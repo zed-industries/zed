@@ -75,6 +75,7 @@ impl DapLocator for CargoLocator {
             }
             _ => {}
         }
+
         Some(DebugScenario {
             adapter: adapter.0,
             label: resolved_label.to_string().into(),

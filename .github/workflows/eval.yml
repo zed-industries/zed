@@ -30,6 +30,7 @@ jobs:
   noop:
     name: No-op
     runs-on: ubuntu-latest
+    if: github.repository_owner == 'zed-industries'
     steps:
       - name: No-op
         run: echo "Nothing to do"

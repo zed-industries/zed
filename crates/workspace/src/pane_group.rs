@@ -1281,7 +1281,17 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeRow,
                         Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
-                    window.set_cursor_style(cursor_style, Some(&handle.hitbox));
+
+                    if layout
+                        .dragged_handle
+                        .borrow()
+                        .is_some_and(|dragged_ix| dragged_ix == ix)
+                    {
+                        window.set_window_cursor_style(cursor_style);
+                    } else {
+                        window.set_cursor_style(cursor_style, &handle.hitbox);
+                    }
+
                     window.paint_quad(gpui::fill(
                         handle.divider_bounds,
                         cx.theme().colors().pane_group_border,

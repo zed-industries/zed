@@ -36,6 +36,7 @@ enable = false
 "/assistant/context-servers.html" = "/docs/ai/mcp.html"
 "/assistant/model-context-protocol.html" = "/docs/ai/mcp.html"
 "/model-improvement.html" = "/docs/ai/ai-improvement.html"
+"/extensions/context-servers.html" = "/docs/extensions/mcp-extensions.html"
 
 
 # Our custom preprocessor for expanding commands like `{#kb action::ActionName}`,

@@ -2049,7 +2049,7 @@ impl BufferSnapshot {
         self.visible_text.reversed_chars_at(offset)
     }
 
-    pub fn reversed_chunks_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Chunks {
+    pub fn reversed_chunks_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Chunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.visible_text.reversed_chunks_in_range(range)
     }

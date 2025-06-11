@@ -84,7 +84,9 @@ impl State {
                     lmstudio::Model::new(
                         &model.id,
                         None,
-                        None,
+                        model
+                            .loaded_context_length
+                            .or_else(|| model.max_context_length),
                         model.capabilities.supports_tool_calls(),
                     )
                 })
@@ -248,15 +250,15 @@ impl LmStudioLanguageModel {
         for message in request.messages {
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                        .push(match message.role {
-                            Role::User => ChatMessage::User { content: text },
-                            Role::Assistant => ChatMessage::Assistant {
-                                content: Some(text),
-                                tool_calls: Vec::new(),
-                            },
-                            Role::System => ChatMessage::System { content: text },
-                        }),
+                    MessageContent::Text(text) => messages.push(match message.role {
+                        Role::User => ChatMessage::User { content: text },
+                        Role::Assistant => ChatMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => ChatMessage::System { content: text },
+                    }),
+                    MessageContent::Thinking { .. } => {}
                     MessageContent::RedactedThinking(_) => {}
                     MessageContent::Image(_) => {}
                     MessageContent::ToolUse(tool_use) => {
@@ -418,6 +420,7 @@ impl LanguageModel for LmStudioLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_lmstudio_request(request);
@@ -467,6 +470,13 @@ impl LmStudioEventMapper {
         let mut events = Vec::new();
         if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(reasoning_content) = choice.delta.reasoning_content {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning_content,
+                signature: None,
+            }));
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls {

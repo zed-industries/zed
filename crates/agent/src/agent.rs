@@ -3,6 +3,7 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
+mod agent_profile;
 mod buffer_codegen;
 mod context;
 mod context_picker;

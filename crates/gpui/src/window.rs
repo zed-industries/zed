@@ -408,7 +408,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
+    pub(crate) hitbox_id: HitboxId,
     pub(crate) style: CursorStyle,
 }
 
@@ -416,6 +416,19 @@ pub(crate) struct CursorStyleRequest {
 pub(crate) struct HitTest {
     pub(crate) ids: SmallVec<[HitboxId; 8]>,
     pub(crate) hover_hitbox_count: usize,
+}
+
+/// A type of window control area that corresponds to the platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowControlArea {
+    /// An area that allows dragging of the platform window.
+    Drag,
+    /// An area that allows closing of the platform window.
+    Close,
+    /// An area that allows maximizing of the platform window.
+    Max,
+    /// An area that allows minimizing of the platform window.
+    Min,
 }
 
 /// An identifier for a [Hitbox] which also includes [HitboxBehavior].
@@ -604,10 +617,12 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    window_cursor_style: Option<CursorStyle>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -647,10 +662,12 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
+            window_cursor_style: None,
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -673,14 +690,27 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+        self.window_cursor_style = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
             self.next_inspector_instance_ids.clear();
             self.inspector_hitboxes.clear();
         }
+    }
+
+    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        self.window_cursor_style.or_else(|| {
+            self.cursor_styles.iter().rev().find_map(|request| {
+                request
+                    .hitbox_id
+                    .is_hovered(window)
+                    .then_some(request.style)
+            })
+        })
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -1011,6 +1041,22 @@ impl Window {
                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
+            })
+        });
+        platform_window.on_hit_test_window_control({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                                return Some(*area);
+                            }
+                        }
+                        None
+                    })
+                    .log_err()
+                    .unwrap_or(None)
             })
         });
 
@@ -2125,12 +2171,21 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.map(|hitbox| hitbox.id),
+            hitbox_id: hitbox.id,
             style,
         });
+    }
+
+    /// Updates the cursor style for the entire window at the platform level. A cursor
+    /// style using this method will have precedence over any cursor style set using
+    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// phase of element drawing.
+    pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_cursor_style = Some(style);
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -3002,6 +3057,14 @@ impl Window {
         hitbox
     }
 
+    /// Set a hitbox which will act as a control area of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_control_hitboxes.push((area, hitbox));
+    }
+
     /// Sets the key context for the current element. This context will be used to translate
     /// keybindings into actions.
     ///
@@ -3205,15 +3268,7 @@ impl Window {
         if self.is_window_hovered() {
             let style = self
                 .rendered_frame
-                .cursor_styles
-                .iter()
-                .rev()
-                .find(|request| {
-                    request
-                        .hitbox_id
-                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
-                })
-                .map(|request| request.style)
+                .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -3502,6 +3557,7 @@ impl Window {
                         .dispatch_tree
                         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
+                    window.pending_input_changed(cx);
                     window.replay_pending_input(to_replay, cx)
                 })
                 .log_err();

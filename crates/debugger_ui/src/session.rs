@@ -1,6 +1,6 @@
 pub mod running;
 
-use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerializedLayout};
+use crate::{StackTraceView, persistence::SerializedLayout, session::running::DebugTerminal};
 use dap::client::SessionId;
 use gpui::{
     App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -22,7 +22,6 @@ pub struct DebugSession {
     running_state: Entity<RunningState>,
     label: OnceLock<SharedString>,
     stack_trace_view: OnceCell<Entity<StackTraceView>>,
-    _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
@@ -38,8 +37,8 @@ impl DebugSession {
     pub(crate) fn running(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        parent_terminal: Option<Entity<DebugTerminal>>,
         session: Entity<Session>,
-        _debug_panel: WeakEntity<DebugPanel>,
         serialized_layout: Option<SerializedLayout>,
         dock_axis: Axis,
         window: &mut Window,
@@ -50,6 +49,7 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
+                parent_terminal,
                 serialized_layout,
                 dock_axis,
                 window,
@@ -64,7 +64,6 @@ impl DebugSession {
             remote_id: None,
             running_state,
             label: OnceLock::new(),
-            _debug_panel,
             stack_trace_view: OnceCell::new(),
             _worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,

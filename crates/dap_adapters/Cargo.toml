@@ -23,6 +23,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+collections.workspace = true
 dap.workspace = true
 futures.workspace = true
 gpui.workspace = true

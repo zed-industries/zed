@@ -260,7 +260,9 @@ pub(crate) struct LinkedEditingRange {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GetDocumentDiagnostics {}
+pub(crate) struct GetDocumentDiagnostics {
+    pub previous_result_id: Option<String>,
+}
 
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
@@ -3810,6 +3812,109 @@ impl GetDocumentDiagnostics {
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })
     }
+
+    pub fn deserialize_workspace_diagnostics_report(
+        report: lsp::WorkspaceDiagnosticReportResult,
+        server_id: LanguageServerId,
+    ) -> Vec<WorkspaceLspPullDiagnostics> {
+        let mut pulled_diagnostics = HashMap::default();
+        match report {
+            lsp::WorkspaceDiagnosticReportResult::Report(workspace_diagnostic_report) => {
+                for report in workspace_diagnostic_report.items {
+                    match report {
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(report) => {
+                            process_full_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                        lsp::WorkspaceDocumentDiagnosticReport::Unchanged(report) => {
+                            process_unchanged_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                    }
+                }
+            }
+            lsp::WorkspaceDiagnosticReportResult::Partial(
+                workspace_diagnostic_report_partial_result,
+            ) => {
+                for report in workspace_diagnostic_report_partial_result.items {
+                    match report {
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(report) => {
+                            process_full_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                        lsp::WorkspaceDocumentDiagnosticReport::Unchanged(report) => {
+                            process_unchanged_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        pulled_diagnostics.into_values().collect()
+    }
+}
+
+pub struct WorkspaceLspPullDiagnostics {
+    pub version: Option<i32>,
+    pub diagnostics: LspPullDiagnostics,
+}
+
+fn process_full_workspace_diagnostics_report(
+    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    server_id: LanguageServerId,
+    report: lsp::WorkspaceFullDocumentDiagnosticReport,
+) {
+    let mut new_diagnostics = HashMap::default();
+    process_full_diagnostics_report(
+        &mut new_diagnostics,
+        server_id,
+        report.uri,
+        report.full_document_diagnostic_report,
+    );
+    diagnostics.extend(new_diagnostics.into_iter().map(|(uri, diagnostics)| {
+        (
+            uri,
+            WorkspaceLspPullDiagnostics {
+                version: report.version.map(|v| v as i32),
+                diagnostics,
+            },
+        )
+    }));
+}
+
+fn process_unchanged_workspace_diagnostics_report(
+    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    server_id: LanguageServerId,
+    report: lsp::WorkspaceUnchangedDocumentDiagnosticReport,
+) {
+    let mut new_diagnostics = HashMap::default();
+    process_unchanged_diagnostics_report(
+        &mut new_diagnostics,
+        server_id,
+        report.uri,
+        report.unchanged_document_diagnostic_report,
+    );
+    diagnostics.extend(new_diagnostics.into_iter().map(|(uri, diagnostics)| {
+        (
+            uri,
+            WorkspaceLspPullDiagnostics {
+                version: report.version.map(|v| v as i32),
+                diagnostics,
+            },
+        )
+    }));
 }
 
 #[async_trait(?Send)]
@@ -3849,7 +3954,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 uri: file_path_to_lsp_url(path)?,
             },
             identifier,
-            previous_result_id: None,
+            previous_result_id: self.previous_result_id.clone(),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
@@ -3933,7 +4038,7 @@ impl LspCommand for GetDocumentDiagnostics {
 
     async fn from_proto(
         message: proto::GetDocumentDiagnostics,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Self> {
@@ -3942,7 +4047,11 @@ impl LspCommand for GetDocumentDiagnostics {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
-        Ok(Self {})
+        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
+        Ok(Self {
+            previous_result_id: lsp_store
+                .update(&mut cx, |lsp_store, cx| lsp_store.result_id(buffer_id, cx))?,
+        })
     }
 
     fn response_to_proto(

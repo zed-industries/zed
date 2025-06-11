@@ -5,10 +5,10 @@
 //! elements with uniform height.
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, Element, ElementId, Entity,
-    GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
-    IsZero, LayoutId, ListSizingBehavior, Overflow, Pixels, Render, ScrollHandle, Size,
-    StyleRefinement, Styled, Window, point, size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
+    Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
+    ListSizingBehavior, Overflow, Pixels, ScrollHandle, Size, StyleRefinement, Styled, Window,
+    point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -19,28 +19,23 @@ use super::ListHorizontalSizingBehavior;
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visible subset of items.
 #[track_caller]
-pub fn uniform_list<I, R, V>(
-    view: Entity<V>,
-    id: I,
+pub fn uniform_list<R>(
+    id: impl Into<ElementId>,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<R>,
+    f: impl 'static + Fn(Range<usize>, &mut Window, &mut App) -> Vec<R>,
 ) -> UniformList
 where
-    I: Into<ElementId>,
     R: IntoElement,
-    V: Render,
 {
     let id = id.into();
     let mut base_style = StyleRefinement::default();
     base_style.overflow.y = Some(Overflow::Scroll);
 
-    let render_range = move |range, window: &mut Window, cx: &mut App| {
-        view.update(cx, |this, cx| {
-            f(this, range, window, cx)
-                .into_iter()
-                .map(|component| component.into_any_element())
-                .collect()
-        })
+    let render_range = move |range: Range<usize>, window: &mut Window, cx: &mut App| {
+        f(range, window, cx)
+            .into_iter()
+            .map(|component| component.into_any_element())
+            .collect()
     };
 
     UniformList {

@@ -22,7 +22,7 @@ impl DapLocator for PythonLocator {
         resolved_label: &str,
         adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
-        if adapter.as_ref() != "Debugpy" {
+        if adapter.0.as_ref() != "Debugpy" {
             return None;
         }
         let valid_program = build_config.command.starts_with("$ZED_")

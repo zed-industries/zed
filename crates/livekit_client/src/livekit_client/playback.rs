@@ -412,7 +412,7 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
         self.sample_rate
     }
 
-    fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame> {
+    fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
         assert_eq!(self.sample_rate, target_sample_rate);
         let buf = self.buffer.lock().pop_front()?;
         Some(AudioFrame {

@@ -4,7 +4,7 @@
 bash -euo pipefail
 source script/lib/blob-store.sh
 
-allowed_targets=("linux-targz" "macos")
+allowed_targets=("linux-targz" "macos" "freebsd")
 is_allowed_target() {
     for val in "${allowed_targets[@]}"; do
         if [[ "$1" == "$val" ]]; then
@@ -54,6 +54,9 @@ case "$target" in
         done
         upload_to_blob_store $bucket_name "target/latest-sha" "nightly/latest-sha-linux-targz"
         rm -f "target/latest-sha"
+        ;;
+    freebsd)
+        echo "No freebsd client build (yet)."
         ;;
     *)
         echo "Error: Unknown target '$target'"

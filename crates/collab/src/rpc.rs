@@ -4,7 +4,10 @@ use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
-use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
+    MIN_ACCOUNT_AGE_FOR_LLM_USE,
+};
 use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
@@ -65,7 +68,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
@@ -86,9 +89,35 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
+const MAX_CONCURRENT_CONNECTIONS: usize = 512;
+
+static CONCURRENT_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
+
+pub struct ConnectionGuard;
+
+impl ConnectionGuard {
+    pub fn try_acquire() -> Result<Self, ()> {
+        let current_connections = CONCURRENT_CONNECTIONS.fetch_add(1, SeqCst);
+        if current_connections >= MAX_CONCURRENT_CONNECTIONS {
+            CONCURRENT_CONNECTIONS.fetch_sub(1, SeqCst);
+            tracing::error!(
+                "too many concurrent connections: {}",
+                current_connections + 1
+            );
+            return Err(());
+        }
+        Ok(ConnectionGuard)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        CONCURRENT_CONNECTIONS.fetch_sub(1, SeqCst);
+    }
+}
 
 struct Response<R> {
     peer: Arc<Peer>,
@@ -356,7 +385,7 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDiffBases>)
             .add_message_handler(
-                broadcast_project_message_from_host::<proto::RefreshDocumentsDiagnostics>,
+                broadcast_project_message_from_host::<proto::PullWorkspaceDiagnostics>,
             )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
@@ -722,6 +751,7 @@ impl Server {
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
+        connection_guard: Option<ConnectionGuard>,
     ) -> impl Future<Output = ()> + use<> {
         let this = self.clone();
         let span = info_span!("handle connection", %address,
@@ -742,6 +772,7 @@ impl Server {
                 tracing::error!("server is tearing down");
                 return
             }
+
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
                 .add_connection(connection, {
@@ -783,6 +814,7 @@ impl Server {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
+            drop(connection_guard);
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -1154,6 +1186,19 @@ pub async fn handle_websocket_request(
     }
 
     let socket_address = socket_address.to_string();
+
+    // Acquire connection guard before WebSocket upgrade
+    let connection_guard = match ConnectionGuard::try_acquire() {
+        Ok(guard) => guard,
+        Err(()) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent connections",
+            )
+                .into_response();
+        }
+    };
+
     ws.on_upgrade(move |socket| {
         let socket = socket
             .map_ok(to_tungstenite_message)
@@ -1171,6 +1216,7 @@ pub async fn handle_websocket_request(
                     system_id_header.map(|header| header.to_string()),
                     None,
                     Executor::Production,
+                    Some(connection_guard),
                 )
                 .await;
         }
@@ -2773,8 +2819,12 @@ async fn make_update_user_plan_message(
         (None, None)
     };
 
-    let account_too_young =
-        !matches!(plan, proto::Plan::ZedPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+    let bypass_account_age_check = feature_flags
+        .iter()
+        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
+    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
+        && !bypass_account_age_check
+        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
 
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
@@ -4074,9 +4124,6 @@ async fn accept_terms_of_service(
     })?;
     Ok(())
 }
-
-/// The minimum account age an account must have in order to use the LLM service.
-pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
 
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,

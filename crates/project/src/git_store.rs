@@ -23,9 +23,9 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        UpstreamTrackingStatus,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
+        ResetMode, UpstreamTrackingStatus,
     },
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
@@ -1553,6 +1553,7 @@ impl GitStore {
     ) -> Result<proto::RemoteMessageResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -1565,7 +1566,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(askpass, cx)
+                repository_handle.fetch(fetch_options, askpass, cx)
             })?
             .await??;
 
@@ -3500,6 +3501,7 @@ impl Repository {
 
     pub fn fetch(
         &mut self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
@@ -3513,7 +3515,7 @@ impl Repository {
                     backend,
                     environment,
                     ..
-                } => backend.fetch(askpass, environment, cx).await,
+                } => backend.fetch(fetch_options, askpass, environment, cx).await,
                 RepositoryState::Remote { project_id, client } => {
                     askpass_delegates.lock().insert(askpass_id, askpass);
                     let _defer = util::defer(|| {
@@ -3526,6 +3528,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             askpass_id,
+                            remote: fetch_options.to_proto(),
                         })
                         .await
                         .context("sending fetch request")?;

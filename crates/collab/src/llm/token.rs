@@ -1,6 +1,6 @@
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::db::{billing_customer, billing_subscription, user};
-use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
+use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG};
 use crate::{Config, db::billing_preference};
 use anyhow::{Context as _, Result};
 use chrono::{NaiveDateTime, Utc};
@@ -84,7 +84,7 @@ impl LlmTokenClaims {
                 .any(|flag| flag == "llm-closed-beta"),
             bypass_account_age_check: feature_flags
                 .iter()
-                .any(|flag| flag == "bypass-account-age-check"),
+                .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG),
             can_use_web_search_tool: true,
             use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
             plan,

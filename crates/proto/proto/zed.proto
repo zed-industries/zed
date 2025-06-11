@@ -391,7 +391,7 @@ message Envelope {
 
         GetDocumentDiagnostics get_document_diagnostics = 350;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 351;
-        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 352; // current max
+        PullWorkspaceDiagnostics pull_workspace_diagnostics = 352; // current max
 
     }
 

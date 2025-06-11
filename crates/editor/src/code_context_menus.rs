@@ -722,10 +722,9 @@ impl CompletionsMenu {
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
-            cx.entity().clone(),
             "completions",
             self.entries.borrow().len(),
-            move |_editor, range, _window, cx| {
+            cx.processor(move |_editor, range: Range<usize>, _window, cx| {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
@@ -837,7 +836,7 @@ impl CompletionsMenu {
                         )
                     })
                     .collect()
-            },
+            }),
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
@@ -1452,10 +1451,9 @@ impl CodeActionsMenu {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
         let list = uniform_list(
-            cx.entity().clone(),
             "code_actions_menu",
             self.actions.len(),
-            move |_this, range, _, cx| {
+            cx.processor(move |_this, range: Range<usize>, _, cx| {
                 actions
                     .iter()
                     .skip(range.start)
@@ -1518,7 +1516,7 @@ impl CodeActionsMenu {
                         )
                     })
                     .collect()
-            },
+            }),
         )
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())

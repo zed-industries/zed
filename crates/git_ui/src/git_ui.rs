@@ -59,7 +59,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.fetch(window, cx);
+                    panel.fetch(true, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::FetchFrom, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.fetch(false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Push, window, cx| {
@@ -67,7 +75,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.push(false, window, cx);
+                    panel.push(false, false, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::PushTo, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(false, true, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
@@ -75,7 +91,7 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.push(true, window, cx);
+                    panel.push(true, false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Pull, window, cx| {
@@ -367,9 +383,11 @@ mod remote_button {
                             el.context(keybinding_target.clone())
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
+                        .action("Fetch From", git::FetchFrom.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())
+                        .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })

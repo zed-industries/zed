@@ -103,7 +103,7 @@ pub struct VenvSettingsContent<'a> {
 }
 
 impl VenvSettings {
-    pub fn as_option(&self) -> Option<VenvSettingsContent> {
+    pub fn as_option(&self) -> Option<VenvSettingsContent<'_>> {
         match self {
             VenvSettings::Off => None,
             VenvSettings::On {

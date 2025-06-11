@@ -8,7 +8,7 @@ use project::{
     ProjectItem as _, ProjectPath,
     debugger::session::{Session, SessionEvent},
 };
-use std::{path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 use ui::{Scrollbar, ScrollbarState, prelude::*};
 use workspace::Workspace;
 
@@ -281,10 +281,11 @@ impl ModuleList {
 
     fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         uniform_list(
-            cx.entity(),
             "module-list",
             self.entries.len(),
-            |this, range, _window, cx| range.map(|ix| this.render_entry(ix, cx)).collect(),
+            cx.processor(|this, range: Range<usize>, _window, cx| {
+                range.map(|ix| this.render_entry(ix, cx)).collect()
+            }),
         )
         .track_scroll(self.scroll_handle.clone())
         .size_full()

@@ -72,25 +72,25 @@ impl<'a> MarkdownParser<'a> {
         self.cursor >= self.tokens.len() - 1
     }
 
-    fn peek(&self, steps: usize) -> Option<&(Event, Range<usize>)> {
+    fn peek(&self, steps: usize) -> Option<&(Event<'_>, Range<usize>)> {
         if self.eof() || (steps + self.cursor) >= self.tokens.len() {
             return self.tokens.last();
         }
         return self.tokens.get(self.cursor + steps);
     }
 
-    fn previous(&self) -> Option<&(Event, Range<usize>)> {
+    fn previous(&self) -> Option<&(Event<'_>, Range<usize>)> {
         if self.cursor == 0 || self.cursor > self.tokens.len() {
             return None;
         }
         return self.tokens.get(self.cursor - 1);
     }
 
-    fn current(&self) -> Option<&(Event, Range<usize>)> {
+    fn current(&self) -> Option<&(Event<'_>, Range<usize>)> {
         return self.peek(0);
     }
 
-    fn current_event(&self) -> Option<&Event> {
+    fn current_event(&self) -> Option<&Event<'_>> {
         return self.current().map(|(event, _)| event);
     }
 

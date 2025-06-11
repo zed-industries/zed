@@ -87,7 +87,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(command.into())
             }
@@ -113,7 +113,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -136,7 +136,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -161,7 +161,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -186,7 +186,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -208,7 +208,7 @@ impl extension::Extension for WasmExtension {
                         completions.into_iter().map(Into::into).collect(),
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(labels
                     .into_iter()
@@ -234,7 +234,7 @@ impl extension::Extension for WasmExtension {
                         symbols.into_iter().map(Into::into).collect(),
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(labels
                     .into_iter()
@@ -256,7 +256,7 @@ impl extension::Extension for WasmExtension {
                 let completions = extension
                     .call_complete_slash_command_argument(store, &command.into(), &arguments)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(completions.into_iter().map(Into::into).collect())
             }
@@ -282,7 +282,7 @@ impl extension::Extension for WasmExtension {
                 let output = extension
                     .call_run_slash_command(store, &command.into(), &arguments, resource)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(output.into())
             }
@@ -302,7 +302,7 @@ impl extension::Extension for WasmExtension {
                 let command = extension
                     .call_context_server_command(store, context_server_id.clone(), project_resource)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(command.into())
             }
             .boxed()
@@ -325,7 +325,7 @@ impl extension::Extension for WasmExtension {
                         project_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?
+                    .map_err(|err| store.data().extension_error(err))?
                 else {
                     return Ok(None);
                 };
@@ -343,7 +343,7 @@ impl extension::Extension for WasmExtension {
                 let packages = extension
                     .call_suggest_docs_packages(store, provider.as_ref())
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(packages)
             }
@@ -369,7 +369,7 @@ impl extension::Extension for WasmExtension {
                         kv_store_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 anyhow::Ok(())
             }
@@ -390,7 +390,7 @@ impl extension::Extension for WasmExtension {
                 let dap_binary = extension
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 let dap_binary = dap_binary.try_into()?;
                 Ok(dap_binary)
             }
@@ -406,7 +406,7 @@ impl extension::Extension for WasmExtension {
                     .call_dap_schema(store)
                     .await
                     .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
-                    .map_err(|err| anyhow!(err.to_string()))
+                    .map_err(|err| store.data().extension_error(err))
             }
             .boxed()
         })
@@ -680,6 +680,15 @@ impl WasmState {
     fn work_dir(&self) -> PathBuf {
         self.host.work_dir.join(self.manifest.id.as_ref())
     }
+
+    fn extension_error(&self, message: String) -> anyhow::Error {
+        anyhow!(
+            "from extension \"{}\" version {}: {}",
+            self.manifest.name,
+            self.manifest.version,
+            message
+        )
+    }
 }
 
 impl wasi::WasiView for WasmState {
@@ -715,7 +724,7 @@ impl IncrementalCompilationCache {
 }
 
 impl CacheStore for IncrementalCompilationCache {
-    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+    fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>> {
         self.cache.get(key).map(|v| v.into())
     }
 

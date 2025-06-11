@@ -43,6 +43,8 @@ pub struct AvailableModel {
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
     pub max_completion_tokens: Option<u32>,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -227,7 +229,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
-                supports_tools: Some(false),
+                supports_tools: model.supports_tools,
+                supports_images: model.supports_images,
             });
         }
 
@@ -345,7 +348,7 @@ impl LanguageModel for OpenRouterLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images.unwrap_or(false)
     }
 
     fn count_tokens(
@@ -367,6 +370,7 @@ impl LanguageModel for OpenRouterLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_open_router(request, &self.model, self.max_output_tokens());
@@ -385,20 +389,26 @@ pub fn into_open_router(
     max_output_tokens: Option<u32>,
 ) -> open_router::Request {
     let mut messages = Vec::new();
-    for req_message in request.messages {
-        for content in req_message.content {
+    for message in request.messages {
+        for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                    .push(match req_message.role {
-                        Role::User => open_router::RequestMessage::User { content: text },
-                        Role::Assistant => open_router::RequestMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => open_router::RequestMessage::System { content: text },
-                    }),
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    add_message_content_part(
+                        open_router::MessagePart::Text { text: text },
+                        message.role,
+                        &mut messages,
+                    )
+                }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image(image) => {
+                    add_message_content_part(
+                        open_router::MessagePart::Image {
+                            image_url: image.to_base64_url(),
+                        },
+                        message.role,
+                        &mut messages,
+                    );
+                }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_router::ToolCall {
                         id: tool_use.id.to_string(),
@@ -424,16 +434,20 @@ pub fn into_open_router(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                      LanguageModelToolResultContent::Text(text) => {
-                          text.to_string()
+                        LanguageModelToolResultContent::Text(text) => {
+                            vec![open_router::MessagePart::Text {
+                                text: text.to_string(),
+                            }]
                         }
-                        LanguageModelToolResultContent::Image(_) => {
-                          "[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()
+                        LanguageModelToolResultContent::Image(image) => {
+                            vec![open_router::MessagePart::Image {
+                                image_url: image.to_base64_url(),
+                            }]
                         }
                     };
 
                     messages.push(open_router::RequestMessage::Tool {
-                        content: content,
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -469,6 +483,42 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+    }
+}
+
+fn add_message_content_part(
+    new_part: open_router::MessagePart,
+    role: Role,
+    messages: &mut Vec<open_router::RequestMessage>,
+) {
+    match (role, messages.last_mut()) {
+        (Role::User, Some(open_router::RequestMessage::User { content }))
+        | (Role::System, Some(open_router::RequestMessage::System { content })) => {
+            content.push_part(new_part);
+        }
+        (
+            Role::Assistant,
+            Some(open_router::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        ) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => open_router::RequestMessage::User {
+                    content: open_router::MessageContent::from(vec![new_part]),
+                },
+                Role::Assistant => open_router::RequestMessage::Assistant {
+                    content: Some(open_router::MessageContent::from(vec![new_part])),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_router::RequestMessage::System {
+                    content: open_router::MessageContent::from(vec![new_part]),
+                },
+            });
+        }
     }
 }
 

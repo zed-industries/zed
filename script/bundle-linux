@@ -87,7 +87,11 @@ fi
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
-    echo "Error: remote_server still depends on libssl or libcrypto" && exit 1
+    if [[ "$remote_server_triple" == *-musl ]]; then
+        echo "Error: remote_server still depends on libssl or libcrypto" && exit 1
+    else
+        echo "Info: Using non-musl remote-server build."
+    fi
 fi
 
 suffix=""

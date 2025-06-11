@@ -57,7 +57,7 @@ use zed_llm_client::{CompletionIntent, UsageLimit};
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryStore, RecentEntry};
+use crate::history_store::{HistoryEntryId, HistoryStore};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
 use crate::thread_history::{HistoryEntryElement, ThreadHistory};
@@ -257,6 +257,7 @@ impl ActiveView {
 
     pub fn prompt_editor(
         context_editor: Entity<ContextEditor>,
+        history_store: Entity<HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
@@ -321,6 +322,19 @@ impl ActiveView {
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
                         })
+                    }
+                    ContextEvent::PathChanged { old_path, new_path } => {
+                        history_store.update(cx, |history_store, cx| {
+                            if let Some(old_path) = old_path {
+                                history_store
+                                    .replace_recently_opened_text_thread(old_path, new_path, cx);
+                            } else {
+                                history_store.push_recently_opened_entry(
+                                    HistoryEntryId::Context(new_path.clone()),
+                                    cx,
+                                );
+                            }
+                        });
                     }
                     _ => {}
                 }
@@ -516,8 +530,7 @@ impl AgentPanel {
             HistoryStore::new(
                 thread_store.clone(),
                 context_store.clone(),
-                [RecentEntry::Thread(thread_id, thread.clone())],
-                window,
+                [HistoryEntryId::Thread(thread_id)],
                 cx,
             )
         });
@@ -544,7 +557,13 @@ impl AgentPanel {
                     editor.insert_default_prompt(window, cx);
                     editor
                 });
-                ActiveView::prompt_editor(context_editor, language_registry.clone(), window, cx)
+                ActiveView::prompt_editor(
+                    context_editor,
+                    history_store.clone(),
+                    language_registry.clone(),
+                    window,
+                    cx,
+                )
             }
         };
 
@@ -581,86 +600,9 @@ impl AgentPanel {
             let panel = weak_panel.clone();
             let assistant_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
-                    let recently_opened = panel
-                        .update(cx, |this, cx| {
-                            this.history_store.update(cx, |history_store, cx| {
-                                history_store.recently_opened_entries(cx)
-                            })
-                        })
-                        .unwrap_or_default();
-
-                    if !recently_opened.is_empty() {
-                        menu = menu.header("Recently Opened");
-
-                        for entry in recently_opened.iter() {
-                            if let RecentEntry::Context(context) = entry {
-                                if context.read(cx).path().is_none() {
-                                    log::error!(
-                                        "bug: text thread in recent history list was never saved"
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            let summary = entry.summary(cx);
-
-                            menu = menu.entry_with_end_slot_on_hover(
-                                summary,
-                                None,
-                                {
-                                    let panel = panel.clone();
-                                    let entry = entry.clone();
-                                    move |window, cx| {
-                                        panel
-                                            .update(cx, {
-                                                let entry = entry.clone();
-                                                move |this, cx| match entry {
-                                                    RecentEntry::Thread(_, thread) => {
-                                                        this.open_thread(thread, window, cx)
-                                                    }
-                                                    RecentEntry::Context(context) => {
-                                                        let Some(path) = context.read(cx).path()
-                                                        else {
-                                                            return;
-                                                        };
-                                                        this.open_saved_prompt_editor(
-                                                            path.clone(),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx)
-                                                    }
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                },
-                                IconName::Close,
-                                "Close Entry".into(),
-                                {
-                                    let panel = panel.clone();
-                                    let entry = entry.clone();
-                                    move |_window, cx| {
-                                        panel
-                                            .update(cx, |this, cx| {
-                                                this.history_store.update(
-                                                    cx,
-                                                    |history_store, cx| {
-                                                        history_store.remove_recently_opened_entry(
-                                                            &entry, cx,
-                                                        );
-                                                    },
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-                        }
-
-                        menu = menu.separator();
+                    if let Some(panel) = panel.upgrade() {
+                        menu = Self::populate_recently_opened_menu_section(menu, panel, cx);
                     }
-
                     menu.action("View All", Box::new(OpenHistory))
                         .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
                         .fixed_width(px(320.).into())
@@ -898,6 +840,7 @@ impl AgentPanel {
         self.set_active_view(
             ActiveView::prompt_editor(
                 context_editor.clone(),
+                self.history_store.clone(),
                 self.language_registry.clone(),
                 window,
                 cx,
@@ -984,7 +927,13 @@ impl AgentPanel {
             )
         });
         self.set_active_view(
-            ActiveView::prompt_editor(editor.clone(), self.language_registry.clone(), window, cx),
+            ActiveView::prompt_editor(
+                editor.clone(),
+                self.history_store.clone(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
             window,
             cx,
         );
@@ -1383,16 +1332,6 @@ impl AgentPanel {
                     }
                 }
             }
-            ActiveView::TextThread { context_editor, .. } => {
-                let context = context_editor.read(cx).context();
-                // When switching away from an unsaved text thread, delete its entry.
-                if context.read(cx).path().is_none() {
-                    let context = context.clone();
-                    self.history_store.update(cx, |store, cx| {
-                        store.remove_recently_opened_entry(&RecentEntry::Context(context), cx);
-                    });
-                }
-            }
             _ => {}
         }
 
@@ -1400,13 +1339,14 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
                     let id = thread.read(cx).id().clone();
-                    store.push_recently_opened_entry(RecentEntry::Thread(id, thread), cx);
+                    store.push_recently_opened_entry(HistoryEntryId::Thread(id), cx);
                 }
             }),
             ActiveView::TextThread { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
-                    let context = context_editor.read(cx).context().clone();
-                    store.push_recently_opened_entry(RecentEntry::Context(context), cx)
+                    if let Some(path) = context_editor.read(cx).context().read(cx).path() {
+                        store.push_recently_opened_entry(HistoryEntryId::Context(path.clone()), cx)
+                    }
                 })
             }
             _ => {}
@@ -1424,6 +1364,70 @@ impl AgentPanel {
         }
 
         self.focus_handle(cx).focus(window);
+    }
+
+    fn populate_recently_opened_menu_section(
+        mut menu: ContextMenu,
+        panel: Entity<Self>,
+        cx: &mut Context<ContextMenu>,
+    ) -> ContextMenu {
+        let entries = panel
+            .read(cx)
+            .history_store
+            .read(cx)
+            .recently_opened_entries(cx);
+
+        if entries.is_empty() {
+            return menu;
+        }
+
+        menu = menu.header("Recently Opened");
+
+        for entry in entries {
+            let title = entry.title().clone();
+            let id = entry.id();
+
+            menu = menu.entry_with_end_slot_on_hover(
+                title,
+                None,
+                {
+                    let panel = panel.downgrade();
+                    let id = id.clone();
+                    move |window, cx| {
+                        let id = id.clone();
+                        panel
+                            .update(cx, move |this, cx| match id {
+                                HistoryEntryId::Thread(id) => this
+                                    .open_thread_by_id(&id, window, cx)
+                                    .detach_and_log_err(cx),
+                                HistoryEntryId::Context(path) => this
+                                    .open_saved_prompt_editor(path.clone(), window, cx)
+                                    .detach_and_log_err(cx),
+                            })
+                            .ok();
+                    }
+                },
+                IconName::Close,
+                "Close Entry".into(),
+                {
+                    let panel = panel.downgrade();
+                    let id = id.clone();
+                    move |_window, cx| {
+                        panel
+                            .update(cx, |this, cx| {
+                                this.history_store.update(cx, |history_store, cx| {
+                                    history_store.remove_recently_opened_entry(&id, cx);
+                                });
+                            })
+                            .ok();
+                    }
+                },
+            );
+        }
+
+        menu = menu.separator();
+
+        menu
     }
 }
 

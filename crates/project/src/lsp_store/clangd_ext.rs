@@ -84,6 +84,7 @@ pub fn register_notifications(
                     this.merge_diagnostics(
                         server_id,
                         mapped_diagnostics,
+                        None,
                         DiagnosticSourceKind::Pushed,
                         &adapter.disk_based_diagnostic_sources,
                         |diag, _| !is_inactive_region(diag),

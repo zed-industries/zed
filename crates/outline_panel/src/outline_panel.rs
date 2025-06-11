@@ -1107,38 +1107,14 @@ impl OutlinePanel {
                     });
                 } else {
                     let mut offset = Point::default();
-                    let expand_excerpt_control_height = 1.0;
                     if let Some(buffer_id) = scroll_to_buffer {
-                        let current_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
-                        if current_folded {
-                            let previous_buffer_id = self
-                                .fs_entries
-                                .iter()
-                                .rev()
-                                .filter_map(|entry| match entry {
-                                    FsEntry::File(file) => Some(file.buffer_id),
-                                    FsEntry::ExternalFile(external_file) => {
-                                        Some(external_file.buffer_id)
-                                    }
-                                    FsEntry::Directory(..) => None,
-                                })
-                                .skip_while(|id| *id != buffer_id)
-                                .nth(1);
-                            if let Some(previous_buffer_id) = previous_buffer_id {
-                                if !active_editor
-                                    .read(cx)
-                                    .is_buffer_folded(previous_buffer_id, cx)
-                                {
-                                    offset.y += expand_excerpt_control_height;
-                                }
-                            }
-                        } else {
-                            if multi_buffer_snapshot.as_singleton().is_none() {
-                                offset.y = -(active_editor.read(cx).file_header_size() as f32);
-                            }
-                            offset.y -= expand_excerpt_control_height;
+                        if multi_buffer_snapshot.as_singleton().is_none()
+                            && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
+                        {
+                            offset.y = -(active_editor.read(cx).file_header_size() as f32);
                         }
                     }
+
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, window, cx);
                     });
@@ -4521,8 +4497,10 @@ impl OutlinePanel {
                 let multi_buffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
-                uniform_list(cx.entity().clone(), "entries", items_len, {
-                    move |outline_panel, range, window, cx| {
+                uniform_list(
+                    "entries",
+                    items_len,
+                    cx.processor(move |outline_panel, range: Range<usize>, window, cx| {
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4579,8 +4557,8 @@ impl OutlinePanel {
                                 ),
                             })
                             .collect()
-                    }
-                })
+                    }),
+                )
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(self.max_width_item_index)

@@ -4,8 +4,8 @@ use crate::{
     KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
-    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
-    platform::PlatformInputHandler, point, px, size,
+    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -1144,6 +1144,9 @@ impl PlatformWindow for MacWindow {
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.0.as_ref().lock().close_callback = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {

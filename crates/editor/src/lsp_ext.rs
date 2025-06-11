@@ -42,8 +42,8 @@ where
         .selections
         .disjoint_anchors()
         .iter()
-        .filter(|selection| selection.start == selection.end)
-        .filter_map(|selection| Some((selection.start, selection.start.buffer_id?)))
+        .filter_map(|selection| Some((selection.head(), selection.head().buffer_id?)))
+        .unique_by(|(_, buffer_id)| *buffer_id)
         .filter_map(|(trigger_anchor, buffer_id)| {
             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
             let language = buffer.read(cx).language_at(trigger_anchor.text_anchor)?;
@@ -53,7 +53,6 @@ where
                 None
             }
         })
-        .unique_by(|(_, buffer, _)| buffer.read(cx).remote_id())
         .collect::<Vec<_>>();
 
     let applicable_buffer_tasks = applicable_buffers

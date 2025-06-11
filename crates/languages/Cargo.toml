@@ -88,7 +88,6 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
-which.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

@@ -11,6 +11,8 @@ pub(crate) struct NodeLocator;
 
 const TYPESCRIPT_RUNNER_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_RUNNER"));
+const TYPESCRIPT_JEST_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST"));
 
 #[async_trait]
 impl DapLocator for NodeLocator {
@@ -25,12 +27,7 @@ impl DapLocator for NodeLocator {
         resolved_label: &str,
         adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
-        // TODO(debugger) fix issues with `await` breakpoint step
-        if cfg!(not(debug_assertions)) {
-            return None;
-        }
-
-        if adapter.as_ref() != "JavaScript" {
+        if adapter.0.as_ref() != "JavaScript" {
             return None;
         }
         if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
@@ -41,12 +38,20 @@ impl DapLocator for NodeLocator {
             .join("node_modules")
             .join(".bin")
             .join(test_library);
-        let args = build_config.args[1..].to_vec();
+
+        let mut args = if test_library == "jest"
+            || test_library == &TYPESCRIPT_JEST_TASK_VARIABLE.template_value()
+        {
+            vec!["--runInBand".to_owned()]
+        } else {
+            vec![]
+        };
+        args.extend(build_config.args[1..].iter().cloned());
 
         let config = serde_json::json!({
             "request": "launch",
             "type": "pwa-node",
-            "program": program_path,
+            "runtimeExecutable": program_path,
             "args": args,
             "cwd": build_config.cwd.clone(),
             "runtimeArgs": ["--inspect-brk"],
@@ -63,6 +68,6 @@ impl DapLocator for NodeLocator {
     }
 
     async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
-        bail!("Python locator should not require DapLocator::run to be ran");
+        bail!("JavaScript locator should not require DapLocator::run to be ran");
     }
 }

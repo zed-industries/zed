@@ -261,6 +261,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#bfbdb6ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#d2a6ffff",
             "font_style": null,
@@ -313,6 +318,16 @@
           },
           "punctuation.special": {
             "color": "#d2a6ffff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#d2a6ffff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector.pseudo": {
+            "color": "#5ac1feff",
             "font_style": null,
             "font_weight": null
           },
@@ -632,6 +647,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#5c6166ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#a37accff",
             "font_style": null,
@@ -684,6 +704,16 @@
           },
           "punctuation.special": {
             "color": "#a37accff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#a37accff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector.pseudo": {
+            "color": "#3b9ee5ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1003,6 +1033,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "namespace": {
+            "color": "#cccac2ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "number": {
             "color": "#dfbfffff",
             "font_style": null,
@@ -1055,6 +1090,16 @@
           },
           "punctuation.special": {
             "color": "#dfbfffff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector": {
+            "color": "#dfbfffff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "selector.pseudo": {
+            "color": "#72cffeff",
             "font_style": null,
             "font_weight": null
           },

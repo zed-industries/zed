@@ -294,6 +294,7 @@ impl ExampleContext {
                 | ThreadEvent::MessageDeleted(_)
                 | ThreadEvent::SummaryChanged
                 | ThreadEvent::SummaryGenerated
+                | ThreadEvent::ProfileChanged
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged

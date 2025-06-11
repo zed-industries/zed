@@ -348,6 +348,7 @@ impl LanguageModel for DeepSeekLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_deepseek(request, &self.model, self.max_output_tokens());
@@ -372,15 +373,15 @@ pub fn into_deepseek(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                    .push(match message.role {
-                        Role::User => deepseek::RequestMessage::User { content: text },
-                        Role::Assistant => deepseek::RequestMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => deepseek::RequestMessage::System { content: text },
-                    }),
+                MessageContent::Text(text) => messages.push(match message.role {
+                    Role::User => deepseek::RequestMessage::User { content: text },
+                    Role::Assistant => deepseek::RequestMessage::Assistant {
+                        content: Some(text),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => deepseek::RequestMessage::System { content: text },
+                }),
+                MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
@@ -483,6 +484,13 @@ impl DeepSeekEventMapper {
         let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(reasoning_content) = choice.delta.reasoning_content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning_content,
+                signature: None,
+            }));
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {

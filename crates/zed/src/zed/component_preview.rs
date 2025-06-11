@@ -5,6 +5,7 @@
 mod persistence;
 mod preview_support;
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use std::iter::Iterator;
@@ -780,10 +781,9 @@ impl Render for ComponentPreview {
                     .h_full()
                     .child(
                         gpui::uniform_list(
-                            cx.entity().clone(),
                             "component-nav",
                             sidebar_entries.len(),
-                            move |this, range, _window, cx| {
+                            cx.processor(move |this, range: Range<usize>, _window, cx| {
                                 range
                                     .filter_map(|ix| {
                                         if ix < sidebar_entries.len() {
@@ -797,7 +797,7 @@ impl Render for ComponentPreview {
                                         }
                                     })
                                     .collect()
-                            },
+                            }),
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
                         .pt_4()
