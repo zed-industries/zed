@@ -32,7 +32,7 @@ impl From<DirenvError> for Option<EnvironmentErrorMessage> {
 pub async fn load_direnv_environment(
     env: &HashMap<String, String>,
     dir: &Path,
-) -> Result<HashMap<String, String>, DirenvError> {
+) -> Result<HashMap<String, Option<String>>, DirenvError> {
     let Ok(direnv_path) = which::which("direnv") else {
         return Err(DirenvError::NotFound);
     };
@@ -68,11 +68,8 @@ pub async fn load_direnv_environment(
         return Ok(HashMap::new());
     }
 
-    match serde_json::from_str::<HashMap<String, Option<String>>>(&output) {
-        Ok(env) => Ok(env
-            .into_iter()
-            .flat_map(|(k, v)| v.map(|v| (k, v)))
-            .collect()),
+    match serde_json::from_str(&output) {
+        Ok(env) => Ok(env),
         Err(err) => {
             log::error!(
                 "json parse error {}, while parsing output of `{} {}`:\n{}",
