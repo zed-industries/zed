@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::{TypedEnvelope, proto};
+use clock::Global;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
@@ -88,7 +89,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, Point};
 use url::Url;
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -3481,6 +3482,20 @@ pub struct LspStore {
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
+    document_color_data: HashMap<PathBuf, BufferLspColorData>,
+}
+
+struct BufferLspColorData {
+    buffer_version: Global,
+    server_data: HashMap<LanguageServerId, Arc<[LspColor]>>,
+    data_subscription: watch::Sender<Arc<[LspColor]>>,
+}
+
+pub struct LspColor {
+    pub buffer_range: Range<Point>,
+    pub lsp_range: lsp::Range,
+    pub color: lsp::Color,
+    // TODO kb resolve (textDocument/colorPresentation)
 }
 
 pub enum LspStoreEvent {
@@ -3707,7 +3722,8 @@ impl LspStore {
             languages: languages.clone(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
-            diagnostic_summaries: Default::default(),
+            diagnostic_summaries: HashMap::default(),
+            document_color_data: HashMap::default(),
             active_entry: None,
 
             _maintain_workspace_config,
@@ -3763,7 +3779,8 @@ impl LspStore {
             languages: languages.clone(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
-            diagnostic_summaries: Default::default(),
+            diagnostic_summaries: HashMap::default(),
+            document_color_data: HashMap::default(),
             active_entry: None,
             toolchain_store,
             _maintain_workspace_config,
