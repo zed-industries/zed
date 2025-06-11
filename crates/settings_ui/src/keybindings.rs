@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, time::Duration};
+use std::{fmt::Write as _, ops::Range, time::Duration};
 
 use db::anyhow::anyhow;
 use gpui::{
@@ -15,7 +15,10 @@ use ui::{
 };
 use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
 
-use crate::{keybindings::persistence::KEYBINDING_EDITORS, ui_components::table::Table};
+use crate::{
+    keybindings::persistence::KEYBINDING_EDITORS,
+    ui_components::table::{Table, TableInteractionState},
+};
 
 actions!(zed, [OpenKeymapEditor]);
 
@@ -54,6 +57,7 @@ struct KeymapEditor {
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     processed_bindings: Vec<ProcessedKeybinding>,
+    table_interaction_state: Entity<TableInteractionState>,
     scroll_handle: UniformListScrollHandle,
     horizontal_scrollbar: ScrollbarProperties,
     vertical_scrollbar: ScrollbarProperties,
@@ -77,10 +81,7 @@ impl KeymapEditor {
                 this.processed_bindings = key_bindings;
             });
 
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                this.hide_scrollbars(window, cx);
-            })
-            .detach();
+            let table_interaction_state = TableInteractionState::new(window, cx);
 
             let scroll_handle = UniformListScrollHandle::new();
             let vertical_scrollbar = ScrollbarProperties {
@@ -108,6 +109,7 @@ impl KeymapEditor {
                 scroll_handle,
                 horizontal_scrollbar,
                 vertical_scrollbar,
+                table_interaction_state,
             };
 
             this.update_scrollbar_visibility(cx);
@@ -392,10 +394,8 @@ impl Render for KeymapEditor {
         };
 
         let row_count = self.processed_bindings.len();
-        let table = Table::new(row_count);
 
         let theme = cx.theme();
-        let headers = ["Command", "Keystrokes", "Context"].map(Into::into);
 
         div()
             .size_full()
@@ -412,108 +412,121 @@ impl Render for KeymapEditor {
                 }
             }))
             .child(
-                table
-                    .h_full()
-                    .v_flex()
-                    .child(table.render_header(headers, cx))
-                    .child(
-                        div()
-                            .flex_grow()
-                            .w_full()
-                            .relative()
-                            .overflow_hidden()
-                            .child(
-                                uniform_list(
-                                    "keybindings",
-                                    row_count,
-                                    cx.processor(move |this, range, _, cx| {
-                                        range
-                                            .map(|index| {
-                                                let binding = &this.processed_bindings[index];
-                                                let row = [
-                                                    binding.action.clone(),
-                                                    binding.keystroke_text.clone(),
-                                                    binding.context.clone(),
-                                                    // TODO: Add a source field
-                                                    // string_cell(keybinding.source().to_string()),
-                                                ]
-                                                .map(string_cell);
+                Table::uniform_list(
+                    "keymap-editor-table",
+                    row_count,
+                    cx.processor(|this, range: Range<usize>, window, cx| {
+                        range
+                            .map(|index| {
+                                let binding = &this.processed_bindings[index];
+                                let row = [
+                                    binding.action.clone(),
+                                    binding.keystroke_text.clone(),
+                                    binding.context.clone(),
+                                    // TODO: Add a source field
+                                    // binding.source.clone(),
+                                ];
 
-                                                table.render_row(index, row, cx)
-                                            })
-                                            .collect()
-                                    }),
-                                )
-                                .size_full()
-                                .flex_grow()
-                                .track_scroll(self.scroll_handle.clone())
-                                .with_sizing_behavior(ListSizingBehavior::Auto)
-                                .with_horizontal_sizing_behavior(
-                                    ListHorizontalSizingBehavior::Unconstrained,
-                                ),
-                            )
-                            .when(self.vertical_scrollbar.show_track, |this| {
-                                this.child(
-                                    v_flex()
-                                        .h_full()
-                                        .flex_none()
-                                        .w(scroll_track_size)
-                                        .bg(cx.theme().colors().background)
-                                        .child(
-                                            div()
-                                                .size_full()
-                                                .flex_1()
-                                                .border_l_1()
-                                                .border_color(cx.theme().colors().border),
-                                        ),
+                                // fixme: pass through callback as a row_cx param
+                                let striped = false;
+
+                                crate::ui_components::table::render_row(
+                                    index, row, row_count, striped, cx,
                                 )
                             })
-                            .when(self.vertical_scrollbar.show_scrollbar, |this| {
-                                this.child(self.render_vertical_scrollbar(cx))
-                            }),
-                    )
-                    .when(self.horizontal_scrollbar.show_track, |this| {
-                        this.child(
-                            h_flex()
-                                .w_full()
-                                .h(scroll_track_size)
-                                .flex_none()
-                                .relative()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .flex_1()
-                                        // for some reason the horizontal scrollbar is 1px
-                                        // taller than the vertical scrollbar??
-                                        .h(scroll_track_size - px(1.))
-                                        .bg(cx.theme().colors().background)
-                                        .border_t_1()
-                                        .border_color(cx.theme().colors().border),
-                                )
-                                .when(self.vertical_scrollbar.show_track, |this| {
-                                    this.child(
-                                        div()
-                                            .flex_none()
-                                            // -1px prevents a missing pixel between the two container borders
-                                            .w(scroll_track_size - px(1.))
-                                            .h_full(),
-                                    )
-                                    .child(
-                                        // HACK: Fill the missing 1px 🥲
-                                        div()
-                                            .absolute()
-                                            .right(scroll_track_size - px(1.))
-                                            .bottom(scroll_track_size - px(1.))
-                                            .size_px()
-                                            .bg(cx.theme().colors().border),
-                                    )
-                                }),
-                        )
-                    })
-                    .when(self.horizontal_scrollbar.show_scrollbar, |this| {
-                        this.child(self.render_horizontal_scrollbar(h_scroll_offset, cx))
+                            .collect()
                     }),
+                )
+                .header(["Command", "Keystrokes", "Context"])
+                .interactable(&self.table_interaction_state),
             )
+        // .child(
+        //     table
+        //         .h_full()
+        //         .v_flex()
+        //         .child(table.render_header(headers, cx))
+        //         .child(
+        //             div()
+        //                 .flex_grow()
+        //                 .w_full()
+        //                 .relative()
+        //                 .overflow_hidden()
+        //                 .child(
+        //                     uniform_list(
+        //                         "keybindings",
+        //                         row_count,
+        //                         cx.processor(move |this, range, _, cx| {}),
+        //                     )
+        //                     .size_full()
+        //                     .flex_grow()
+        //                     .track_scroll(self.scroll_handle.clone())
+        //                     .with_sizing_behavior(ListSizingBehavior::Auto)
+        //                     .with_horizontal_sizing_behavior(
+        //                         ListHorizontalSizingBehavior::Unconstrained,
+        //                     ),
+        //                 )
+        //                 .when(self.vertical_scrollbar.show_track, |this| {
+        //                     this.child(
+        //                         v_flex()
+        //                             .h_full()
+        //                             .flex_none()
+        //                             .w(scroll_track_size)
+        //                             .bg(cx.theme().colors().background)
+        //                             .child(
+        //                                 div()
+        //                                     .size_full()
+        //                                     .flex_1()
+        //                                     .border_l_1()
+        //                                     .border_color(cx.theme().colors().border),
+        //                             ),
+        //                     )
+        //                 })
+        //                 .when(self.vertical_scrollbar.show_scrollbar, |this| {
+        //                     this.child(self.render_vertical_scrollbar(cx))
+        //                 }),
+        //         )
+        //         .when(self.horizontal_scrollbar.show_track, |this| {
+        //             this.child(
+        //                 h_flex()
+        //                     .w_full()
+        //                     .h(scroll_track_size)
+        //                     .flex_none()
+        //                     .relative()
+        //                     .child(
+        //                         div()
+        //                             .w_full()
+        //                             .flex_1()
+        //                             // for some reason the horizontal scrollbar is 1px
+        //                             // taller than the vertical scrollbar??
+        //                             .h(scroll_track_size - px(1.))
+        //                             .bg(cx.theme().colors().background)
+        //                             .border_t_1()
+        //                             .border_color(cx.theme().colors().border),
+        //                     )
+        //                     .when(self.vertical_scrollbar.show_track, |this| {
+        //                         this.child(
+        //                             div()
+        //                                 .flex_none()
+        //                                 // -1px prevents a missing pixel between the two container borders
+        //                                 .w(scroll_track_size - px(1.))
+        //                                 .h_full(),
+        //                         )
+        //                         .child(
+        //                             // HACK: Fill the missing 1px 🥲
+        //                             div()
+        //                                 .absolute()
+        //                                 .right(scroll_track_size - px(1.))
+        //                                 .bottom(scroll_track_size - px(1.))
+        //                                 .size_px()
+        //                                 .bg(cx.theme().colors().border),
+        //                         )
+        //                     }),
+        //             )
+        //         })
+        //         .when(self.horizontal_scrollbar.show_scrollbar, |this| {
+        //             this.child(self.render_horizontal_scrollbar(h_scroll_offset, cx))
+        //         }),
+        // )
     }
 }
 

@@ -1,12 +1,11 @@
 use std::ops::Range;
 
-use db::smol::stream::iter;
-use gpui::{Entity, FontWeight, Length, uniform_list};
+use gpui::{AppContext as _, Entity, FocusHandle, FontWeight, Length, WeakEntity, uniform_list};
 use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
-    ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator, IntoElement,
-    ParentElement, RegisterComponent, RenderOnce, Styled, StyledTypography, Window, div,
-    example_group_with_title, px, single_example, v_flex,
+    ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
+    InteractiveElement as _, IntoElement, ParentElement, RegisterComponent, RenderOnce, Styled,
+    StyledTypography, Window, div, example_group_with_title, px, single_example, v_flex,
 };
 
 struct UniformListData {
@@ -36,6 +35,31 @@ impl<const COLS: usize> TableContents<COLS> {
     }
 }
 
+pub struct TableInteractionState {
+    pub focus_handle: FocusHandle,
+}
+
+impl TableInteractionState {
+    pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+
+            // cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+            //     this.hide_scrollbars(window, cx);
+            // })
+            // .detach();
+
+            Self { focus_handle }
+        })
+    }
+}
+
+impl TableInteractionState {
+    pub fn hide_scrollbars(&mut self, window: &mut Window, cx: &mut App) {
+        todo!()
+    }
+}
+
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table<const COLS: usize = 3> {
@@ -43,6 +67,7 @@ pub struct Table<const COLS: usize = 3> {
     width: Length,
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
+    interaction_state: Option<WeakEntity<TableInteractionState>>,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -60,10 +85,10 @@ impl<const COLS: usize> Table<COLS> {
                 row_count: row_count,
                 render_item_fn: Box::new(render_item_fn),
             }),
+            interaction_state: None,
         }
     }
 
-    /// Create a new table with a column count equal to the
     /// number of headers provided.
     pub fn new() -> Self {
         Table {
@@ -71,6 +96,7 @@ impl<const COLS: usize> Table<COLS> {
             width: Length::Auto,
             headers: None,
             rows: TableContents::Vec(Vec::new()),
+            interaction_state: None,
         }
     }
 
@@ -83,6 +109,11 @@ impl<const COLS: usize> Table<COLS> {
     /// Sets the width of the table.
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
+        self
+    }
+
+    pub fn interactable(mut self, interaction_state: &Entity<TableInteractionState>) -> Self {
+        self.interaction_state = Some(interaction_state.downgrade());
         self
     }
 
@@ -185,6 +216,12 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .when_some(self.headers.take(), |this, headers| {
                 this.child(render_header(headers, cx))
             })
+            .when_some(
+                self.interaction_state.and_then(|state| state.upgrade()),
+                |this, interaction_state| {
+                    this.track_focus(&interaction_state.read(cx).focus_handle)
+                },
+            )
             .map(|div| match self.rows {
                 TableContents::Vec(items) => div.children(
                     items
