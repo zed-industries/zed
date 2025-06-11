@@ -15,5 +15,5 @@
 ] @default
 
 (_ value: (call_expression
-  function: (identifier)
-  type_arguments: (type_arguments)) @call_expression_with_type_arguments)
+  function: (identifier) @function_name_before_type_arguments
+  type_arguments: (type_arguments)))
