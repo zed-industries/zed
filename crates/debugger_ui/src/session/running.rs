@@ -818,7 +818,7 @@ impl RunningState {
 
             let request_type = dap_registry
                 .adapter(&adapter)
-                .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                .with_context(|| format!("{}: is not a valid adapter name", &adapter))
                 .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
@@ -932,15 +932,13 @@ impl RunningState {
             };
 
             if config_is_valid {
-                // Ok(DebugTaskDefinition {
-                //     label,
-                //     adapter: DebugAdapterName(adapter),
-                //     config,
-                //     tcp_connection,
-                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name =
-                    locator_name.context("Could not find a valid locator for a build task")?;
+                    locator_name.with_context(|| {
+                        format!("Could not find a valid locator for a build task and configure is invalid with error: {}", request_type.err()
+                            .map(|err| err.to_string())
+                            .unwrap_or_default())
+                    })?;
                 let request = dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
@@ -956,7 +954,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
