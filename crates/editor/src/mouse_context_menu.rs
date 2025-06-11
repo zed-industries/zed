@@ -200,7 +200,6 @@ pub fn deploy_context_menu(
         });
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
-        dbg!(&evaluate_selection);
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu

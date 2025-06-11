@@ -116,7 +116,6 @@ pub fn init(cx: &mut App) {
                     let status = running_state.thread_status(cx);
 
                     let active_item = active_item.downgrade();
-                    let workspace = workspace.weak_handle();
                     div.when(status == Some(ThreadStatus::Running), |div| {
                         let active_item = active_item.clone();
                         div.on_action(move |_: &Pause, _, cx| {
