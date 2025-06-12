@@ -6114,6 +6114,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "buffer_diff",
+ "call",
  "chrono",
  "collections",
  "command_palette_hooks",
