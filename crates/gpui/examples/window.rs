@@ -1,6 +1,7 @@
 use gpui::{
     App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Timer,
-    Window, WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    Window, WindowBounds, WindowControlArea, WindowKind, WindowOptions, actions, div, prelude::*,
+    px, rgb, size,
 };
 
 struct SubWindow {
@@ -33,31 +34,69 @@ impl Render for SubWindow {
             .when(self.custom_titlebar, |cx| {
                 cx.child(
                     div()
+                        .id("titlebar")
                         .flex()
                         .h(px(32.))
-                        .px_4()
-                        .bg(gpui::blue())
                         .text_color(gpui::white())
                         .w_full()
+                        .justify_between()
+                        .child(
+                            div()
+                                .px_3()
+                                .bg(gpui::black())
+                                .window_control_area(WindowControlArea::Drag)
+                                .flex()
+                                .items_center()
+                                .flex_1()
+                                .child("Custom Titlebar"),
+                        )
                         .child(
                             div()
                                 .flex()
-                                .items_center()
-                                .justify_center()
-                                .size_full()
-                                .child("Custom Titlebar"),
+                                .flex_shrink_0()
+                                .child(
+                                    div()
+                                        .id("minimize")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(32.))
+                                        .window_control_area(WindowControlArea::Min)
+                                        .bg(gpui::black())
+                                        .hover(|this| this.bg(gpui::black().opacity(0.95)))
+                                        .text_color(gpui::white())
+                                        .child("_"),
+                                )
+                                .child(
+                                    div()
+                                        .id("maximize")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(32.))
+                                        .window_control_area(WindowControlArea::Max)
+                                        .bg(gpui::black())
+                                        .hover(|this| this.bg(gpui::black().opacity(0.95)))
+                                        .text_color(gpui::white())
+                                        .child("+"),
+                                )
+                                .child(
+                                    div()
+                                        .id("close")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(32.))
+                                        .window_control_area(WindowControlArea::Close)
+                                        .bg(gpui::black())
+                                        .hover(|this| this.bg(gpui::red().opacity(0.95)))
+                                        .text_color(gpui::white())
+                                        .child("x"),
+                                ),
                         ),
                 )
             })
-            .child(
-                div()
-                    .p_8()
-                    .gap_2()
-                    .child("SubWindow")
-                    .child(button("Close", |window, _| {
-                        window.remove_window();
-                    })),
-            )
+            .child(div().p_8().gap_2().child("SubWindow with custom titlebar"))
     }
 }
 
