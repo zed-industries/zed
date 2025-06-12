@@ -39,7 +39,7 @@ fn eval_extract_handle_command_output() {
     // Model                       | Pass rate
     // ----------------------------|----------
     // claude-3.7-sonnet           |  0.98
-    // gemini-2.5-pro-06-05        |  0.77
+    // gemini-2.5-pro-06-05        |  0.77 --> 0.98
     // gemini-2.5-flash            |  0.11
     // gpt-4.1                     |  1.00
 
@@ -56,8 +56,8 @@ fn eval_extract_handle_command_output() {
     ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
-        10,
-        0.7, // Taking the lower bar for Gemini
+        50,
+        1.0, // Taking the lower bar for Gemini
         0.05,
         EvalInput::from_conversation(
             vec![

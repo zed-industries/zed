@@ -49,7 +49,7 @@ impl FromStr for EditFormat {
     fn from_str(s: &str) -> anyhow::Result<Self> {
         match s.to_lowercase().as_str() {
             "xml_tags" | "xml" => Ok(EditFormat::XmlTags),
-            "diff_fenced" | "diff" => Ok(EditFormat::DiffFenced),
+            "diff_fenced" | "diff-fenced" | "diff" => Ok(EditFormat::DiffFenced),
             _ => bail!("Unknown EditFormat: {}", s),
         }
     }

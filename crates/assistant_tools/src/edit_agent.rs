@@ -233,7 +233,7 @@ impl EditAgent {
                     edit_description,
                 }
                 .render(&this.templates)?,
-                EditFormat::Diff => EditFileDiffFencedPromptTemplate {
+                EditFormat::DiffFenced => EditFileDiffFencedPromptTemplate {
                     path,
                     edit_description,
                 }
@@ -259,7 +259,7 @@ impl EditAgent {
         self.action_log
             .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
 
-        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
+        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, self.edit_format, cx);
         let mut edit_events = edit_events.peekable();
         while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
             // Skip events until we're at the start of a new edit.
@@ -367,6 +367,7 @@ impl EditAgent {
 
     fn parse_edit_chunks(
         chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        edit_format: EditFormat,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -376,13 +377,12 @@ impl EditAgent {
         let output = cx.background_spawn(async move {
             pin_mut!(chunks);
 
-            let mut parser = EditParser::new(EditFormat::XmlTags);
+            let mut parser = EditParser::new(edit_format);
             let mut raw_edits = String::new();
             while let Some(chunk) = chunks.next().await {
                 match chunk {
                     Ok(chunk) => {
                         raw_edits.push_str(&chunk);
-                        println!("{chunk}");
                         for event in parser.push(&chunk) {
                             tx.unbounded_send(Ok(event))?;
                         }
