@@ -358,7 +358,7 @@ impl DebugPanel {
                             .console_output(cx)
                             .unbounded_send(format!(
                                 "Session failed to restart with error: {}",
-                                error.to_string()
+                                error
                             ))
                             .ok();
                         session.shutdown(cx)
