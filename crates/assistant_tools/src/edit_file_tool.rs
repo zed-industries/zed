@@ -10,9 +10,7 @@ use assistant_tool::{
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{
-    Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, ToPoint, scroll::Autoscroll,
-};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, scroll::Autoscroll};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
