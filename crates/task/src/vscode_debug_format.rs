@@ -33,6 +33,9 @@ impl VsCodeDebugTaskDefinition {
         if let Some(config) = config.as_object_mut() {
             if adapter == "JavaScript" {
                 config.insert("type".to_owned(), self.r#type.clone().into());
+                if let Some(port) = self.port {
+                    config.insert("port".to_owned(), port.into());
+                }
             }
         }
         let definition = DebugScenario {
