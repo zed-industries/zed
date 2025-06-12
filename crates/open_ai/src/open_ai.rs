@@ -1,16 +1,9 @@
 use anyhow::{Context as _, Result, anyhow};
-use futures::{
-    AsyncBufReadExt, AsyncReadExt, StreamExt,
-    io::BufReader,
-    stream::{self, BoxStream},
-};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    convert::TryFrom,
-    future::{self, Future},
-};
+use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
@@ -230,24 +223,6 @@ pub struct Request {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CompletionRequest {
-    pub model: String,
-    pub prompt: String,
-    pub max_tokens: u32,
-    pub temperature: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prediction: Option<Prediction>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rewrite_speculation: Option<bool>,
-}
-
-#[derive(Clone, Deserialize, Serialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Prediction {
-    Content { content: String },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ToolChoice {
     Auto,
@@ -416,204 +391,12 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionResponse {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<CompletionChoice>,
-    pub usage: Usage,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionChoice {
-    pub text: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Response {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<Choice>,
-    pub usage: Usage,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Choice {
-    pub index: u32,
-    pub message: RequestMessage,
-    pub finish_reason: Option<String>,
-}
-
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: Request,
-) -> Result<Response> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
-
-    let mut request_body = request;
-    request_body.stream = false;
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        let response: Response = serde_json::from_str(&body)?;
-        Ok(response)
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
-                "Failed to connect to OpenAI API: {}",
-                response.error.message,
-            ),
-            _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
-                response.status(),
-                body,
-            ),
-        }
-    }
-}
-
-pub async fn complete_text(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: CompletionRequest,
-) -> Result<CompletionResponse> {
-    let uri = format!("{api_url}/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        let response = serde_json::from_str(&body)?;
-        Ok(response)
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
-                "Failed to connect to OpenAI API: {}",
-                response.error.message,
-            ),
-            _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
-                response.status(),
-                body,
-            ),
-        }
-    }
-}
-
-fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
-    ResponseStreamEvent {
-        created: response.created as u32,
-        model: response.model,
-        choices: response
-            .choices
-            .into_iter()
-            .map(|choice| {
-                let content = match &choice.message {
-                    RequestMessage::Assistant { content, .. } => content.as_ref(),
-                    RequestMessage::User { content } => Some(content),
-                    RequestMessage::System { content } => Some(content),
-                    RequestMessage::Tool { content, .. } => Some(content),
-                };
-
-                let mut text_content = String::new();
-                match content {
-                    Some(MessageContent::Plain(text)) => text_content.push_str(&text),
-                    Some(MessageContent::Multipart(parts)) => {
-                        for part in parts {
-                            match part {
-                                MessagePart::Text { text } => text_content.push_str(&text),
-                                MessagePart::Image { .. } => {}
-                            }
-                        }
-                    }
-                    None => {}
-                };
-
-                ChoiceDelta {
-                    index: choice.index,
-                    delta: ResponseMessageDelta {
-                        role: Some(match choice.message {
-                            RequestMessage::Assistant { .. } => Role::Assistant,
-                            RequestMessage::User { .. } => Role::User,
-                            RequestMessage::System { .. } => Role::System,
-                            RequestMessage::Tool { .. } => Role::Tool,
-                        }),
-                        content: if text_content.is_empty() {
-                            None
-                        } else {
-                            Some(text_content)
-                        },
-                        tool_calls: None,
-                    },
-                    finish_reason: choice.finish_reason,
-                }
-            })
-            .collect(),
-        usage: Some(response.usage),
-    }
-}
-
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    if request.model.starts_with("o1") {
-        let response = complete(client, api_url, api_key, request).await;
-        let response_stream_event = response.map(adapt_response_to_stream);
-        return Ok(stream::once(future::ready(response_stream_event)).boxed());
-    }
-
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
