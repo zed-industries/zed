@@ -9,7 +9,7 @@ use editor::{
     Editor, EditorEvent,
     actions::{RestartLanguageServer, StopLanguageServer},
 };
-use gpui::{Entity, Subscription, WeakEntity};
+use gpui::{Entity, Subscription, WeakEntity, actions};
 use itertools::Itertools as _;
 use language::{BufferId, LocalFile};
 use lsp::{LanguageServerId, LanguageServerName};
@@ -23,6 +23,8 @@ use ui::{
 use workspace::{StatusItemView, Workspace};
 
 use crate::{LogStore, lsp_log::GlobalLogStore};
+
+actions!(lsp_tool, [ToggleMenu]);
 
 pub struct LspTool {
     workspace: WeakEntity<Workspace>,
@@ -182,7 +184,7 @@ impl LspTool {
         let lsp_store = workspace.project().read(cx).lsp_store();
         let lsp_store_subscription =
             cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
-                lsp_tool.on_lsp_store_(e, window, cx)
+                lsp_tool.on_lsp_store_event(e, window, cx)
             });
 
         Self {
@@ -194,7 +196,7 @@ impl LspTool {
         }
     }
 
-    fn on_lsp_store_(&mut self, e: &LspStoreEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_lsp_store_event(&mut self, e: &LspStoreEvent, _: &mut Window, cx: &mut Context<Self>) {
         match e {
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -692,7 +694,9 @@ impl Render for LspTool {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                        .tooltip(move |_, cx| Tooltip::simple("Language servers", cx)),
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Language servers", &ToggleMenu, window, cx)
+                        }),
                 )
                 .menu({
                     let lsp_tool = cx.weak_entity();

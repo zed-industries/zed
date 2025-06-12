@@ -9562,15 +9562,6 @@ impl LspStore {
         local.language_server_watched_paths.remove(&server_id);
 
         let server_state = local.language_servers.remove(&server_id);
-        cx.notify();
-        cx.emit(LspStoreEvent::LanguageServerUpdate {
-            language_server_id: server_id,
-            name: Some(name.clone()),
-            message: proto::update_language_server::Variant::StatusUpdate(proto::StatusUpdate {
-                message: None,
-                status: proto::status_update::Status::Stopped as i32,
-            }),
-        });
         self.cleanup_lsp_data(server_id);
         let name = self
             .language_server_statuses
@@ -9597,11 +9588,17 @@ impl LspStore {
                     },
                 ),
             });
-        cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
-        cx.spawn(async move |_, cx| {
-            Self::shutdown_language_server(server_state, name, cx).await;
-            orphaned_worktrees
-        })
+            cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
+            return cx.spawn(async move |_, cx| {
+                Self::shutdown_language_server(server_state, name, cx).await;
+                orphaned_worktrees
+            });
+        }
+
+        if server_state.is_some() {
+            cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
+        }
+        Task::ready(orphaned_worktrees)
     }
 
     pub fn restart_language_servers_for_buffers(
