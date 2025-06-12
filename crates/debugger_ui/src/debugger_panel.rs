@@ -349,8 +349,26 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-            Self::register_session(this.clone(), session, true, cx).await?;
-            task.await
+            Self::register_session(this.clone(), session.clone(), true, cx).await?;
+
+            if let Err(error) = task.await {
+                session
+                    .update(cx, |session, cx| {
+                        session
+                            .console_output(cx)
+                            .unbounded_send(format!(
+                                "Session failed to restart with error: {}",
+                                error.to_string()
+                            ))
+                            .ok();
+                        session.shutdown(cx)
+                    })?
+                    .await;
+
+                return Err(error);
+            };
+
+            Ok(())
         })
         .detach_and_log_err(cx);
     }
