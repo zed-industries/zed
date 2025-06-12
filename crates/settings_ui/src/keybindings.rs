@@ -66,8 +66,8 @@ struct KeymapEditor {
 impl EventEmitter<()> for KeymapEditor {}
 
 impl Focusable for KeymapEditor {
-    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+        return self.filter_editor.focus_handle(cx);
     }
 }
 
