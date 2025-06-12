@@ -700,6 +700,10 @@
     //
     // Default: false
     "sort_by_path": false,
+    // Whether to collapse untracked files in the diff panel.
+    //
+    // Default: false
+    "collapse_untracked_diff": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
