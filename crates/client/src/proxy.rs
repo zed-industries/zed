@@ -4,6 +4,7 @@ mod http_proxy;
 mod socks_proxy;
 
 use anyhow::{Context as _, Result};
+use hickory_resolver::{TokioAsyncResolver, config::LookupIpStrategy, system_conf};
 use http_client::Url;
 use http_proxy::{HttpProxyType, connect_http_proxy_stream, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_socks_proxy_stream, parse_socks_proxy};
@@ -19,17 +20,28 @@ pub(crate) async fn connect_proxy_stream(
         anyhow::bail!("Parsing proxy url failed");
     };
 
+    println!("==> 1");
+    {
+        let (config, mut opts) = system_conf::read_system_conf().unwrap();
+        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+        println!("config: {:#?}", config);
+        let x = TokioAsyncResolver::tokio(config, opts);
+        let res = x.lookup_ip(proxy_domain.as_str()).await;
+        println!("==> 1.1 Proxy domain lookup result: {:?}", res);
+    };
     // Connect to proxy and wrap protocol later
     let stream = tokio::net::TcpStream::connect((proxy_domain.as_str(), proxy_port))
         .await
         .context("Failed to connect to proxy")?;
 
+    println!("==> 2");
     let proxy_stream = match proxy_type {
         ProxyType::SocksProxy(proxy) => connect_socks_proxy_stream(stream, proxy, rpc_host).await?,
         ProxyType::HttpProxy(proxy) => {
             connect_http_proxy_stream(stream, proxy, rpc_host, &proxy_domain).await?
         }
     };
+    println!("==> 3");
 
     Ok(proxy_stream)
 }

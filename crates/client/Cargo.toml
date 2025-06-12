@@ -56,6 +56,7 @@ worktree.workspace = true
 telemetry.workspace = true
 tokio.workspace = true
 workspace-hack.workspace = true
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
