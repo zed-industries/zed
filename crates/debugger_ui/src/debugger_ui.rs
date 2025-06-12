@@ -111,7 +111,6 @@ pub fn init(cx: &mut App) {
                     }
 
                     let caps = running_state.capabilities(cx);
-                    let supports_restart = caps.supports_restart_request.unwrap_or_default();
                     let supports_step_back = caps.supports_step_back.unwrap_or_default();
                     let supports_detach = running_state.session().read(cx).is_attached();
                     let status = running_state.thread_status(cx);
@@ -204,13 +203,13 @@ pub fn init(cx: &mut App) {
                                 .ok();
                         })
                     })
-                    .when(supports_restart, |div| {
+                    .on_action({
                         let active_item = active_item.clone();
-                        div.on_action(move |_: &Restart, _, cx| {
+                        move |_: &Restart, _, cx| {
                             active_item
                                 .update(cx, |item, cx| item.restart_session(cx))
                                 .ok();
-                        })
+                        }
                     })
                     .on_action({
                         let active_item = active_item.clone();
