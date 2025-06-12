@@ -11,15 +11,18 @@ use collections::HashMap;
 use context_server::ContextServerId;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyView, App, Entity, EventEmitter, FocusHandle,
+    Action, Animation, AnimationExt as _, AnyView, App, Corner, Entity, EventEmitter, FocusHandle,
     Focusable, ScrollHandle, Subscription, Transformation, percentage,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use project::context_server_store::{ContextServerStatus, ContextServerStore};
+use project::{
+    context_server_store::{ContextServerStatus, ContextServerStore},
+    project_settings::ProjectSettings,
+};
 use settings::{Settings, update_settings_file};
 use ui::{
-    Disclosure, ElevationIndex, Indicator, Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip,
-    prelude::*,
+    ContextMenu, Disclosure, ElevationIndex, Indicator, PopoverMenu, Scrollbar, ScrollbarState,
+    Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -69,6 +72,9 @@ impl AgentConfiguration {
                 _ => {}
             },
         );
+
+        cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
+            .detach();
 
         let scroll_handle = ScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
@@ -511,6 +517,38 @@ impl AgentConfiguration {
             ),
         };
 
+        let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
+            .trigger_with_tooltip(
+                IconButton::new("context-server-config-menu", IconName::Settings)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small),
+                Tooltip::text("Open MCP server options"),
+            )
+            .anchor(Corner::TopRight)
+            .menu({
+                let fs = self.fs.clone();
+                let context_server_id = context_server_id.clone();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Configure Server", None, |_, _| {})
+                            .entry("Open Logs", None, |_, _| {})
+                            .separator()
+                            .entry("Delete", None, {
+                                let fs = fs.clone();
+                                let context_server_id = context_server_id.clone();
+                                move |_, cx| {
+                                    update_settings_file::<ProjectSettings>(fs.clone(), cx, {
+                                        let context_server_id = context_server_id.clone();
+                                        move |settings, _| {
+                                            settings.context_servers.remove(&context_server_id.0);
+                                        }
+                                    });
+                                }
+                            })
+                    }))
+                }
+            });
+
         v_flex()
             .id(item_id.clone())
             .border_1()
@@ -570,28 +608,37 @@ impl AgentConfiguration {
                             }),
                     )
                     .child(
-                        Switch::new("context-server-switch", is_running.into())
-                            .color(SwitchColor::Accent)
-                            .on_click({
-                                let context_server_manager = self.context_server_store.clone();
-                                let context_server_id = context_server_id.clone();
-                                move |state, _window, cx| match state {
-                                    ToggleState::Unselected | ToggleState::Indeterminate => {
-                                        context_server_manager.update(cx, |this, cx| {
-                                            this.stop_server(&context_server_id, cx).log_err();
-                                        });
-                                    }
-                                    ToggleState::Selected => {
-                                        context_server_manager.update(cx, |this, cx| {
-                                            if let Some(server) =
-                                                this.get_server(&context_server_id)
-                                            {
-                                                this.start_server(server, cx).log_err();
+                        h_flex()
+                            .gap_1()
+                            .child(context_server_configuration_menu)
+                            .child(
+                                Switch::new("context-server-switch", is_running.into())
+                                    .color(SwitchColor::Accent)
+                                    .on_click({
+                                        let context_server_manager =
+                                            self.context_server_store.clone();
+                                        let context_server_id = context_server_id.clone();
+
+                                        move |state, _window, cx| match state {
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    this.stop_server(&context_server_id, cx)
+                                                        .log_err();
+                                                });
                                             }
-                                        })
-                                    }
-                                }
-                            }),
+                                            ToggleState::Selected => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    if let Some(server) =
+                                                        this.get_server(&context_server_id)
+                                                    {
+                                                        this.start_server(server, cx).log_err();
+                                                    }
+                                                })
+                                            }
+                                        }
+                                    }),
+                            ),
                     ),
             )
             .map(|parent| {

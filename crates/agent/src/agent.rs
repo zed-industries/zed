@@ -162,7 +162,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry, fs.clone(), cx);
+    context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
 
     register_slash_commands(cx);
     inline_assistant::init(
@@ -178,7 +178,10 @@ pub fn init(
         cx,
     );
     indexed_docs::init(cx);
-    cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(move |workspace, window, cx| {
+        AddContextServerModal::register(workspace, language_registry.clone(), window, cx)
+    })
+    .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
 }
 

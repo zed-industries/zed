@@ -353,7 +353,6 @@ impl Render for ConfigureContextServerModal {
                                     .border_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .bg(cx.theme().colors().editor_background)
-                                    .gap_1()
                                     .child({
                                         let settings = ThemeSettings::get_global(cx);
                                         let text_style = TextStyle {
@@ -430,7 +429,6 @@ impl Render for ConfigureContextServerModal {
                         ModalFooter::new()
                             .when_some(setup.repository_url.clone(), |this, repository_url| {
                                 this.start_slot(
-                                    h_flex().w_full().child(
                                         Button::new("open-repository", "Open Repository")
                                             .icon(IconName::ArrowUpRight)
                                             .icon_color(Color::Muted)
@@ -448,7 +446,6 @@ impl Render for ConfigureContextServerModal {
                                                 }
                                             })
                                             .on_click(move |_, _, cx| cx.open_url(&repository_url)),
-                                    ),
                                 )
                             })
                             .end_slot(match &setup.configuration {
