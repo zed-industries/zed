@@ -197,8 +197,8 @@ Error: Running Zed as root or via sudo is unsupported.
         return;
     }
 
-    // `zed --env` Outputs environment variables as JSON to stdout
-    if args.env {
+    // `zed --printenv` Outputs environment variables as JSON to stdout
+    if args.printenv {
         let env_vars: HashMap<String, String> = env::vars().collect();
         let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
             eprintln!("Error serializing environment variables: {}", err);
@@ -1086,7 +1086,7 @@ struct Args {
 
     /// Output current environment variables as JSON to stdout
     #[arg(long, hide = true)]
-    env: bool,
+    printenv: bool,
 }
 
 #[derive(Clone, Debug)]

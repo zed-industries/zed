@@ -37,7 +37,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!("sh -c '{zed_path} --env >&{ENV_OUTPUT_FD}';"));
+    command_string.push_str(&format!("sh -c '{zed_path} --printenv >&{ENV_OUTPUT_FD}';"));
     command.args(["-i", "-c", &command_string]);
     super::set_pre_exec_to_start_new_session(&mut command);
 
@@ -52,7 +52,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
         String::from_utf8_lossy(&process_output.stderr),
     );
 
-    // Parse the JSON output from zed --env
+    // Parse the JSON output from zed --printenv
     let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
         .with_context(|| "Failed to deserialize environment variables from json")?;
     Ok(env_map)
