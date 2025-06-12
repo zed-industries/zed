@@ -11,8 +11,15 @@ const END_TAGS: [&str; 3] = [OLD_TEXT_END_TAG, NEW_TEXT_END_TAG, EDITS_END_TAG];
 
 #[derive(Debug)]
 pub enum EditParserEvent {
-    OldTextChunk { chunk: String, done: bool },
-    NewTextChunk { chunk: String, done: bool },
+    OldTextChunk {
+        chunk: String,
+        done: bool,
+        line_hint: Option<String>,
+    },
+    NewTextChunk {
+        chunk: String,
+        done: bool,
+    },
 }
 
 #[derive(
@@ -33,9 +40,14 @@ pub struct EditParser {
 #[derive(Debug, PartialEq)]
 enum EditParserState {
     Pending,
-    WithinOldText { start: bool },
+    WithinOldText {
+        start: bool,
+        line_hint: Option<String>,
+    },
     AfterOldText,
-    WithinNewText { start: bool },
+    WithinNewText {
+        start: bool,
+    },
 }
 
 impl EditParser {
@@ -54,14 +66,24 @@ impl EditParser {
         loop {
             match &mut self.state {
                 EditParserState::Pending => {
-                    if let Some(start) = self.buffer.find("<old_text>") {
-                        self.buffer.drain(..start + "<old_text>".len());
-                        self.state = EditParserState::WithinOldText { start: true };
+                    if let Some(start) = self.buffer.find("<old_text") {
+                        if let Some(tag_end) = self.buffer[start..].find('>') {
+                            let tag_end = start + tag_end + 1;
+                            let tag = &self.buffer[start..tag_end];
+                            let line_hint = self.parse_line_hint(tag);
+                            self.buffer.drain(..tag_end);
+                            self.state = EditParserState::WithinOldText {
+                                start: true,
+                                line_hint,
+                            };
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
                 }
-                EditParserState::WithinOldText { start } => {
+                EditParserState::WithinOldText { start, line_hint } => {
                     if !self.buffer.is_empty() {
                         if *start && self.buffer.starts_with('\n') {
                             self.buffer.remove(0);
@@ -69,6 +91,7 @@ impl EditParser {
                         *start = false;
                     }
 
+                    let line_hint_clone = line_hint.clone();
                     if let Some(tag_range) = self.find_end_tag() {
                         let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
@@ -82,12 +105,17 @@ impl EditParser {
 
                         self.buffer.drain(..tag_range.end);
                         self.state = EditParserState::AfterOldText;
-                        edit_events.push(EditParserEvent::OldTextChunk { chunk, done: true });
+                        edit_events.push(EditParserEvent::OldTextChunk {
+                            chunk,
+                            done: true,
+                            line_hint: line_hint_clone,
+                        });
                     } else {
                         if !self.ends_with_tag_prefix() {
                             edit_events.push(EditParserEvent::OldTextChunk {
                                 chunk: mem::take(&mut self.buffer),
                                 done: false,
+                                line_hint: line_hint_clone,
                             });
                         }
                         break;
@@ -152,6 +180,16 @@ impl EditParser {
             .flat_map(|tag| (1..tag.len()).map(move |i| &tag[..i]))
             .chain(["\n"]);
         end_prefixes.any(|prefix| self.buffer.ends_with(&prefix))
+    }
+
+    fn parse_line_hint(&self, tag: &str) -> Option<String> {
+        if let Some(start) = tag.find("line_hint=\"") {
+            let start = start + "line_hint=\"".len();
+            if let Some(end) = tag[start..].find('"') {
+                return Some(tag[start..start + end].to_string());
+            }
+        }
+        None
     }
 
     pub fn finish(self) -> EditParserMetrics {
@@ -413,6 +451,65 @@ mod tests {
         );
     }
 
+    #[gpui::test(iterations = 100)]
+    fn test_line_hint_parsing(mut rng: StdRng) {
+        let mut parser = EditParser::new();
+
+        let edits = parse_random_chunks(
+            r#"<old_text line_hint="23:50">original code</old_text><new_text>updated code</new_text>"#,
+            &mut parser,
+            &mut rng,
+        );
+
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].old_text, "original code");
+        assert_eq!(edits[0].
+        assert_eq!(edits[0].new_text, "updated code");
+
+        // Test the events directly to verify line_hint is parsed
+        let mut parser = EditParser::new();
+        let input = r#"<old_text line_hint="23:50">original code</old_text><new_text>updated code</new_text>"#;
+        let events = parser.push(input);
+
+        // Find the OldTextChunk event that's done
+        let old_text_event = events
+            .iter()
+            .find(|event| matches!(event, EditParserEvent::OldTextChunk { done: true, .. }))
+            .expect("Should have completed OldTextChunk event");
+
+        if let EditParserEvent::OldTextChunk {
+            chunk,
+            done,
+            line_hint,
+        } = old_text_event
+        {
+            assert_eq!(chunk, "original code");
+            assert!(done);
+            assert_eq!(line_hint.as_ref(), Some(&"23:50".to_string()));
+        }
+
+        // Test without line hint
+        let mut parser = EditParser::new();
+        let input = r#"<old_text>original code</old_text><new_text>updated code</new_text>"#;
+        let events = parser.push(input);
+
+        let old_text_event = events
+            .iter()
+            .find(|event| matches!(event, EditParserEvent::OldTextChunk { done: true, .. }))
+            .expect("Should have completed OldTextChunk event");
+
+        if let EditParserEvent::OldTextChunk {
+            chunk,
+            done,
+            line_hint,
+        } = old_text_event
+        {
+            assert_eq!(chunk, "original code");
+            assert!(done);
+            assert_eq!(line_hint, &None);
+        }
+    }
+
     #[derive(Default, Debug, PartialEq, Eq)]
     struct Edit {
         old_text: String,
@@ -433,7 +530,11 @@ mod tests {
         for chunk_ix in chunk_indices {
             for event in parser.push(&input[last_ix..chunk_ix]) {
                 match event {
-                    EditParserEvent::OldTextChunk { chunk, done } => {
+                    EditParserEvent::OldTextChunk {
+                        chunk,
+                        done,
+                        line_hint: _,
+                    } => {
                         old_text.as_mut().unwrap().push_str(&chunk);
                         if done {
                             pending_edit.old_text = old_text.take().unwrap();

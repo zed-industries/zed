@@ -433,7 +433,7 @@ impl EditAgent {
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
-                let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
+                let EditParserEvent::OldTextChunk { chunk, done, line_hint: _ } = edit_event? else {
                     break;
                 };
 
