@@ -281,7 +281,7 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 #### Go
 
 Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications. Zed will automatically create debug scenarios for `func main` in your main packages, and also
-for any tests, so you can use the Play button in the gutter to debug these without configuration. We do not yet support attaching to an existing running copy of delve.
+for any tests, so you can use the Play button in the gutter to debug these without configuration.
 
 ##### Debug Go Packages
 
@@ -350,6 +350,27 @@ and the "build" command should build that.
 }
 ```
 
+##### Attaching to an existing instance of Delve
+
+You might find yourself needing to connect to an existing instance of Delve that's not necessarily running on your machine; in such case, you can use `tcp_arguments` to instrument Zed's connection to Delve.
+
+````
+{
+  "adapter": "Delve",
+  "label": "Connect to a running Delve instance",
+  "program": "/Users/zed/Projects/language_repositories/golang/hello/hello",
+  "cwd": "/Users/zed/Projects/language_repositories/golang/hello",
+  "args": [],
+  "env": {},
+  "request": "launch",
+  "mode": "exec",
+  "stopOnEntry": false,
+  "tcp_connection": { "host": "123.456.789.012", "port": 53412 }
+}
+```
+
+In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that *there will be no terminal* in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debugee.
+
 ### Ruby
 
 To run a ruby task in the debugger, you will need to configure it in the `.zed/debug.json` file in your project. We don't yet have automatic detection of ruby tasks, nor do we support connecting to an existing process.
@@ -371,7 +392,7 @@ The configuration should look like this:
     // "cwd": ""
   }
 }
-```
+````
 
 ## Breakpoints
 
