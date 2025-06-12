@@ -17,18 +17,12 @@ pub(crate) async fn connect_proxy_stream(
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
         // so any fallback could expose users to significant risks.
-        anyhow::bail!("Parsing proxy url failed");
+        anyhow::bail!("Parsing proxy url type failed");
     };
 
-    let proxy_domain = {
-        let (config, mut opts) = system_conf::read_system_conf().unwrap();
-        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-        let x = TokioAsyncResolver::tokio(config, opts);
-        let res = x.lookup_ip(proxy_domain).await.unwrap();
-        let ip = res.into_iter().next().unwrap();
-        println!("==> proxy_domain: {:?}", ip);
-        ip.to_string()
-    };
+    let proxy_domain = resolve_proxy_url_if_needed(proxy_domain)
+        .await
+        .context("Failed to resolve proxy domain")?;
     // Connect to proxy and wrap protocol later
     let stream = tokio::net::TcpStream::connect((proxy_domain.as_str(), proxy_port))
         .await
@@ -42,6 +36,19 @@ pub(crate) async fn connect_proxy_stream(
     };
 
     Ok(proxy_stream)
+}
+
+async fn resolve_proxy_url_if_needed(proxy_domain: String) -> Result<String> {
+    let (config, mut opts) = system_conf::read_system_conf().unwrap();
+    opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+    let resolver = TokioAsyncResolver::tokio(config, opts);
+    let ip = resolver
+        .lookup_ip(proxy_domain.as_str())
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No IP found for proxy domain {proxy_domain}"))?;
+    Ok(ip.to_string())
 }
 
 enum ProxyType<'t> {
