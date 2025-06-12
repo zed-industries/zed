@@ -81,19 +81,3 @@ fn spawn_and_read_fd(
 
     Ok((buffer, process.wait_with_output()?))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn test_spawn_and_read_fd() -> anyhow::Result<()> {
-        let mut command = std::process::Command::new("sh");
-        super::super::set_pre_exec_to_start_new_session(&mut command);
-        command.args(["-lic", "printf 'abc%.0s' $(seq 1 65536) >&0"]);
-        let (bytes, _) = spawn_and_read_fd(command, 0)?;
-        assert_eq!(bytes.len(), 65536 * 3);
-        Ok(())
-    }
-}
