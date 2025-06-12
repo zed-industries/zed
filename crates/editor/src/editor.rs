@@ -15636,6 +15636,10 @@ impl Editor {
         ))
     }
 
+    fn save_non_dirty_buffers(&self, cx: &App) -> bool {
+        self.is_singleton(cx) && EditorSettings::get_global(cx).save_non_dirty_buffers
+    }
+
     fn perform_format(
         &mut self,
         project: Entity<Project>,
@@ -15648,7 +15652,7 @@ impl Editor {
         let (buffers, target) = match target {
             FormatTarget::Buffers => {
                 let mut buffers = buffer.read(cx).all_buffers();
-                if trigger == FormatTrigger::Save {
+                if trigger == FormatTrigger::Save && !self.save_non_dirty_buffers(cx) {
                     buffers.retain(|buffer| buffer.read(cx).is_dirty());
                 }
                 (buffers, LspFormatTarget::Buffers)

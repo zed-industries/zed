@@ -50,6 +50,7 @@ pub struct EditorSettings {
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: bool,
+    pub save_non_dirty_buffers: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -502,6 +503,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop_selection: Option<bool>,
+
+    /// Whether to save singleton buffers that are not dirty.
+    /// This will "touch" the file and related tools enabled, e.g. formatters.
+    ///
+    /// Default: true
+    pub save_non_dirty_buffers: Option<bool>,
 }
 
 // Toolbar related settings
