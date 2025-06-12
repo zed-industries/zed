@@ -1,6 +1,6 @@
 use crate::{
     Templates,
-    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
+    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
@@ -201,8 +201,14 @@ impl Tool for EditFileTool {
         let card_clone = card.clone();
         let action_log_clone = action_log.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let edit_agent =
-                EditAgent::new(model, project.clone(), action_log_clone, Templates::new());
+            let edit_format = EditFormat::from_env()?;
+            let edit_agent = EditAgent::new(
+                model,
+                project.clone(),
+                action_log_clone,
+                Templates::new(),
+                edit_format,
+            );
 
             let buffer = project
                 .update(cx, |project, cx| {

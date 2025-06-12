@@ -8,7 +8,8 @@ use crate::{Template, Templates};
 use anyhow::Result;
 use assistant_tool::ActionLog;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
-use edit_parser::{EditFormat, EditParser, EditParserEvent, EditParserMetrics};
+pub use edit_parser::EditFormat;
+use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
 use futures::{
     Stream, StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -41,13 +42,23 @@ impl Template for CreateFilePromptTemplate {
 }
 
 #[derive(Serialize)]
-struct EditFilePromptTemplate {
+struct EditFileXmlPromptTemplate {
     path: Option<PathBuf>,
     edit_description: String,
 }
 
-impl Template for EditFilePromptTemplate {
-    const TEMPLATE_NAME: &'static str = "edit_file_prompt.hbs";
+impl Template for EditFileXmlPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_xml.hbs";
+}
+
+#[derive(Serialize)]
+struct EditFileDiffFencedPromptTemplate {
+    path: Option<PathBuf>,
+    edit_description: String,
+}
+
+impl Template for EditFileDiffFencedPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_diff_fenced.hbs";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +81,7 @@ pub struct EditAgent {
     action_log: Entity<ActionLog>,
     project: Entity<Project>,
     templates: Arc<Templates>,
+    edit_format: EditFormat,
 }
 
 impl EditAgent {
@@ -78,12 +90,14 @@ impl EditAgent {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
+        edit_format: EditFormat,
     ) -> Self {
         EditAgent {
             model,
             project,
             action_log,
             templates,
+            edit_format,
         }
     }
 
@@ -209,14 +223,23 @@ impl EditAgent {
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
         let conversation = conversation.clone();
+        let edit_format = self.edit_format.clone();
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
-            let prompt = EditFilePromptTemplate {
-                path,
-                edit_description,
-            }
-            .render(&this.templates)?;
+            let prompt = match edit_format {
+                EditFormat::XmlTags => EditFileXmlPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+                EditFormat::Diff => EditFileDiffFencedPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+            };
+
             let edit_chunks = this
                 .request(conversation, CompletionIntent::EditFile, prompt, cx)
                 .await?;
@@ -359,6 +382,7 @@ impl EditAgent {
                 match chunk {
                     Ok(chunk) => {
                         raw_edits.push_str(&chunk);
+                        println!("{chunk}");
                         for event in parser.push(&chunk) {
                             tx.unbounded_send(Ok(event))?;
                         }
@@ -1341,7 +1365,13 @@ mod tests {
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        EditAgent::new(model, project, action_log, Templates::new())
+        EditAgent::new(
+            model,
+            project,
+            action_log,
+            Templates::new(),
+            EditFormat::XmlTags,
+        )
     }
 
     #[gpui::test(iterations = 10)]

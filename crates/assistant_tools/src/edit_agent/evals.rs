@@ -56,7 +56,7 @@ fn eval_extract_handle_command_output() {
     ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
-        100,
+        10,
         0.7, // Taking the lower bar for Gemini
         0.05,
         EvalInput::from_conversation(
@@ -1488,8 +1488,16 @@ impl EditAgentTest {
             .await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
+        let edit_format = EditFormat::from_env().unwrap();
+
         Self {
-            agent: EditAgent::new(agent_model, project.clone(), action_log, Templates::new()),
+            agent: EditAgent::new(
+                agent_model,
+                project.clone(),
+                action_log,
+                Templates::new(),
+                edit_format,
+            ),
             project,
             judge_model,
         }

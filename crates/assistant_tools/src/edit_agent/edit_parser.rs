@@ -1,8 +1,9 @@
+use anyhow::bail;
 use derive_more::{Add, AddAssign};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::{mem, ops::Range};
+use std::{mem, ops::Range, str::FromStr};
 
 const OLD_TEXT_END_TAG: &str = "</old_text>";
 const NEW_TEXT_END_TAG: &str = "</new_text>";
@@ -26,17 +27,44 @@ pub struct EditParserMetrics {
     pub mismatched_tags: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EditFormat {
-    /// XML-like tags: <old_text>...</old_text> <new_text>...</new_text>
+    /// XML-like tags:
+    /// <old_text>...</old_text>
+    /// <new_text>...</new_text>
     XmlTags,
-    /// Diff-fenced format: <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE
+    /// Diff-fenced format:
+    /// <<<<<<< SEARCH
+    /// ...
+    /// =======
+    /// ...
+    /// >>>>>>> REPLACE
     DiffFenced,
+}
+
+impl FromStr for EditFormat {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> anyhow::Result<Self> {
+        match s.to_lowercase().as_str() {
+            "xml_tags" | "xml" => Ok(EditFormat::XmlTags),
+            "diff_fenced" | "diff" => Ok(EditFormat::DiffFenced),
+            _ => bail!("Unknown EditFormat: {}", s),
+        }
+    }
+}
+
+impl EditFormat {
+    pub fn from_env() -> anyhow::Result<Self> {
+        std::env::var("ZED_EDIT_FORMAT")
+            .map_or(Ok(EditFormat::XmlTags), |s| EditFormat::from_str(&s))
+    }
 }
 
 pub trait EditFormatParser: Send + std::fmt::Debug {
     fn push(&mut self, chunk: &str) -> SmallVec<[EditParserEvent; 1]>;
-    fn metrics(&self) -> &EditParserMetrics;
+    // fn metrics(&self) -> &EditParserMetrics;
     fn take_metrics(&mut self) -> EditParserMetrics;
 }
 
@@ -192,9 +220,9 @@ impl EditFormatParser for XmlEditParser {
         edit_events
     }
 
-    fn metrics(&self) -> &EditParserMetrics {
-        &self.metrics
-    }
+    // fn metrics(&self) -> &EditParserMetrics {
+    //     &self.metrics
+    // }
 
     fn take_metrics(&mut self) -> EditParserMetrics {
         std::mem::take(&mut self.metrics)
@@ -310,9 +338,9 @@ impl EditFormatParser for DiffFencedEditParser {
         edit_events
     }
 
-    fn metrics(&self) -> &EditParserMetrics {
-        &self.metrics
-    }
+    // fn metrics(&self) -> &EditParserMetrics {
+    //     &self.metrics
+    // }
 
     fn take_metrics(&mut self) -> EditParserMetrics {
         std::mem::take(&mut self.metrics)
