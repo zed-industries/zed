@@ -316,11 +316,13 @@ impl LocalLspStore {
                         })?
                         .await
                         .inspect_err(|_| {
-                            if let Some(this) = this.upgrade() {
-                                this.update(cx, |_, cx| {
-                                    cx.emit(LspStoreEvent::LanguageServerRemoved(server_id))
-                                })
-                                .ok();
+                            if let Some(lsp_store) = this.upgrade() {
+                                lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.remove_result_ids(server_id);
+                                        cx.emit(LspStoreEvent::LanguageServerRemoved(server_id))
+                                    })
+                                    .ok();
                             }
                         })?;
 
@@ -3136,12 +3138,15 @@ impl LocalLspStore {
                     server_ids.remove(server_id_to_remove);
                 });
             self.language_server_watched_paths
-                .remove(&server_id_to_remove);
+                .remove(server_id_to_remove);
             self.language_server_paths_watched_for_rename
-                .remove(&server_id_to_remove);
+                .remove(server_id_to_remove);
             self.last_workspace_edits_by_language_server
-                .remove(&server_id_to_remove);
-            self.language_servers.remove(&server_id_to_remove);
+                .remove(server_id_to_remove);
+            self.language_servers.remove(server_id_to_remove);
+            for values_per_server in self.buffer_pull_diagnostics_result_ids.values_mut() {
+                values_per_server.remove(server_id_to_remove);
+            }
             cx.emit(LspStoreEvent::LanguageServerRemoved(*server_id_to_remove));
         }
         servers_to_remove.into_keys().collect()
@@ -8841,6 +8846,7 @@ impl LspStore {
         local.language_server_watched_paths.remove(&server_id);
         let server_state = local.language_servers.remove(&server_id);
         cx.notify();
+        self.remove_result_ids(server_id);
         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
         cx.spawn(async move |_, cx| {
             Self::shutdown_language_server(server_state, name, cx).await;
@@ -9725,6 +9731,14 @@ impl LspStore {
                 log::error!("Formatting failed: {error_string}");
                 self.last_formatting_failure
                     .replace(error_string.lines().join(" "));
+            }
+        }
+    }
+
+    fn remove_result_ids(&mut self, for_server: LanguageServerId) {
+        if let Some(local) = self.as_local_mut() {
+            for values_per_server in local.buffer_pull_diagnostics_result_ids.values_mut() {
+                values_per_server.remove(&for_server);
             }
         }
     }
