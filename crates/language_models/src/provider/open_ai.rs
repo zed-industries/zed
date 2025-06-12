@@ -648,7 +648,6 @@ pub fn count_open_ai_tokens(
             | Model::FourPointOneMini
             | Model::FourPointOneNano
             | Model::O1
-            | Model::O1Mini
             | Model::O3
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
