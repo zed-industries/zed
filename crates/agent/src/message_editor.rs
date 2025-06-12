@@ -428,10 +428,6 @@ impl MessageEditor {
     }
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.thread.read(cx).has_pending_edit_tool_uses() {
-            return;
-        }
-
         self.edits_expanded = true;
         AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
         cx.notify();
@@ -641,42 +637,36 @@ impl MessageEditor {
             .border_color(cx.theme().colors().border)
             .child(
                 h_flex()
-                    .items_start()
                     .justify_between()
                     .child(self.context_strip.clone())
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .when(focus_handle.is_focused(window), |this| {
-                                this.child(
-                                    IconButton::new("toggle-height", expand_icon)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .tooltip({
-                                            let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
-                                                let expand_label = if is_editor_expanded {
-                                                    "Minimize Message Editor".to_string()
-                                                } else {
-                                                    "Expand Message Editor".to_string()
-                                                };
+                    .when(focus_handle.is_focused(window), |this| {
+                        this.child(
+                            IconButton::new("toggle-height", expand_icon)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        let expand_label = if is_editor_expanded {
+                                            "Minimize Message Editor".to_string()
+                                        } else {
+                                            "Expand Message Editor".to_string()
+                                        };
 
-                                                Tooltip::for_action_in(
-                                                    expand_label,
-                                                    &ExpandMessageEditor,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .on_click(cx.listener(|_, _, window, cx| {
-                                            window
-                                                .dispatch_action(Box::new(ExpandMessageEditor), cx);
-                                        })),
-                                )
-                            }),
-                    ),
+                                        Tooltip::for_action_in(
+                                            expand_label,
+                                            &ExpandMessageEditor,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                })),
+                        )
+                    }),
             )
             .child(
                 v_flex()
