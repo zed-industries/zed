@@ -1168,15 +1168,35 @@ impl DebugDelegate {
         }
 
         let dap_registry = cx.global::<DapRegistry>();
+        let hide_vscode = scenarios.iter().any(|(kind, _)| match kind {
+            TaskSourceKind::Worktree {
+                id: _,
+                directory_in_worktree: dir,
+                id_base: _,
+            } => dir.ends_with(".zed"),
+            _ => false,
+        });
 
         self.candidates = recent
             .into_iter()
             .map(|scenario| Self::get_scenario_kind(&languages, &dap_registry, scenario))
-            .chain(scenarios.into_iter().map(|(kind, scenario)| {
-                let (language, scenario) =
-                    Self::get_scenario_kind(&languages, &dap_registry, scenario);
-                (language.or(Some(kind)), scenario)
-            }))
+            .chain(
+                scenarios
+                    .into_iter()
+                    .filter(|(kind, _)| match kind {
+                        TaskSourceKind::Worktree {
+                            id: _,
+                            directory_in_worktree: dir,
+                            id_base: _,
+                        } => !(hide_vscode && dir.ends_with(".vscode")),
+                        _ => true,
+                    })
+                    .map(|(kind, scenario)| {
+                        let (language, scenario) =
+                            Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                        (language.or(Some(kind)), scenario)
+                    }),
+            )
             .collect();
     }
 }
