@@ -115,20 +115,6 @@ Automatic scenario creation is currently supported for Rust, Go and Python. Java
 
 ### Example Configurations
 
-#### Go
-
-```json
-[
-  {
-    "label": "Go (Delve)",
-    "adapter": "Delve",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "mode": "debug"
-  }
-]
-```
-
 #### JavaScript
 
 ##### Debug Active File
@@ -293,11 +279,23 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
 ```json
 [
   {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "mode": "debug"
+  }
+]
+```
+
+```json
+[
+  {
     "label": "Run server",
     "adapter": "Delve",
     "request": "launch",
     "mode": "debug",
-    // For Delve, the program is the package name
+    // For Delve, the program can be a package name
     "program": "./cmd/server"
     // "args": [],
     // "buildFlags": [],
@@ -357,7 +355,7 @@ and the "build" command should build that.
 
 You might find yourself needing to connect to an existing instance of Delve that's not necessarily running on your machine; in such case, you can use `tcp_arguments` to instrument Zed's connection to Delve.
 
-````
+```
 {
   "adapter": "Delve",
   "label": "Connect to a running Delve instance",
@@ -372,9 +370,9 @@ You might find yourself needing to connect to an existing instance of Delve that
 }
 ```
 
-In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that *there will be no terminal* in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
+In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that _there will be no terminal_ in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
 
-### Ruby
+#### Ruby
 
 To run a ruby task in the debugger, you will need to configure it in the `.zed/debug.json` file in your project. We don't yet have automatic detection of ruby tasks, nor do we support connecting to an existing process.
 
@@ -395,7 +393,7 @@ The configuration should look like this:
     // "cwd": ""
   }
 }
-````
+```
 
 ## Breakpoints
 
