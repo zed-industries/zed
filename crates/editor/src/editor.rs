@@ -240,7 +240,6 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
-pub(crate) const MIN_LINE_NUMBER_DIGITS: u32 = 4;
 pub(crate) const MINIMAP_FONT_SIZE: AbsoluteLength = AbsoluteLength::Pixels(px(2.));
 
 pub type RenderDiffHunkControlsFn = Arc<
@@ -913,6 +912,7 @@ enum SelectionDragState {
     ReadyToDrag {
         selection: Selection<Anchor>,
         click_position: gpui::Point<Pixels>,
+        mouse_down_time: Instant,
     },
     /// State when the mouse is dragging the selection in the editor.
     Dragging {
@@ -1054,8 +1054,9 @@ pub struct Editor {
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
     next_editor_action_id: EditorActionId,
-    editor_actions:
-        Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut Window, &mut Context<Self>)>>>>,
+    editor_actions: Rc<
+        RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&Editor, &mut Window, &mut Context<Self>)>>>,
+    >,
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
@@ -5139,10 +5140,13 @@ impl Editor {
             .as_ref()
             .map_or(true, |provider| provider.filter_completions());
 
-        // When `is_incomplete` is false, can filter completions instead of re-querying when the
-        // current query is a suffix of the initial query.
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
-            if !menu.is_incomplete && filter_completions {
+            if filter_completions {
+                menu.filter(query.clone(), provider.clone(), window, cx);
+            }
+            // When `is_incomplete` is false, no need to re-query completions when the current query
+            // is a suffix of the initial query.
+            if !menu.is_incomplete {
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
                 //
@@ -5160,7 +5164,6 @@ impl Editor {
                         menu.initial_position.to_offset(&snapshot) == position.to_offset(&snapshot)
                     };
                     if position_matches {
-                        menu.filter(query.clone(), provider.clone(), window, cx);
                         return;
                     }
                 }
@@ -5709,70 +5712,60 @@ impl Editor {
         drop(context_menu);
         let snapshot = self.snapshot(window, cx);
         let deployed_from = action.deployed_from.clone();
-        let mut task = self.code_actions_task.take();
         let action = action.clone();
-        cx.spawn_in(window, async move |editor, cx| {
-            while let Some(prev_task) = task {
-                prev_task.await.log_err();
-                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
+        self.completion_tasks.clear();
+        self.discard_inline_completion(false, cx);
+
+        let multibuffer_point = match &action.deployed_from {
+            Some(CodeActionSource::Indicator(row)) => {
+                DisplayPoint::new(*row, 0).to_point(&snapshot)
             }
+            _ => self.selections.newest::<Point>(cx).head(),
+        };
+        let Some((buffer, buffer_row)) = snapshot
+            .buffer_snapshot
+            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+            .and_then(|(buffer_snapshot, range)| {
+                self.buffer()
+                    .read(cx)
+                    .buffer(buffer_snapshot.remote_id())
+                    .map(|buffer| (buffer, range.start.row))
+            })
+        else {
+            return;
+        };
+        let buffer_id = buffer.read(cx).remote_id();
+        let tasks = self
+            .tasks
+            .get(&(buffer_id, buffer_row))
+            .map(|t| Arc::new(t.to_owned()));
 
-            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
-                if editor.focus_handle.is_focused(window) {
-                    let multibuffer_point = match &action.deployed_from {
-                        Some(CodeActionSource::Indicator(row)) => {
-                            DisplayPoint::new(*row, 0).to_point(&snapshot)
-                        }
-                        _ => editor.selections.newest::<Point>(cx).head(),
-                    };
-                    let (buffer, buffer_row) = snapshot
-                        .buffer_snapshot
-                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
-                        .and_then(|(buffer_snapshot, range)| {
-                            editor
-                                .buffer
-                                .read(cx)
-                                .buffer(buffer_snapshot.remote_id())
-                                .map(|buffer| (buffer, range.start.row))
-                        })?;
-                    let (_, code_actions) = editor
-                        .available_code_actions
-                        .clone()
-                        .and_then(|(location, code_actions)| {
-                            let snapshot = location.buffer.read(cx).snapshot();
-                            let point_range = location.range.to_point(&snapshot);
-                            let point_range = point_range.start.row..=point_range.end.row;
-                            if point_range.contains(&buffer_row) {
-                                Some((location, code_actions))
-                            } else {
-                                None
-                            }
-                        })
-                        .unzip();
-                    let buffer_id = buffer.read(cx).remote_id();
-                    let tasks = editor
-                        .tasks
-                        .get(&(buffer_id, buffer_row))
-                        .map(|t| Arc::new(t.to_owned()));
-                    if tasks.is_none() && code_actions.is_none() {
-                        return None;
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let project = self.project.clone();
+
+        let code_actions_task = match deployed_from {
+            Some(CodeActionSource::RunMenu(_)) => Task::ready(None),
+            _ => self.code_actions(buffer_row, window, cx),
+        };
+
+        let runnable_task = match deployed_from {
+            Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
+            _ => {
+                let mut task_context_task = Task::ready(None);
+                if let Some(tasks) = &tasks {
+                    if let Some(project) = project {
+                        task_context_task =
+                            Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
                     }
+                }
 
-                    editor.completion_tasks.clear();
-                    editor.discard_inline_completion(false, cx);
-                    let task_context =
-                        tasks
-                            .as_ref()
-                            .zip(editor.project.clone())
-                            .map(|(tasks, project)| {
-                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
-                            });
+                cx.spawn_in(window, {
+                    let buffer = buffer.clone();
+                    async move |editor, cx| {
+                        let task_context = task_context_task.await;
 
-                    Some(cx.spawn_in(window, async move |editor, cx| {
-                        let task_context = match task_context {
-                            Some(task_context) => task_context.await,
-                            None => None,
-                        };
                         let resolved_tasks =
                             tasks
                                 .zip(task_context.clone())
@@ -5784,101 +5777,133 @@ impl Editor {
                                     )),
                                 });
                         let debug_scenarios = editor.update(cx, |editor, cx| {
-                            if cx.has_flag::<DebuggerFeatureFlag>() {
-                                maybe!({
-                                    let project = editor.project.as_ref()?;
-                                    let dap_store = project.read(cx).dap_store();
-                                    let mut scenarios = vec![];
-                                    let resolved_tasks = resolved_tasks.as_ref()?;
-                                    let buffer = buffer.read(cx);
-                                    let language = buffer.language()?;
-                                    let file = buffer.file();
-                                    let debug_adapter =
-                                        language_settings(language.name().into(), file, cx)
-                                            .debuggers
-                                            .first()
-                                            .map(SharedString::from)
-                                            .or_else(|| {
-                                                language
-                                                    .config()
-                                                    .debuggers
-                                                    .first()
-                                                    .map(SharedString::from)
-                                            })?;
-
-                                    dap_store.update(cx, |dap_store, cx| {
-                                        for (_, task) in &resolved_tasks.templates {
-                                            if let Some(scenario) = dap_store
-                                                .debug_scenario_for_build_task(
-                                                    task.original_task().clone(),
-                                                    debug_adapter.clone().into(),
-                                                    task.display_label().to_owned().into(),
-                                                    cx,
-                                                )
-                                            {
-                                                scenarios.push(scenario);
-                                            }
-                                        }
-                                    });
-                                    Some(scenarios)
-                                })
-                                .unwrap_or_default()
-                            } else {
-                                vec![]
-                            }
+                            editor.debug_scenarios(&resolved_tasks, &buffer, cx)
                         })?;
-                        let spawn_straight_away = quick_launch
-                            && resolved_tasks
-                                .as_ref()
-                                .map_or(false, |tasks| tasks.templates.len() == 1)
-                            && code_actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty())
-                            && debug_scenarios.is_empty();
-                        if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
-                            crate::hover_popover::hide_hover(editor, cx);
-                            *editor.context_menu.borrow_mut() =
-                                Some(CodeContextMenu::CodeActions(CodeActionsMenu {
-                                    buffer,
-                                    actions: CodeActionContents::new(
-                                        resolved_tasks,
-                                        code_actions,
-                                        debug_scenarios,
-                                        task_context.unwrap_or_default(),
-                                    ),
-                                    selected_item: Default::default(),
-                                    scroll_handle: UniformListScrollHandle::default(),
-                                    deployed_from,
-                                }));
-                            if spawn_straight_away {
-                                if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction { item_ix: Some(0) },
-                                    window,
-                                    cx,
-                                ) {
-                                    cx.notify();
-                                    return task;
-                                }
-                            }
-                            cx.notify();
-                            Task::ready(Ok(()))
-                        }) {
-                            task.await
-                        } else {
-                            Ok(())
-                        }
-                    }))
-                } else {
-                    Some(Task::ready(Ok(())))
-                }
-            })?;
-            if let Some(task) = spawned_test_task {
-                task.await?;
+                        anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
+                    }
+                })
             }
+        };
 
-            anyhow::Ok(())
+        cx.spawn_in(window, async move |editor, cx| {
+            let (resolved_tasks, debug_scenarios, task_context) = runnable_task.await?;
+            let code_actions = code_actions_task.await;
+            let spawn_straight_away = quick_launch
+                && resolved_tasks
+                    .as_ref()
+                    .map_or(false, |tasks| tasks.templates.len() == 1)
+                && code_actions
+                    .as_ref()
+                    .map_or(true, |actions| actions.is_empty())
+                && debug_scenarios.is_empty();
+
+            editor.update_in(cx, |editor, window, cx| {
+                crate::hover_popover::hide_hover(editor, cx);
+                *editor.context_menu.borrow_mut() =
+                    Some(CodeContextMenu::CodeActions(CodeActionsMenu {
+                        buffer,
+                        actions: CodeActionContents::new(
+                            resolved_tasks,
+                            code_actions,
+                            debug_scenarios,
+                            task_context.unwrap_or_default(),
+                        ),
+                        selected_item: Default::default(),
+                        scroll_handle: UniformListScrollHandle::default(),
+                        deployed_from,
+                    }));
+                if spawn_straight_away {
+                    if let Some(task) = editor.confirm_code_action(
+                        &ConfirmCodeAction { item_ix: Some(0) },
+                        window,
+                        cx,
+                    ) {
+                        cx.notify();
+                        return task;
+                    }
+                }
+
+                Task::ready(Ok(()))
+            })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn debug_scenarios(
+        &mut self,
+        resolved_tasks: &Option<ResolvedTasks>,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Vec<task::DebugScenario> {
+        if cx.has_flag::<DebuggerFeatureFlag>() {
+            maybe!({
+                let project = self.project.as_ref()?;
+                let dap_store = project.read(cx).dap_store();
+                let mut scenarios = vec![];
+                let resolved_tasks = resolved_tasks.as_ref()?;
+                let buffer = buffer.read(cx);
+                let language = buffer.language()?;
+                let file = buffer.file();
+                let debug_adapter = language_settings(language.name().into(), file, cx)
+                    .debuggers
+                    .first()
+                    .map(SharedString::from)
+                    .or_else(|| language.config().debuggers.first().map(SharedString::from))?;
+
+                dap_store.update(cx, |dap_store, cx| {
+                    for (_, task) in &resolved_tasks.templates {
+                        if let Some(scenario) = dap_store.debug_scenario_for_build_task(
+                            task.original_task().clone(),
+                            debug_adapter.clone().into(),
+                            task.display_label().to_owned().into(),
+                            cx,
+                        ) {
+                            scenarios.push(scenario);
+                        }
+                    }
+                });
+                Some(scenarios)
+            })
+            .unwrap_or_default()
+        } else {
+            vec![]
+        }
+    }
+
+    fn code_actions(
+        &mut self,
+        buffer_row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Rc<[AvailableCodeAction]>>> {
+        let mut task = self.code_actions_task.take();
+        cx.spawn_in(window, async move |editor, cx| {
+            while let Some(prev_task) = task {
+                prev_task.await.log_err();
+                task = editor
+                    .update(cx, |this, _| this.code_actions_task.take())
+                    .ok()?;
+            }
+
+            editor
+                .update(cx, |editor, cx| {
+                    editor
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some(code_actions)
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .ok()
+                .flatten()
+        })
     }
 
     pub fn confirm_code_action(
@@ -7539,8 +7564,7 @@ impl Editor {
             "Set Breakpoint"
         };
 
-        let run_to_cursor = command_palette_hooks::CommandPaletteFilter::try_global(cx)
-            .map_or(false, |filter| !filter.is_hidden(&DebuggerRunToCursor));
+        let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
@@ -7564,7 +7588,7 @@ impl Editor {
                             })
                             .ok();
 
-                        window.dispatch_action(Box::new(DebuggerRunToCursor), cx);
+                        window.dispatch_action(Box::new(RunToCursor), cx);
                     })
                     .separator()
                 })
@@ -7919,7 +7943,7 @@ impl Editor {
                 window.focus(&editor.focus_handle(cx));
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
-                        deployed_from: Some(CodeActionSource::Indicator(row)),
+                        deployed_from: Some(CodeActionSource::RunMenu(row)),
                         quick_launch,
                     },
                     window,
@@ -14036,7 +14060,8 @@ impl Editor {
                 prefer_lsp && !lsp_tasks_by_rows.is_empty(),
                 new_rows,
                 cx.clone(),
-            );
+            )
+            .await;
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
@@ -14066,35 +14091,40 @@ impl Editor {
         snapshot: DisplaySnapshot,
         prefer_lsp: bool,
         runnable_ranges: Vec<RunnableRange>,
-        mut cx: AsyncWindowContext,
-    ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
-        runnable_ranges
-            .into_iter()
-            .filter_map(|mut runnable| {
-                let mut tasks = cx
+        cx: AsyncWindowContext,
+    ) -> Task<Vec<((BufferId, BufferRow), RunnableTasks)>> {
+        cx.spawn(async move |cx| {
+            let mut runnable_rows = Vec::with_capacity(runnable_ranges.len());
+            for mut runnable in runnable_ranges {
+                let Some(tasks) = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
-                    .ok()?;
+                    .ok()
+                else {
+                    continue;
+                };
+                let mut tasks = tasks.await;
+
                 if prefer_lsp {
                     tasks.retain(|(task_kind, _)| {
                         !matches!(task_kind, TaskSourceKind::Language { .. })
                     });
                 }
                 if tasks.is_empty() {
-                    return None;
+                    continue;
                 }
 
                 let point = runnable.run_range.start.to_point(&snapshot.buffer_snapshot);
-
-                let row = snapshot
+                let Some(row) = snapshot
                     .buffer_snapshot
-                    .buffer_line_for_row(MultiBufferRow(point.row))?
-                    .1
-                    .start
-                    .row;
+                    .buffer_line_for_row(MultiBufferRow(point.row))
+                    .map(|(_, range)| range.start.row)
+                else {
+                    continue;
+                };
 
                 let context_range =
                     BufferOffset(runnable.full_range.start)..BufferOffset(runnable.full_range.end);
-                Some((
+                runnable_rows.push((
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
@@ -14105,16 +14135,17 @@ impl Editor {
                         column: point.column,
                         extra_variables: runnable.extra_captures,
                     },
-                ))
-            })
-            .collect()
+                ));
+            }
+            runnable_rows
+        })
     }
 
     fn templates_with_tags(
         project: &Entity<Project>,
         runnable: &mut Runnable,
         cx: &mut App,
-    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+    ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
         let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
             let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer, cx)
@@ -14129,39 +14160,40 @@ impl Editor {
             )
         });
 
-        let mut templates_with_tags = mem::take(&mut runnable.tags)
-            .into_iter()
-            .flat_map(|RunnableTag(tag)| {
-                inventory
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|inventory| {
-                        inventory.read(cx).list_tasks(
-                            file.clone(),
-                            Some(runnable.language.clone()),
-                            worktree_id,
-                            cx,
-                        )
-                    })
-                    .filter(move |(_, template)| {
-                        template.tags.iter().any(|source_tag| source_tag == &tag)
-                    })
-            })
-            .sorted_by_key(|(kind, _)| kind.to_owned())
-            .collect::<Vec<_>>();
-        if let Some((leading_tag_source, _)) = templates_with_tags.first() {
-            // Strongest source wins; if we have worktree tag binding, prefer that to
-            // global and language bindings;
-            // if we have a global binding, prefer that to language binding.
-            let first_mismatch = templates_with_tags
-                .iter()
-                .position(|(tag_source, _)| tag_source != leading_tag_source);
-            if let Some(index) = first_mismatch {
-                templates_with_tags.truncate(index);
+        let tags = mem::take(&mut runnable.tags);
+        let language = runnable.language.clone();
+        cx.spawn(async move |cx| {
+            let mut templates_with_tags = Vec::new();
+            if let Some(inventory) = inventory {
+                for RunnableTag(tag) in tags {
+                    let Ok(new_tasks) = inventory.update(cx, |inventory, cx| {
+                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
+                    }) else {
+                        return templates_with_tags;
+                    };
+                    templates_with_tags.extend(new_tasks.await.into_iter().filter(
+                        move |(_, template)| {
+                            template.tags.iter().any(|source_tag| source_tag == &tag)
+                        },
+                    ));
+                }
             }
-        }
+            templates_with_tags.sort_by_key(|(kind, _)| kind.to_owned());
 
-        templates_with_tags
+            if let Some((leading_tag_source, _)) = templates_with_tags.first() {
+                // Strongest source wins; if we have worktree tag binding, prefer that to
+                // global and language bindings;
+                // if we have a global binding, prefer that to language binding.
+                let first_mismatch = templates_with_tags
+                    .iter()
+                    .position(|(tag_source, _)| tag_source != leading_tag_source);
+                if let Some(index) = first_mismatch {
+                    templates_with_tags.truncate(index);
+                }
+            }
+
+            templates_with_tags
+        })
     }
 
     pub fn move_to_enclosing_bracket(
@@ -18137,16 +18169,9 @@ impl Editor {
             .selections
             .disjoint_anchors()
             .iter()
-            .map(|selection| {
-                let range = if selection.reversed {
-                    selection.end.text_anchor..selection.start.text_anchor
-                } else {
-                    selection.start.text_anchor..selection.end.text_anchor
-                };
-                Location {
-                    buffer: buffer.clone(),
-                    range,
-                }
+            .map(|range| Location {
+                buffer: buffer.clone(),
+                range: range.start.text_anchor..range.end.text_anchor,
             })
             .collect::<Vec<_>>();
 
@@ -19739,7 +19764,7 @@ impl Editor {
             .flatten()
             .filter_map(|keystroke| {
                 if keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
-                    Some(keystroke.key_char.clone().unwrap_or(keystroke.key.clone()))
+                    keystroke.key_char.clone()
                 } else {
                     None
                 }
@@ -19816,6 +19841,21 @@ impl Editor {
         }
     }
 
+    pub fn register_action_renderer(
+        &mut self,
+        listener: impl Fn(&Editor, &mut Window, &mut Context<Editor>) + 'static,
+    ) -> Subscription {
+        let id = self.next_editor_action_id.post_inc();
+        self.editor_actions
+            .borrow_mut()
+            .insert(id, Box::new(listener));
+
+        let editor_actions = self.editor_actions.clone();
+        Subscription::new(move || {
+            editor_actions.borrow_mut().remove(&id);
+        })
+    }
+
     pub fn register_action<A: Action>(
         &mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
@@ -19824,7 +19864,7 @@ impl Editor {
         let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
             id,
-            Box::new(move |window, _| {
+            Box::new(move |_, window, _| {
                 let listener = listener.clone();
                 window.on_action(TypeId::of::<A>(), move |action, phase, window, cx| {
                     let action = action.downcast_ref().unwrap();
@@ -20056,8 +20096,13 @@ fn process_completion_for_edit(
     let buffer = buffer.read(cx);
     let buffer_snapshot = buffer.snapshot();
     let (snippet, new_text) = if completion.is_snippet() {
+        // Workaround for typescript language server issues so that methods don't expand within
+        // strings and functions with type expressions. The previous point is used because the query
+        // for function identifier doesn't match when the cursor is immediately after. See PR #30312
         let mut snippet_source = completion.new_text.clone();
-        if let Some(scope) = buffer_snapshot.language_scope_at(cursor_position) {
+        let mut previous_point = text::ToPoint::to_point(cursor_position, buffer);
+        previous_point.column = previous_point.column.saturating_sub(1);
+        if let Some(scope) = buffer_snapshot.language_scope_at(previous_point) {
             if scope.prefers_label_for_snippet_in_completion() {
                 if let Some(label) = completion.label() {
                     if matches!(
@@ -21520,8 +21565,8 @@ impl EditorSnapshot {
             return None;
         }
 
-        let em_width = cx.text_system().em_width(font_id, font_size).log_err()?;
-        let em_advance = cx.text_system().em_advance(font_id, font_size).log_err()?;
+        let ch_width = cx.text_system().ch_width(font_id, font_size).log_err()?;
+        let ch_advance = cx.text_system().ch_advance(font_id, font_size).log_err()?;
 
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
@@ -21534,8 +21579,10 @@ impl EditorSnapshot {
             .show_line_numbers
             .unwrap_or(gutter_settings.line_numbers);
         let line_gutter_width = if show_line_numbers {
-            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
-            let min_width_for_number_on_gutter = em_advance * MIN_LINE_NUMBER_DIGITS as f32;
+            // Avoid flicker-like gutter resizes when the line number gains another digit by
+            // only resizing the gutter on files with > 10**min_line_number_digits lines.
+            let min_width_for_number_on_gutter =
+                ch_advance * gutter_settings.min_line_number_digits as f32;
             max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
             0.0.into()
@@ -21558,20 +21605,20 @@ impl EditorSnapshot {
                         + MAX_RELATIVE_TIMESTAMP.len()
                         + SPACING_WIDTH;
 
-                    em_advance * max_char_count
+                    ch_advance * max_char_count
                 });
 
         let is_singleton = self.buffer_snapshot.is_singleton();
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if !is_singleton {
-            em_width * 4.0
+            ch_width * 4.0
         } else if show_runnables || show_breakpoints {
-            em_width * 3.0
+            ch_width * 3.0
         } else if show_git_gutter && show_line_numbers {
-            em_width * 2.0
+            ch_width * 2.0
         } else if show_git_gutter || show_line_numbers {
-            em_width
+            ch_width
         } else {
             px(0.)
         };
@@ -21579,11 +21626,11 @@ impl EditorSnapshot {
         let shows_folds = is_singleton && gutter_settings.folds;
 
         let right_padding = if shows_folds && show_line_numbers {
-            em_width * 4.0
+            ch_width * 4.0
         } else if shows_folds || (!is_singleton && show_line_numbers) {
-            em_width * 3.0
+            ch_width * 3.0
         } else if show_line_numbers {
-            em_width
+            ch_width
         } else {
             px(0.)
         };

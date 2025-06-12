@@ -142,7 +142,11 @@ pub fn guess_compositor() -> &'static str {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
-    Rc::new(WindowsPlatform::new())
+    Rc::new(
+        WindowsPlatform::new()
+            .inspect_err(|err| show_error("Error: Zed failed to launch", err.to_string()))
+            .unwrap(),
+    )
 }
 
 pub(crate) trait Platform: 'static {

@@ -55,6 +55,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -3710,8 +3711,10 @@ impl GitPanel {
                     .relative()
                     .overflow_hidden()
                     .child(
-                        uniform_list(cx.entity().clone(), "entries", entry_count, {
-                            move |this, range, window, cx| {
+                        uniform_list(
+                            "entries",
+                            entry_count,
+                            cx.processor(move |this, range: Range<usize>, window, cx| {
                                 let mut items = Vec::with_capacity(range.end - range.start);
 
                                 for ix in range {
@@ -3739,8 +3742,8 @@ impl GitPanel {
                                 }
 
                                 items
-                            }
-                        })
+                            }),
+                        )
                         .when(
                             !self.horizontal_scrollbar.show_track
                                 && self.horizontal_scrollbar.show_scrollbar,

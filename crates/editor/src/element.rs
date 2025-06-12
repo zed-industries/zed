@@ -6,10 +6,10 @@ use crate::{
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-    OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightedChunk,
@@ -75,7 +75,7 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use sum_tree::Bias;
 use text::{BufferId, SelectionGoal};
@@ -87,6 +87,7 @@ use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
+const SELECTION_DRAG_DELAY: Duration = Duration::from_millis(300);
 
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
@@ -187,7 +188,7 @@ impl EditorElement {
         let editor = &self.editor;
         editor.update(cx, |editor, cx| {
             for action in editor.editor_actions.borrow().values() {
-                (action)(window, cx)
+                (action)(editor, window, cx)
             }
         });
 
@@ -642,6 +643,7 @@ impl EditorElement {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
                     selection: newest_anchor.clone(),
                     click_position: event.position,
+                    mouse_down_time: Instant::now(),
                 };
                 cx.stop_propagation();
                 return;
@@ -837,6 +839,7 @@ impl EditorElement {
             SelectionDragState::ReadyToDrag {
                 selection: _,
                 ref click_position,
+                mouse_down_time: _,
             } => {
                 if event.position == *click_position {
                     editor.select(
@@ -851,6 +854,8 @@ impl EditorElement {
                     editor.selection_drag_state = SelectionDragState::None;
                     cx.stop_propagation();
                     return;
+                } else {
+                    debug_panic!("drag state can never be in ready state after drag")
                 }
             }
             SelectionDragState::Dragging { ref selection, .. } => {
@@ -993,25 +998,54 @@ impl EditorElement {
                     drop_cursor.start = drop_anchor;
                     drop_cursor.end = drop_anchor;
                     *hide_drop_cursor = !text_hitbox.is_hovered(window);
+                    editor.apply_scroll_delta(scroll_delta, window, cx);
+                    cx.notify();
                 }
-                SelectionDragState::ReadyToDrag { ref selection, .. } => {
-                    let drop_cursor = Selection {
-                        id: post_inc(&mut editor.selections.next_selection_id),
-                        start: drop_anchor,
-                        end: drop_anchor,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    };
-                    editor.selection_drag_state = SelectionDragState::Dragging {
-                        selection: selection.clone(),
-                        drop_cursor,
-                        hide_drop_cursor: false,
-                    };
+                SelectionDragState::ReadyToDrag {
+                    ref selection,
+                    ref click_position,
+                    ref mouse_down_time,
+                } => {
+                    if mouse_down_time.elapsed() >= SELECTION_DRAG_DELAY {
+                        let drop_cursor = Selection {
+                            id: post_inc(&mut editor.selections.next_selection_id),
+                            start: drop_anchor,
+                            end: drop_anchor,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        };
+                        editor.selection_drag_state = SelectionDragState::Dragging {
+                            selection: selection.clone(),
+                            drop_cursor,
+                            hide_drop_cursor: false,
+                        };
+                        editor.apply_scroll_delta(scroll_delta, window, cx);
+                        cx.notify();
+                    } else {
+                        let click_point = position_map.point_for_position(*click_position);
+                        editor.selection_drag_state = SelectionDragState::None;
+                        editor.select(
+                            SelectPhase::Begin {
+                                position: click_point.previous_valid,
+                                add: false,
+                                click_count: 1,
+                            },
+                            window,
+                            cx,
+                        );
+                        editor.select(
+                            SelectPhase::Update {
+                                position: point_for_position.previous_valid,
+                                goal_column: point_for_position.exact_unclipped.column(),
+                                scroll_delta,
+                            },
+                            window,
+                            cx,
+                        );
+                    }
                 }
                 _ => {}
             }
-            editor.apply_scroll_delta(scroll_delta, window, cx);
-            cx.notify();
         } else {
             editor.select(
                 SelectPhase::Update {
@@ -2826,7 +2860,8 @@ impl EditorElement {
                 let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
                 let editor = self.editor.clone();
-                let is_wide = max_line_number_length >= MIN_LINE_NUMBER_DIGITS
+                let is_wide = max_line_number_length
+                    >= EditorSettings::get_global(cx).gutter.min_line_number_digits as u32
                     && row_info
                         .buffer_row
                         .is_some_and(|row| (row + 1).ilog10() + 1 == max_line_number_length)
@@ -5576,6 +5611,12 @@ impl EditorElement {
                 let editor = self.editor.read(cx);
                 if editor.mouse_cursor_hidden {
                     window.set_window_cursor_style(CursorStyle::None);
+                } else if matches!(
+                    editor.selection_drag_state,
+                    SelectionDragState::Dragging { .. }
+                ) {
+                    window
+                        .set_cursor_style(CursorStyle::DragCopy, &layout.position_map.text_hitbox);
                 } else if editor
                     .hovered_link_state
                     .as_ref()

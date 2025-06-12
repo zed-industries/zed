@@ -38,5 +38,5 @@ completion_query_characters = ["-", "."]
 opt_into_language_servers = ["tailwindcss-language-server"]
 prefer_label_for_snippet = true
 
-[overrides.call_expression]
+[overrides.function_name_before_type_arguments]
 prefer_label_for_snippet = true

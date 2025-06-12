@@ -329,6 +329,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let mut task_contexts = TaskContexts::default();
     task_contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+    let task_contexts = Arc::new(task_contexts);
 
     let topmost_local_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
@@ -354,8 +355,9 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);
 
-            get_all_tasks(&project, &task_contexts, cx)
+            get_all_tasks(&project, task_contexts.clone(), cx)
         })
+        .await
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved;
@@ -394,7 +396,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     );
 
     let (_, resolved_task) = cx
-        .update(|cx| get_all_tasks(&project, &task_contexts, cx))
+        .update(|cx| get_all_tasks(&project, task_contexts.clone(), cx))
+        .await
         .into_iter()
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
@@ -432,7 +435,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.run_until_parked();
 
     let all_tasks = cx
-        .update(|cx| get_all_tasks(&project, &task_contexts, cx))
+        .update(|cx| get_all_tasks(&project, task_contexts.clone(), cx))
+        .await
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved;
@@ -519,43 +523,47 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         })
     });
 
-    let active_non_worktree_item_tasks = cx.update(|cx| {
-        get_all_tasks(
-            &project,
-            &TaskContexts {
-                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
-                active_worktree_context: None,
-                other_worktree_contexts: Vec::new(),
-                lsp_task_sources: HashMap::default(),
-                latest_selection: None,
-            },
-            cx,
-        )
-    });
+    let active_non_worktree_item_tasks = cx
+        .update(|cx| {
+            get_all_tasks(
+                &project,
+                Arc::new(TaskContexts {
+                    active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
+                    active_worktree_context: None,
+                    other_worktree_contexts: Vec::new(),
+                    lsp_task_sources: HashMap::default(),
+                    latest_selection: None,
+                }),
+                cx,
+            )
+        })
+        .await;
     assert!(
         active_non_worktree_item_tasks.is_empty(),
         "A task can not be resolved with context with no ZED_WORKTREE_ROOT data"
     );
 
-    let active_worktree_tasks = cx.update(|cx| {
-        get_all_tasks(
-            &project,
-            &TaskContexts {
-                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
-                active_worktree_context: Some((worktree_id, {
-                    let mut worktree_context = TaskContext::default();
-                    worktree_context
-                        .task_variables
-                        .insert(task::VariableName::WorktreeRoot, "/dir".to_string());
-                    worktree_context
-                })),
-                other_worktree_contexts: Vec::new(),
-                lsp_task_sources: HashMap::default(),
-                latest_selection: None,
-            },
-            cx,
-        )
-    });
+    let active_worktree_tasks = cx
+        .update(|cx| {
+            get_all_tasks(
+                &project,
+                Arc::new(TaskContexts {
+                    active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
+                    active_worktree_context: Some((worktree_id, {
+                        let mut worktree_context = TaskContext::default();
+                        worktree_context
+                            .task_variables
+                            .insert(task::VariableName::WorktreeRoot, "/dir".to_string());
+                        worktree_context
+                    })),
+                    other_worktree_contexts: Vec::new(),
+                    lsp_task_sources: HashMap::default(),
+                    latest_selection: None,
+                }),
+                cx,
+            )
+        })
+        .await;
     assert_eq!(
         active_worktree_tasks
             .into_iter()
@@ -8851,20 +8859,22 @@ fn tsx_lang() -> Arc<Language> {
 
 fn get_all_tasks(
     project: &Entity<Project>,
-    task_contexts: &TaskContexts,
+    task_contexts: Arc<TaskContexts>,
     cx: &mut App,
-) -> Vec<(TaskSourceKind, ResolvedTask)> {
-    let (mut old, new) = project.update(cx, |project, cx| {
-        project
-            .task_store
-            .read(cx)
-            .task_inventory()
-            .unwrap()
-            .read(cx)
-            .used_and_current_resolved_tasks(task_contexts, cx)
+) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
+    let new_tasks = project.update(cx, |project, cx| {
+        project.task_store.update(cx, |task_store, cx| {
+            task_store.task_inventory().unwrap().update(cx, |this, cx| {
+                this.used_and_current_resolved_tasks(task_contexts, cx)
+            })
+        })
     });
-    old.extend(new);
-    old
+
+    cx.background_spawn(async move {
+        let (mut old, new) = new_tasks.await;
+        old.extend(new);
+        old
+    })
 }
 
 #[track_caller]

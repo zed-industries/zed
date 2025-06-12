@@ -192,31 +192,33 @@ where
             task_contexts(workspace, window, cx)
         })?;
         let task_contexts = task_contexts.await;
-        let mut tasks = workspace.update(cx, |workspace, cx| {
-            let Some(task_inventory) = workspace
-                .project()
-                .read(cx)
-                .task_store()
-                .read(cx)
-                .task_inventory()
-                .cloned()
-            else {
-                return Vec::new();
-            };
-            let (file, language) = task_contexts
-                .location()
-                .map(|location| {
-                    let buffer = location.buffer.read(cx);
-                    (
-                        buffer.file().cloned(),
-                        buffer.language_at(location.range.start),
-                    )
-                })
-                .unwrap_or_default();
-            task_inventory
-                .read(cx)
-                .list_tasks(file, language, task_contexts.worktree(), cx)
-        })?;
+        let mut tasks = workspace
+            .update(cx, |workspace, cx| {
+                let Some(task_inventory) = workspace
+                    .project()
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+                else {
+                    return Task::ready(Vec::new());
+                };
+                let (file, language) = task_contexts
+                    .location()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        (
+                            buffer.file().cloned(),
+                            buffer.language_at(location.range.start),
+                        )
+                    })
+                    .unwrap_or_default();
+                task_inventory
+                    .read(cx)
+                    .list_tasks(file, language, task_contexts.worktree(), cx)
+            })?
+            .await;
 
         let did_spawn = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -283,10 +285,12 @@ pub fn task_contexts(
                 .worktree_for_id(*worktree_id, cx)
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         })
-        .or(workspace
-            .visible_worktrees(cx)
-            .next()
-            .map(|tree| tree.read(cx).id()));
+        .or_else(|| {
+            workspace
+                .visible_worktrees(cx)
+                .next()
+                .map(|tree| tree.read(cx).id())
+        });
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 

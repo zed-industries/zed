@@ -162,7 +162,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry, cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

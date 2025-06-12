@@ -462,14 +462,21 @@ impl DebugAdapter for GoDebugAdapter {
             ]
         };
 
+        let mut configuration = task_definition.config.clone();
+        if let Some(configuration) = configuration.as_object_mut() {
+            configuration
+                .entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+        }
+
         Ok(DebugAdapterBinary {
-            command: minidelve_path.to_string_lossy().into_owned(),
+            command: Some(minidelve_path.to_string_lossy().into_owned()),
             arguments,
             cwd: Some(cwd),
             envs: HashMap::default(),
             connection: None,
             request_args: StartDebuggingRequestArguments {
-                configuration: task_definition.config.clone(),
+                configuration,
                 request: self.request_kind(&task_definition.config)?,
             },
         })

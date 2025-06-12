@@ -1258,7 +1258,7 @@ mod windows_renderer {
     use std::num::NonZeroIsize;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::get_window_long;
+    use crate::{get_window_long, show_error};
 
     pub(super) fn init(
         context: &BladeContext,
@@ -1270,7 +1270,12 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
-        BladeRenderer::new(context, &raw, config)
+        BladeRenderer::new(context, &raw, config).inspect_err(|err| {
+            show_error(
+                "Error: Zed failed to initialize BladeRenderer",
+                err.to_string(),
+            )
+        })
     }
 
     struct RawWindow {

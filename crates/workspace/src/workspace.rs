@@ -922,7 +922,7 @@ type PromptForOpenPath = Box<
 /// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
     weak_self: WeakEntity<Self>,
-    workspace_actions: Vec<Box<dyn Fn(Div, &mut Window, &mut Context<Self>) -> Div>>,
+    workspace_actions: Vec<Box<dyn Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
@@ -5444,12 +5444,19 @@ impl Workspace {
     ) -> &mut Self {
         let callback = Arc::new(callback);
 
-        self.workspace_actions.push(Box::new(move |div, _, cx| {
+        self.workspace_actions.push(Box::new(move |div, _, _, cx| {
             let callback = callback.clone();
             div.on_action(cx.listener(move |workspace, event, window, cx| {
                 (callback)(workspace, event, window, cx)
             }))
         }));
+        self
+    }
+    pub fn register_action_renderer(
+        &mut self,
+        callback: impl Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div + 'static,
+    ) -> &mut Self {
+        self.workspace_actions.push(Box::new(callback));
         self
     }
 
@@ -5460,7 +5467,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         for action in self.workspace_actions.iter() {
-            div = (action)(div, window, cx)
+            div = (action)(div, self, window, cx)
         }
         div
     }

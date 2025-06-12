@@ -56,34 +56,34 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo")]
+    #[serde(rename = "gpt-3.5-turbo")]
     ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4", alias = "gpt-4")]
+    #[serde(rename = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-turbo", alias = "gpt-4-turbo")]
+    #[serde(rename = "gpt-4-turbo")]
     FourTurbo,
-    #[serde(rename = "gpt-4o", alias = "gpt-4o")]
+    #[serde(rename = "gpt-4o")]
     #[default]
     FourOmni,
-    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
+    #[serde(rename = "gpt-4o-mini")]
     FourOmniMini,
-    #[serde(rename = "gpt-4.1", alias = "gpt-4.1")]
+    #[serde(rename = "gpt-4.1")]
     FourPointOne,
-    #[serde(rename = "gpt-4.1-mini", alias = "gpt-4.1-mini")]
+    #[serde(rename = "gpt-4.1-mini")]
     FourPointOneMini,
-    #[serde(rename = "gpt-4.1-nano", alias = "gpt-4.1-nano")]
+    #[serde(rename = "gpt-4.1-nano")]
     FourPointOneNano,
-    #[serde(rename = "o1", alias = "o1")]
+    #[serde(rename = "o1")]
     O1,
-    #[serde(rename = "o1-preview", alias = "o1-preview")]
+    #[serde(rename = "o1-preview")]
     O1Preview,
-    #[serde(rename = "o1-mini", alias = "o1-mini")]
+    #[serde(rename = "o1-mini")]
     O1Mini,
-    #[serde(rename = "o3-mini", alias = "o3-mini")]
+    #[serde(rename = "o3-mini")]
     O3Mini,
-    #[serde(rename = "o3", alias = "o3")]
+    #[serde(rename = "o3")]
     O3,
-    #[serde(rename = "o4-mini", alias = "o4-mini")]
+    #[serde(rename = "o4-mini")]
     O4Mini,
 
     #[serde(rename = "custom")]
@@ -189,7 +189,20 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
-            _ => None,
+            Self::ThreePointFiveTurbo => Some(4_096),
+            Self::Four => Some(8_192),
+            Self::FourTurbo => Some(4_096),
+            Self::FourOmni => Some(16_384),
+            Self::FourOmniMini => Some(16_384),
+            Self::FourPointOne => Some(32_768),
+            Self::FourPointOneMini => Some(32_768),
+            Self::FourPointOneNano => Some(32_768),
+            Self::O1 => Some(100_000),
+            Self::O1Preview => Some(32_768),
+            Self::O1Mini => Some(65_536),
+            Self::O3Mini => Some(100_000),
+            Self::O3 => Some(100_000),
+            Self::O4Mini => Some(100_000),
         }
     }
 
@@ -206,8 +219,13 @@ impl Model {
             | Self::FourPointOne
             | Self::FourPointOneMini
             | Self::FourPointOneNano => true,
-            Self::O1 | Self::O1Preview | Self::O1Mini => false,
-            _ => false,
+            Self::O1
+            | Self::O1Preview
+            | Self::O1Mini
+            | Self::O3
+            | Self::O3Mini
+            | Self::O4Mini
+            | Model::Custom { .. } => false,
         }
     }
 }
