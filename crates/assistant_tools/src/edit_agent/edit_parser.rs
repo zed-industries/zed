@@ -1,9 +1,10 @@
 use anyhow::bail;
 use derive_more::{Add, AddAssign};
+use language_model::LanguageModel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::{mem, ops::Range, str::FromStr};
+use std::{mem, ops::Range, str::FromStr, sync::Arc};
 
 const OLD_TEXT_END_TAG: &str = "</old_text>";
 const NEW_TEXT_END_TAG: &str = "</new_text>";
@@ -34,12 +35,14 @@ pub enum EditFormat {
     /// <old_text>...</old_text>
     /// <new_text>...</new_text>
     XmlTags,
-    /// Diff-fenced format:
+    /// Diff-fenced format (fences are optional):
+    /// ```
     /// <<<<<<< SEARCH
     /// ...
     /// =======
     /// ...
     /// >>>>>>> REPLACE
+    /// ```
     DiffFenced,
 }
 
@@ -56,9 +59,21 @@ impl FromStr for EditFormat {
 }
 
 impl EditFormat {
-    pub fn from_env() -> anyhow::Result<Self> {
-        std::env::var("ZED_EDIT_FORMAT")
-            .map_or(Ok(EditFormat::XmlTags), |s| EditFormat::from_str(&s))
+    /// Return an optimal edit format for the language model
+    pub fn from_model(model: Arc<dyn LanguageModel>) -> anyhow::Result<Self> {
+        if model.provider_id().0 == "google" {
+            Ok(EditFormat::DiffFenced)
+        } else {
+            Ok(EditFormat::XmlTags)
+        }
+    }
+
+    /// Return an optimal edit format for the language model with the ability to override it
+    /// by setting the `ZED_EDIT_FORMAT` environment variable
+    #[allow(dead_code)]
+    pub fn from_env(model: Arc<dyn LanguageModel>) -> anyhow::Result<Self> {
+        let default = EditFormat::from_model(model)?;
+        std::env::var("ZED_EDIT_FORMAT").map_or(Ok(default), |s| EditFormat::from_str(&s))
     }
 }
 
@@ -648,6 +663,29 @@ mod tests {
         assert_eq!(
             parse_random_chunks(
                 "mathweb/flask/app.py\n<<<<<<< SEARCH\nfrom flask import Flask\n=======\nimport math\nfrom flask import Flask\n>>>>>>> REPLACE",
+                &mut parser,
+                &mut rng
+            ),
+            vec![Edit {
+                old_text: "from flask import Flask".to_string(),
+                new_text: "import math\nfrom flask import Flask".to_string(),
+            }]
+        );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 0,
+                mismatched_tags: 0
+            }
+        );
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_diff_fenced_with_markdown_fences(mut rng: StdRng) {
+        let mut parser = EditParser::new(EditFormat::DiffFenced);
+        assert_eq!(
+            parse_random_chunks(
+                "```diff\n<<<<<<< SEARCH\nfrom flask import Flask\n=======\nimport math\nfrom flask import Flask\n>>>>>>> REPLACE\n```",
                 &mut parser,
                 &mut rng
             ),

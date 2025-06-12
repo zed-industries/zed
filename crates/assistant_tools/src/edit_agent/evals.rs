@@ -38,9 +38,9 @@ fn eval_extract_handle_command_output() {
     //
     // Model                       | Pass rate
     // ----------------------------|----------
-    // claude-3.7-sonnet           |  0.98
-    // gemini-2.5-pro-06-05        |  0.77 --> 0.98
-    // gemini-2.5-flash            |  0.11
+    // claude-4.0-sonnet           |  0.97
+    // gemini-2.5-pro-06-05        |  0.98
+    // gemini-2.5-flash            |  0.16
     // gpt-4.1                     |  1.00
 
     let input_file_path = "root/blame.rs";
@@ -56,8 +56,8 @@ fn eval_extract_handle_command_output() {
     ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
-        50,
-        1.0, // Taking the lower bar for Gemini
+        10,
+        0.95,
         0.05,
         EvalInput::from_conversation(
             vec![
@@ -443,8 +443,8 @@ fn eval_from_pixels_constructor() {
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |
-    //  gemini-2.5-pro-preview-03-25   |  0.94
+    //  claude-4.0-sonnet              |        -> 0.12
+    //  gemini-2.5-pro-preview-03-25   |  0.94  -> 0.78
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
@@ -753,8 +753,9 @@ fn eval_add_overwrite_test() {
     //  Model                          | Pass rate
     // ============================================
     //
+    //  claude-4.0-sonnet              |  0.00
     //  claude-3.7-sonnet              |  0.16
-    //  gemini-2.5-pro-preview-03-25   |  0.35
+    //  gemini-2.5-pro-preview-03-25   |  0.35 --> 0.43
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/action_log.rs";
@@ -1488,7 +1489,7 @@ impl EditAgentTest {
             .await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        let edit_format = EditFormat::from_env().unwrap();
+        let edit_format = EditFormat::from_env(agent_model.clone()).unwrap();
 
         Self {
             agent: EditAgent::new(

@@ -201,7 +201,7 @@ impl Tool for EditFileTool {
         let card_clone = card.clone();
         let action_log_clone = action_log.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let edit_format = EditFormat::from_env()?;
+            let edit_format = EditFormat::from_model(model.clone())?;
             let edit_agent = EditAgent::new(
                 model,
                 project.clone(),
