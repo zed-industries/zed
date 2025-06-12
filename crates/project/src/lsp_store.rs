@@ -3482,7 +3482,7 @@ pub struct LspStore {
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    document_color_data: HashMap<PathBuf, BufferLspColorData>,
+    document_color_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspColorData>>,
 }
 
 struct BufferLspColorData {
