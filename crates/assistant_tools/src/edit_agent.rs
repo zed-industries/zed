@@ -286,7 +286,11 @@ impl EditAgent {
                 _ => {
                     let ranges = resolved_old_text
                         .into_iter()
-                        .map(|text| text.range)
+                        .map(|text| {
+                            let start_line = (snapshot.offset_to_point(text.range.start).row + 1) as usize;
+                            let end_line = (snapshot.offset_to_point(text.range.end).row + 1) as usize;
+                            start_line..end_line
+                        })
                         .collect();
                     output_events
                         .unbounded_send(EditAgentOutputEvent::AmbiguousEditRange(ranges))
@@ -1374,10 +1378,12 @@ mod tests {
             &agent,
             indoc! {"
                 <old_text>
-                return 42;
+                    return 42;
+                }
                 </old_text>
                 <new_text>
-                return 100;
+                    return 100;
+                }
                 </new_text>
             "},
             &mut rng,
@@ -1407,7 +1413,7 @@ mod tests {
 
         // And AmbiguousEditRange even should be emitted
         let events = drain_events(&mut events);
-        let ambiguous_ranges = vec![17..31, 52..66, 87..101];
+        let ambiguous_ranges = vec![2..3, 6..7, 10..11];
         assert!(
             events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
             "Should emit AmbiguousEditRange for non-unique text"
