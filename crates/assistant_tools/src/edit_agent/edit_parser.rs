@@ -1,4 +1,5 @@
 use derive_more::{Add, AddAssign};
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -14,7 +15,7 @@ pub enum EditParserEvent {
     OldTextChunk {
         chunk: String,
         done: bool,
-        line_hint: Option<String>,
+        line_hint: Option<u32>,
     },
     NewTextChunk {
         chunk: String,
@@ -40,14 +41,9 @@ pub struct EditParser {
 #[derive(Debug, PartialEq)]
 enum EditParserState {
     Pending,
-    WithinOldText {
-        start: bool,
-        line_hint: Option<String>,
-    },
+    WithinOldText { start: bool, line_hint: Option<u32> },
     AfterOldText,
-    WithinNewText {
-        start: bool,
-    },
+    WithinNewText { start: bool },
 }
 
 impl EditParser {
@@ -91,7 +87,7 @@ impl EditParser {
                         *start = false;
                     }
 
-                    let line_hint_clone = line_hint.clone();
+                    let line_hint = line_hint.clone();
                     if let Some(tag_range) = self.find_end_tag() {
                         let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
@@ -108,14 +104,14 @@ impl EditParser {
                         edit_events.push(EditParserEvent::OldTextChunk {
                             chunk,
                             done: true,
-                            line_hint: line_hint_clone,
+                            line_hint,
                         });
                     } else {
                         if !self.ends_with_tag_prefix() {
                             edit_events.push(EditParserEvent::OldTextChunk {
                                 chunk: mem::take(&mut self.buffer),
                                 done: false,
-                                line_hint: line_hint_clone,
+                                line_hint,
                             });
                         }
                         break;
@@ -182,14 +178,15 @@ impl EditParser {
         end_prefixes.any(|prefix| self.buffer.ends_with(&prefix))
     }
 
-    fn parse_line_hint(&self, tag: &str) -> Option<String> {
-        if let Some(start) = tag.find("line_hint=\"") {
-            let start = start + "line_hint=\"".len();
-            if let Some(end) = tag[start..].find('"') {
-                return Some(tag[start..start + end].to_string());
-            }
-        }
-        None
+    fn parse_line_hint(&self, tag: &str) -> Option<u32> {
+        static LINE_HINT_REGEX: std::sync::LazyLock<Regex> =
+            std::sync::LazyLock::new(|| Regex::new(r#"line_hint=(?:"|)(\d+)"#).unwrap());
+
+        LINE_HINT_REGEX
+            .captures(tag)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().parse::<u32>().ok())
+            .flatten()
     }
 
     pub fn finish(self) -> EditParserMetrics {
@@ -216,6 +213,7 @@ mod tests {
             vec![Edit {
                 old_text: "original".to_string(),
                 new_text: "updated".to_string(),
+                line_hint: None,
             }]
         );
         assert_eq!(
@@ -247,10 +245,12 @@ mod tests {
                 Edit {
                     old_text: "first old".to_string(),
                     new_text: "first new".to_string(),
+                    line_hint: None,
                 },
                 Edit {
                     old_text: "second old".to_string(),
                     new_text: "second new".to_string(),
+                    line_hint: None,
                 },
             ]
         );
@@ -282,14 +282,17 @@ mod tests {
                 Edit {
                     old_text: "content".to_string(),
                     new_text: "updated content".to_string(),
+                    line_hint: None,
                 },
                 Edit {
                     old_text: "second item".to_string(),
                     new_text: "modified second item".to_string(),
+                    line_hint: None,
                 },
                 Edit {
                     old_text: "third case".to_string(),
                     new_text: "improved third case".to_string(),
+                    line_hint: None,
                 },
             ]
         );
@@ -314,6 +317,7 @@ mod tests {
             vec![Edit {
                 old_text: "code with <tag>nested</tag> elements".to_string(),
                 new_text: "new <code>content</code>".to_string(),
+                line_hint: None,
             }]
         );
         assert_eq!(
@@ -337,6 +341,7 @@ mod tests {
             vec![Edit {
                 old_text: "".to_string(),
                 new_text: "".to_string(),
+                line_hint: None,
             }]
         );
         assert_eq!(
@@ -360,6 +365,7 @@ mod tests {
             vec![Edit {
                 old_text: "line1\nline2\nline3".to_string(),
                 new_text: "line1\nmodified line2\nline3".to_string(),
+                line_hint: None,
             }]
         );
         assert_eq!(
@@ -406,10 +412,12 @@ mod tests {
                 Edit {
                     old_text: "a\nb\nc".to_string(),
                     new_text: "a\nB\nc".to_string(),
+                    line_hint: None,
                 },
                 Edit {
                     old_text: "d\ne\nf".to_string(),
                     new_text: "D\ne\nF".to_string(),
+                    line_hint: None,
                 }
             ]
         );
@@ -440,6 +448,7 @@ mod tests {
             vec![Edit {
                 old_text: "Lorem".to_string(),
                 new_text: "LOREM".to_string(),
+                line_hint: None,
             },]
         );
         assert_eq!(
@@ -452,68 +461,60 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_line_hint_parsing(mut rng: StdRng) {
+    fn test_line_hints(mut rng: StdRng) {
+        // Line hint provided, and it's a range
         let mut parser = EditParser::new();
 
         let edits = parse_random_chunks(
-            r#"<old_text line_hint="23:50">original code</old_text><new_text>updated code</new_text>"#,
+            r#"
+            <old_text line_hint="23:50">original code</old_text>
+            <new_text>updated code</new_text>"#,
             &mut parser,
             &mut rng,
         );
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].old_text, "original code");
-        assert_eq!(edits[0].
+        assert_eq!(edits[0].line_hint, Some(23));
         assert_eq!(edits[0].new_text, "updated code");
 
-        // Test the events directly to verify line_hint is parsed
+        // Line hint provided, and it's a single number (line number)
         let mut parser = EditParser::new();
-        let input = r#"<old_text line_hint="23:50">original code</old_text><new_text>updated code</new_text>"#;
-        let events = parser.push(input);
 
-        // Find the OldTextChunk event that's done
-        let old_text_event = events
-            .iter()
-            .find(|event| matches!(event, EditParserEvent::OldTextChunk { done: true, .. }))
-            .expect("Should have completed OldTextChunk event");
+        let edits = parse_random_chunks(
+            r#"
+            <old_text line_hint="23">original code</old_text>
+            <new_text>updated code</new_text>"#,
+            &mut parser,
+            &mut rng,
+        );
 
-        if let EditParserEvent::OldTextChunk {
-            chunk,
-            done,
-            line_hint,
-        } = old_text_event
-        {
-            assert_eq!(chunk, "original code");
-            assert!(done);
-            assert_eq!(line_hint.as_ref(), Some(&"23:50".to_string()));
-        }
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].old_text, "original code");
+        assert_eq!(edits[0].line_hint, Some(23));
+        assert_eq!(edits[0].new_text, "updated code");
 
-        // Test without line hint
+        // No line hint
         let mut parser = EditParser::new();
-        let input = r#"<old_text>original code</old_text><new_text>updated code</new_text>"#;
-        let events = parser.push(input);
+        let edits = parse_random_chunks(
+            r#"
+            <old_text>old</old_text>
+            <new_text>new</new_text>"#,
+            &mut parser,
+            &mut rng,
+        );
 
-        let old_text_event = events
-            .iter()
-            .find(|event| matches!(event, EditParserEvent::OldTextChunk { done: true, .. }))
-            .expect("Should have completed OldTextChunk event");
-
-        if let EditParserEvent::OldTextChunk {
-            chunk,
-            done,
-            line_hint,
-        } = old_text_event
-        {
-            assert_eq!(chunk, "original code");
-            assert!(done);
-            assert_eq!(line_hint, &None);
-        }
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].old_text, "old");
+        assert_eq!(edits[0].line_hint, None);
+        assert_eq!(edits[0].new_text, "new");
     }
 
     #[derive(Default, Debug, PartialEq, Eq)]
     struct Edit {
         old_text: String,
         new_text: String,
+        line_hint: Option<u32>,
     }
 
     fn parse_random_chunks(input: &str, parser: &mut EditParser, rng: &mut StdRng) -> Vec<Edit> {
@@ -533,11 +534,12 @@ mod tests {
                     EditParserEvent::OldTextChunk {
                         chunk,
                         done,
-                        line_hint: _,
+                        line_hint,
                     } => {
                         old_text.as_mut().unwrap().push_str(&chunk);
                         if done {
                             pending_edit.old_text = old_text.take().unwrap();
+                            pending_edit.line_hint = line_hint;
                             new_text = Some(String::new());
                         }
                     }
