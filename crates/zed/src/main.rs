@@ -191,12 +191,13 @@ Error: Running Zed as root or via sudo is unsupported.
 
     let args = Args::parse();
 
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
         return;
     }
 
-    // Outputs environment variables as JSON to stdout or a file/pipe
+    // `zed --env` Outputs environment variables as JSON to stdout
     if let Some(output_path) = args.env {
         let env_vars: HashMap<String, String> = env::vars().collect();
         let to_string = if output_path.is_some() {
