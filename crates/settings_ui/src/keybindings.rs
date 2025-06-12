@@ -110,12 +110,11 @@ impl KeymapEditor {
     }
 
     fn update_matches(&mut self, cx: &mut Context<Self>) {
-        let query = dbg!(self.filter_editor.read(cx).text(cx));
+        let query = self.filter_editor.read(cx).text(cx);
         let string_match_candidates = self.string_match_candidates.clone();
         let executor = cx.background_executor().clone();
         let keybind_count = self.keybindings.len();
         let query = command_palette::normalize_action_query(&query);
-        dbg!(&query);
         let fuzzy_match = cx.background_spawn(async move {
             fuzzy::match_strings(
                 &string_match_candidates,
@@ -131,7 +130,6 @@ impl KeymapEditor {
 
         cx.spawn(async move |this, cx| {
             let matches = fuzzy_match.await;
-            dbg!(&matches);
             this.update(cx, |this, cx| {
                 this.table_interaction_state.update(cx, |this, _cx| {
                     this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
@@ -226,8 +224,6 @@ impl Render for KeymapEditor {
         let row_count = self.matches.len();
         let theme = cx.theme();
 
-        dbg!(&self.matches);
-
         div()
             .size_full()
             .bg(theme.colors().background)
@@ -246,7 +242,6 @@ impl Render for KeymapEditor {
                         cx.processor(move |this, range: Range<usize>, _window, _cx| {
                             range
                                 .filter_map(|index| {
-                                    dbg!(index);
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
                                     Some(
