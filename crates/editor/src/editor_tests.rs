@@ -21910,6 +21910,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let fake_server = fake_servers.next().await.unwrap();
+    let server_id = fake_server.server.server_id();
     let mut first_request = fake_server
         .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
             let new_result_id = counter.fetch_add(1, atomic::Ordering::Release) + 1;
@@ -21941,7 +21942,10 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .expect("created a singleton buffer")
                 .read(cx)
                 .remote_id();
-            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id, cx);
+            let buffer_result_id = project
+                .lsp_store()
+                .read(cx)
+                .result_id(server_id, buffer_id, cx);
             assert_eq!(expected, buffer_result_id);
         });
     };

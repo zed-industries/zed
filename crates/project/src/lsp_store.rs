@@ -166,7 +166,7 @@ pub struct LocalLspStore {
     _subscription: gpui::Subscription,
     lsp_tree: Entity<LanguageServerTree>,
     registered_buffers: HashMap<BufferId, usize>,
-    buffer_pull_diagnostics_result_ids: HashMap<PathBuf, Option<String>>,
+    buffer_pull_diagnostics_result_ids: HashMap<PathBuf, HashMap<LanguageServerId, Option<String>>>,
 }
 
 impl LocalLspStore {
@@ -2297,7 +2297,9 @@ impl LocalLspStore {
         buffer.update(cx, |buffer, cx| {
             if let Some(abs_path) = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)) {
                 self.buffer_pull_diagnostics_result_ids
-                    .insert(abs_path, result_id);
+                    .entry(abs_path)
+                    .or_default()
+                    .insert(server_id, result_id);
             }
 
             buffer.update_diagnostics(server_id, set, cx)
@@ -5757,72 +5759,69 @@ impl LspStore {
     ) -> Task<Result<Vec<LspPullDiagnostics>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
-        let result_id = self.result_id(buffer_id, cx);
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
-                buffer_id: buffer_id.into(),
+                buffer_id: buffer_id.to_proto(),
                 version: serialize_version(&buffer_handle.read(cx).version()),
                 project_id: upstream_project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
-                    GetDocumentDiagnostics {
-                        previous_result_id: result_id.clone(),
-                    }
-                    .to_proto(upstream_project_id, buffer_handle.read(cx)),
+                    proto::GetDocumentDiagnostics {
+                        project_id: upstream_project_id,
+                        buffer_id: buffer_id.to_proto(),
+                        version: serialize_version(&buffer_handle.read(cx).version()),
+                    },
                 )),
             });
-            let buffer = buffer_handle.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
-                };
-                let responses = request_task.await?.responses;
-                let diagnostics = join_all(
-                    responses
-                        .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
-                                response,
-                            ) => Some(response),
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
-                        })
-                        .map(|diagnostics_response| {
-                            GetDocumentDiagnostics {
-                                previous_result_id: result_id.clone(),
-                            }
-                            .response_from_proto(
-                                diagnostics_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            )
-                        }),
-                )
-                .await;
-
-                Ok(diagnostics
+            cx.background_spawn(async move {
+                Ok(request_task
+                    .await?
+                    .responses
                     .into_iter()
-                    .collect::<Result<Vec<_>>>()?
-                    .into_iter()
-                    .flatten()
+                    .filter_map(|lsp_response| match lsp_response.response? {
+                        proto::lsp_response::Response::GetDocumentDiagnosticsResponse(response) => {
+                            Some(response)
+                        }
+                        unexpected => {
+                            debug_panic!("Unexpected response: {unexpected:?}");
+                            None
+                        }
+                    })
+                    .flat_map(GetDocumentDiagnostics::diagnostics_from_proto)
                     .collect())
             })
         } else {
-            let all_actions_task = self.request_multiple_lsp_locally(
-                &buffer_handle,
-                None::<PointUtf16>,
-                GetDocumentDiagnostics {
-                    previous_result_id: result_id,
-                },
-                cx,
-            );
-            cx.spawn(async move |_, _| Ok(all_actions_task.await.into_iter().flatten().collect()))
+            let server_ids = buffer_handle.update(cx, |buffer, cx| {
+                self.language_servers_for_local_buffer(buffer, cx)
+                    .map(|(_, server)| server.server_id())
+                    .collect::<Vec<_>>()
+            });
+            let pull_diagnostics = server_ids
+                .into_iter()
+                .map(|server_id| {
+                    let result_id = self.result_id(server_id, buffer_id, cx);
+                    self.request_lsp(
+                        buffer_handle.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        GetDocumentDiagnostics {
+                            server_id,
+                            previous_result_id: result_id,
+                        },
+                        cx,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            cx.background_spawn(async move {
+                let mut responses = Vec::new();
+                for diagnostics in join_all(pull_diagnostics).await {
+                    responses.extend(diagnostics?);
+                }
+                Ok(responses)
+            })
         }
     }
 
@@ -9716,7 +9715,12 @@ impl LspStore {
         }
     }
 
-    pub fn result_id(&self, buffer_id: BufferId, cx: &App) -> Option<String> {
+    pub fn result_id(
+        &self,
+        server_id: LanguageServerId,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<String> {
         let abs_path = self
             .buffer_store
             .read(cx)
@@ -9725,19 +9729,21 @@ impl LspStore {
             .map(|f| f.abs_path(cx))?;
         self.as_local()?
             .buffer_pull_diagnostics_result_ids
-            .get(&abs_path)
-            .cloned()
-            .flatten()
+            .get(&abs_path)?
+            .get(&server_id)?
+            .clone()
     }
 
-    pub fn all_result_ids(&self) -> HashMap<PathBuf, String> {
+    pub fn all_result_ids(&self, server_id: LanguageServerId) -> HashMap<PathBuf, String> {
         let Some(local) = self.as_local() else {
             return HashMap::default();
         };
         local
             .buffer_pull_diagnostics_result_ids
             .iter()
-            .filter_map(|(file_path, result_id)| Some((file_path.clone(), result_id.clone()?)))
+            .filter_map(|(file_path, result_ids)| {
+                Some((file_path.clone(), result_ids.get(&server_id)?.clone()?))
+            })
             .collect()
     }
 
@@ -9822,7 +9828,7 @@ fn lsp_workspace_diagnostics_refresh(
 
                 let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
                     lsp_store
-                        .all_result_ids()
+                        .all_result_ids(server.server_id())
                         .into_iter()
                         .filter_map(|(abs_path, result_id)| {
                             let uri = file_path_to_lsp_url(&abs_path).ok()?;
