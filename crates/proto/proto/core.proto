@@ -24,4 +24,5 @@ message Collaborator {
     uint32 replica_id = 2;
     uint64 user_id = 3;
     bool is_host = 4;
+    optional string commit_email = 5;
 }

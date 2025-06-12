@@ -189,6 +189,7 @@ message UpdateProject {
 
 message JoinProject {
     uint64 project_id = 1;
+    optional string commit_email = 2;
 }
 
 message JoinProjectResponse {
@@ -199,6 +200,11 @@ message JoinProjectResponse {
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
     reserved 7;
+}
+
+message SetCommitEmail {
+    uint64 project_id = 1;
+    optional string commit_email = 2;
 }
 
 message LeaveProject {

@@ -118,6 +118,7 @@ impl Database {
                         user_id: collaborator.user_id.to_proto(),
                         replica_id: collaborator.replica_id.0 as u32,
                         is_host: false,
+                        commit_email: None,
                     })
                     .collect(),
             })
@@ -225,6 +226,7 @@ impl Database {
                                 user_id: collaborator.user_id.to_proto(),
                                 replica_id: collaborator.replica_id.0 as u32,
                                 is_host: false,
+                                commit_email: None,
                             })
                             .collect(),
                     },
@@ -261,6 +263,7 @@ impl Database {
                         replica_id: db_collaborator.replica_id.0 as u32,
                         user_id: db_collaborator.user_id.to_proto(),
                         is_host: false,
+                        commit_email: None,
                     })
                 } else {
                     collaborator_ids_to_remove.push(db_collaborator.id);
@@ -390,6 +393,7 @@ impl Database {
                 replica_id: row.replica_id.0 as u32,
                 user_id: row.user_id.to_proto(),
                 is_host: false,
+                commit_email: None,
             });
         }
 

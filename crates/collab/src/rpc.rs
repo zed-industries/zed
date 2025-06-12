@@ -1894,24 +1894,6 @@ async fn join_project(
         .await?;
     drop(db);
     tracing::info!(%project_id, "join remote project");
-    join_project_internal(response, session, project, replica_id)
-}
-
-trait JoinProjectInternalResponse {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
-}
-impl JoinProjectInternalResponse for Response<proto::JoinProject> {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
-        Response::<proto::JoinProject>::send(self, result)
-    }
-}
-
-fn join_project_internal(
-    response: impl JoinProjectInternalResponse,
-    session: Session,
-    project: &mut Project,
-    replica_id: &ReplicaId,
-) -> Result<()> {
     let collaborators = project
         .collaborators
         .iter()
@@ -1939,6 +1921,7 @@ fn join_project_internal(
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
             is_host: false,
+            commit_email: None,
         }),
     };
 
