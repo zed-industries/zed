@@ -179,6 +179,19 @@ impl DebugPanel {
                 cx,
             )
         });
+        let worktree = worktree_id.or_else(|| {
+            active_buffer
+                .as_ref()
+                .and_then(|buffer| buffer.read(cx).file())
+                .map(|f| f.worktree_id(cx))
+        });
+        let Some(worktree) = worktree
+            .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
+            .or_else(|| self.project.read(cx).visible_worktrees(cx).next())
+        else {
+            log::debug!("Could not find a worktree to spawn the debug session in");
+            return;
+        };
         self.debug_scenario_scheduled_last = true;
         if let Some(inventory) = self
             .project
@@ -213,7 +226,7 @@ impl DebugPanel {
                     .await?;
                 dap_store
                     .update(cx, |dap_store, cx| {
-                        dap_store.boot_session(session.clone(), definition, cx)
+                        dap_store.boot_session(session.clone(), definition, worktree, cx)
                     })?
                     .await
             }
@@ -336,8 +349,26 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-            Self::register_session(this.clone(), session, true, cx).await?;
-            task.await
+            Self::register_session(this.clone(), session.clone(), true, cx).await?;
+
+            if let Err(error) = task.await {
+                session
+                    .update(cx, |session, cx| {
+                        session
+                            .console_output(cx)
+                            .unbounded_send(format!(
+                                "Session failed to restart with error: {}",
+                                error
+                            ))
+                            .ok();
+                        session.shutdown(cx)
+                    })?
+                    .await;
+
+                return Err(error);
+            };
+
+            Ok(())
         })
         .detach_and_log_err(cx);
     }

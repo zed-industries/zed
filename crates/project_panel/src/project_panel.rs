@@ -4413,8 +4413,7 @@ impl ProjectPanel {
                                     )
                                 }
                             })
-                        }
-                        .ml_1(),
+                        },
                     )
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {

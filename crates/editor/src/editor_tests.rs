@@ -9085,12 +9085,17 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         );
     }
 
-    // For non-dirty buffer, no formatting request should be sent
+    // For non-dirty buffer and the corresponding settings, no formatting request should be sent
     {
         assert!(!cx.read(|cx| editor.is_dirty(cx)));
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.save_non_dirty_buffers = Some(false);
+            });
+        });
 
         fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
-            panic!("Should not be invoked on non-dirty buffer");
+            panic!("Should not be invoked on non-dirty buffer when configured so");
         });
         let save = editor
             .update_in(cx, |editor, window, cx| {
@@ -9099,8 +9104,19 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             .unwrap();
         cx.executor().start_waiting();
         save.await;
+
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
     }
 
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings::<EditorSettings>(cx, |settings| {
+            settings.save_non_dirty_buffers = Some(false);
+        });
+    });
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
         settings.languages.insert(
@@ -9438,19 +9454,35 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // For non-dirty buffer, no formatting request should be sent
+    // For non-dirty buffer, a formatting request should be sent anyway with the default settings
+    // where non-dirty singleton buffers are saved and formatted anyway.
     let save = editor
         .update_in(cx, |editor, window, cx| {
             editor.save(true, project.clone(), window, cx)
         })
         .unwrap();
-    let _pending_format_request = fake_server
-        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
-            panic!("Should not be invoked on non-dirty buffer");
+    fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+            );
+            assert_eq!(params.options.tab_size, 4);
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                ", ".to_string(),
+            )]))
         })
-        .next();
+        .next()
+        .await;
+    cx.executor().advance_clock(super::FORMAT_TIMEOUT);
     cx.executor().start_waiting();
     save.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one, two\nthree\n"
+    );
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
