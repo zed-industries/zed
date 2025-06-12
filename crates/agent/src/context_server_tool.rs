@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cell::LazyCell, sync::Arc};
 
 use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
@@ -6,7 +6,11 @@ use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, context_server_store::ContextServerStore};
+use regex::Regex;
 use ui::IconName;
+
+const TOOL_NAME_REGEX: LazyCell<Regex> =
+    LazyCell::new(|| Regex::new(r"^[a-zA-Z0-9_-]{1,64}$").unwrap());
 
 pub struct ContextServerTool {
     store: Entity<ContextServerStore>,
@@ -30,6 +34,15 @@ impl ContextServerTool {
 
 impl Tool for ContextServerTool {
     fn name(&self) -> String {
+        let tool_name = format!("{}_{}", self.server_id.0.trim(), self.tool.name.trim());
+        if TOOL_NAME_REGEX.is_match(&tool_name) {
+            tool_name
+        } else {
+            self.tool.name.clone()
+        }
+    }
+
+    fn ui_name(&self) -> String {
         self.tool.name.clone()
     }
 
