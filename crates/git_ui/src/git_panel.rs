@@ -360,7 +360,7 @@ pub struct GitPanel {
     modal_open: bool,
     show_placeholders: bool,
     local_committer: Option<GitCommitter>,
-    get_committer_task: Option<Task<()>>,
+    local_committer_task: Option<Task<()>>,
     _settings_subscription: Subscription,
 }
 
@@ -524,7 +524,7 @@ impl GitPanel {
                 width: None,
                 show_placeholders: false,
                 local_committer: None,
-                get_committer_task: None,
+                local_committer_task: None,
                 context_menu: None,
                 workspace: workspace.weak_handle(),
                 modal_open: false,
@@ -734,20 +734,6 @@ impl GitPanel {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
-        }
-        self.load_git_committer(cx);
-    }
-
-    pub fn load_git_committer(&mut self, cx: &Context<Self>) {
-        if self.get_committer_task.is_none() {
-            self.get_committer_task = Some(cx.spawn(async move |this, cx| {
-                let committer = get_git_committer(cx).await;
-                this.update(cx, |this, cx| {
-                    this.local_committer = Some(committer);
-                    cx.notify()
-                })
-                .ok();
-            }));
         }
     }
 
@@ -2266,6 +2252,19 @@ impl GitPanel {
             Ok(selection.map(|selection| Remote {
                 name: current_remotes[selection].clone(),
             }))
+        }
+    }
+
+    pub fn load_local_committer(&mut self, cx: &Context<Self>) {
+        if self.local_committer_task.is_none() {
+            self.local_committer_task = Some(cx.spawn(async move |this, cx| {
+                let committer = get_git_committer(cx).await;
+                this.update(cx, |this, cx| {
+                    this.local_committer = Some(committer);
+                    cx.notify()
+                })
+                .ok();
+            }));
         }
     }
 
@@ -4267,7 +4266,7 @@ impl Render for GitPanel {
         let has_write_access = self.has_write_access(cx);
 
         let has_co_authors = room.map_or(false, |room| {
-            self.load_git_committer(cx);
+            self.load_local_committer(cx);
             let room = room.read(cx);
             room.remote_participants()
                 .values()
