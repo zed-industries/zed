@@ -14,7 +14,7 @@ use crate::{
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, Project, ProjectId, RejoinedProject, RemoveChannelMemberResult, ReplicaId,
+        NotificationId, ProjectId, RejoinedProject, RemoveChannelMemberResult,
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -1921,7 +1921,8 @@ async fn join_project(
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
             is_host: false,
-            commit_email: None,
+            committer_name: None,
+            committer_email: None,
         }),
     };
 

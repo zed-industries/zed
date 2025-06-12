@@ -1026,7 +1026,8 @@ impl Database {
                     user_id: collaborator.user_id,
                     replica_id: collaborator.replica_id,
                     is_host: collaborator.is_host,
-                    commit_email: collaborator.commit_email,
+                    committer_name: collaborator.committer_name,
+                    committer_email: collaborator.committer_email,
                 })
                 .collect(),
             worktrees,

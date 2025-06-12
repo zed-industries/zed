@@ -58,7 +58,8 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
     pub user_id: UserId,
     pub is_host: bool,
-    pub commit_email: Option<String>,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
 }
 
 impl PartialOrd for User {
@@ -913,7 +914,8 @@ impl Collaborator {
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
             is_host: message.is_host,
-            commit_email: message.commit_email,
+            committer_name: message.committer_name,
+            committer_email: message.committer_email,
         })
     }
 }

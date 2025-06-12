@@ -751,7 +751,8 @@ pub struct ProjectCollaborator {
     pub user_id: UserId,
     pub replica_id: ReplicaId,
     pub is_host: bool,
-    pub commit_email: Option<String>,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
 }
 
 impl ProjectCollaborator {
@@ -761,7 +762,8 @@ impl ProjectCollaborator {
             replica_id: self.replica_id.0 as u32,
             user_id: self.user_id.to_proto(),
             is_host: self.is_host,
-            commit_email: self.commit_email.clone(),
+            committer_name: self.committer_name.clone(),
+            committer_email: self.committer_email.clone(),
         }
     }
 }

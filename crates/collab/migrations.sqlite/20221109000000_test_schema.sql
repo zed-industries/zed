@@ -186,7 +186,8 @@ CREATE TABLE "project_collaborators" (
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
     "is_host" BOOLEAN NOT NULL,
-    "commit_email" VARCHAR
+    "committer_name" VARCHAR,
+    "committer_email" VARCHAR
 );
 
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
