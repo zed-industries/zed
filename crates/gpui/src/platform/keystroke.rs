@@ -43,7 +43,7 @@ impl Display for InvalidKeystrokeError {
 
 /// Sentence explaining what keystroke parser expects, starting with "Expected ..."
 pub const KEYSTROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected a sequence of modifiers \
-    (`ctrl`, `alt`, `shift`, `fn`, `cmd`, `super`, or `win`) \
+    (`ctrl`, `alt`, `shift`, `fn`, `mod3`, `cmd`, `super`, or `win`) \
     followed by a key, separated by `-`.";
 
 impl Keystroke {
@@ -113,6 +113,10 @@ impl Keystroke {
                 continue;
             }
             if component.eq_ignore_ascii_case("fn") {
+                modifiers.function = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("mod3") {
                 modifiers.function = true;
                 continue;
             }
@@ -199,7 +203,10 @@ impl Keystroke {
     pub fn unparse(&self) -> String {
         let mut str = String::new();
         if self.modifiers.function {
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
             str.push_str("fn-");
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            str.push_str("mod3-");
         }
         if self.modifiers.control {
             str.push_str("ctrl-");
@@ -350,6 +357,12 @@ impl std::fmt::Display for Keystroke {
             #[cfg(not(target_os = "macos"))]
             write!(f, "shift-")?;
         }
+        if self.modifiers.function {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            write!(f, "mod3-")?;
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            write!(f, "fn-")?;
+        }
         let key = match self.key.as_str() {
             #[cfg(target_os = "macos")]
             "backspace" => '⌫',
@@ -403,7 +416,8 @@ pub struct Modifiers {
     #[serde(default)]
     pub platform: bool,
 
-    /// The function key
+    /// The function key, on macos
+    /// The xkb mod3 modifier, on linux
     #[serde(default)]
     pub function: bool,
 }
