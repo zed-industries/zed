@@ -9447,9 +9447,9 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
 
     // Get write counts after file creation (files were created with initial content)
     // We expect each file to have been written once during creation
-    let write_count_after_creation_1 = fs.write_count_for_path("/dir/file1.rs");
-    let write_count_after_creation_2 = fs.write_count_for_path("/dir/file2.rs");
-    let write_count_after_creation_3 = fs.write_count_for_path("/dir/file3.rs");
+    let write_count_after_creation_1 = fs.write_count_for_path(path!("/dir/file1.rs"));
+    let write_count_after_creation_2 = fs.write_count_for_path(path!("/dir/file2.rs"));
+    let write_count_after_creation_3 = fs.write_count_for_path(path!("/dir/file3.rs"));
 
     // Perform autosave
     let save_task = editor.update_in(cx, |editor, window, cx| {
@@ -9467,17 +9467,17 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
 
     // Only the dirty buffer should have been saved
     assert_eq!(
-        fs.write_count_for_path("/dir/file1.rs") - write_count_after_creation_1,
+        fs.write_count_for_path(path!("/dir/file1.rs")) - write_count_after_creation_1,
         1,
         "Buffer 1 was dirty, so it should have been written once during autosave"
     );
     assert_eq!(
-        fs.write_count_for_path("/dir/file2.rs") - write_count_after_creation_2,
+        fs.write_count_for_path(path!("/dir/file2.rs")) - write_count_after_creation_2,
         0,
         "Buffer 2 was clean, so it should not have been written during autosave"
     );
     assert_eq!(
-        fs.write_count_for_path("/dir/file3.rs") - write_count_after_creation_3,
+        fs.write_count_for_path(path!("/dir/file3.rs")) - write_count_after_creation_3,
         0,
         "Buffer 3 was clean, so it should not have been written during autosave"
     );
@@ -9504,17 +9504,17 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     // During manual save, clean buffers don't get written to disk
     // They just get did_save called for language server notifications
     assert_eq!(
-        fs.write_count_for_path("/dir/file1.rs") - write_count_after_creation_1,
+        fs.write_count_for_path(path!("/dir/file1.rs")) - write_count_after_creation_1,
         1,
         "Buffer 1 should only have been written once total (during autosave, not manual save)"
     );
     assert_eq!(
-        fs.write_count_for_path("/dir/file2.rs") - write_count_after_creation_2,
+        fs.write_count_for_path(path!("/dir/file2.rs")) - write_count_after_creation_2,
         0,
         "Buffer 2 should not have been written at all"
     );
     assert_eq!(
-        fs.write_count_for_path("/dir/file3.rs") - write_count_after_creation_3,
+        fs.write_count_for_path(path!("/dir/file3.rs")) - write_count_after_creation_3,
         0,
         "Buffer 3 should not have been written at all"
     );
