@@ -1,6 +1,7 @@
 #![cfg_attr(not(unix), allow(unused))]
 
 use anyhow::{Context as _, Result};
+use collections::HashMap;
 
 /// Capture all environment variables from the login shell.
 #[cfg(unix)]
@@ -80,4 +81,14 @@ fn spawn_and_read_fd(
     reader.read_to_end(&mut buffer)?;
 
     Ok((buffer, process.wait_with_output()?))
+}
+
+pub fn print_env() {
+    let env_vars: HashMap<String, String> = std::env::vars().collect();
+    let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
+        eprintln!("Error serializing environment variables: {}", err);
+        std::process::exit(1);
+    });
+    println!("{}", json);
+    std::process::exit(0);
 }

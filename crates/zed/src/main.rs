@@ -199,12 +199,7 @@ Error: Running Zed as root or via sudo is unsupported.
 
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
-        let env_vars: HashMap<String, String> = env::vars().collect();
-        let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
-            eprintln!("Error serializing environment variables: {}", err);
-            std::process::exit(1);
-        });
-        println!("{}", json);
+        util::shell_env::print_env();
         return;
     }
 
