@@ -515,6 +515,13 @@ pub struct GitCommitter {
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
+    if cfg!(test) {
+        return GitCommitter {
+            name: None,
+            email: None,
+        };
+    }
+
     let git_binary_path =
         if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
             cx.update(|cx| {
