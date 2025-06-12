@@ -180,7 +180,7 @@ impl EditParser {
 
     fn parse_line_hint(&self, tag: &str) -> Option<u32> {
         static LINE_HINT_REGEX: std::sync::LazyLock<Regex> =
-            std::sync::LazyLock::new(|| Regex::new(r#"line_hint=(?:"|)(\d+)"#).unwrap());
+            std::sync::LazyLock::new(|| Regex::new(r#"line=(?:"|)(\d+)"#).unwrap());
 
         LINE_HINT_REGEX
             .captures(tag)

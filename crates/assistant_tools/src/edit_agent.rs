@@ -287,8 +287,10 @@ impl EditAgent {
                     let ranges = resolved_old_text
                         .into_iter()
                         .map(|text| {
-                            let start_line = (snapshot.offset_to_point(text.range.start).row + 1) as usize;
-                            let end_line = (snapshot.offset_to_point(text.range.end).row + 1) as usize;
+                            let start_line =
+                                (snapshot.offset_to_point(text.range.start).row + 1) as usize;
+                            let end_line =
+                                (snapshot.offset_to_point(text.range.end).row + 1) as usize;
                             start_line..end_line
                         })
                         .collect();
@@ -433,25 +435,25 @@ impl EditAgent {
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
-                let EditParserEvent::OldTextChunk { chunk, done, line_hint: _ } = edit_event? else {
+                let EditParserEvent::OldTextChunk {
+                    chunk,
+                    done,
+                    line_hint,
+                } = edit_event?
+                else {
                     break;
                 };
 
-                old_range_tx.send(matcher.push(&chunk))?;
+                old_range_tx.send(matcher.push(&chunk, line_hint))?;
                 if done {
                     break;
                 }
             }
 
             let matches = matcher.finish();
+            let best_match = matcher.select_best_match();
 
-            let old_range = if matches.len() == 1 {
-                matches.first()
-            } else {
-                // No matches or multiple ambiguous matches
-                None
-            };
-            old_range_tx.send(old_range.cloned())?;
+            old_range_tx.send(best_match.clone())?;
 
             let indent = LineIndent::from_iter(
                 matcher
@@ -460,10 +462,18 @@ impl EditAgent {
                     .unwrap_or(&String::new())
                     .chars(),
             );
-            let resolved_old_texts = matches
-                .into_iter()
-                .map(|range| ResolvedOldText { range, indent })
-                .collect::<Vec<_>>();
+
+            let resolved_old_texts = if let Some(best_match) = best_match {
+                vec![ResolvedOldText {
+                    range: best_match,
+                    indent,
+                }]
+            } else {
+                matches
+                    .into_iter()
+                    .map(|range| ResolvedOldText { range, indent })
+                    .collect::<Vec<_>>()
+            };
 
             Ok((edit_events, resolved_old_texts))
         });
