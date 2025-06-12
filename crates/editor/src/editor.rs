@@ -912,6 +912,7 @@ enum SelectionDragState {
     ReadyToDrag {
         selection: Selection<Anchor>,
         click_position: gpui::Point<Pixels>,
+        mouse_down_time: Instant,
     },
     /// State when the mouse is dragging the selection in the editor.
     Dragging {
