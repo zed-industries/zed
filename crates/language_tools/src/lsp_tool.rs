@@ -1,12 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
 };
 
 use client::proto;
-use collections::HashMap as CollectionsHashMap;
+use collections::{HashMap, HashSet, hash_map};
 use editor::{
-    Editor,
+    Editor, EditorEvent,
     actions::{RestartLanguageServer, StopLanguageServer},
 };
 use gpui::{Entity, Subscription, WeakEntity};
@@ -40,14 +40,23 @@ struct ActiveEditor {
 #[derive(Debug, Default, Clone)]
 struct LanguageServers {
     servers: HashMap<LanguageServerId, LanguageServerState>,
-    servers_per_buffer_abs_path: CollectionsHashMap<PathBuf, HashSet<LanguageServerId>>,
+    servers_per_buffer_abs_path: HashMap<PathBuf, HashSet<LanguageServerId>>,
 }
 
 #[derive(Debug, Clone)]
 struct LanguageServerState {
     name: LanguageServerName,
-    message: Option<String>,
+    message: Option<(SharedString, Severity)>,
     status: LanguageServerStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Ok,
+    Info,
+    Warning,
+    Error,
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,14 +67,118 @@ enum LanguageServerStatus {
     Stopped,
 }
 
+impl LanguageServers {
+    fn update_status(
+        &mut self,
+        id: LanguageServerId,
+        status: LanguageServerStatus,
+        message: Option<&str>,
+        name: Option<LanguageServerName>,
+    ) {
+        match self.servers.entry(id) {
+            hash_map::Entry::Occupied(mut o) => {
+                let state = o.get_mut();
+                if let Some(name) = name {
+                    state.name = name;
+                }
+                state.status = status;
+                state.message = message
+                    .map(|message| (SharedString::from(message.to_owned()), Severity::Other));
+            }
+            hash_map::Entry::Vacant(v) => {
+                if let Some(name) = name {
+                    v.insert(LanguageServerState {
+                        name,
+                        message: message.map(|message| {
+                            (SharedString::from(message.to_owned()), Severity::Other)
+                        }),
+                        status,
+                    });
+                }
+            }
+        }
+
+        let duplicate_server_statuses =
+            self.servers
+                .iter()
+                .fold(HashMap::default(), |mut acc, (id, state)| {
+                    acc.entry(state.name.clone())
+                        .or_insert_with(BTreeMap::new)
+                        .insert(*id, state.status);
+                    acc
+                });
+
+        for duplicate_statuses in duplicate_server_statuses.into_values() {
+            if duplicate_statuses.len() < 2 {
+                continue;
+            }
+
+            let mut stopped_servers = BTreeSet::new();
+            let mut not_stopped = Vec::new();
+            for (id, status) in duplicate_statuses {
+                if status == LanguageServerStatus::Stopped {
+                    stopped_servers.insert(id);
+                } else {
+                    not_stopped.push(id);
+                }
+            }
+
+            if not_stopped.is_empty() {
+                if stopped_servers.len() > 1 {
+                    for id in stopped_servers.into_iter().rev().skip(1) {
+                        self.remove(id);
+                    }
+                }
+            } else {
+                for id in stopped_servers {
+                    self.remove(id);
+                }
+            }
+        }
+    }
+
+    fn update_message(
+        &mut self,
+        id: LanguageServerId,
+        message: Option<&str>,
+        severity: Severity,
+        name: Option<LanguageServerName>,
+    ) {
+        if let Some(state) = self.servers.get_mut(&id) {
+            state.message =
+                message.map(|message| (SharedString::from(message.to_owned()), severity));
+            if let Some(name) = name {
+                state.name = name;
+            }
+        } else if let Some((message, name)) = message.zip(name) {
+            self.servers.insert(
+                id,
+                LanguageServerState {
+                    message: Some((SharedString::from(message.to_owned()), severity)),
+                    name,
+                    status: LanguageServerStatus::Running,
+                },
+            );
+        }
+    }
+
+    fn remove(&mut self, id: LanguageServerId) {
+        self.servers.remove(&id);
+        self.servers_per_buffer_abs_path.retain(|_, servers| {
+            servers.remove(&id);
+            !servers.is_empty()
+        });
+    }
+}
+
 impl LspTool {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let lsp_store = workspace.project().read(cx).lsp_store();
-
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |_lsp_tool, _window, cx| {
                 cx.notify();
             });
+
+        let lsp_store = workspace.project().read(cx).lsp_store();
         let lsp_store_subscription =
             cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
                 lsp_tool.on_lsp_store_event(e, window, cx)
@@ -80,59 +193,110 @@ impl LspTool {
         }
     }
 
-    fn on_lsp_store_event(
-        &mut self,
-        e: &LspStoreEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_lsp_store_event(&mut self, e: &LspStoreEvent, _: &mut Window, cx: &mut Context<Self>) {
         match e {
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
-            } => {
-                let status = match proto::status_update::Status::from_i32(status_update.status) {
-                    Some(proto::status_update::Status::Starting) => LanguageServerStatus::Starting,
-                    Some(proto::status_update::Status::Running) => LanguageServerStatus::Running,
-                    Some(proto::status_update::Status::Stopping) => LanguageServerStatus::Stopping,
-                    Some(proto::status_update::Status::Stopped) => LanguageServerStatus::Stopped,
-                    _ => return,
-                };
-
-                let message = status_update.message.as_deref().map(|s| s.to_string());
-
-                if let Some(state) = self.language_servers.servers.get_mut(language_server_id) {
-                    state.status = status;
-                    if let Some(message) = message {
-                        state.message = Some(message);
-                    }
-                    if let Some(name) = name.as_ref() {
-                        state.name = name.clone();
-                    }
-                } else if let Some(name) = name.as_ref() {
-                    self.language_servers.servers.insert(
+            } => match proto::status_update::Status::from_i32(status_update.status) {
+                Some(proto::status_update::Status::Starting) => {
+                    self.language_servers.update_status(
                         *language_server_id,
-                        LanguageServerState {
-                            name: name.clone(),
-                            message,
-                            status,
-                        },
+                        LanguageServerStatus::Starting,
+                        status_update.message.as_deref(),
+                        name.clone(),
                     );
+                    cx.notify();
                 }
-                cx.notify();
-            }
+                Some(proto::status_update::Status::Running) => {
+                    self.language_servers.update_status(
+                        *language_server_id,
+                        LanguageServerStatus::Running,
+                        status_update.message.as_deref(),
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                Some(proto::status_update::Status::Stopping) => {
+                    self.language_servers.update_status(
+                        *language_server_id,
+                        LanguageServerStatus::Stopping,
+                        status_update.message.as_deref(),
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                Some(proto::status_update::Status::Stopped) => {
+                    self.language_servers.update_status(
+                        *language_server_id,
+                        LanguageServerStatus::Stopped,
+                        status_update.message.as_deref(),
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+
+                Some(proto::status_update::Status::Ok) => {
+                    self.language_servers.update_message(
+                        *language_server_id,
+                        status_update.message.as_deref(),
+                        Severity::Ok,
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                Some(proto::status_update::Status::Info) => {
+                    self.language_servers.update_message(
+                        *language_server_id,
+                        status_update.message.as_deref(),
+                        Severity::Info,
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                Some(proto::status_update::Status::Warning) => {
+                    self.language_servers.update_message(
+                        *language_server_id,
+                        status_update.message.as_deref(),
+                        Severity::Warning,
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                Some(proto::status_update::Status::Error) => {
+                    self.language_servers.update_message(
+                        *language_server_id,
+                        status_update.message.as_deref(),
+                        Severity::Error,
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                Some(proto::status_update::Status::Other) => {
+                    self.language_servers.update_message(
+                        *language_server_id,
+                        status_update.message.as_deref(),
+                        Severity::Other,
+                        name.clone(),
+                    );
+                    cx.notify();
+                }
+                None => {
+                    log::error!("Unexpected status update {}", status_update.status);
+                }
+            },
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(update),
                 ..
             } => {
-                let buffer_abs_path = PathBuf::from(&update.buffer_abs_path);
                 self.language_servers
                     .servers_per_buffer_abs_path
-                    .entry(buffer_abs_path)
+                    .entry(PathBuf::from(&update.buffer_abs_path))
                     .or_default()
                     .insert(*language_server_id);
+                cx.notify();
             }
             _ => {}
         };
@@ -156,17 +320,14 @@ impl LspTool {
 
         ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
             if active_editor.is_none() {
-                menu = menu
+                return menu
                     .item(
                         ContextMenuEntry::new(
                             "No active editor - open a file to manage language servers",
                         )
                         .disabled(true),
                     )
-                    .separator();
-
-                // Still show global actions even without an active editor
-                menu = menu
+                    .separator()
                     .item(
                         ContextMenuEntry::new("Restart All Servers")
                             .disabled(true)
@@ -178,14 +339,24 @@ impl LspTool {
                             .handler(|_, _| {}),
                     )
                     .separator();
-            }
-
-            if servers.is_empty() {
-                menu = menu.item(
-                    ContextMenuEntry::new("No language servers are currently running")
-                        .disabled(true),
-                );
-                return menu;
+            } else if servers.is_empty() {
+                return menu
+                    .item(
+                        ContextMenuEntry::new("No language servers are currently running")
+                            .disabled(true),
+                    )
+                    .separator()
+                    .item(
+                        ContextMenuEntry::new("Restart All Servers")
+                            .disabled(true)
+                            .handler(|_, _| {}),
+                    )
+                    .item(
+                        ContextMenuEntry::new("Stop All Servers")
+                            .disabled(true)
+                            .handler(|_, _| {}),
+                    )
+                    .separator();
             }
 
             // For now, categorize all servers as "Other Active Servers"
@@ -518,7 +689,7 @@ impl StatusItemView for LspTool {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
-        _window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if ProjectSettings::get_global(cx).global_lsp_settings.button {
@@ -532,37 +703,75 @@ impl StatusItemView for LspTool {
                 {
                     let editor_buffers =
                         HashSet::from_iter(editor.read(cx).buffer().read(cx).excerpt_buffer_ids());
+                    let _editor_subscription =
+                        cx.subscribe(&editor, |lsp_tool, _, e: &EditorEvent, cx| match e {
+                            EditorEvent::ExcerptsAdded { buffer, .. } => {
+                                if let Some(active_editor) = lsp_tool.active_editor.as_mut() {
+                                    let buffer_id = buffer.read(cx).remote_id();
+                                    if active_editor.editor_buffers.insert(buffer_id) {
+                                        cx.notify();
+                                    }
+                                }
+                            }
+                            EditorEvent::ExcerptsRemoved {
+                                removed_buffer_ids, ..
+                            } => {
+                                if let Some(active_editor) = lsp_tool.active_editor.as_mut() {
+                                    let mut removed = false;
+                                    for id in removed_buffer_ids {
+                                        active_editor.editor_buffers.retain(|buffer_id| {
+                                            let retain = buffer_id != id;
+                                            removed |= !retain;
+                                            retain
+                                        });
+                                    }
+                                    if removed {
+                                        cx.notify();
+                                    }
+                                }
+                            }
+                            _ => {}
+                        });
                     self.active_editor = Some(ActiveEditor {
                         editor: editor.downgrade(),
-                        _editor_subscription: Subscription::new(|| {}),
+                        _editor_subscription,
                         editor_buffers,
                     });
+                    cx.notify();
                 }
-            } else {
+            } else if self.active_editor.is_some() {
                 self.active_editor = None;
+                cx.notify();
             }
-        } else {
+        } else if self.active_editor.is_some() {
             self.active_editor = None;
+            cx.notify();
         }
-        cx.notify();
     }
 }
 
+// TODO kb keyboard story
 impl Render for LspTool {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
         for server in self.language_servers.servers.values() {
-            if let Some(ref message) = server.message {
-                // Simple heuristic to determine severity from message content
-                let message_lower = message.to_lowercase();
-                if message_lower.contains("error") || message_lower.contains("failed") {
-                    has_errors = true;
-                } else if message_lower.contains("warning") || message_lower.contains("warn") {
-                    has_warnings = true;
-                } else {
-                    has_other_notifications = true;
+            if let Some((message, severity)) = &server.message {
+                match severity {
+                    Severity::Error => has_errors = true,
+                    Severity::Warning => has_warnings = true,
+                    Severity::Info | Severity::Ok => has_other_notifications = true,
+                    Severity::Other => {
+                        let message_lower = message.to_lowercase();
+                        if message_lower.contains("error") || message_lower.contains("failed") {
+                            has_errors = true;
+                        } else if message_lower.contains("warn") {
+                            has_warnings = true;
+                        } else {
+                            has_other_notifications = true;
+                        }
+                    }
                 }
             }
         }
@@ -577,8 +786,6 @@ impl Render for LspTool {
             None
         };
 
-        let lsp_logs = cx.global::<GlobalLogStore>().0.downgrade();
-
         div().child(
             PopoverMenu::new("lsp-tool-menu")
                 .trigger(
@@ -590,13 +797,17 @@ impl Render for LspTool {
                         .tooltip(move |_, cx| Tooltip::simple("Language servers", cx)),
                 )
                 .menu({
-                    let this = cx.weak_entity();
+                    let lsp_tool = cx.weak_entity();
                     move |window, cx| {
-                        this.upgrade().map(|this| {
-                            this.update(cx, |this, cx| {
-                                this.build_context_menu(lsp_logs.clone(), window, cx)
+                        lsp_tool
+                            .update(cx, |lsp_tool, cx| {
+                                lsp_tool.build_context_menu(
+                                    cx.global::<GlobalLogStore>().0.downgrade(),
+                                    window,
+                                    cx,
+                                )
                             })
-                        })
+                            .ok()
                     }
                 }),
         )
