@@ -1,11 +1,39 @@
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Timer,
-    Window, WindowBounds, WindowControlArea, WindowKind, WindowOptions, actions, div, prelude::*,
-    px, rgb, size,
+    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Task,
+    Timer, Window, WindowBounds, WindowControlArea, WindowKind, WindowOptions, actions, div,
+    prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
     custom_titlebar: bool,
+    value: f64,
+    _task: Option<Task<()>>,
+}
+
+impl SubWindow {
+    fn new(custom_titlebar: bool, cx: &mut Context<Self>) -> Self {
+        let _task = if custom_titlebar {
+            Some(cx.spawn(async move |this, cx| {
+                // This loop for test when continuous update, is the TitleBar draggable.
+                loop {
+                    Timer::after(std::time::Duration::from_millis(30)).await;
+
+                    _ = this.update(cx, |this, cx| {
+                        this.value = rand::random::<f64>() * 100000000.0;
+                        cx.notify();
+                    });
+                }
+            }))
+        } else {
+            None
+        };
+
+        Self {
+            custom_titlebar,
+            value: 0.0,
+            _task,
+        }
+    }
 }
 
 fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
@@ -96,7 +124,17 @@ impl Render for SubWindow {
                         ),
                 )
             })
-            .child(div().p_8().gap_2().child("SubWindow with custom titlebar"))
+            .child(
+                div()
+                    .p_8()
+                    .gap_2()
+                    .flex()
+                    .flex_col()
+                    .child("SubWindow with custom TitleBar.")
+                    .when(self.custom_titlebar, |cx| {
+                        cx.child(div().py_4().child(format!("Value: {}", self.value)))
+                    }),
+            )
     }
 }
 
@@ -122,11 +160,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
@@ -137,11 +171,7 @@ impl Render for WindowDemo {
                         kind: WindowKind::PopUp,
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
@@ -152,11 +182,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: true,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(true, cx)),
                 )
                 .unwrap();
             }))
@@ -167,11 +193,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
@@ -183,11 +205,7 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
