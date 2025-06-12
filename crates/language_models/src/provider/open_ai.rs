@@ -648,7 +648,6 @@ pub fn count_open_ai_tokens(
             | Model::FourPointOneMini
             | Model::FourPointOneNano
             | Model::O1
-            | Model::O1Preview
             | Model::O1Mini
             | Model::O3
             | Model::O3Mini

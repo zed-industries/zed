@@ -75,8 +75,6 @@ pub enum Model {
     FourPointOneNano,
     #[serde(rename = "o1")]
     O1,
-    #[serde(rename = "o1-preview")]
-    O1Preview,
     #[serde(rename = "o1-mini")]
     O1Mini,
     #[serde(rename = "o3-mini")]
@@ -113,7 +111,6 @@ impl Model {
             "gpt-4.1-mini" => Ok(Self::FourPointOneMini),
             "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
             "o1" => Ok(Self::O1),
-            "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
@@ -133,7 +130,6 @@ impl Model {
             Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
-            Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
@@ -153,7 +149,6 @@ impl Model {
             Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
-            Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
@@ -175,7 +170,6 @@ impl Model {
             Self::FourPointOneMini => 1_047_576,
             Self::FourPointOneNano => 1_047_576,
             Self::O1 => 200_000,
-            Self::O1Preview => 128_000,
             Self::O1Mini => 128_000,
             Self::O3Mini => 200_000,
             Self::O3 => 200_000,
@@ -198,7 +192,6 @@ impl Model {
             Self::FourPointOneMini => Some(32_768),
             Self::FourPointOneNano => Some(32_768),
             Self::O1 => Some(100_000),
-            Self::O1Preview => Some(32_768),
             Self::O1Mini => Some(65_536),
             Self::O3Mini => Some(100_000),
             Self::O3 => Some(100_000),
@@ -220,7 +213,6 @@ impl Model {
             | Self::FourPointOneMini
             | Self::FourPointOneNano => true,
             Self::O1
-            | Self::O1Preview
             | Self::O1Mini
             | Self::O3
             | Self::O3Mini
