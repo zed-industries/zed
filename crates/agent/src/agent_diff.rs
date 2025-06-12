@@ -1513,7 +1513,7 @@ impl AgentDiff {
                     multibuffer.add_diff(diff_handle.clone(), cx);
                 });
 
-                let new_state = if thread.read(cx).has_pending_edit_tool_uses() {
+                let new_state = if thread.read(cx).is_generating() {
                     EditorState::Generating
                 } else {
                     EditorState::Reviewing
