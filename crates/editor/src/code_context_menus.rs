@@ -1055,7 +1055,8 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_mixed_case_prefix_length: Reverse<usize>,
+                sort_capitalize: Reverse<usize>,
+                sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_kind: usize,
                 sort_fuzzy_bracket: Reverse<usize>,
@@ -1126,28 +1127,19 @@ impl CompletionsMenu {
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
-                let sort_mixed_case_prefix_length = Reverse(
+                let sort_capitalize = Reverse(
                     query
                         .as_ref()
-                        .map(|q| {
-                            q.chars()
-                                .zip(string_match.string.chars())
-                                .enumerate()
-                                .take_while(|(i, (q_char, match_char))| {
-                                    if *i == 0 {
-                                        // Case-sensitive comparison for first character
-                                        q_char == match_char
-                                    } else {
-                                        // Case-insensitive comparison for other characters
-                                        q_char.to_lowercase().eq(match_char.to_lowercase())
-                                    }
-                                })
-                                .count()
-                        })
+                        .and_then(|q| q.chars().next())
+                        .zip(string_match.string.chars().next())
+                        .map(|(q_char, s_char)| if q_char == s_char { 1 } else { 0 })
                         .unwrap_or(0),
                 );
+                let sort_positions = string_match.positions.clone();
+
                 MatchTier::WordStartMatch {
-                    sort_mixed_case_prefix_length,
+                    sort_capitalize,
+                    sort_positions,
                     sort_snippet,
                     sort_kind,
                     sort_fuzzy_bracket,
