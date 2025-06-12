@@ -261,7 +261,6 @@ pub(crate) struct LinkedEditingRange {
 
 #[derive(Clone, Debug)]
 pub(crate) struct GetDocumentDiagnostics {
-    pub server_id: LanguageServerId,
     pub previous_result_id: Option<String>,
 }
 
@@ -4071,24 +4070,14 @@ impl LspCommand for GetDocumentDiagnostics {
     }
 
     async fn from_proto(
-        message: proto::GetDocumentDiagnostics,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: proto::GetDocumentDiagnostics,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        let server_id = LanguageServerId::from_proto(todo!("TODO kb"));
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
-        Ok(Self {
-            server_id,
-            previous_result_id: lsp_store.update(&mut cx, |lsp_store, cx| {
-                lsp_store.result_id(server_id, buffer_id, cx)
-            })?,
-        })
+        anyhow::bail!(
+            "proto::GetDocumentDiagnostics is not expected to be converted from proto directly, as it needs `previous_result_id` fetched first"
+        )
     }
 
     fn response_to_proto(
