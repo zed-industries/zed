@@ -387,7 +387,6 @@ impl LspTool {
                     &lsp_logs,
                 );
             }
-
             if let Some(active_editor) = &active_editor {
                 menu = menu
                     .entry(
@@ -650,7 +649,6 @@ impl StatusItemView for LspTool {
     }
 }
 
-// TODO kb keyboard story
 impl Render for LspTool {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let mut has_errors = false;
