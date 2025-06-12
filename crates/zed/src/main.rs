@@ -198,27 +198,13 @@ Error: Running Zed as root or via sudo is unsupported.
     }
 
     // `zed --env` Outputs environment variables as JSON to stdout
-    if let Some(output_path) = args.env {
+    if args.env {
         let env_vars: HashMap<String, String> = env::vars().collect();
-        let to_string = if output_path.is_some() {
-            serde_json::to_string
-        } else {
-            serde_json::to_string_pretty
-        };
-        let json = to_string(&env_vars).unwrap_or_else(|err| {
+        let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
             eprintln!("Error serializing environment variables: {}", err);
             std::process::exit(1);
         });
-
-        match output_path {
-            Some(path) => std::fs::write(&path, json).unwrap_or_else(|err| {
-                eprintln!("Error writing to {}: {}", path, err);
-                std::process::exit(1);
-            }),
-            _ => {
-                println!("{}", json);
-            }
-        }
+        println!("{}", json);
         return;
     }
 
@@ -1099,8 +1085,8 @@ struct Args {
     dump_all_actions: bool,
 
     /// Output current environment variables as JSON to stdout
-    #[arg(long, hide = true, value_name = "FILE")]
-    env: Option<Option<String>>,
+    #[arg(long, hide = true)]
+    env: bool,
 }
 
 #[derive(Clone, Debug)]
