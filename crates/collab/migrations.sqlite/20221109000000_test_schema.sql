@@ -185,7 +185,9 @@ CREATE TABLE "project_collaborators" (
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
-    "is_host" BOOLEAN NOT NULL
+    "is_host" BOOLEAN NOT NULL,
+    "committer_name" VARCHAR,
+    "committer_email" VARCHAR
 );
 
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");

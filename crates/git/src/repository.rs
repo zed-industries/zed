@@ -26,8 +26,8 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::ResultExt;
 use util::command::{new_smol_command, new_std_command};
+use util::{ResultExt, paths};
 use uuid::Uuid;
 
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
@@ -467,6 +467,50 @@ impl RealGitRepository {
 #[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
     pub commit_sha: Oid,
+}
+
+#[derive(Debug)]
+pub struct GitCommitter {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
+    if cfg!(any(feature = "test-support", test)) {
+        return GitCommitter {
+            name: None,
+            email: None,
+        };
+    }
+
+    let git_binary_path =
+        if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+            cx.update(|cx| {
+                cx.path_for_auxiliary_executable("git")
+                    .context("could not find git binary path")
+                    .log_err()
+            })
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+
+    let git = GitBinary::new(
+        git_binary_path.unwrap_or(PathBuf::from("git")),
+        paths::home_dir().clone(),
+        cx.background_executor().clone(),
+    );
+
+    cx.background_spawn(async move {
+        let name = git.run(["config", "--global", "user.name"]).await.log_err();
+        let email = git
+            .run(["config", "--global", "user.email"])
+            .await
+            .log_err();
+        GitCommitter { name, email }
+    })
+    .await
 }
 
 impl GitRepository for RealGitRepository {
