@@ -936,7 +936,7 @@ impl Pane {
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
         if !item_already_exists {
-            self.close_items_on_file_open(window, cx);
+            self.close_items_on_item_open(window, cx);
         }
 
         if item.is_singleton(cx) {
@@ -1422,7 +1422,7 @@ impl Pane {
         )
     }
 
-    fn close_items_on_file_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_items_on_item_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let target = self.max_tabs.map(|m| m.get());
         let protect_active_item = false;
         self.close_items_to_target_count(target, protect_active_item, window, cx);
