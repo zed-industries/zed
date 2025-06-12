@@ -5615,10 +5615,8 @@ impl EditorElement {
                     editor.selection_drag_state,
                     SelectionDragState::Dragging { .. }
                 ) {
-                    window.set_cursor_style(
-                        CursorStyle::ClosedHand,
-                        &layout.position_map.text_hitbox,
-                    );
+                    window
+                        .set_cursor_style(CursorStyle::DragCopy, &layout.position_map.text_hitbox);
                 } else if editor
                     .hovered_link_state
                     .as_ref()
