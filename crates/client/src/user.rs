@@ -49,7 +49,6 @@ pub struct User {
     pub github_login: String,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
-    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -883,7 +882,6 @@ impl User {
             github_login: message.github_login,
             avatar_uri: message.avatar_url.into(),
             name: message.name,
-            email: message.email,
         })
     }
 }

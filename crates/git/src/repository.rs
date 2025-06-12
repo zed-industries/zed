@@ -508,6 +508,7 @@ pub struct GitRepositoryCheckpoint {
     pub commit_sha: Oid,
 }
 
+#[derive(Debug)]
 pub struct GitCommitter {
     pub name: Option<String>,
     pub email: Option<String>,

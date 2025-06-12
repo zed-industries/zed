@@ -738,7 +738,7 @@ impl GitPanel {
         self.load_git_committer(cx);
     }
 
-    pub fn load_git_committer(&mut self, cx: &mut Context<Self>) {
+    pub fn load_git_committer(&mut self, cx: &Context<Self>) {
         if self.get_committer_task.is_none() {
             self.get_committer_task = Some(cx.spawn(async move |this, cx| {
                 let committer = get_git_committer(cx).await;
@@ -4267,8 +4267,9 @@ impl Render for GitPanel {
         let has_write_access = self.has_write_access(cx);
 
         let has_co_authors = room.map_or(false, |room| {
-            room.read(cx)
-                .remote_participants()
+            self.load_git_committer(cx);
+            let room = room.read(cx);
+            room.remote_participants()
                 .values()
                 .any(|remote_participant| remote_participant.can_write())
         });

@@ -1890,7 +1890,13 @@ async fn join_project(
 
     let db = session.db().await;
     let (project, replica_id) = &mut *db
-        .join_project(project_id, session.connection_id, session.user_id())
+        .join_project(
+            project_id,
+            session.connection_id,
+            session.user_id(),
+            request.committer_name.clone(),
+            request.committer_email.clone(),
+        )
         .await?;
     drop(db);
     tracing::info!(%project_id, "join remote project");
@@ -1921,8 +1927,8 @@ async fn join_project(
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
             is_host: false,
-            committer_name: None,
-            committer_email: None,
+            committer_name: request.committer_name.clone(),
+            committer_email: request.committer_email.clone(),
         }),
     };
 
@@ -2551,7 +2557,6 @@ async fn get_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
-            email: user.email_address,
             name: user.name,
         })
         .collect();
@@ -2585,7 +2590,6 @@ async fn fuzzy_search_users(
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
             name: user.name,
-            email: user.email_address,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
