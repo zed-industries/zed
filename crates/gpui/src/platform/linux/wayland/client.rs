@@ -84,26 +84,12 @@ use crate::platform::linux::{
 };
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
-    AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
     ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
-};
-use crate::{
-    Capslock,
-    platform::linux::{
-        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-        reveal_path_internal,
-        wayland::{
-            clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
-            cursor::Cursor,
-            serial::{SerialKind, SerialTracker},
-            window::WaylandWindow,
-        },
-        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-    },
 };
 
 /// Used to convert evdev scancode to xkb scancode
