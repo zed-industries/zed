@@ -816,23 +816,22 @@ impl Item for Editor {
             .into_iter()
             .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
             .collect::<HashSet<_>>();
-        let save_non_dirty_buffers = self.save_non_dirty_buffers(cx);
-        cx.spawn_in(window, async move |editor, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             if format {
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.perform_format(
-                            project.clone(),
-                            FormatTrigger::Save,
-                            FormatTarget::Buffers,
-                            window,
-                            cx,
-                        )
-                    })?
-                    .await?;
+                this.update_in(cx, |editor, window, cx| {
+                    editor.perform_format(
+                        project.clone(),
+                        FormatTrigger::Save,
+                        FormatTarget::Buffers,
+                        window,
+                        cx,
+                    )
+                })?
+                .await?;
             }
 
-            if save_non_dirty_buffers {
+            if buffers.len() == 1 {
+                // Apply full save routine for singleton buffers, to allow to `touch` the file via the editor.
                 project
                     .update(cx, |project, cx| project.save_buffers(buffers, cx))?
                     .await?;
