@@ -903,6 +903,7 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
+    keyboard_grace: bool,
 }
 
 enum SelectionDragState {
@@ -6235,21 +6236,56 @@ impl Editor {
         }
     }
 
+    pub fn blame_hover(&mut self, _: &BlameHover, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self.selections.newest::<Point>(cx).head();
+        let Some((buffer, point, _)) = snapshot.buffer_snapshot.point_to_buffer_point(cursor)
+        else {
+            return;
+        };
+
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        let row_info = RowInfo {
+            buffer_id: Some(buffer.remote_id()),
+            buffer_row: Some(point.row),
+            ..Default::default()
+        };
+        let Some(blame_entry) = blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+        else {
+            return;
+        };
+
+        // TODO: Place the popover in a more sensible place
+        let anchor = self.selections.newest_anchor().head();
+        let position = self.to_pixel_point(anchor, &snapshot, window);
+        if let Some(position) = position {
+            self.show_blame_popover(&blame_entry, position, true, cx);
+        }
+    }
+
     fn show_blame_popover(
         &mut self,
         blame_entry: &BlameEntry,
         position: gpui::Point<Pixels>,
+        ignore_timeout: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
             cx.notify();
         } else {
-            let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
             let show_task = cx.spawn(async move |editor, cx| {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(delay))
-                    .await;
+                if !ignore_timeout {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(blame_popover_delay))
+                        .await;
+                }
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(state) = &mut editor.inline_blame_popover {
@@ -6285,6 +6321,7 @@ impl Editor {
                     commit_message: details,
                     markdown,
                 },
+                keyboard_grace: ignore_timeout,
             });
         }
     }

@@ -257,6 +257,7 @@ actions!(
         ApplyAllDiffHunks,
         ApplyDiffHunk,
         Backspace,
+        BlameHover,
         Cancel,
         CancelFlycheck,
         CancelLanguageServerWork,
