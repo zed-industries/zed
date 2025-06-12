@@ -4,8 +4,8 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::display_map::EditorMargins;
@@ -38,8 +38,7 @@ use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
-use util::RangeExt;
-use util::ResultExt;
+use util::{RangeExt, ResultExt, maybe};
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenConfiguration;
 
@@ -134,7 +133,7 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = AssistantSettings::get_global(cx).enabled;
+            let enabled = AgentSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
@@ -219,7 +218,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         if !settings.enabled {
             return;
         }
@@ -1011,7 +1010,7 @@ impl InlineAssistant {
                         self.update_editor_highlights(&editor, cx);
                     }
                 } else {
-                    entry.get().highlight_updates.send(()).ok();
+                    entry.get_mut().highlight_updates.send(()).ok();
                 }
             }
 
@@ -1171,27 +1170,31 @@ impl InlineAssistant {
                 selections.select_anchor_ranges([position..position])
             });
 
-            let mut scroll_target_top;
-            let mut scroll_target_bottom;
+            let mut scroll_target_range = None;
             if let Some(decorations) = assist.decorations.as_ref() {
-                scroll_target_top = editor
-                    .row_for_block(decorations.prompt_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-                scroll_target_bottom = editor
-                    .row_for_block(decorations.end_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-            } else {
+                scroll_target_range = maybe!({
+                    let top = editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f32;
+                    let bottom = editor.row_for_block(decorations.end_block_id, cx)?.0 as f32;
+                    Some((top, bottom))
+                });
+                if scroll_target_range.is_none() {
+                    log::error!("bug: failed to find blocks for scrolling to inline assist");
+                }
+            }
+            let scroll_target_range = scroll_target_range.unwrap_or_else(|| {
                 let snapshot = editor.snapshot(window, cx);
                 let start_row = assist
                     .range
                     .start
                     .to_display_point(&snapshot.display_snapshot)
                     .row();
-                scroll_target_top = start_row.0 as f32;
-                scroll_target_bottom = scroll_target_top + 1.;
-            }
+                let top = start_row.0 as f32;
+                let bottom = top + 1.0;
+                (top, bottom)
+            });
+            let mut scroll_target_top = scroll_target_range.0;
+            let mut scroll_target_bottom = scroll_target_range.1;
+
             scroll_target_top -= editor.vertical_scroll_margin() as f32;
             scroll_target_bottom += editor.vertical_scroll_margin() as f32;
 
@@ -1331,7 +1334,7 @@ impl InlineAssistant {
                 editor.clear_gutter_highlights::<GutterPendingRange>(cx);
             } else {
                 editor.highlight_gutter::<GutterPendingRange>(
-                    &gutter_pending_ranges,
+                    gutter_pending_ranges,
                     |cx| cx.theme().status().info_background,
                     cx,
                 )
@@ -1342,7 +1345,7 @@ impl InlineAssistant {
                 editor.clear_gutter_highlights::<GutterTransformedRange>(cx);
             } else {
                 editor.highlight_gutter::<GutterTransformedRange>(
-                    &gutter_transformed_ranges,
+                    gutter_transformed_ranges,
                     |cx| cx.theme().status().info,
                     cx,
                 )
@@ -1445,7 +1448,7 @@ impl InlineAssistant {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()
-                            .block_mouse_down()
+                            .block_mouse_except_scroll()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.window.line_height())
@@ -1519,7 +1522,7 @@ impl InlineAssistant {
 struct EditorInlineAssists {
     assist_ids: Vec<InlineAssistId>,
     scroll_lock: Option<InlineAssistScrollLock>,
-    highlight_updates: async_watch::Sender<()>,
+    highlight_updates: watch::Sender<()>,
     _update_highlights: Task<Result<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -1531,7 +1534,7 @@ struct InlineAssistScrollLock {
 
 impl EditorInlineAssists {
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
-        let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
+        let (highlight_updates_tx, mut highlight_updates_rx) = watch::channel(());
         Self {
             assist_ids: Vec::new(),
             scroll_lock: None,
@@ -1689,7 +1692,7 @@ impl InlineAssist {
                         if let Some(editor) = editor.upgrade() {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor_assists) =
-                                    this.assists_by_editor.get(&editor.downgrade())
+                                    this.assists_by_editor.get_mut(&editor.downgrade())
                                 {
                                     editor_assists.highlight_updates.send(()).ok();
                                 }
@@ -1771,7 +1774,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AssistantSettings::get_global(cx).enabled {
+        if !AgentSettings::get_global(cx).enabled {
             return Task::ready(Ok(Vec::new()));
         }
 

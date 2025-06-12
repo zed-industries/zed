@@ -6,11 +6,12 @@ use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{
-    Project,
+    Project, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use ui::IconName;
 use util::RangeExt;
@@ -57,6 +58,10 @@ impl Tool for GrepTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
         false
     }
 
@@ -109,7 +114,7 @@ impl Tool for GrepTool {
         let input = match serde_json::from_value::<GrepToolInput>(input) {
             Ok(input) => input,
             Err(error) => {
-                return Task::ready(Err(anyhow!("Failed to parse input: {}", error))).into();
+                return Task::ready(Err(anyhow!("Failed to parse input: {error}"))).into();
             }
         };
 
@@ -122,7 +127,24 @@ impl Tool for GrepTool {
         ) {
             Ok(matcher) => matcher,
             Err(error) => {
-                return Task::ready(Err(anyhow!("invalid include glob pattern: {}", error))).into();
+                return Task::ready(Err(anyhow!("invalid include glob pattern: {error}"))).into();
+            }
+        };
+
+        // Exclude global file_scan_exclusions and private_files settings
+        let exclude_matcher = {
+            let global_settings = WorktreeSettings::get_global(cx);
+            let exclude_patterns = global_settings
+                .file_scan_exclusions
+                .sources()
+                .iter()
+                .chain(global_settings.private_files.sources().iter());
+
+            match PathMatcher::new(exclude_patterns) {
+                Ok(matcher) => matcher,
+                Err(error) => {
+                    return Task::ready(Err(anyhow!("invalid exclude pattern: {error}"))).into();
+                }
             }
         };
 
@@ -133,7 +155,7 @@ impl Tool for GrepTool {
             false,
             false,
             include_matcher,
-            PathMatcher::default(), // For now, keep it simple and don't enable an exclude pattern.
+            exclude_matcher,
             true, // Always match file include pattern against *full project paths* that start with a project root.
             None,
         ) {
@@ -156,12 +178,24 @@ impl Tool for GrepTool {
                     continue;
                 }
 
-                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
+                let Ok((Some(path), mut parse_status)) = buffer.read_with(cx, |buffer, cx| {
                     (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
-                })? else {
+                }) else {
                     continue;
                 };
 
+                // Check if this file should be excluded based on its worktree settings
+                if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
+                    project.find_project_path(&path, cx)
+                }) {
+                    if cx.update(|cx| {
+                        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                        worktree_settings.is_path_excluded(&project_path.path)
+                            || worktree_settings.is_path_private(&project_path.path)
+                    }).unwrap_or(false) {
+                        continue;
+                    }
+                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
@@ -280,10 +314,11 @@ impl Tool for GrepTool {
 mod tests {
     use super::*;
     use assistant_tool::Tool;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
-    use project::{FakeFs, Project};
+    use project::{FakeFs, Project, WorktreeSettings};
+    use serde_json::json;
     use settings::SettingsStore;
     use unindent::Unindent;
     use util::path;
@@ -295,7 +330,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             serde_json::json!({
                 "src": {
                     "main.rs": "fn main() {\n    println!(\"Hello, world!\");\n}",
@@ -383,7 +418,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             serde_json::json!({
                 "case_test.txt": "This file has UPPERCASE and lowercase text.\nUPPERCASE patterns should match only with case_sensitive: true",
             }),
@@ -464,7 +499,7 @@ mod tests {
 
         // Create test file with syntax structures
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             serde_json::json!({
                 "test_syntax.rs": r#"
                     fn top_level_function() {
@@ -752,9 +787,9 @@ mod tests {
         match task.output.await {
             Ok(result) => {
                 if cfg!(windows) {
-                    result.content.replace("root\\", "root/")
+                    result.content.as_str().unwrap().replace("root\\", "root/")
                 } else {
-                    result.content
+                    result.content.as_str().unwrap().to_string()
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),
@@ -784,5 +819,489 @@ mod tests {
         )
         .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
         .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_grep_security_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project_root": {
+                    "allowed_file.rs": "fn main() { println!(\"This file is in the project\"); }",
+                    ".mysecrets": "SECRET_KEY=abc123\nfn secret() { /* private */ }",
+                    ".secretdir": {
+                        "config": "fn special_configuration() { /* excluded */ }"
+                    },
+                    ".mymetadata": "fn custom_metadata() { /* excluded */ }",
+                    "subdir": {
+                        "normal_file.rs": "fn normal_file_content() { /* Normal */ }",
+                        "special.privatekey": "fn private_key_content() { /* private */ }",
+                        "data.mysensitive": "fn sensitive_data() { /* private */ }"
+                    }
+                },
+                "outside_project": {
+                    "sensitive_file.rs": "fn outside_function() { /* This file is outside the project */ }"
+                }
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            use gpui::UpdateGlobal;
+            use project::WorktreeSettings;
+            use settings::SettingsStore;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions = Some(vec![
+                        "**/.secretdir".to_string(),
+                        "**/.mymetadata".to_string(),
+                    ]);
+                    settings.private_files = Some(vec![
+                        "**/.mysecrets".to_string(),
+                        "**/*.privatekey".to_string(),
+                        "**/*.mysensitive".to_string(),
+                    ]);
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Searching for files outside the project worktree should return no results
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "outside_function"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not find files outside the project worktree"
+        );
+
+        // Searching within the project should succeed
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "main"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.iter().any(|p| p.contains("allowed_file.rs")),
+            "grep_tool should be able to search files inside worktrees"
+        );
+
+        // Searching files that match file_scan_exclusions should return no results
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "special_configuration"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not search files in .secretdir (file_scan_exclusions)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "custom_metadata"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not search .mymetadata files (file_scan_exclusions)"
+        );
+
+        // Searching private files should return no results
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "SECRET_KEY"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not search .mysecrets (private_files)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "private_key_content"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not search .privatekey files (private_files)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "sensitive_data"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not search .mysensitive files (private_files)"
+        );
+
+        // Searching a normal file should still work, even with private_files configured
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "normal_file_content"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.iter().any(|p| p.contains("normal_file.rs")),
+            "Should be able to search normal files"
+        );
+
+        // Path traversal attempts with .. in include_pattern should not escape project
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "outside_function",
+                    "include_pattern": "../outside_project/**/*.rs"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        let results = result.unwrap();
+        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        assert!(
+            paths.is_empty(),
+            "grep_tool should not allow escaping project boundaries with relative paths"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_grep_with_multiple_worktree_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create first worktree with its own private files
+        fs.insert_tree(
+            path!("/worktree1"),
+            json!({
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/fixture.*"],
+                        "private_files": ["**/secret.rs"]
+                    }"#
+                },
+                "src": {
+                    "main.rs": "fn main() { let secret_key = \"hidden\"; }",
+                    "secret.rs": "const API_KEY: &str = \"secret_value\";",
+                    "utils.rs": "pub fn get_config() -> String { \"config\".to_string() }"
+                },
+                "tests": {
+                    "test.rs": "fn test_secret() { assert!(true); }",
+                    "fixture.sql": "SELECT * FROM secret_table;"
+                }
+            }),
+        )
+        .await;
+
+        // Create second worktree with different private files
+        fs.insert_tree(
+            path!("/worktree2"),
+            json!({
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/internal.*"],
+                        "private_files": ["**/private.js", "**/data.json"]
+                    }"#
+                },
+                "lib": {
+                    "public.js": "export function getSecret() { return 'public'; }",
+                    "private.js": "const SECRET_KEY = \"private_value\";",
+                    "data.json": "{\"secret_data\": \"hidden\"}"
+                },
+                "docs": {
+                    "README.md": "# Documentation with secret info",
+                    "internal.md": "Internal secret documentation"
+                }
+            }),
+        )
+        .await;
+
+        // Set global settings
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                });
+            });
+        });
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            cx,
+        )
+        .await;
+
+        // Wait for worktrees to be fully scanned
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Search for "secret" - should exclude files based on worktree-specific settings
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "secret",
+                    "case_sensitive": false
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        let paths = extract_paths_from_results(&content);
+
+        // Should find matches in non-private files
+        assert!(
+            paths.iter().any(|p| p.contains("main.rs")),
+            "Should find 'secret' in worktree1/src/main.rs"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("test.rs")),
+            "Should find 'secret' in worktree1/tests/test.rs"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("public.js")),
+            "Should find 'secret' in worktree2/lib/public.js"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("README.md")),
+            "Should find 'secret' in worktree2/docs/README.md"
+        );
+
+        // Should NOT find matches in private/excluded files based on worktree settings
+        assert!(
+            !paths.iter().any(|p| p.contains("secret.rs")),
+            "Should not search in worktree1/src/secret.rs (local private_files)"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("fixture.sql")),
+            "Should not search in worktree1/tests/fixture.sql (local file_scan_exclusions)"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("private.js")),
+            "Should not search in worktree2/lib/private.js (local private_files)"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("data.json")),
+            "Should not search in worktree2/lib/data.json (local private_files)"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("internal.md")),
+            "Should not search in worktree2/docs/internal.md (local file_scan_exclusions)"
+        );
+
+        // Test with `include_pattern` specific to one worktree
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "regex": "secret",
+                    "include_pattern": "worktree1/**/*.rs"
+                });
+                Arc::new(GrepTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        let paths = extract_paths_from_results(&content);
+
+        // Should only find matches in worktree1 *.rs files (excluding private ones)
+        assert!(
+            paths.iter().any(|p| p.contains("main.rs")),
+            "Should find match in worktree1/src/main.rs"
+        );
+        assert!(
+            paths.iter().any(|p| p.contains("test.rs")),
+            "Should find match in worktree1/tests/test.rs"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("secret.rs")),
+            "Should not find match in excluded worktree1/src/secret.rs"
+        );
+        assert!(
+            paths.iter().all(|p| !p.contains("worktree2")),
+            "Should not find any matches in worktree2"
+        );
+    }
+
+    // Helper function to extract file paths from grep results
+    fn extract_paths_from_results(results: &str) -> Vec<String> {
+        results
+            .lines()
+            .filter(|line| line.starts_with("## Matches in "))
+            .map(|line| {
+                line.strip_prefix("## Matches in ")
+                    .unwrap()
+                    .trim()
+                    .to_string()
+            })
+            .collect()
     }
 }

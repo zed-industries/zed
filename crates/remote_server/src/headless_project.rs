@@ -1,5 +1,5 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
@@ -9,8 +9,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, PrettierStore, ProjectEnvironment, ProjectPath, ToolchainStore,
-    WorktreeId,
+    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectPath,
+    ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -76,6 +76,7 @@ impl HeadlessProject {
         }: HeadlessAppState,
         cx: &mut Context<Self>,
     ) -> Self {
+        debug_adapter_extension::init(proxy.clone(), cx);
         language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
@@ -86,12 +87,13 @@ impl HeadlessProject {
         });
 
         let environment = cx.new(|_| ProjectEnvironment::new(None));
-
+        let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
                 worktree_store.clone(),
                 environment.clone(),
+                manifest_tree.clone(),
                 cx,
             )
         });
@@ -144,6 +146,7 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
+                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -171,6 +174,7 @@ impl HeadlessProject {
                 prettier_store.clone(),
                 toolchain_store.clone(),
                 environment,
+                manifest_tree,
                 languages.clone(),
                 http_client.clone(),
                 fs.clone(),
@@ -367,7 +371,7 @@ impl HeadlessProject {
                 let mut parent = path
                     .parent()
                     .ok_or(e)
-                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                    .with_context(|| format!("{path:?} does not exist"))?;
                 if parent == Path::new("") {
                     parent = util::paths::home_dir();
                 }
@@ -382,7 +386,7 @@ impl HeadlessProject {
         };
 
         let worktree = this
-            .update(&mut cx.clone(), |this, _| {
+            .read_with(&mut cx.clone(), |this, _| {
                 Worktree::local(
                     Arc::from(canonicalized.as_path()),
                     message.payload.visible,
@@ -393,11 +397,12 @@ impl HeadlessProject {
             })?
             .await?;
 
-        let response = this.update(&mut cx, |_, cx| {
-            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
+        let response = this.read_with(&mut cx, |_, cx| {
+            let worktree = worktree.read(cx);
+            proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_proto(),
-            })
+            }
         })?;
 
         // We spawn this asynchronously, so that we can send the response back
@@ -535,7 +540,7 @@ impl HeadlessProject {
                 });
             }
 
-            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+            let buffer_id = buffer.read(cx).remote_id();
 
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store
@@ -557,11 +562,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
-            message
-                .query
-                .ok_or_else(|| anyhow!("missing query field"))?,
-        )?;
+        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
         let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
@@ -575,7 +576,7 @@ impl HeadlessProject {
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
         while let Ok(buffer) = results.recv().await {
-            let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
+            let buffer_id = buffer.read_with(&mut cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {

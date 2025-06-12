@@ -2,11 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use anyhow::Context as _;
 use anyhow::{Result, anyhow};
 use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
@@ -14,9 +16,14 @@ use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_dir;
 
-pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
-pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
-pub const COPILOT_CHAT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct CopilotChatSettings {
+    pub api_url: Arc<str>,
+    pub auth_url: Arc<str>,
+    pub models_url: Arc<str>,
+}
 
 // Copilot's base model; defined by Microsoft in premium requests table
 // This will be moved to the front of the Copilot model list, and will be used for
@@ -113,7 +120,7 @@ pub enum ModelVendor {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type")]
-pub enum ChatMessageContent {
+pub enum ChatMessagePart {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image_url")]
@@ -194,24 +201,53 @@ pub enum ToolChoice {
     None,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
-        content: Option<String>,
+        content: ChatMessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: Vec<ChatMessageContent>,
+        content: ChatMessageContent,
     },
     System {
         content: String,
     },
     Tool {
-        content: String,
+        content: ChatMessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ChatMessageContent {
+    Plain(String),
+    Multipart(Vec<ChatMessagePart>),
+}
+
+impl ChatMessageContent {
+    pub fn empty() -> Self {
+        ChatMessageContent::Multipart(vec![])
+    }
+}
+
+impl From<Vec<ChatMessagePart>> for ChatMessageContent {
+    fn from(mut parts: Vec<ChatMessagePart>) -> Self {
+        if let [ChatMessagePart::Text { text }] = parts.as_mut_slice() {
+            ChatMessageContent::Plain(std::mem::take(text))
+        } else {
+            ChatMessageContent::Multipart(parts)
+        }
+    }
+}
+
+impl From<String> for ChatMessageContent {
+    fn from(text: String) -> Self {
+        ChatMessageContent::Plain(text)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -293,8 +329,8 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     type Error = anyhow::Error;
 
     fn try_from(response: ApiTokenResponse) -> Result<Self, Self::Error> {
-        let expires_at = DateTime::from_timestamp(response.expires_at, 0)
-            .ok_or_else(|| anyhow!("invalid expires_at"))?;
+        let expires_at =
+            DateTime::from_timestamp(response.expires_at, 0).context("invalid expires_at")?;
 
         Ok(Self {
             api_key: response.token,
@@ -310,6 +346,7 @@ impl Global for GlobalCopilotChat {}
 pub struct CopilotChat {
     oauth_token: Option<String>,
     api_token: Option<ApiToken>,
+    settings: CopilotChatSettings,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
 }
@@ -343,62 +380,77 @@ impl CopilotChat {
             .map(|model| model.0.clone())
     }
 
-    pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
+    fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut Context<Self>) -> Self {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
+        let settings = CopilotChatSettings::default();
+        cx.spawn(async move |this, cx| {
+            let mut parent_watch_rx = watch_config_dir(
+                cx.background_executor(),
+                fs.clone(),
+                dir_path.clone(),
+                config_paths,
+            );
+            while let Some(contents) = parent_watch_rx.next().await {
+                let oauth_token = extract_oauth_token(contents);
 
-        cx.spawn({
-            let client = client.clone();
-            async move |cx| {
-                let mut parent_watch_rx = watch_config_dir(
-                    cx.background_executor(),
-                    fs.clone(),
-                    dir_path.clone(),
-                    config_paths,
-                );
-                while let Some(contents) = parent_watch_rx.next().await {
-                    let oauth_token = extract_oauth_token(contents);
-                    cx.update(|cx| {
-                        if let Some(this) = Self::global(cx).as_ref() {
-                            this.update(cx, |this, cx| {
-                                this.oauth_token = oauth_token.clone();
-                                cx.notify();
-                            });
-                        }
-                    })?;
+                this.update(cx, |this, cx| {
+                    this.oauth_token = oauth_token.clone();
+                    cx.notify();
+                })?;
 
-                    if let Some(ref oauth_token) = oauth_token {
-                        let api_token = request_api_token(oauth_token, client.clone()).await?;
-                        cx.update(|cx| {
-                            if let Some(this) = Self::global(cx).as_ref() {
-                                this.update(cx, |this, cx| {
-                                    this.api_token = Some(api_token.clone());
-                                    cx.notify();
-                                });
-                            }
-                        })?;
-                        let models = get_models(api_token.api_key, client.clone()).await?;
-                        cx.update(|cx| {
-                            if let Some(this) = Self::global(cx).as_ref() {
-                                this.update(cx, |this, cx| {
-                                    this.models = Some(models);
-                                    cx.notify();
-                                });
-                            }
-                        })?;
-                    }
+                if oauth_token.is_some() {
+                    Self::update_models(&this, cx).await?;
                 }
-                anyhow::Ok(())
             }
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
-        Self {
-            oauth_token: None,
+        let this = Self {
+            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
             api_token: None,
             models: None,
+            settings,
             client,
+        };
+        if this.oauth_token.is_some() {
+            cx.spawn(async move |this, mut cx| Self::update_models(&this, &mut cx).await)
+                .detach_and_log_err(cx);
         }
+
+        this
+    }
+
+    async fn update_models(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
+        let (oauth_token, client, auth_url) = this.read_with(cx, |this, _| {
+            (
+                this.oauth_token.clone(),
+                this.client.clone(),
+                this.settings.auth_url.clone(),
+            )
+        })?;
+        let api_token = request_api_token(
+            &oauth_token.ok_or_else(|| {
+                anyhow!("OAuth token is missing while updating Copilot Chat models")
+            })?,
+            auth_url,
+            client.clone(),
+        )
+        .await?;
+
+        let models_url = this.update(cx, |this, cx| {
+            this.api_token = Some(api_token.clone());
+            cx.notify();
+            this.settings.models_url.clone()
+        })?;
+        let models = get_models(models_url, api_token.api_key, client.clone()).await?;
+
+        this.update(cx, |this, cx| {
+            this.models = Some(models);
+            cx.notify();
+        })?;
+        anyhow::Ok(())
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -413,24 +465,29 @@ impl CopilotChat {
         request: Request,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
-            return Err(anyhow!("Copilot chat is not enabled"));
-        };
+        let this = cx
+            .update(|cx| Self::global(cx))
+            .ok()
+            .flatten()
+            .context("Copilot chat is not enabled")?;
 
-        let (oauth_token, api_token, client) = this.read_with(&cx, |this, _| {
-            (
-                this.oauth_token.clone(),
-                this.api_token.clone(),
-                this.client.clone(),
-            )
-        })?;
+        let (oauth_token, api_token, client, api_url, auth_url) =
+            this.read_with(&cx, |this, _| {
+                (
+                    this.oauth_token.clone(),
+                    this.api_token.clone(),
+                    this.client.clone(),
+                    this.settings.api_url.clone(),
+                    this.settings.auth_url.clone(),
+                )
+            })?;
 
-        let oauth_token = oauth_token.ok_or_else(|| anyhow!("No OAuth token available"))?;
+        let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let token = match api_token {
             Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
             _ => {
-                let token = request_api_token(&oauth_token, client.clone()).await?;
+                let token = request_api_token(&oauth_token, auth_url, client.clone()).await?;
                 this.update(&mut cx, |this, cx| {
                     this.api_token = Some(token.clone());
                     cx.notify();
@@ -439,12 +496,28 @@ impl CopilotChat {
             }
         };
 
-        stream_completion(client.clone(), token.api_key, request).await
+        stream_completion(client.clone(), token.api_key, api_url, request).await
+    }
+
+    pub fn set_settings(&mut self, settings: CopilotChatSettings, cx: &mut Context<Self>) {
+        let same_settings = self.settings == settings;
+        self.settings = settings;
+        if !same_settings {
+            cx.spawn(async move |this, cx| {
+                Self::update_models(&this, cx).await?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .detach();
+        }
     }
 }
 
-async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
-    let all_models = request_models(api_token, client).await?;
+async fn get_models(
+    models_url: Arc<str>,
+    api_token: String,
+    client: Arc<dyn HttpClient>,
+) -> Result<Vec<Model>> {
+    let all_models = request_models(models_url, api_token, client).await?;
 
     let mut models: Vec<Model> = all_models
         .into_iter()
@@ -472,10 +545,14 @@ async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Ve
     Ok(models)
 }
 
-async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
+async fn request_models(
+    models_url: Arc<str>,
+    api_token: String,
+    client: Arc<dyn HttpClient>,
+) -> Result<Vec<Model>> {
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
-        .uri(COPILOT_CHAT_MODELS_URL)
+        .uri(models_url.as_ref())
         .header("Authorization", format!("Bearer {}", api_token))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat");
@@ -484,24 +561,29 @@ async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Resul
 
     let mut response = client.send(request).await?;
 
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to request models: {}",
+        response.status()
+    );
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
 
-        let body_str = std::str::from_utf8(&body)?;
+    let body_str = std::str::from_utf8(&body)?;
 
-        let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
+    let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 
-        Ok(models)
-    } else {
-        Err(anyhow!("Failed to request models: {}", response.status()))
-    }
+    Ok(models)
 }
 
-async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Result<ApiToken> {
+async fn request_api_token(
+    oauth_token: &str,
+    auth_url: Arc<str>,
+    client: Arc<dyn HttpClient>,
+) -> Result<ApiToken> {
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
-        .uri(COPILOT_CHAT_AUTH_URL)
+        .uri(auth_url.as_ref())
         .header("Authorization", format!("token {}", oauth_token))
         .header("Accept", "application/json");
 
@@ -522,8 +604,7 @@ async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Re
         response.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
-
-        Err(anyhow!("Failed to request API token: {}", body_str))
+        anyhow::bail!("Failed to request API token: {body_str}");
     }
 }
 
@@ -547,11 +628,21 @@ fn extract_oauth_token(contents: String) -> Option<String> {
 async fn stream_completion(
     client: Arc<dyn HttpClient>,
     api_key: String,
+    completion_url: Arc<str>,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+    let is_vision_request = request.messages.last().map_or(false, |message| match message {
+        ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. }
+        | ChatMessage::Tool { content, .. } => {
+            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+        }
+        _ => false,
+    });
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
-        .uri(COPILOT_CHAT_COMPLETION_URL)
+        .uri(completion_url.as_ref())
         .header(
             "Editor-Version",
             format!(
@@ -562,7 +653,7 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("Copilot-Vision-Request", "true");
+        .header("Copilot-Vision-Request", is_vision_request.to_string());
 
     let is_streaming = request.stream;
 
@@ -574,11 +665,11 @@ async fn stream_completion(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        return Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ));
+        );
     }
 
     if is_streaming {

@@ -5,14 +5,13 @@
 //! elements with uniform height.
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, Element, ElementId, Entity,
-    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, Window, point,
-    size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
+    Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
+    ListSizingBehavior, Overflow, Pixels, ScrollHandle, Size, StyleRefinement, Styled, Window,
+    point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
-use taffy::style::Overflow;
 
 use super::ListHorizontalSizingBehavior;
 
@@ -20,28 +19,23 @@ use super::ListHorizontalSizingBehavior;
 /// When rendered into a container with overflow-y: hidden and a fixed (or max) height,
 /// uniform_list will only render the visible subset of items.
 #[track_caller]
-pub fn uniform_list<I, R, V>(
-    view: Entity<V>,
-    id: I,
+pub fn uniform_list<R>(
+    id: impl Into<ElementId>,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<R>,
+    f: impl 'static + Fn(Range<usize>, &mut Window, &mut App) -> Vec<R>,
 ) -> UniformList
 where
-    I: Into<ElementId>,
     R: IntoElement,
-    V: Render,
 {
     let id = id.into();
     let mut base_style = StyleRefinement::default();
     base_style.overflow.y = Some(Overflow::Scroll);
 
-    let render_range = move |range, window: &mut Window, cx: &mut App| {
-        view.update(cx, |this, cx| {
-            f(this, range, window, cx)
-                .into_iter()
-                .map(|component| component.into_any_element())
-                .collect()
-        })
+    let render_range = move |range: Range<usize>, window: &mut Window, cx: &mut App| {
+        f(range, window, cx)
+            .into_iter()
+            .map(|component| component.into_any_element())
+            .collect()
     };
 
     UniformList {
@@ -52,11 +46,7 @@ where
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
-
-            #[cfg(debug_assertions)]
-            location: Some(*core::panic::Location::caller()),
-
-            ..Default::default()
+            ..Interactivity::new()
         },
         scroll_handle: None,
         sizing_behavior: ListSizingBehavior::default(),
@@ -166,9 +156,14 @@ impl Element for UniformList {
         self.interactivity.element_id.clone()
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -176,6 +171,7 @@ impl Element for UniformList {
         let item_size = self.measure_item(None, window, cx);
         let layout_id = self.interactivity.request_layout(
             global_id,
+            inspector_id,
             window,
             cx,
             |style, window, cx| match self.sizing_behavior {
@@ -223,6 +219,7 @@ impl Element for UniformList {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -271,6 +268,7 @@ impl Element for UniformList {
 
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             content_size,
             window,
@@ -435,6 +433,7 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<crate::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -443,6 +442,7 @@ impl Element for UniformList {
     ) {
         self.interactivity.paint(
             global_id,
+            inspector_id,
             bounds,
             hitbox.as_ref(),
             window,

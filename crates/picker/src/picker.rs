@@ -1,3 +1,7 @@
+mod head;
+pub mod highlighted_match_with_paths;
+pub mod popover_menu;
+
 use anyhow::Result;
 use editor::{
     Editor,
@@ -13,15 +17,12 @@ use gpui::{
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 use ui::{
     Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, prelude::*, v_flex,
 };
 use util::ResultExt;
 use workspace::ModalView;
-
-mod head;
-pub mod highlighted_match_with_paths;
 
 enum ElementContainer {
     List(ListState),
@@ -189,7 +190,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .overflow_hidden()
                     .flex_none()
                     .h_9()
-                    .px_3()
+                    .px_2p5()
                     .child(editor.clone()),
             )
             .when(
@@ -759,14 +760,13 @@ impl<D: PickerDelegate> Picker<D> {
 
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
-                cx.entity().clone(),
                 "candidates",
                 self.delegate.match_count(),
-                move |picker, visible_range, window, cx| {
+                cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
                     visible_range
                         .map(|ix| picker.render_element(window, cx, ix))
                         .collect()
-                },
+                }),
             )
             .with_sizing_behavior(sizing_behavior)
             .when_some(self.widest_item, |el, widest_item| {

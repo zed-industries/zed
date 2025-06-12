@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
-    editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
+    editor_settings::GoToDefinitionFallback,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
 };
@@ -120,11 +120,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let hovered_link_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => modifiers.secondary(),
-            MultiCursorModifier::CmdOrCtrl => modifiers.alt,
-        };
+        let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
         if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
@@ -539,7 +535,7 @@ pub fn show_link_definition(
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
                     if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
-                        this.update(cx, |_, _| {
+                        this.read_with(cx, |_, _| {
                             let range = maybe!({
                                 let start =
                                     snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
@@ -649,7 +645,7 @@ pub fn show_link_definition(
                 }
             })?;
 
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         }
         .log_err()
         .await
@@ -665,7 +661,7 @@ pub(crate) fn find_url(
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -727,7 +723,7 @@ pub(crate) fn find_url_from_range(
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -786,7 +782,7 @@ pub(crate) async fn find_file(
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
     let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
 

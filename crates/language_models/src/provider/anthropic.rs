@@ -1,6 +1,9 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
-use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
+use anthropic::{
+    AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
+    ToolResultPart, Usage,
+};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -15,8 +18,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, MessageContent,
-    RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -237,8 +240,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::Claude3_7Sonnet,
-            anthropic::Model::Claude3_7SonnetThinking,
+            anthropic::Model::ClaudeSonnet4,
+            anthropic::Model::ClaudeSonnet4Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -346,9 +349,14 @@ pub fn count_anthropic_tokens(
                     MessageContent::ToolUse(_tool_use) => {
                         // TODO: Estimate token usage from tool uses.
                     }
-                    MessageContent::ToolResult(tool_result) => {
-                        string_contents.push_str(&tool_result.content);
-                    }
+                    MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            string_contents.push_str(text);
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                    },
                 }
             }
 
@@ -379,22 +387,34 @@ impl AnthropicModel {
         &self,
         request: anthropic::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event, AnthropicError>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<anthropic::Event, AnthropicError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
+            let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.context("failed to stream completion")
+            request.await.map_err(|err| match err {
+                AnthropicError::RateLimit(duration) => {
+                    LanguageModelCompletionError::RateLimit(duration)
+                }
+                err @ (AnthropicError::ApiError(..) | AnthropicError::Other(..)) => {
+                    LanguageModelCompletionError::Other(anthropic_err_to_anyhow(err))
+                }
+            })
         }
         .boxed()
     }
@@ -418,6 +438,10 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_images(&self) -> bool {
         true
     }
 
@@ -461,6 +485,7 @@ impl LanguageModel for AnthropicModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_anthropic(
@@ -472,12 +497,7 @@ impl LanguageModel for AnthropicModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request
-                .await
-                .map_err(|err| match err.downcast::<AnthropicError>() {
-                    Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
-                    Err(err) => anyhow!(err),
-                })?;
+            let response = request.await?;
             Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -511,14 +531,7 @@ pub fn into_anthropic(
 
         match message.role {
             Role::User | Role::Assistant => {
-                let cache_control = if message.cache {
-                    Some(anthropic::CacheControl {
-                        cache_type: anthropic::CacheControlType::Ephemeral,
-                    })
-                } else {
-                    None
-                };
-                let anthropic_message_content: Vec<anthropic::RequestContent> = message
+                let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
                     .content
                     .into_iter()
                     .filter_map(|content| match content {
@@ -526,7 +539,7 @@ pub fn into_anthropic(
                             if !text.is_empty() {
                                 Some(anthropic::RequestContent::Text {
                                     text,
-                                    cache_control,
+                                    cache_control: None,
                                 })
                             } else {
                                 None
@@ -540,7 +553,7 @@ pub fn into_anthropic(
                                 Some(anthropic::RequestContent::Thinking {
                                     thinking,
                                     signature: signature.unwrap_or_default(),
-                                    cache_control,
+                                    cache_control: None,
                                 })
                             } else {
                                 None
@@ -561,22 +574,35 @@ pub fn into_anthropic(
                                 media_type: "image/png".to_string(),
                                 data: image.source.to_string(),
                             },
-                            cache_control,
+                            cache_control: None,
                         }),
                         MessageContent::ToolUse(tool_use) => {
                             Some(anthropic::RequestContent::ToolUse {
                                 id: tool_use.id.to_string(),
                                 name: tool_use.name.to_string(),
                                 input: tool_use.input,
-                                cache_control,
+                                cache_control: None,
                             })
                         }
                         MessageContent::ToolResult(tool_result) => {
                             Some(anthropic::RequestContent::ToolResult {
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content.to_string(),
-                                cache_control,
+                                content: match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        ToolResultContent::Plain(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                                            source: anthropic::ImageSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: "image/png".to_string(),
+                                                data: image.source.to_string(),
+                                            },
+                                        }])
+                                    }
+                                },
+                                cache_control: None,
                             })
                         }
                     })
@@ -592,6 +618,29 @@ pub fn into_anthropic(
                         continue;
                     }
                 }
+
+                // Mark the last segment of the message as cached
+                if message.cache {
+                    let cache_control_value = Some(anthropic::CacheControl {
+                        cache_type: anthropic::CacheControlType::Ephemeral,
+                    });
+                    for message_content in anthropic_message_content.iter_mut().rev() {
+                        match message_content {
+                            anthropic::RequestContent::RedactedThinking { .. } => {
+                                // Caching is not possible, fallback to next message
+                            }
+                            anthropic::RequestContent::Text { cache_control, .. }
+                            | anthropic::RequestContent::Thinking { cache_control, .. }
+                            | anthropic::RequestContent::Image { cache_control, .. }
+                            | anthropic::RequestContent::ToolUse { cache_control, .. }
+                            | anthropic::RequestContent::ToolResult { cache_control, .. } => {
+                                *cache_control = cache_control_value;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 new_messages.push(anthropic::Message {
                     role: anthropic_role,
                     content: anthropic_message_content,
@@ -795,6 +844,7 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
@@ -1040,5 +1090,77 @@ impl Render for ConfigurationView {
                 )
                 .into_any()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anthropic::AnthropicModelMode;
+    use language_model::{LanguageModelRequestMessage, MessageContent};
+
+    #[test]
+    fn test_cache_control_only_on_last_segment() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    MessageContent::Text("Some prompt".to_string()),
+                    MessageContent::Image(language_model::LanguageModelImage::empty()),
+                    MessageContent::Image(language_model::LanguageModelImage::empty()),
+                    MessageContent::Image(language_model::LanguageModelImage::empty()),
+                    MessageContent::Image(language_model::LanguageModelImage::empty()),
+                ],
+                cache: true,
+            }],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-3-5-sonnet".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+        );
+
+        assert_eq!(anthropic_request.messages.len(), 1);
+
+        let message = &anthropic_request.messages[0];
+        assert_eq!(message.content.len(), 5);
+
+        assert!(matches!(
+            message.content[0],
+            anthropic::RequestContent::Text {
+                cache_control: None,
+                ..
+            }
+        ));
+        for i in 1..3 {
+            assert!(matches!(
+                message.content[i],
+                anthropic::RequestContent::Image {
+                    cache_control: None,
+                    ..
+                }
+            ));
+        }
+
+        assert!(matches!(
+            message.content[4],
+            anthropic::RequestContent::Image {
+                cache_control: Some(anthropic::CacheControl {
+                    cache_type: anthropic::CacheControlType::Ephemeral,
+                }),
+                ..
+            }
+        ));
     }
 }

@@ -256,7 +256,7 @@ impl DiagnosticBlock {
 
         if let Some(diagnostics_editor) = diagnostics_editor {
             if let Some(diagnostic) = diagnostics_editor
-                .update(cx, |diagnostics, _| {
+                .read_with(cx, |diagnostics, _| {
                     diagnostics
                         .diagnostics
                         .get(&buffer_id)

@@ -152,6 +152,7 @@
       "g end": ["vim::EndOfLine", { "display_lines": true }],
       "g 0": ["vim::StartOfLine", { "display_lines": true }],
       "g home": ["vim::StartOfLine", { "display_lines": true }],
+      "g shift-m": ["vim::MiddleOfLine", { "display_lines": true }],
       "g ^": ["vim::FirstNonWhitespace", { "display_lines": true }],
       "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
@@ -197,6 +198,8 @@
       "9": ["vim::Number", 9],
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w ]": "editor::GoToDefinitionSplit",
+      "ctrl-w ctrl-]": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
@@ -392,6 +395,8 @@
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePreviousItem",
       "insert": "vim::InsertBefore",
+      ".": "vim::Repeat",
+      "alt-.": "vim::RepeatFind",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
@@ -418,6 +423,7 @@
 
       "x": "editor::SelectLine",
       "shift-x": "editor::SelectLine",
+      "%": "editor::SelectAll",
       // Window mode
       "space w h": "workspace::ActivatePaneLeft",
       "space w l": "workspace::ActivatePaneRight",
@@ -447,7 +453,8 @@
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow"
+      "shift-c": "editor::AddSelectionBelow",
+      "alt-shift-c": "editor::AddSelectionAbove"
     }
   },
   {
@@ -708,7 +715,7 @@
     }
   },
   {
-    "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
+    "context": "AgentPanel || GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -838,20 +845,25 @@
     }
   },
   {
+    "context": "MessageEditor > Editor && VimControl",
+    "bindings": {
+      "enter": "agent::Chat",
+      // TODO: Implement search
+      "/": null,
+      "?": null,
+      "#": null,
+      "*": null,
+      "n": null,
+      "shift-n": null
+    }
+  },
+  {
     "context": "os != macos && Editor && edit_prediction_conflict",
     "bindings": {
       // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This
       // is because alt-tab may not be available, as it is often used for window switching on Linux
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
-    }
-  },
-  {
-    // Fixes https://github.com/zed-industries/zed/issues/29095 by ensuring that
-    // the last binding for editor::ToggleComments is not ctrl-c.
-    "context": "hack_to_fix_ctrl-c",
-    "bindings": {
-      "g c": "editor::ToggleComments"
     }
   }
 ]

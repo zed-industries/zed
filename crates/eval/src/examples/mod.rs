@@ -1,5 +1,5 @@
+use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -16,6 +16,8 @@ mod add_arg_to_trait_method;
 mod code_block_citations;
 mod comment_translation;
 mod file_search;
+mod grep_params_escapement;
+mod overwrite_file;
 mod planets;
 
 pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
@@ -25,6 +27,8 @@ pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
         Rc::new(code_block_citations::CodeBlockCitations),
         Rc::new(planets::Planets),
         Rc::new(comment_translation::CommentTranslation),
+        Rc::new(overwrite_file::FileOverwriteExample),
+        Rc::new(grep_params_escapement::GrepParamsEscapementExample),
     ];
 
     for example_path in list_declarative_examples(examples_dir).unwrap() {
@@ -45,6 +49,7 @@ impl DeclarativeExample {
     pub fn load(example_path: &Path) -> Result<Self> {
         let name = Self::name_from_path(example_path);
         let base: ExampleToml = toml::from_str(&fs::read_to_string(&example_path)?)?;
+        let example_dir = example_path.parent().unwrap();
 
         let language_server = if base.require_lsp {
             Some(crate::example::LanguageServer {
@@ -63,6 +68,14 @@ impl DeclarativeExample {
             AgentProfileId::default()
         };
 
+        let existing_thread_json = if let Some(path) = base.existing_thread_path {
+            let content = fs::read_to_string(example_dir.join(&path))
+                .unwrap_or_else(|_| panic!("Failed to read existing thread file: {}", path));
+            Some(content)
+        } else {
+            None
+        };
+
         let metadata = ExampleMetadata {
             name,
             url: base.url,
@@ -70,6 +83,8 @@ impl DeclarativeExample {
             language_server,
             max_assertions: None,
             profile_id,
+            existing_thread_json,
+            max_turns: base.max_turns,
         };
 
         Ok(DeclarativeExample {
@@ -110,6 +125,10 @@ pub struct ExampleToml {
     pub diff_assertions: BTreeMap<String, String>,
     #[serde(default)]
     pub thread_assertions: BTreeMap<String, String>,
+    #[serde(default)]
+    pub existing_thread_path: Option<String>,
+    #[serde(default)]
+    pub max_turns: Option<u32>,
 }
 
 #[async_trait(?Send)]
@@ -120,7 +139,8 @@ impl Example for DeclarativeExample {
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         cx.push_user_message(&self.prompt);
-        let _ = cx.run_to_end().await;
+        let max_turns = self.metadata.max_turns.unwrap_or(1000);
+        let _ = cx.run_turns(max_turns).await;
         Ok(())
     }
 

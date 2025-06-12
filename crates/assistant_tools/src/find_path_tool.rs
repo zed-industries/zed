@@ -1,6 +1,8 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+};
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
 use gpui::{
@@ -54,6 +56,10 @@ impl Tool for FindPathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
         false
     }
 
@@ -117,16 +123,18 @@ impl Tool for FindPathTool {
                     )
                     .unwrap();
                 }
-                let output = FindPathToolOutput {
-                    glob,
-                    paths: matches.clone(),
-                };
 
-                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+                for mat in matches.iter().skip(offset).take(RESULTS_PER_PAGE) {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
+
+                let output = FindPathToolOutput {
+                    glob,
+                    paths: matches,
+                };
+
                 Ok(ToolResultOutput {
-                    content: message,
+                    content: ToolResultContent::Text(message),
                     output: Some(serde_json::to_value(output)?),
                 })
             }
@@ -233,8 +241,6 @@ impl ToolCard for FindPathToolCard {
             format!("{} matches", self.paths.len()).into()
         };
 
-        let glob_label = self.glob.to_string();
-
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
                 v_flex()
@@ -308,7 +314,7 @@ impl ToolCard for FindPathToolCard {
             .gap_1()
             .child(
                 ToolCallCardHeader::new(IconName::SearchCode, matches_label)
-                    .with_code_path(glob_label)
+                    .with_code_path(&self.glob)
                     .disclosure_slot(
                         Disclosure::new("path-search-disclosure", self.expanded)
                             .opened_icon(IconName::ChevronUp)

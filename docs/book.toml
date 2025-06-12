@@ -27,7 +27,7 @@ enable = false
 "/conversations.html" = "/community-links"
 "/ai.html" = "/docs/ai/overview.html"
 "/assistant/assistant.html" = "/docs/ai/overview.html"
-"/assistant/configuration.html" = "/docs/ai/custom-api-keys.html"
+"/assistant/configuration.html" = "/docs/ai/configuration.html"
 "/assistant/assistant-panel.html" = "/docs/ai/agent-panel.html"
 "/assistant/contexts.html" = "/docs/ai/text-threads.html"
 "/assistant/inline-assistant.html" = "/docs/ai/inline-assistant.html"
@@ -36,6 +36,7 @@ enable = false
 "/assistant/context-servers.html" = "/docs/ai/mcp.html"
 "/assistant/model-context-protocol.html" = "/docs/ai/mcp.html"
 "/model-improvement.html" = "/docs/ai/ai-improvement.html"
+"/extensions/context-servers.html" = "/docs/extensions/mcp-extensions.html"
 
 
 # Our custom preprocessor for expanding commands like `{#kb action::ActionName}`,

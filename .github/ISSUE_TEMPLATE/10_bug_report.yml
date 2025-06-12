@@ -18,14 +18,16 @@ body:
           - Issues with insufficient detail may be summarily closed.
         -->
 
+        DESCRIPTION_HERE
+
         Steps to reproduce:
         1.
         2.
         3.
         4.
 
-        Expected Behavior:
-        Actual Behavior:
+        **Expected Behavior**:
+        **Actual Behavior**:
 
         <!-- Before Submitting, did you:
           1. Include settings.json, keymap.json, .editorconfig if relevant?
@@ -49,8 +51,8 @@ body:
     attributes:
       label: Zed Version and System Specs
       description: |
-        Open Zed, from the command palette select "zed: Copy System Specs Into Clipboard"
+        Open Zed, from the command palette select "zed: copy system specs into clipboard"
       placeholder: |
-        Output of "zed: Copy System Specs Into Clipboard"
+        Output of "zed: copy system specs into clipboard"
     validations:
       required: true

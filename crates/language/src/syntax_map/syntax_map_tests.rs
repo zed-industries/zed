@@ -788,12 +788,96 @@ fn test_empty_combined_injections_inside_injections(cx: &mut App) {
             "(template...",
             // Markdown inline content
             "(inline)",
-            // HTML within the ERB
-            "(document (text))",
             // The ruby syntax tree should be empty, since there are
             // no interpolations in the ERB template.
             "(program)",
+            // HTML within the ERB
+            "(document (text))",
         ],
+    );
+}
+
+#[gpui::test]
+fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
+    let text = r#"
+        <body>
+            <% if @one %>
+                <div class=one>
+            <% else %>
+                <div class=two>
+            <% end %>
+            </div>
+        </body>
+    "#
+    .unindent();
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+
+    let language = Arc::new(erb_lang());
+
+    log::info!("parsing");
+    registry.add(language.clone());
+    syntax_map.reparse(language.clone(), &buffer);
+
+    log::info!("loading html");
+    registry.add(Arc::new(html_lang()));
+    syntax_map.reparse(language.clone(), &buffer);
+
+    log::info!("loading ruby");
+    registry.add(Arc::new(ruby_lang()));
+    syntax_map.reparse(language.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["tag", "ivar"],
+        "
+            <«body»>
+                <% if «@one» %>
+                    <«div» class=one>
+                <% else %>
+                    <«div» class=two>
+                <% end %>
+                </«div»>
+            </«body»>
+        ",
+    );
+
+    let text = r#"
+        <body>
+            <% if @one«_hundred» %>
+                <div class=one>
+            <% else %>
+                <div class=two>
+            <% end %>
+            </div>
+        </body>
+    "#
+    .unindent();
+
+    log::info!("editing");
+    buffer.edit_via_marked_text(&text);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(language.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["tag", "ivar"],
+        "
+            <«body»>
+                <% if «@one_hundred» %>
+                    <«div» class=one>
+                <% else %>
+                    <«div» class=two>
+                <% end %>
+                </«div»>
+            </«body»>
+        ",
     );
 }
 
@@ -1076,7 +1160,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), Default::default());
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
 
     let mut mutated_syntax_map = SyntaxMap::new(&buffer);
     mutated_syntax_map.set_language_registry(registry.clone());
@@ -1317,6 +1401,7 @@ fn assert_layers_for_range(
     }
 }
 
+#[track_caller]
 fn assert_capture_ranges(
     syntax_map: &SyntaxMap,
     buffer: &BufferSnapshot,

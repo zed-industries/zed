@@ -34,10 +34,11 @@ fn file_stem_to_key(stem: &str) -> SnippetKind {
 
 fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
     let mut snippets = vec![];
-    for (prefix, snippet) in file_contents.snippets {
+    for (name, snippet) in file_contents.snippets {
+        let snippet_name = name.clone();
         let prefixes = snippet
             .prefix
-            .map_or_else(move || vec![prefix], |prefixes| prefixes.into());
+            .map_or_else(move || vec![snippet_name], |prefixes| prefixes.into());
         let description = snippet
             .description
             .map(|description| description.to_string());
@@ -49,6 +50,7 @@ fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
             body,
             prefix: prefixes,
             description,
+            name,
         }));
     }
     snippets
@@ -59,6 +61,7 @@ pub struct Snippet {
     pub prefix: Vec<String>,
     pub body: String,
     pub description: Option<String>,
+    pub name: String,
 }
 
 async fn process_updates(
@@ -66,7 +69,7 @@ async fn process_updates(
     entries: Vec<PathBuf>,
     mut cx: AsyncApp,
 ) -> Result<()> {
-    let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+    let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
     for entry_path in entries {
         if !entry_path
             .extension()
@@ -117,7 +120,7 @@ async fn initial_scan(
     path: Arc<Path>,
     mut cx: AsyncApp,
 ) -> Result<()> {
-    let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+    let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
     let entries = fs.read_dir(&path).await;
     if let Ok(entries) = entries {
         let entries = entries
@@ -141,15 +144,13 @@ struct GlobalSnippetWatcher(Entity<SnippetProvider>);
 
 impl GlobalSnippetWatcher {
     fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Self {
-        let global_snippets_dir = paths::config_dir().join("snippets");
+        let global_snippets_dir = paths::snippets_dir();
         let provider = cx.new(|_cx| SnippetProvider {
             fs,
             snippets: Default::default(),
             watch_tasks: vec![],
         });
-        provider.update(cx, |this, cx| {
-            this.watch_directory(&global_snippets_dir, cx)
-        });
+        provider.update(cx, |this, cx| this.watch_directory(global_snippets_dir, cx));
         Self(provider)
     }
 }
@@ -182,7 +183,7 @@ impl SnippetProvider {
         let path: Arc<Path> = Arc::from(path);
 
         self.watch_tasks.push(cx.spawn(async move |this, cx| {
-            let fs = this.update(cx, |this, _| this.fs.clone())?;
+            let fs = this.read_with(cx, |this, _| this.fs.clone())?;
             let watched_path = path.clone();
             let watcher = fs.watch(&watched_path, Duration::from_secs(1));
             initial_scan(this.clone(), path, cx.clone()).await?;

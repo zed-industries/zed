@@ -23,7 +23,7 @@ use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
     AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
-    RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
+    ModelUsageContext, RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
 };
 
 pub struct ContextStrip {
@@ -37,6 +37,7 @@ pub struct ContextStrip {
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
+    model_usage_context: ModelUsageContext,
 }
 
 impl ContextStrip {
@@ -47,6 +48,7 @@ impl ContextStrip {
         text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
+        model_usage_context: ModelUsageContext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -81,7 +83,14 @@ impl ContextStrip {
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
+            model_usage_context,
         }
+    }
+
+    /// Whether or not the context strip has items to display
+    pub fn has_context_items(&self, cx: &App) -> bool {
+        self.context_store.read(cx).context().next().is_some()
+            || self.suggested_context(cx).is_some()
     }
 
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
@@ -92,11 +101,20 @@ impl ContextStrip {
                 .as_ref()
                 .and_then(|thread_store| thread_store.upgrade())
                 .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
+
+            let current_model = self.model_usage_context.language_model(cx);
+
             self.context_store
                 .read(cx)
                 .context()
                 .flat_map(|context| {
-                    AddedContext::new_pending(context.clone(), prompt_store, project, cx)
+                    AddedContext::new_pending(
+                        context.clone(),
+                        prompt_store,
+                        project,
+                        current_model.as_ref(),
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -104,14 +122,14 @@ impl ContextStrip {
         }
     }
 
-    fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_context(&self, cx: &App) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
             SuggestContextKind::File => self.suggested_file(cx),
             SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
-    fn suggested_file(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_file(&self, cx: &App) -> Option<SuggestedContext> {
         let workspace = self.workspace.upgrade()?;
         let active_item = workspace.read(cx).active_item(cx)?;
 
@@ -138,7 +156,7 @@ impl ContextStrip {
         })
     }
 
-    fn suggested_thread(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_thread(&self, cx: &App) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
         }

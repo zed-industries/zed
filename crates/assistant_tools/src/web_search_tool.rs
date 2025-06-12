@@ -3,7 +3,9 @@ use std::{sync::Arc, time::Duration};
 use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+};
 use futures::{Future, FutureExt, TryFutureExt};
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
@@ -31,6 +33,10 @@ impl Tool for WebSearchTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
         false
     }
 
@@ -74,8 +80,10 @@ impl Tool for WebSearchTool {
             async move {
                 let response = search_task.await.map_err(|err| anyhow!(err))?;
                 Ok(ToolResultOutput {
-                    content: serde_json::to_string(&response)
-                        .context("Failed to serialize search results")?,
+                    content: ToolResultContent::Text(
+                        serde_json::to_string(&response)
+                            .context("Failed to serialize search results")?,
+                    ),
                     output: Some(serde_json::to_value(response)?),
                 })
             }
@@ -162,7 +170,7 @@ impl ToolCard for WebSearchToolCard {
                     .gap_1()
                     .children(response.results.iter().enumerate().map(|(index, result)| {
                         let title = result.title.clone();
-                        let url = result.url.clone();
+                        let url = SharedString::from(result.url.clone());
 
                         Button::new(("result", index), title)
                             .label_size(LabelSize::Small)

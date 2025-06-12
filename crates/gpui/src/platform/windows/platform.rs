@@ -33,8 +33,8 @@ use crate::{platform::blade::BladeContext, *};
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    gpu_context: BladeContext,
     // The below members will never change throughout the entire lifecycle of the app.
+    gpu_context: BladeContext,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -62,6 +62,7 @@ struct PlatformCallbacks {
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 impl WindowsPlatformState {
@@ -80,9 +81,9 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new() -> Result<Self> {
         unsafe {
-            OleInitialize(None).expect("unable to initialize Windows OLE");
+            OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
@@ -96,19 +97,19 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .expect("Error creating bitmap factory.")
+                .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Error creating DirectWriteTextSystem"),
+                .context("Error creating DirectWriteTextSystem")?,
         );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
-        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
-        Self {
+        Ok(Self {
             state,
             raw_window_handles,
             gpu_context,
@@ -121,7 +122,7 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
-        }
+        })
     }
 
     fn redraw_all(&self) {
@@ -201,6 +202,19 @@ impl WindowsPlatform {
         }
     }
 
+    fn handle_input_lang_change(&self) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.keyboard_layout_change.take() {
+            drop(lock);
+            callback();
+            self.state
+                .borrow_mut()
+                .callbacks
+                .keyboard_layout_change
+                .get_or_insert(callback);
+        }
+    }
+
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
@@ -208,7 +222,8 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
-                    WM_GPUI_CLOSE_ONE_WINDOW
+                    WM_INPUTLANGCHANGE
+                    | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
                         if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
@@ -216,9 +231,6 @@ impl WindowsPlatform {
                         }
                     }
                     _ => {
-                        // todo(windows)
-                        // crate `windows 0.56` reports true as Err
-                        TranslateMessage(&msg).as_bool();
                         DispatchMessageW(&msg);
                     }
                 }
@@ -247,6 +259,7 @@ impl WindowsPlatform {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
             _ => unreachable!(),
         }
         false
@@ -305,8 +318,8 @@ impl Platform for WindowsPlatform {
         )
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(windows)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -560,7 +573,7 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
-        Err(anyhow!("not yet implemented"))
+        anyhow::bail!("not yet implemented");
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -767,7 +780,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
         return Ok(None);
     }
 
-    let mut paths = Vec::new();
+    let mut paths = Vec::with_capacity(file_count as usize);
     for i in 0..file_count {
         let item = unsafe { results.GetItemAt(i)? };
         let path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };

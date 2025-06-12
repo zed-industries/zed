@@ -5,21 +5,21 @@ mod tool_picker;
 
 use std::{sync::Arc, time::Duration};
 
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyView, App, Entity, EventEmitter, FocusHandle,
-    Focusable, ScrollHandle, Subscription, pulsating_between,
+    Focusable, ScrollHandle, Subscription, Transformation, percentage,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use settings::{Settings, update_settings_file};
 use ui::{
-    Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
-    Switch, SwitchColor, Tooltip, prelude::*,
+    Disclosure, ElevationIndex, Indicator, Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -142,7 +142,7 @@ impl AgentConfiguration {
             .expanded_provider_configurations
             .get(&provider.id())
             .copied()
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         v_flex()
             .pt_3()
@@ -201,12 +201,12 @@ impl AgentConfiguration {
                                 .on_click(cx.listener({
                                     let provider_id = provider.id().clone();
                                     move |this, _event, _window, _cx| {
-                                        let is_open = this
+                                        let is_expanded = this
                                             .expanded_provider_configurations
                                             .entry(provider_id.clone())
-                                            .or_insert(true);
+                                            .or_insert(false);
 
-                                        *is_open = !*is_open;
+                                        *is_expanded = !*is_expanded;
                                     }
                                 })),
                             ),
@@ -214,9 +214,9 @@ impl AgentConfiguration {
             )
             .when(is_expanded, |parent| match configuration_view {
                 Some(configuration_view) => parent.child(configuration_view),
-                None => parent.child(div().child(Label::new(format!(
+                None => parent.child(Label::new(format!(
                     "No configuration view for {provider_name}",
-                )))),
+                ))),
             })
     }
 
@@ -230,7 +230,8 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_4()
-            .flex_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
                     .gap_0p5()
@@ -248,7 +249,7 @@ impl AgentConfiguration {
     }
 
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
+        let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
 
         h_flex()
             .gap_4()
@@ -276,7 +277,7 @@ impl AgentConfiguration {
                     let fs = self.fs.clone();
                     move |state, _window, cx| {
                         let allow = state == &ToggleState::Selected;
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| {
@@ -289,7 +290,7 @@ impl AgentConfiguration {
     }
 
     fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let single_file_review = AssistantSettings::get_global(cx).single_file_review;
+        let single_file_review = AgentSettings::get_global(cx).single_file_review;
 
         h_flex()
             .gap_4()
@@ -314,11 +315,49 @@ impl AgentConfiguration {
                         let fs = self.fs.clone();
                         move |state, _window, cx| {
                             let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AssistantSettings>(
+                            update_settings_file::<AgentSettings>(
                                 fs.clone(),
                                 cx,
                                 move |settings, _| {
                                     settings.set_single_file_review(allow);
+                                },
+                            );
+                        }
+                    }),
+            )
+    }
+
+    fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
+
+        h_flex()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new("Play sound when finished generating"))
+                    .child(
+                        Label::new(
+                            "Hear a notification sound when the agent is done generating changes or needs your input.",
+                        )
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Switch::new("play-sound-notification-switch", play_sound_when_agent_done.into())
+                    .color(SwitchColor::Accent)
+                    .on_click({
+                        let fs = self.fs.clone();
+                        move |state, _window, cx| {
+                            let allow = state == &ToggleState::Selected;
+                            update_settings_file::<AgentSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| {
+                                    settings.set_play_sound_when_agent_done(allow);
                                 },
                             );
                         }
@@ -331,10 +370,12 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2p5()
-            .flex_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .child(Headline::new("General Settings"))
             .child(self.render_command_permission(cx))
             .child(self.render_single_file_review(cx))
+            .child(self.render_sound_notification(cx))
     }
 
     fn render_context_servers_section(
@@ -344,18 +385,17 @@ impl AgentConfiguration {
     ) -> impl IntoElement {
         let context_server_ids = self.context_server_store.read(cx).all_server_ids().clone();
 
-        const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
-
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2()
-            .flex_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
                     .gap_0p5()
                     .child(Headline::new("Model Context Protocol (MCP) Servers"))
-                    .child(Label::new(SUBHEADING).color(Color::Muted)),
+                    .child(Label::new("Connect to context servers via the Model Context Protocol either via Zed extensions or directly.").color(Color::Muted)),
             )
             .children(
                 context_server_ids.into_iter().map(|context_server_id| {
@@ -435,7 +475,6 @@ impl AgentConfiguration {
             .get(&context_server_id)
             .copied()
             .unwrap_or_default();
-
         let tools = tools_by_source
             .get(&ToolSource::ContextServer {
                 id: context_server_id.0.clone().into(),
@@ -444,25 +483,23 @@ impl AgentConfiguration {
         let tool_count = tools.len();
 
         let border_color = cx.theme().colors().border.opacity(0.6);
-        let success_color = Color::Success.color(cx);
 
         let (status_indicator, tooltip_text) = match server_status {
             ContextServerStatus::Starting => (
-                Indicator::dot()
-                    .color(Color::Success)
+                Icon::new(IconName::LoadCircle)
+                    .size(IconSize::XSmall)
+                    .color(Color::Accent)
                     .with_animation(
                         SharedString::from(format!("{}-starting", context_server_id.0.clone(),)),
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.4, 1.)),
-                        move |this, delta| this.color(success_color.alpha(delta).into()),
+                        Animation::new(Duration::from_secs(3)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                     )
                     .into_any_element(),
                 "Server is starting.",
             ),
             ContextServerStatus::Running => (
                 Indicator::dot().color(Color::Success).into_any_element(),
-                "Server is running.",
+                "Server is active.",
             ),
             ContextServerStatus::Error(_) => (
                 Indicator::dot().color(Color::Error).into_any_element(),
@@ -486,12 +523,11 @@ impl AgentConfiguration {
                     .p_1()
                     .justify_between()
                     .when(
-                        error.is_some() || are_tools_expanded && tool_count > 1,
+                        error.is_some() || are_tools_expanded && tool_count >= 1,
                         |element| element.border_b_1().border_color(border_color),
                     )
                     .child(
                         h_flex()
-                            .gap_1p5()
                             .child(
                                 Disclosure::new(
                                     "tool-list-disclosure",
@@ -511,12 +547,16 @@ impl AgentConfiguration {
                                 })),
                             )
                             .child(
-                                div()
-                                    .id(item_id.clone())
+                                h_flex()
+                                    .id(SharedString::from(format!("tooltip-{}", item_id)))
+                                    .h_full()
+                                    .w_3()
+                                    .mx_1()
+                                    .justify_center()
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(context_server_id.0.clone()).ml_0p5())
+                            .child(Label::new(item_id).ml_0p5().mr_1p5())
                             .when(is_running, |this| {
                                 this.child(
                                     Label::new(if tool_count == 1 {
@@ -630,9 +670,7 @@ impl Render for AgentConfiguration {
                     .size_full()
                     .overflow_y_scroll()
                     .child(self.render_general_settings_section(cx))
-                    .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_context_servers_section(window, cx))
-                    .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_provider_configuration_section(cx)),
             )
             .child(

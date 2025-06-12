@@ -2,25 +2,18 @@ use crate::{
     adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
 };
-use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, BackgroundExecutor};
+use futures::channel::oneshot;
+use gpui::{AppContext, AsyncApp};
 use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
 };
-
-#[cfg(any(test, feature = "test-support"))]
-const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-
-#[cfg(not(any(test, feature = "test-support")))]
-const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -41,7 +34,6 @@ pub struct DebugAdapterClient {
     id: SessionId,
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
-    executor: BackgroundExecutor,
     transport_delegate: TransportDelegate,
 }
 
@@ -61,7 +53,6 @@ impl DebugAdapterClient {
             binary,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
-            executor: cx.background_executor().clone(),
         };
         log::info!("Successfully connected to debug adapter");
 
@@ -173,40 +164,30 @@ impl DebugAdapterClient {
 
         self.send_message(Message::Request(request)).await?;
 
-        let mut timeout = self.executor.timer(DAP_REQUEST_TIMEOUT).fuse();
         let command = R::COMMAND.to_string();
 
-        select! {
-            response = callback_rx.fuse() => {
-                log::debug!(
-                    "Client {} received response for: `{}` sequence_id: {}",
-                    self.id.0,
-                    command,
-                    sequence_id
-                );
-
-                let response = response??;
-                match response.success {
-                    true => {
-                        if let Some(json) = response.body {
-                            Ok(serde_json::from_value(json)?)
-                        // Note: dap types configure themselves to return `None` when an empty object is received,
-                        // which then fails here...
-                        } else if let Ok(result) = serde_json::from_value(serde_json::Value::Object(Default::default())) {
-                            Ok(result)
-                        } else {
-                            Ok(serde_json::from_value(Default::default())?)
-                        }
-                    }
-                    false => Err(anyhow!("Request failed: {}", response.message.unwrap_or_default())),
+        let response = callback_rx.await??;
+        log::debug!(
+            "Client {} received response for: `{}` sequence_id: {}",
+            self.id.0,
+            command,
+            sequence_id
+        );
+        match response.success {
+            true => {
+                if let Some(json) = response.body {
+                    Ok(serde_json::from_value(json)?)
+                // Note: dap types configure themselves to return `None` when an empty object is received,
+                // which then fails here...
+                } else if let Ok(result) =
+                    serde_json::from_value(serde_json::Value::Object(Default::default()))
+                {
+                    Ok(result)
+                } else {
+                    Ok(serde_json::from_value(Default::default())?)
                 }
             }
-
-            _ = timeout => {
-                self.transport_delegate.cancel_pending_request(&sequence_id).await;
-                log::error!("Cancelled DAP request for {command:?} id {sequence_id} which took over {DAP_REQUEST_TIMEOUT:?}");
-                anyhow::bail!("DAP request timeout");
-            }
+            false => anyhow::bail!("Request failed: {}", response.message.unwrap_or_default()),
         }
     }
 
@@ -300,9 +281,7 @@ mod tests {
     };
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
@@ -318,7 +297,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -388,7 +367,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -441,7 +420,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,

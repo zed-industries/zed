@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
@@ -365,14 +365,14 @@ fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamCon
     if input {
         device = cpal::default_host()
             .default_input_device()
-            .ok_or_else(|| anyhow!("no audio input device available"))?;
+            .context("no audio input device available")?;
         config = device
             .default_input_config()
             .context("failed to get default input config")?;
     } else {
         device = cpal::default_host()
             .default_output_device()
-            .ok_or_else(|| anyhow!("no audio output device available"))?;
+            .context("no audio output device available")?;
         config = device
             .default_output_config()
             .context("failed to get default output config")?;
@@ -412,7 +412,7 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
         self.sample_rate
     }
 
-    fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame> {
+    fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
         assert_eq!(self.sample_rate, target_sample_rate);
         let buf = self.buffer.lock().pop_front()?;
         Some(AudioFrame {
@@ -493,10 +493,7 @@ fn create_buffer_pool(
     ]);
 
     pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(|cv_return| {
-        anyhow!(
-            "failed to create pixel buffer pool: CVReturn({})",
-            cv_return
-        )
+        anyhow::anyhow!("failed to create pixel buffer pool: CVReturn({cv_return})",)
     })
 }
 
@@ -707,7 +704,7 @@ mod macos {
     }
 
     impl super::DeviceChangeListenerApi for CoreAudioDefaultDeviceChangeListener {
-        fn new(input: bool) -> gpui::Result<Self> {
+        fn new(input: bool) -> anyhow::Result<Self> {
             let (tx, rx) = futures::channel::mpsc::unbounded();
 
             let callback = Box::new(PropertyListenerCallbackWrapper(Box::new(move || {
