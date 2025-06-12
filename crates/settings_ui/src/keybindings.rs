@@ -229,7 +229,19 @@ impl Render for KeymapEditor {
             .bg(theme.colors().background)
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
-            .child(self.filter_editor.clone())
+            .px_4()
+            .v_flex()
+            .pb_4()
+            .child(
+                h_flex()
+                    .w_full()
+                    .h_12()
+                    .px_4()
+                    .my_4()
+                    .border_2()
+                    .border_color(theme.colors().border)
+                    .child(self.filter_editor.clone()),
+            )
             .child(
                 Table::new()
                     .interactable(&self.table_interaction_state)
