@@ -36,6 +36,7 @@ pub struct StackFrameList {
     opened_stack_frame_id: Option<StackFrameId>,
     scrollbar_state: ScrollbarState,
     list_state: ListState,
+    error: Option<SharedString>,
     _refresh_task: Task<()>,
 }
 
@@ -82,6 +83,7 @@ impl StackFrameList {
             state,
             _subscription,
             entries: Default::default(),
+            error: None,
             selected_ix: None,
             opened_stack_frame_id: None,
             list_state,
@@ -657,7 +659,7 @@ impl StackFrameList {
     }
 
     fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).size_full()
+        div().p_1().child(list(self.list_state.clone()).size_full())
     }
 }
 
@@ -666,12 +668,21 @@ impl Render for StackFrameList {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
-            .p_1()
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .when_some(self.error.clone(), |el, error| {
+                el.child(
+                    h_flex()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .pl_1()
+                        .child(Icon::new(IconName::Warning))
+                        .child(Label::new(error)),
+                )
+            })
             .child(self.render_list(window, cx))
             .child(self.render_vertical_scrollbar(cx))
     }
