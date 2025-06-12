@@ -152,6 +152,7 @@ mod tests {
                         "X": "Y",
                     },
                     "type": "node",
+                    "port": 17,
                 }),
                 tcp_connection: Some(TcpArgumentsTemplate {
                     port: Some(17),
