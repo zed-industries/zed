@@ -1870,7 +1870,15 @@ impl Pane {
                 match answer.await {
                     Ok(0) => {
                         pane.update_in(cx, |_, window, cx| {
-                            item.save(SaveOptions { format: should_format, autosave: false }, project, window, cx)
+                            item.save(
+                                SaveOptions {
+                                    format: should_format,
+                                    autosave: false,
+                                },
+                                project,
+                                window,
+                                cx,
+                            )
                         })?
                         .await?
                     }
@@ -1896,7 +1904,15 @@ impl Pane {
                 match answer.await {
                     Ok(0) => {
                         pane.update_in(cx, |_, window, cx| {
-                            item.save(SaveOptions { format: should_format, autosave: false }, project, window, cx)
+                            item.save(
+                                SaveOptions {
+                                    format: should_format,
+                                    autosave: false,
+                                },
+                                project,
+                                window,
+                                cx,
+                            )
                         })?
                         .await?
                     }
