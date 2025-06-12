@@ -515,7 +515,7 @@ pub struct GitCommitter {
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
-    if cfg!(test) {
+    if cfg!(any(feature = "test-support", test)) {
         return GitCommitter {
             name: None,
             email: None,
