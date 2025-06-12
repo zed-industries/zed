@@ -9639,7 +9639,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         .update_in(cx, |editor, window, cx| {
             editor.save(
                 SaveOptions {
-                    format: true,
+                    format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -9650,7 +9650,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         .unwrap();
     let _pending_format_request = fake_server
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
-            panic!("Should not be invoked on non-dirty buffer");
+            panic!("Should not be invoked");
         })
         .next();
     cx.executor().start_waiting();
@@ -9765,7 +9765,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -9811,7 +9811,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
             editor.perform_format(
                 project,
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -9989,7 +9989,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -10025,7 +10025,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -15567,7 +15567,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -15587,7 +15587,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         editor.perform_format(
             project.clone(),
             FormatTrigger::Manual,
-            FormatTarget::Buffers,
+            FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
             window,
             cx,
         )
