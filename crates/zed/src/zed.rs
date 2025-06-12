@@ -1764,6 +1764,7 @@ mod tests {
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
+        item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
@@ -3356,7 +3357,15 @@ mod tests {
                     editor.newline(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
-                    editor.save(true, project.clone(), window, cx)
+                    editor.save(
+                        SaveOptions {
+                            format: true,
+                            autosave: false,
+                        },
+                        project.clone(),
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()

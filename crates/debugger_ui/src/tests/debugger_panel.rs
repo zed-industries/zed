@@ -33,6 +33,7 @@ use std::{
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
+use workspace::item::SaveOptions;
 use workspace::{Item, dock::Panel};
 
 #[gpui::test]
@@ -1213,7 +1214,15 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 
     editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();
