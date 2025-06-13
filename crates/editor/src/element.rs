@@ -1086,16 +1086,16 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.previous_valid;
 
-        let hovered_diff_hunk_row = if text_hovered {
-            let hovered_diff_control = position_map
-                .diff_hunk_control_bounds
-                .iter()
-                .find(|(_, bounds)| bounds.contains(&event.position))
-                .map(|(row, _)| *row);
+        let hovered_diff_control = position_map
+            .diff_hunk_control_bounds
+            .iter()
+            .find(|(_, bounds)| bounds.contains(&event.position))
+            .map(|(row, _)| *row);
 
-            if let Some(control_row) = hovered_diff_control {
-                Some(control_row)
-            } else {
+        let hovered_diff_hunk_row = if let Some(control_row) = hovered_diff_control {
+            Some(control_row)
+        } else {
+            if text_hovered {
                 let current_row = valid_point.row();
                 position_map.display_hunks.iter().find_map(|(hunk, _)| {
                     if let DisplayDiffHunk::Unfolded {
@@ -1111,9 +1111,9 @@ impl EditorElement {
                         None
                     }
                 })
+            } else {
+                None
             }
-        } else {
-            None
         };
 
         if hovered_diff_hunk_row != editor.hovered_diff_hunk_row {
