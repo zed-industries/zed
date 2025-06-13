@@ -33,15 +33,6 @@ pub enum AnthropicModelMode {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
-    Claude3_5Sonnet,
-    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
-    Claude3_7Sonnet,
-    #[serde(
-        rename = "claude-3-7-sonnet-thinking",
-        alias = "claude-3-7-sonnet-thinking-latest"
-    )]
-    Claude3_7SonnetThinking,
     #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
     ClaudeOpus4,
     #[serde(
@@ -57,6 +48,15 @@ pub enum Model {
         alias = "claude-sonnet-4-thinking-latest"
     )]
     ClaudeSonnet4Thinking,
+    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
+    Claude3_7Sonnet,
+    #[serde(
+        rename = "claude-3-7-sonnet-thinking",
+        alias = "claude-3-7-sonnet-thinking-latest"
+    )]
+    Claude3_7SonnetThinking,
+    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
+    Claude3_5Sonnet,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -230,15 +230,15 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> u32 {
         match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
-            Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking
-            | Self::Claude3_5Haiku
-            | Self::ClaudeOpus4
+            Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking => 8_192,
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::Claude3_5Haiku => 8_192,
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -267,17 +267,17 @@ impl Model {
 
     pub fn mode(&self) -> AnthropicModelMode {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
+            | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
-            | Self::ClaudeOpus4
-            | Self::ClaudeSonnet4
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => AnthropicModelMode::Default,
-            Self::Claude3_7SonnetThinking
-            | Self::ClaudeOpus4Thinking
-            | Self::ClaudeSonnet4Thinking => AnthropicModelMode::Thinking {
+            Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
             },
             Self::Custom { mode, .. } => mode.clone(),
@@ -288,7 +288,7 @@ impl Model {
 
     pub fn beta_headers(&self) -> String {
         let mut headers = Self::DEFAULT_BETA_HEADERS
-            .into_iter()
+            .iter()
             .map(|header| header.to_string())
             .collect::<Vec<_>>();
 
