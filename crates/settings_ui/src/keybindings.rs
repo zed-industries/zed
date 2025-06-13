@@ -4,8 +4,8 @@ use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, ScrollStrategy,
-    Subscription, actions, div,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, KeyContext,
+    ScrollStrategy, Subscription, actions, div,
 };
 
 use ui::{
@@ -61,6 +61,7 @@ struct KeymapEditor {
     matches: Vec<StringMatch>,
     table_interaction_state: Entity<TableInteractionState>,
     filter_editor: Entity<Editor>,
+    selected_index: Option<usize>,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -102,6 +103,7 @@ impl KeymapEditor {
             _keymap_subscription,
             table_interaction_state,
             filter_editor,
+            selected_index: None,
         };
 
         this.update_keybindings(cx);
@@ -201,6 +203,69 @@ impl KeymapEditor {
         self.update_matches(cx);
         cx.notify();
     }
+
+    fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("KeymapEditor");
+        dispatch_context.add("menu");
+
+        // todo! track key context in keybind edit modal
+        // let identifier = if self.keymap_editor.focus_handle(cx).is_focused(window) {
+        //     "editing"
+        // } else {
+        //     "not_editing"
+        // };
+        // dispatch_context.add(identifier);
+
+        dispatch_context
+    }
+
+    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected) = &mut self.selected_index {
+            *selected += 1;
+            if *selected >= self.matches.len() {
+                self.select_last(&Default::default(), window, cx);
+            } else {
+                cx.notify();
+            }
+        } else {
+            self.select_first(&Default::default(), window, cx);
+        }
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected) = &mut self.selected_index {
+            *selected = selected.saturating_sub(1);
+            if *selected == 0 {
+                self.select_first(&Default::default(), window, cx);
+            } else if *selected >= self.matches.len() {
+                self.select_last(&Default::default(), window, cx);
+            } else {
+                cx.notify();
+            }
+        } else {
+            self.select_last(&Default::default(), window, cx);
+        }
+    }
+
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+        if self.matches.get(0).is_some() {
+            self.selected_index = Some(0);
+            cx.notify();
+        }
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
+        if self.matches.last().is_some() {
+            self.selected_index = Some(self.matches.len() - 1);
+            cx.notify();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -220,11 +285,16 @@ impl Item for KeymapEditor {
 }
 
 impl Render for KeymapEditor {
-    fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
         let row_count = self.matches.len();
         let theme = cx.theme();
 
         div()
+            .key_context(self.dispatch_context(window, cx))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .size_full()
             .bg(theme.colors().background)
             .id("keymap-editor")
@@ -248,6 +318,7 @@ impl Render for KeymapEditor {
                     .striped()
                     .column_widths([rems(24.), rems(16.), rems(32.), rems(8.)])
                     .header(["Command", "Keystrokes", "Context", "Source"])
+                    .selected_item_index(self.selected_index.clone())
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,

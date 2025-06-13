@@ -353,6 +353,7 @@ pub struct Table<const COLS: usize = 3> {
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
+    selected_item_index: Option<usize>,
     column_widths: Option<[Length; COLS]>,
 }
 
@@ -365,6 +366,7 @@ impl<const COLS: usize> Table<COLS> {
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
+            selected_item_index: None,
             column_widths: None,
         }
     }
@@ -402,6 +404,11 @@ impl<const COLS: usize> Table<COLS> {
 
     pub fn interactable(mut self, interaction_state: &Entity<TableInteractionState>) -> Self {
         self.interaction_state = Some(interaction_state.downgrade());
+        self
+    }
+
+    pub fn selected_item_index(mut self, selected_item_index: Option<usize>) -> Self {
+        self.selected_item_index = selected_item_index;
         self
     }
 
@@ -450,6 +457,8 @@ pub fn render_row<const COLS: usize>(
     let column_widths = table_context
         .column_widths
         .map_or([None; COLS], |widths| widths.map(|width| Some(width)));
+    let is_selected = table_context.selected_item_index == Some(row_index);
+
     div()
         .w_full()
         .flex()
@@ -461,6 +470,10 @@ pub fn render_row<const COLS: usize>(
         .when_some(bg, |row, bg| row.bg(bg))
         .when(!is_last, |row| {
             row.border_b_1().border_color(cx.theme().colors().border)
+        })
+        .when(is_selected, |row| {
+            row.border_2()
+                .border_color(cx.theme().colors().panel_focused_border)
         })
         .children(
             items
@@ -500,6 +513,7 @@ pub fn render_header<const COLS: usize>(
 pub struct TableRenderContext<const COLS: usize> {
     pub striped: bool,
     pub total_row_count: usize,
+    pub selected_item_index: Option<usize>,
     pub column_widths: Option<[Length; COLS]>,
 }
 
@@ -509,6 +523,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             striped: table.striped,
             total_row_count: table.rows.len(),
             column_widths: table.column_widths,
+            selected_item_index: table.selected_item_index.clone(),
         }
     }
 }

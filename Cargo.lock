@@ -14576,6 +14576,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "log",
+ "menu",
  "paths",
  "project",
  "schemars",
