@@ -1,4 +1,4 @@
-use std::{ops::Range, time::Duration};
+use std::{ops::Range, rc::Rc, time::Duration};
 
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
@@ -355,6 +355,7 @@ pub struct Table<const COLS: usize = 3> {
     interaction_state: Option<WeakEntity<TableInteractionState>>,
     selected_item_index: Option<usize>,
     column_widths: Option<[Length; COLS]>,
+    on_click_row: Option<Rc<dyn Fn(usize, &mut Window, &mut App)>>,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -368,6 +369,7 @@ impl<const COLS: usize> Table<COLS> {
             interaction_state: None,
             selected_item_index: None,
             column_widths: None,
+            on_click_row: None,
         }
     }
 
@@ -428,6 +430,14 @@ impl<const COLS: usize> Table<COLS> {
         self.column_widths = Some(widths.map(Into::into));
         self
     }
+
+    pub fn on_click_row(
+        mut self,
+        callback: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click_row = Some(Rc::new(callback));
+        self
+    }
 }
 
 fn base_cell_style(width: Option<Length>, cx: &App) -> Div {
@@ -460,7 +470,7 @@ pub fn render_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(|width| Some(width)));
     let is_selected = table_context.selected_item_index == Some(row_index);
 
-    div()
+    let row = div()
         .w_full()
         .border_2()
         .border_color(transparent_black())
@@ -489,8 +499,15 @@ pub fn render_row<const COLS: usize>(
                         .zip(column_widths)
                         .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
                 ),
-        )
-        .into_any_element()
+        );
+
+    if let Some(on_click) = table_context.on_click_row {
+        row.id(ElementId::named_usize("table-row", row_index))
+            .on_click(move |_, window, cx| on_click(row_index, window, cx))
+            .into_any_element()
+    } else {
+        row.into_any_element()
+    }
 }
 
 pub fn render_header<const COLS: usize>(
@@ -517,12 +534,13 @@ pub fn render_header<const COLS: usize>(
         }))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TableRenderContext<const COLS: usize> {
     pub striped: bool,
     pub total_row_count: usize,
     pub selected_item_index: Option<usize>,
     pub column_widths: Option<[Length; COLS]>,
+    pub on_click_row: Option<Rc<dyn Fn(usize, &mut Window, &mut App)>>,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -532,6 +550,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             total_row_count: table.rows.len(),
             column_widths: table.column_widths,
             selected_item_index: table.selected_item_index.clone(),
+            on_click_row: table.on_click_row.clone(),
         }
     }
 }
@@ -581,7 +600,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     })
             })
             .when_some(self.headers.take(), |this, headers| {
-                this.child(render_header(headers, table_context, cx))
+                this.child(render_header(headers, table_context.clone(), cx))
             })
             .child(
                 div()
@@ -590,12 +609,11 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .relative()
                     .overflow_hidden()
                     .map(|parent| match self.rows {
-                        TableContents::Vec(items) => parent.children(
-                            items
-                                .into_iter()
-                                .enumerate()
-                                .map(|(index, row)| render_row(index, row, table_context, cx)),
-                        ),
+                        TableContents::Vec(items) => {
+                            parent.children(items.into_iter().enumerate().map(|(index, row)| {
+                                render_row(index, row, table_context.clone(), cx)
+                            }))
+                        }
                         TableContents::UniformList(uniform_list_data) => parent.child(
                             uniform_list(
                                 uniform_list_data.element_id,
@@ -608,7 +626,12 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                             .into_iter()
                                             .zip(range)
                                             .map(|(row, row_index)| {
-                                                render_row(row_index, row, table_context, cx)
+                                                render_row(
+                                                    row_index,
+                                                    row,
+                                                    table_context.clone(),
+                                                    cx,
+                                                )
                                             })
                                             .collect()
                                     }

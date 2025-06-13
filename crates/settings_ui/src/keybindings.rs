@@ -319,6 +319,9 @@ impl Render for KeymapEditor {
                     .column_widths([rems(24.), rems(16.), rems(32.), rems(8.)])
                     .header(["Command", "Keystrokes", "Context", "Source"])
                     .selected_item_index(self.selected_index.clone())
+                    .on_click_row(cx.processor(|this, row_index, _window, _cx| {
+                        this.selected_index = Some(row_index);
+                    }))
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
