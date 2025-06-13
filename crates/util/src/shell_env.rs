@@ -38,8 +38,12 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!("sh -c '{zed_path} --printenv >&{ENV_OUTPUT_FD}';"));
+    command_string.push_str(&format!(
+        "sh -c \"{} --printenv >&{}\";",
+        zed_path, ENV_OUTPUT_FD
+    ));
     command.args(["-i", "-c", &command_string]);
+
     super::set_pre_exec_to_start_new_session(&mut command);
 
     let (env_output, process_output) = spawn_and_read_fd(command, ENV_OUTPUT_FD)?;
