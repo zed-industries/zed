@@ -529,13 +529,16 @@ impl Component for KeyBinding {
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestKeyboardMapper;
+
     use super::*;
 
     #[test]
     fn test_text_for_keystroke() {
+        let mapper = TestKeyboardMapper::new();
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", &mapper).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -543,7 +546,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", &mapper).unwrap(),
                 PlatformStyle::Linux,
                 false
             ),
@@ -551,7 +554,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", &mapper).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
@@ -560,7 +563,7 @@ mod tests {
 
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", &mapper).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -568,7 +571,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", &mapper).unwrap(),
                 PlatformStyle::Linux,
                 false
             ),
@@ -576,7 +579,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", &mapper).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
@@ -585,7 +588,7 @@ mod tests {
 
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", &mapper).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -593,7 +596,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", &mapper).unwrap(),
                 PlatformStyle::Linux,
                 false,
             ),
@@ -601,7 +604,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", &mapper).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),

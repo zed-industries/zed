@@ -538,8 +538,15 @@ mod test {
             })
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        let keyboard_mapper = cx.keyboard_mapper();
+        cx.dispatch_keystroke(
+            *window,
+            Keystroke::parse("a", keyboard_mapper.as_ref()).unwrap(),
+        );
+        cx.dispatch_keystroke(
+            *window,
+            Keystroke::parse("ctrl-g", keyboard_mapper.as_ref()).unwrap(),
+        );
 
         window
             .update(cx, |test_view, _, _| {
