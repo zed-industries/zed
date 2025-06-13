@@ -133,9 +133,8 @@ impl KeymapEditor {
         cx.spawn(async move |this, cx| {
             let matches = fuzzy_match.await;
             this.update(cx, |this, cx| {
-                this.table_interaction_state.update(cx, |this, _cx| {
-                    this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
-                });
+                this.selected_index.take();
+                this.scroll_to_item(0, ScrollStrategy::Top, cx);
                 this.matches = matches;
                 cx.notify();
             })
@@ -221,12 +220,21 @@ impl KeymapEditor {
         dispatch_context
     }
 
+    fn scroll_to_item(&self, index: usize, strategy: ScrollStrategy, cx: &mut App) {
+        let index = usize::min(index, self.matches.len().saturating_sub(1));
+        self.table_interaction_state.update(cx, |this, _cx| {
+            this.scroll_handle.scroll_to_item(index, strategy);
+        });
+    }
+
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selected) = &mut self.selected_index {
-            *selected += 1;
-            if *selected >= self.matches.len() {
+        if let Some(selected) = self.selected_index {
+            let selected = selected + 1;
+            if selected >= self.matches.len() {
                 self.select_last(&Default::default(), window, cx);
             } else {
+                self.selected_index = Some(selected);
+                self.scroll_to_item(selected, ScrollStrategy::Center, cx);
                 cx.notify();
             }
         } else {
@@ -240,13 +248,18 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selected) = &mut self.selected_index {
-            *selected = selected.saturating_sub(1);
-            if *selected == 0 {
-                self.select_first(&Default::default(), window, cx);
-            } else if *selected >= self.matches.len() {
+        if let Some(selected) = self.selected_index {
+            if selected == 0 {
+                return;
+            }
+
+            let selected = selected - 1;
+
+            if selected >= self.matches.len() {
                 self.select_last(&Default::default(), window, cx);
             } else {
+                self.selected_index = Some(selected);
+                self.scroll_to_item(selected, ScrollStrategy::Center, cx);
                 cx.notify();
             }
         } else {
@@ -254,16 +267,24 @@ impl KeymapEditor {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.matches.get(0).is_some() {
             self.selected_index = Some(0);
+            self.scroll_to_item(0, ScrollStrategy::Center, cx);
             cx.notify();
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         if self.matches.last().is_some() {
-            self.selected_index = Some(self.matches.len() - 1);
+            let index = self.matches.len() - 1;
+            self.selected_index = Some(index);
+            self.scroll_to_item(index, ScrollStrategy::Center, cx);
             cx.notify();
         }
     }
@@ -280,7 +301,12 @@ impl KeymapEditor {
             .contains_focused(window, cx)
         {
             window.focus(&self.filter_editor.focus_handle(cx));
+        } else {
+            self.filter_editor.update(cx, |editor, cx| {
+                editor.select_all(&Default::default(), window, cx);
+            });
         }
+        self.selected_index.take();
     }
 }
 
