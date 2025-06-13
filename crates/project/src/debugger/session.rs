@@ -137,6 +137,7 @@ pub struct RunningMode {
     worktree: WeakEntity<Worktree>,
     executor: BackgroundExecutor,
     is_started: bool,
+    has_ever_stopped: bool,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -188,6 +189,7 @@ impl RunningMode {
             binary,
             executor: cx.background_executor().clone(),
             is_started: false,
+            has_ever_stopped: false,
         })
     }
 
@@ -506,6 +508,20 @@ impl Mode {
             Mode::Building => Task::ready(Err(anyhow!(
                 "no adapter running to send request: {request:?}"
             ))),
+        }
+    }
+
+    /// Did this debug session stop at least once?
+    pub(crate) fn has_ever_stopped(&self) -> bool {
+        match self {
+            Mode::Building => false,
+            Mode::Running(running_mode) => running_mode.has_ever_stopped,
+        }
+    }
+
+    fn stopped(&mut self) {
+        if let Mode::Running(running) = self {
+            running.has_ever_stopped = true;
         }
     }
 }
@@ -1237,6 +1253,7 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
+        self.mode.stopped();
         // todo(debugger): Find a clean way to get around the clone
         let breakpoint_store = self.breakpoint_store.clone();
         if let Some((local, path)) = self.as_running_mut().and_then(|local| {
@@ -1831,6 +1848,9 @@ impl Session {
         }
     }
 
+    pub fn has_ever_stopped(&self) -> bool {
+        self.mode.has_ever_stopped()
+    }
     pub fn step_over(
         &mut self,
         thread_id: ThreadId,
