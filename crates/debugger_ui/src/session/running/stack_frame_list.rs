@@ -183,7 +183,7 @@ impl StackFrameList {
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
         let mut first_stack_frame = None;
-        let mut first_not_subtle_frame = None;
+        let mut first_stack_frame_with_path = None;
 
         let stack_frames = match self.stack_frames(cx) {
             Ok(stack_frames) => stack_frames,
@@ -199,7 +199,8 @@ impl StackFrameList {
         };
         for stack_frame in &stack_frames {
             match stack_frame.dap.presentation_hint {
-                Some(dap::StackFramePresentationHint::Deemphasize) => {
+                Some(dap::StackFramePresentationHint::Deemphasize)
+                | Some(dap::StackFramePresentationHint::Subtle) => {
                     collapsed_entries.push(stack_frame.dap.clone());
                 }
                 _ => {
@@ -209,10 +210,14 @@ impl StackFrameList {
                     }
 
                     first_stack_frame.get_or_insert(entries.len());
-                    if stack_frame.dap.presentation_hint
-                        != Some(dap::StackFramePresentationHint::Subtle)
+
+                    if stack_frame
+                        .dap
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| source.path.is_some())
                     {
-                        first_not_subtle_frame.get_or_insert(entries.len());
+                        first_stack_frame_with_path.get_or_insert(entries.len());
                     }
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
@@ -225,7 +230,7 @@ impl StackFrameList {
         }
         self.entries = entries;
 
-        if let Some(ix) = first_not_subtle_frame
+        if let Some(ix) = first_stack_frame_with_path
             .or(first_stack_frame)
             .filter(|_| open_first_stack_frame)
         {
@@ -483,7 +488,7 @@ impl StackFrameList {
             .into_any()
     }
 
-    pub(crate) fn expand_collapsed_entry(&mut self, ix: usize) {
+    pub(crate) fn expand_collapsed_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(StackFrameEntry::Collapsed(stack_frames)) = self.entries.get_mut(ix) else {
             return;
         };
@@ -492,6 +497,9 @@ impl StackFrameList {
             .map(StackFrameEntry::Normal);
         self.entries.splice(ix..ix + 1, entries);
         self.selected_ix = Some(ix);
+        self.list_state.reset(self.entries.len());
+        cx.emit(StackFrameListEvent::BuiltEntries);
+        cx.notify();
     }
 
     fn render_collapsed_entry(
@@ -657,7 +665,7 @@ impl StackFrameList {
                 self.go_to_stack_frame_inner(stack_frame, window, cx)
                     .detach_and_log_err(cx)
             }
-            StackFrameEntry::Collapsed(_) => self.expand_collapsed_entry(ix),
+            StackFrameEntry::Collapsed(_) => self.expand_collapsed_entry(ix, cx),
         }
         cx.notify();
     }
