@@ -260,6 +260,14 @@ pub fn init(cx: &mut App) {
                 setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
             })
         });
+
+        workspace.register_action(|workspace, action: &CollapseAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.collapse_all_entries(action, window, cx);
+                });
+            }
+        });
     })
     .detach();
 }
