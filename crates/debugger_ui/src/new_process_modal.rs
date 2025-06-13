@@ -17,7 +17,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     HighlightStyle, InteractiveText, KeyContext, PromptButton, PromptLevel, Render, StyledText,
-    Subscription, TextStyle, UnderlineStyle, WeakEntity,
+    Subscription, Task, TextStyle, UnderlineStyle, WeakEntity,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -201,20 +201,24 @@ impl NewProcessModal {
                                 })?
                                 .await;
 
-                            debug_picker
-                                .update_in(cx, |picker, window, cx| {
-                                    picker.delegate.tasks_loaded(
-                                        task_contexts.clone(),
-                                        languages,
-                                        lsp_tasks.clone(),
-                                        current_resolved_tasks.clone(),
-                                        add_current_language_tasks,
-                                        cx,
-                                    );
-                                    picker.refresh(window, cx);
-                                    cx.notify();
-                                })
-                                .ok();
+                            if let Ok(task) = debug_picker.update(cx, |picker, cx| {
+                                picker.delegate.tasks_loaded(
+                                    task_contexts.clone(),
+                                    languages,
+                                    lsp_tasks.clone(),
+                                    current_resolved_tasks.clone(),
+                                    add_current_language_tasks,
+                                    cx,
+                                )
+                            }) {
+                                task.await;
+                                debug_picker
+                                    .update_in(cx, |picker, window, cx| {
+                                        picker.refresh(window, cx);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
 
                             if let Some(active_cwd) = task_contexts
                                 .active_context()
@@ -1143,61 +1147,67 @@ impl DebugDelegate {
         current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         add_current_language_tasks: bool,
         cx: &mut Context<Picker<Self>>,
-    ) {
+    ) -> Task<()> {
         self.task_contexts = Some(task_contexts.clone());
-
-        let (recent, scenarios) = self
-            .task_store
-            .update(cx, |task_store, cx| {
-                task_store.task_inventory().map(|inventory| {
-                    inventory.update(cx, |inventory, cx| {
-                        inventory.list_debug_scenarios(
-                            &task_contexts,
-                            lsp_tasks,
-                            current_resolved_tasks,
-                            add_current_language_tasks,
-                            cx,
-                        )
-                    })
+        let task = self.task_store.update(cx, |task_store, cx| {
+            task_store.task_inventory().map(|inventory| {
+                inventory.update(cx, |inventory, cx| {
+                    inventory.list_debug_scenarios(
+                        &task_contexts,
+                        lsp_tasks,
+                        current_resolved_tasks,
+                        add_current_language_tasks,
+                        cx,
+                    )
                 })
             })
-            .unwrap_or_default();
-
-        if !recent.is_empty() {
-            self.last_used_candidate_index = Some(recent.len() - 1);
-        }
-
-        let dap_registry = cx.global::<DapRegistry>();
-        let hide_vscode = scenarios.iter().any(|(kind, _)| match kind {
-            TaskSourceKind::Worktree {
-                id: _,
-                directory_in_worktree: dir,
-                id_base: _,
-            } => dir.ends_with(".zed"),
-            _ => false,
         });
+        cx.spawn(async move |this, cx| {
+            let (recent, scenarios) = if let Some(task) = task {
+                task.await
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
-        self.candidates = recent
-            .into_iter()
-            .map(|scenario| Self::get_scenario_kind(&languages, &dap_registry, scenario))
-            .chain(
-                scenarios
+            this.update(cx, |this, cx| {
+                if !recent.is_empty() {
+                    this.delegate.last_used_candidate_index = Some(recent.len() - 1);
+                }
+
+                let dap_registry = cx.global::<DapRegistry>();
+                let hide_vscode = scenarios.iter().any(|(kind, _)| match kind {
+                    TaskSourceKind::Worktree {
+                        id: _,
+                        directory_in_worktree: dir,
+                        id_base: _,
+                    } => dir.ends_with(".zed"),
+                    _ => false,
+                });
+
+                this.delegate.candidates = recent
                     .into_iter()
-                    .filter(|(kind, _)| match kind {
-                        TaskSourceKind::Worktree {
-                            id: _,
-                            directory_in_worktree: dir,
-                            id_base: _,
-                        } => !(hide_vscode && dir.ends_with(".vscode")),
-                        _ => true,
-                    })
-                    .map(|(kind, scenario)| {
-                        let (language, scenario) =
-                            Self::get_scenario_kind(&languages, &dap_registry, scenario);
-                        (language.or(Some(kind)), scenario)
-                    }),
-            )
-            .collect();
+                    .map(|scenario| Self::get_scenario_kind(&languages, &dap_registry, scenario))
+                    .chain(
+                        scenarios
+                            .into_iter()
+                            .filter(|(kind, _)| match kind {
+                                TaskSourceKind::Worktree {
+                                    id: _,
+                                    directory_in_worktree: dir,
+                                    id_base: _,
+                                } => !(hide_vscode && dir.ends_with(".vscode")),
+                                _ => true,
+                            })
+                            .map(|(kind, scenario)| {
+                                let (language, scenario) =
+                                    Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                                (language.or(Some(kind)), scenario)
+                            }),
+                    )
+                    .collect();
+            })
+            .ok();
+        })
     }
 }
 
@@ -1355,24 +1365,44 @@ impl PickerDelegate for DebugDelegate {
         else {
             return;
         };
-        let Some(debug_scenario) = cx
-            .global::<DapRegistry>()
-            .locators()
-            .iter()
-            .find_map(|locator| locator.1.create_scenario(&task, "one-off", adapter.clone()))
-        else {
-            return;
-        };
+        let locators = cx.global::<DapRegistry>().locators();
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(debug_scenario) = cx
+                .background_spawn(async move {
+                    for locator in locators {
+                        if let Some(scenario) =
+                            locator.1.create_scenario(&task, "one-off", &adapter).await
+                        {
+                            return Some(scenario);
+                        }
+                    }
+                    None
+                })
+                .await
+            else {
+                return;
+            };
 
-        send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
-
-        self.debug_panel
-            .update(cx, |panel, cx| {
-                panel.start_session(debug_scenario, task_context, None, worktree_id, window, cx);
+            this.update_in(cx, |this, window, cx| {
+                send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
+                this.delegate
+                    .debug_panel
+                    .update(cx, |panel, cx| {
+                        panel.start_session(
+                            debug_scenario,
+                            task_context,
+                            None,
+                            worktree_id,
+                            window,
+                            cx,
+                        );
+                    })
+                    .ok();
+                cx.emit(DismissEvent);
             })
             .ok();
-
-        cx.emit(DismissEvent);
+        })
+        .detach();
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {

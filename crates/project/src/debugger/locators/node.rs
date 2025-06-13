@@ -19,11 +19,11 @@ impl DapLocator for NodeLocator {
     }
 
     /// Determines whether this locator can generate debug target for given task.
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
         if adapter.0.as_ref() != "JavaScript" {
             return None;
@@ -68,7 +68,7 @@ impl DapLocator for NodeLocator {
         });
 
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
             build: None,
             config,
