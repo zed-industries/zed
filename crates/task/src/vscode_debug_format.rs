@@ -87,8 +87,8 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
 
 fn task_type_to_adapter_name(task_type: &str) -> String {
     match task_type {
-        "pwa-node" | "node" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge" | "msedge"
-        | "pwa-msedge" => "JavaScript",
+        "pwa-node" | "node" | "node-terminal" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge"
+        | "msedge" | "pwa-msedge" => "JavaScript",
         "go" => "Delve",
         "php" => "PHP",
         "cppdbg" | "lldb" => "CodeLLDB",
