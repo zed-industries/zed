@@ -196,7 +196,7 @@ impl TableInteractionState {
             return parent;
         }
         let child = div()
-            .id("keymap-editor-vertical-scroll")
+            .id(("table-vertical-scrollbar", this.entity_id()))
             .occlude()
             .flex_none()
             .h_full()
@@ -245,15 +245,15 @@ impl TableInteractionState {
     /// with the vertical scrollbar when visible.
     fn render_horizontal_scrollbar(
         this: &Entity<Self>,
-        parent: Stateful<Div>,
+        parent: Div,
         right_offset: Pixels,
         cx: &mut App,
-    ) -> Stateful<Div> {
+    ) -> Div {
         if !this.read(cx).horizontal_scrollbar.show_scrollbar {
             return parent;
         }
         let child = div()
-            .id("keymap-editor-horizontal-scroll")
+            .id(("table-horizontal-scrollbar", this.entity_id()))
             .occlude()
             .flex_none()
             .w_full()
@@ -298,10 +298,10 @@ impl TableInteractionState {
 
     fn render_horizantal_scrollbar_track(
         this: &Entity<Self>,
-        parent: Stateful<Div>,
+        parent: Div,
         scroll_track_size: Pixels,
         cx: &mut App,
-    ) -> Stateful<Div> {
+    ) -> Div {
         if !this.read(cx).horizontal_scrollbar.show_track {
             return parent;
         }
@@ -502,7 +502,7 @@ pub fn render_row<const COLS: usize>(
         );
 
     if let Some(on_click) = table_context.on_click_row {
-        row.id(ElementId::named_usize("table-row", row_index))
+        row.id(("table-row", row_index))
             .on_click(move |_, window, cx| on_click(row_index, window, cx))
             .into_any_element()
     } else {
@@ -572,33 +572,10 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             px(0.)
         };
 
-        div()
-            .id("todo! how to have id")
+        let table = div()
             .w(self.width)
             .h_full()
             .v_flex()
-            .when_some(interaction_state.as_ref(), |this, interaction_state| {
-                this.track_focus(&interaction_state.read(cx).focus_handle)
-                    .on_hover({
-                        let interaction_state = interaction_state.downgrade();
-                        move |hovered, window, cx| {
-                            interaction_state
-                                .update(cx, |interaction_state, cx| {
-                                    if *hovered {
-                                        interaction_state.horizontal_scrollbar.show(cx);
-                                        interaction_state.vertical_scrollbar.show(cx);
-                                        cx.notify();
-                                    } else if !interaction_state
-                                        .focus_handle
-                                        .contains_focused(window, cx)
-                                    {
-                                        interaction_state.hide_scrollbars(window, cx);
-                                    }
-                                })
-                                .ok(); // todo! handle error?
-                        }
-                    })
-            })
             .when_some(self.headers.take(), |this, headers| {
                 this.child(render_header(headers, table_context.clone(), cx))
             })
@@ -688,7 +665,35 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         cx,
                     )
                 })
-            })
+            });
+
+        if let Some(interaction_state) = interaction_state.as_ref() {
+            table
+                .track_focus(&interaction_state.read(cx).focus_handle)
+                .id(("table", interaction_state.entity_id()))
+                .on_hover({
+                    let interaction_state = interaction_state.downgrade();
+                    move |hovered, window, cx| {
+                        interaction_state
+                            .update(cx, |interaction_state, cx| {
+                                if *hovered {
+                                    interaction_state.horizontal_scrollbar.show(cx);
+                                    interaction_state.vertical_scrollbar.show(cx);
+                                    cx.notify();
+                                } else if !interaction_state
+                                    .focus_handle
+                                    .contains_focused(window, cx)
+                                {
+                                    interaction_state.hide_scrollbars(window, cx);
+                                }
+                            })
+                            .ok(); // todo! handle error?
+                    }
+                })
+                .into_any_element()
+        } else {
+            table.into_any_element()
+        }
     }
 }
 
