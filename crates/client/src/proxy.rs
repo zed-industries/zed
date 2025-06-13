@@ -3,8 +3,15 @@
 mod http_proxy;
 mod socks_proxy;
 
+use std::sync::LazyLock;
+
 use anyhow::{Context as _, Result};
-use hickory_resolver::{TokioAsyncResolver, config::LookupIpStrategy, system_conf};
+use hickory_resolver::{
+    AsyncResolver, TokioAsyncResolver,
+    config::LookupIpStrategy,
+    name_server::{GenericConnector, TokioRuntimeProvider},
+    system_conf,
+};
 use http_client::Url;
 use http_proxy::{HttpProxyType, connect_http_proxy_stream, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_socks_proxy_stream, parse_socks_proxy};
@@ -62,16 +69,20 @@ async fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)>
     Some(((ip, port), proxy_type))
 }
 
+static SYSTEM_DNS_RESOLVER: LazyLock<AsyncResolver<GenericConnector<TokioRuntimeProvider>>> =
+    LazyLock::new(|| {
+        let (config, mut opts) = system_conf::read_system_conf().unwrap();
+        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+        TokioAsyncResolver::tokio(config, opts)
+    });
+
 async fn resolve_proxy_url_if_needed(proxy: (String, u16)) -> Result<(String, u16)> {
     let proxy = proxy
         .into_target_addr()
         .context("Failed to parse proxy addr")?;
     match proxy {
         TargetAddr::Domain(domain, port) => {
-            let (config, mut opts) = system_conf::read_system_conf().unwrap();
-            opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-            let resolver = TokioAsyncResolver::tokio(config, opts);
-            let ip = resolver
+            let ip = SYSTEM_DNS_RESOLVER
                 .lookup_ip(domain.as_ref())
                 .await?
                 .into_iter()
