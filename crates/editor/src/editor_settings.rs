@@ -142,7 +142,7 @@ impl Minimap {
     }
 
     #[inline]
-    pub fn on_active_pane(&self) -> bool {
+    pub fn on_active_editor(&self) -> bool {
         self.display_in == DisplayIn::ActiveEditor
     }
 
