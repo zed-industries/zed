@@ -51,7 +51,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tiny_http = "0.8"
+tiny_http.workspace = true
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true
