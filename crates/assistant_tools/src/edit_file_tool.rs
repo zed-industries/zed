@@ -10,7 +10,7 @@ use assistant_tool::{
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, scroll::Autoscroll};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
@@ -800,11 +800,30 @@ impl ToolCard for EditFileToolCard {
                                         if let Some(active_editor) = item.downcast::<Editor>() {
                                             active_editor
                                                 .update_in(cx, |editor, window, cx| {
-                                                    editor.go_to_singleton_buffer_point(
-                                                        language::Point::new(0, 0),
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    let snapshot =
+                                                        editor.buffer().read(cx).snapshot(cx);
+                                                    let first_hunk = editor
+                                                        .diff_hunks_in_ranges(
+                                                            &[editor::Anchor::min()
+                                                                ..editor::Anchor::max()],
+                                                            &snapshot,
+                                                        )
+                                                        .next();
+                                                    if let Some(first_hunk) = first_hunk {
+                                                        let first_hunk_start =
+                                                            first_hunk.multi_buffer_range().start;
+                                                        editor.change_selections(
+                                                            Some(Autoscroll::fit()),
+                                                            window,
+                                                            cx,
+                                                            |selections| {
+                                                                selections.select_anchor_ranges([
+                                                                    first_hunk_start
+                                                                        ..first_hunk_start,
+                                                                ]);
+                                                            },
+                                                        )
+                                                    }
                                                 })
                                                 .log_err();
                                         }

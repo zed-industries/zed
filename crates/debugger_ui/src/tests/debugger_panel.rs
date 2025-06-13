@@ -33,6 +33,7 @@ use std::{
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
+use workspace::item::SaveOptions;
 use workspace::{Item, dock::Panel};
 
 #[gpui::test]
@@ -468,14 +469,19 @@ async fn test_handle_start_debugging_request(
 
             // We should preserve the original binary (params to spawn process etc.) except for launch params
             // (as they come from reverse spawn request).
-            let mut original_binary = parent_session.read(cx).binary().clone();
+            let mut original_binary = parent_session.read(cx).binary().cloned().unwrap();
             original_binary.request_args = StartDebuggingRequestArguments {
                 request: StartDebuggingRequestArgumentsRequest::Launch,
                 configuration: fake_config.clone(),
             };
 
             assert_eq!(
-                current_sessions[1].read(cx).session(cx).read(cx).binary(),
+                current_sessions[1]
+                    .read(cx)
+                    .session(cx)
+                    .read(cx)
+                    .binary()
+                    .unwrap(),
                 &original_binary
             );
         })
@@ -1213,7 +1219,15 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 
     editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();

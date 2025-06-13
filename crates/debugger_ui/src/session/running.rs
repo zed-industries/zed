@@ -605,6 +605,7 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        parent_terminal: Option<Entity<DebugTerminal>>,
         serialized_pane_layout: Option<SerializedLayout>,
         dock_axis: Axis,
         window: &mut Window,
@@ -617,7 +618,8 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(|cx| DebugTerminal::empty(window, cx));
+        let debug_terminal =
+            parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -816,20 +818,20 @@ impl RunningState {
 
             let request_type = dap_registry
                 .adapter(&adapter)
-                .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                .with_context(|| format!("{}: is not a valid adapter name", &adapter))
                 .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 
             let build_output = if let Some(build) = build {
-                let (task, locator_name) = match build {
+                let (task_template, locator_name) = match build {
                     BuildTaskDefinition::Template {
                         task_template,
                         locator_name,
                     } => (task_template, locator_name),
                     BuildTaskDefinition::ByName(ref label) => {
-                        let Some(task) = task_store.update(cx, |this, cx| {
-                            this.task_inventory().and_then(|inventory| {
+                        let task = task_store.update(cx, |this, cx| {
+                            this.task_inventory().map(|inventory| {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
@@ -837,14 +839,15 @@ impl RunningState {
                                     cx,
                                 )
                             })
-                        })?
-                        else {
-                            anyhow::bail!("Couldn't find task template for {:?}", build)
-                        };
+                        })?;
+                        let task = match task {
+                            Some(task) => task.await,
+                            None => None,
+                        }.with_context(|| format!("Couldn't find task template for {build:?}"))?;
                         (task, None)
                     }
                 };
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
@@ -929,15 +932,13 @@ impl RunningState {
             };
 
             if config_is_valid {
-                // Ok(DebugTaskDefinition {
-                //     label,
-                //     adapter: DebugAdapterName(adapter),
-                //     config,
-                //     tcp_connection,
-                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name =
-                    locator_name.context("Could not find a valid locator for a build task")?;
+                    locator_name.with_context(|| {
+                        format!("Could not find a valid locator for a build task and configure is invalid with error: {}", request_type.err()
+                            .map(|err| err.to_string())
+                            .unwrap_or_default())
+                    })?;
                 let request = dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
@@ -953,7 +954,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
@@ -992,7 +993,7 @@ impl RunningState {
         let cwd = Some(&request.cwd)
             .filter(|cwd| cwd.len() > 0)
             .map(PathBuf::from)
-            .or_else(|| session.binary().cwd.clone());
+            .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut args = request.args.clone();
 

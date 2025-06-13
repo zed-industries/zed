@@ -260,6 +260,14 @@ pub fn init(cx: &mut App) {
                 setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
             })
         });
+
+        workspace.register_action(|workspace, action: &CollapseAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.collapse_all_entries(action, window, cx);
+                });
+            }
+        });
     })
     .detach();
 }
@@ -4413,8 +4421,7 @@ impl ProjectPanel {
                                     )
                                 }
                             })
-                        }
-                        .ml_1(),
+                        },
                     )
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {
@@ -4914,8 +4921,8 @@ impl Render for ProjectPanel {
                 )
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    uniform_list(cx.entity().clone(), "entries", item_count, {
-                        |this, range, window, cx| {
+                    uniform_list("entries", item_count, {
+                        cx.processor(|this, range: Range<usize>, window, cx| {
                             let mut items = Vec::with_capacity(range.end - range.start);
                             this.for_each_visible_entry(
                                 range,
@@ -4926,7 +4933,7 @@ impl Render for ProjectPanel {
                                 },
                             );
                             items
-                        }
+                        })
                     })
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
