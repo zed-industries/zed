@@ -108,6 +108,12 @@ struct SelectionLayout {
     user_name: Option<SharedString>,
 }
 
+struct InlineBlameLayout {
+    element: AnyElement,
+    bounds: Bounds<Pixels>,
+    entry: BlameEntry,
+}
+
 impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
@@ -950,40 +956,43 @@ impl EditorElement {
             return;
         }
 
-        let text_hitbox = &position_map.text_hitbox;
-        let text_bounds = text_hitbox.bounds;
         let point_for_position = position_map.point_for_position(event.position);
+        let text_hitbox = &position_map.text_hitbox;
 
-        let mut scroll_delta = gpui::Point::<f32>::default();
-        let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
-        let top = text_bounds.origin.y + vertical_margin;
-        let bottom = text_bounds.bottom_left().y - vertical_margin;
-        if event.position.y < top {
-            scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
-        }
-        if event.position.y > bottom {
-            scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
-        }
+        let scroll_delta = {
+            let text_bounds = text_hitbox.bounds;
+            let mut scroll_delta = gpui::Point::<f32>::default();
+            let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
+            let top = text_bounds.origin.y + vertical_margin;
+            let bottom = text_bounds.bottom_left().y - vertical_margin;
+            if event.position.y < top {
+                scroll_delta.y = -scale_vertical_mouse_autoscroll_delta(top - event.position.y);
+            }
+            if event.position.y > bottom {
+                scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
+            }
 
-        // We need horizontal width of text
-        let style = editor.style.clone().unwrap_or_default();
-        let font_id = window.text_system().resolve_font(&style.text.font());
-        let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+            // We need horizontal width of text
+            let style = editor.style.clone().unwrap_or_default();
+            let font_id = window.text_system().resolve_font(&style.text.font());
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
-        let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
+            let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
-        let scroll_space: Pixels = scroll_margin_x * em_width;
+            let scroll_space: Pixels = scroll_margin_x * em_width;
 
-        let left = text_bounds.origin.x + scroll_space;
-        let right = text_bounds.top_right().x - scroll_space;
+            let left = text_bounds.origin.x + scroll_space;
+            let right = text_bounds.top_right().x - scroll_space;
 
-        if event.position.x < left {
-            scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
-        }
-        if event.position.x > right {
-            scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
-        }
+            if event.position.x < left {
+                scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
+            }
+            if event.position.x > right {
+                scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
+            }
+            scroll_delta
+        };
 
         if !editor.has_pending_selection() {
             let drop_anchor = position_map
@@ -1063,6 +1072,7 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,
+        inline_blame_bounds: &Option<(Bounds<Pixels>, BlameEntry)>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
@@ -1072,6 +1082,30 @@ impl EditorElement {
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.mouse_cursor_hidden = false;
+
+        if let Some((bounds, blame_entry)) = inline_blame_bounds {
+            let mouse_over_inline_blame = bounds.contains(&event.position);
+            let mouse_over_popover = editor
+                .inline_blame_popover
+                .as_ref()
+                .and_then(|state| state.popover_bounds)
+                .map_or(false, |bounds| bounds.contains(&event.position));
+
+            if mouse_over_inline_blame || mouse_over_popover {
+                editor.show_blame_popover(&blame_entry, event.position, cx);
+            } else {
+                editor.hide_blame_popover(cx);
+            }
+        } else {
+            if editor
+                .inline_blame_popover
+                .as_ref()
+                .and_then(|state| state.popover_bounds)
+                .map_or(false, |bounds| !bounds.contains(&event.position))
+            {
+                editor.hide_blame_popover(cx);
+            }
+        }
 
         let breakpoint_indicator = if gutter_hovered {
             let new_point = position_map
@@ -2278,7 +2312,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement> {
+    ) -> Option<InlineBlameLayout> {
         if !self
             .editor
             .update(cx, |editor, cx| editor.render_git_blame_inline(window, cx))
@@ -2307,13 +2341,13 @@ impl EditorElement {
             padding * em_width
         };
 
-        let blame_entry = blame
+        let entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 
-        let mut element = render_inline_blame_entry(blame_entry.clone(), &self.style, cx)?;
+        let mut element = render_inline_blame_entry(entry.clone(), &self.style, cx)?;
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -2342,24 +2376,19 @@ impl EditorElement {
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
         let bounds = Bounds::new(absolute_offset, size);
 
-        self.layout_blame_entry_popover(
-            bounds,
-            blame_entry,
-            blame,
-            line_height,
-            text_hitbox,
-            window,
-            cx,
-        );
+        self.layout_blame_entry_popover(entry.clone(), blame, line_height, text_hitbox, window, cx);
 
         element.prepaint_as_root(absolute_offset, AvailableSpace::min_size(), window, cx);
 
-        Some(element)
+        Some(InlineBlameLayout {
+            element,
+            bounds,
+            entry,
+        })
     }
 
     fn layout_blame_entry_popover(
         &self,
-        parent_bounds: Bounds<Pixels>,
         blame_entry: BlameEntry,
         blame: Entity<GitBlame>,
         line_height: Pixels,
@@ -2367,91 +2396,62 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mouse_position = window.mouse_position();
-        let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
-        let mouse_over_popover = self.editor.read_with(cx, |editor, _| {
-            editor
-                .inline_blame_popover
-                .as_ref()
-                .and_then(|state| state.popover_bounds)
-                .map_or(false, |bounds| bounds.contains(&mouse_position))
+        let Some((popover_state, target_point)) = self.editor.read_with(cx, |editor, _| {
+            editor.inline_blame_popover.as_ref().and_then(|state| {
+                if state.show_task.is_none() {
+                    Some((state.popover_state.clone(), state.position))
+                } else {
+                    None
+                }
+            })
+        }) else {
+            return;
+        };
+
+        let workspace = self
+            .editor
+            .read_with(cx, |editor, _| editor.workspace().map(|w| w.downgrade()));
+
+        let maybe_element = workspace.and_then(|workspace| {
+            render_blame_entry_popover(
+                blame_entry,
+                popover_state.scroll_handle,
+                popover_state.commit_message,
+                popover_state.markdown,
+                workspace,
+                &blame,
+                window,
+                cx,
+            )
         });
 
-        self.editor.update(cx, |editor, cx| {
-            if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, mouse_position, cx);
+        if let Some(mut element) = maybe_element {
+            let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+            let overall_height = size.height + HOVER_POPOVER_GAP;
+            let popover_origin = if target_point.y > overall_height {
+                point(target_point.x, target_point.y - size.height)
             } else {
-                editor.hide_blame_popover(cx);
-            }
-        });
+                point(
+                    target_point.x,
+                    target_point.y + line_height + HOVER_POPOVER_GAP,
+                )
+            };
 
-        let should_draw = self.editor.read_with(cx, |editor, _| {
-            editor
-                .inline_blame_popover
-                .as_ref()
-                .map_or(false, |state| state.show_task.is_none())
-        });
+            let horizontal_offset = (text_hitbox.top_right().x
+                - POPOVER_RIGHT_OFFSET
+                - (popover_origin.x + size.width))
+                .min(Pixels::ZERO);
 
-        if should_draw {
-            let maybe_element = self.editor.update(cx, |editor, cx| {
-                editor
-                    .workspace()
-                    .map(|workspace| workspace.downgrade())
-                    .zip(
-                        editor
-                            .inline_blame_popover
-                            .as_ref()
-                            .map(|p| p.popover_state.clone()),
-                    )
-                    .and_then(|(workspace, popover_state)| {
-                        render_blame_entry_popover(
-                            blame_entry,
-                            popover_state.scroll_handle,
-                            popover_state.commit_message,
-                            popover_state.markdown,
-                            workspace,
-                            &blame,
-                            window,
-                            cx,
-                        )
-                    })
+            let origin = point(popover_origin.x + horizontal_offset, popover_origin.y);
+            let popover_bounds = Bounds::new(origin, size);
+
+            self.editor.update(cx, |editor, _| {
+                if let Some(state) = &mut editor.inline_blame_popover {
+                    state.popover_bounds = Some(popover_bounds);
+                }
             });
 
-            if let Some(mut element) = maybe_element {
-                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin = self.editor.read_with(cx, |editor, _| {
-                    let target_point = editor
-                        .inline_blame_popover
-                        .as_ref()
-                        .map_or(mouse_position, |state| state.position);
-
-                    let overall_height = size.height + HOVER_POPOVER_GAP;
-                    let popover_origin = if target_point.y > overall_height {
-                        point(target_point.x, target_point.y - size.height)
-                    } else {
-                        point(
-                            target_point.x,
-                            target_point.y + line_height + HOVER_POPOVER_GAP,
-                        )
-                    };
-
-                    let horizontal_offset = (text_hitbox.top_right().x
-                        - POPOVER_RIGHT_OFFSET
-                        - (popover_origin.x + size.width))
-                        .min(Pixels::ZERO);
-
-                    point(popover_origin.x + horizontal_offset, popover_origin.y)
-                });
-
-                let popover_bounds = Bounds::new(origin, size);
-                self.editor.update(cx, |editor, _| {
-                    if let Some(state) = &mut editor.inline_blame_popover {
-                        state.popover_bounds = Some(popover_bounds);
-                    }
-                });
-
-                window.defer_draw(element, origin, 2);
-            }
+            window.defer_draw(element, origin, 2);
         }
     }
 
@@ -6258,9 +6258,9 @@ impl EditorElement {
     }
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        if let Some(mut inline_blame) = layout.inline_blame.take() {
+        if let Some(mut blame_layout) = layout.inline_blame_layout.take() {
             window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
-                inline_blame.paint(window, cx);
+                blame_layout.element.paint(window, cx);
             })
         }
     }
@@ -6709,6 +6709,10 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let inline_blame_bounds = layout
+                .inline_blame_layout
+                .as_ref()
+                .map(|layout| (layout.bounds, layout.entry.clone()));
 
             move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -6722,7 +6726,14 @@ impl EditorElement {
                             Self::mouse_dragged(editor, event, &position_map, window, cx)
                         }
 
-                        Self::mouse_moved(editor, event, &position_map, window, cx)
+                        Self::mouse_moved(
+                            editor,
+                            event,
+                            &position_map,
+                            &inline_blame_bounds,
+                            window,
+                            cx,
+                        )
                     });
                 }
             }
@@ -8392,7 +8403,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let mut inline_blame = None;
+                    let mut inline_blame_layout = None;
                     let mut inline_code_actions = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
@@ -8414,7 +8425,7 @@ impl Element for EditorElement {
                             let line_layout = &line_layouts[line_ix];
                             let crease_trailer_layout = crease_trailers[line_ix].as_ref();
 
-                            inline_blame = self.layout_inline_blame(
+                            if let Some(layout) = self.layout_inline_blame(
                                 display_row,
                                 row_info,
                                 line_layout,
@@ -8426,8 +8437,8 @@ impl Element for EditorElement {
                                 &text_hitbox,
                                 window,
                                 cx,
-                            );
-                            if inline_blame.is_some() {
+                            ) {
+                                inline_blame_layout = Some(layout);
                                 // Blame overrides inline diagnostics
                                 inline_diagnostics.remove(&display_row);
                             }
@@ -8756,7 +8767,7 @@ impl Element for EditorElement {
                         line_numbers,
                         blamed_display_rows,
                         inline_diagnostics,
-                        inline_blame,
+                        inline_blame_layout,
                         inline_code_actions,
                         blocks,
                         cursors,
@@ -8937,7 +8948,7 @@ pub struct EditorLayout {
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
-    inline_blame: Option<AnyElement>,
+    inline_blame_layout: Option<InlineBlameLayout>,
     inline_code_actions: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

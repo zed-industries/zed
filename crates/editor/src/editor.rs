@@ -6267,8 +6267,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
-            state.hide_task.take();
-            cx.notify();
+            if state.hide_task.take().is_some() {
+                cx.notify();
+                println!("cancelling hide task, notify");
+            }
         } else {
             let delay = EditorSettings::get_global(cx).hover_popover_delay;
             let show_task = cx.spawn(async move |editor, cx| {
@@ -6278,8 +6280,10 @@ impl Editor {
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(state) = &mut editor.inline_blame_popover {
-                            state.show_task = None;
-                            cx.notify();
+                            if state.show_task.take().is_some() {
+                                cx.notify();
+                                println!("cancelling show task, notify");
+                            }
                         }
                     })
                     .ok();
@@ -6317,8 +6321,10 @@ impl Editor {
     fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
         if let Some(state) = &mut self.inline_blame_popover {
             if state.show_task.is_some() {
-                self.inline_blame_popover.take();
-                cx.notify();
+                if self.inline_blame_popover.take().is_some() {
+                    cx.notify();
+                    println!("cancelling show task, notify");
+                }
             } else {
                 let hide_task = cx.spawn(async move |editor, cx| {
                     cx.background_executor()
@@ -6326,8 +6332,10 @@ impl Editor {
                         .await;
                     editor
                         .update(cx, |editor, cx| {
-                            editor.inline_blame_popover.take();
-                            cx.notify();
+                            if editor.inline_blame_popover.take().is_some() {
+                                cx.notify();
+                                println!("removing popover, notify");
+                            }
                         })
                         .ok();
                 });
