@@ -706,6 +706,8 @@ impl DapStore {
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
+        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+
         cx.background_spawn(async move {
             if shutdown_children.len() > 0 {
                 let _ = join_all(shutdown_children).await;
