@@ -29,7 +29,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, Role, ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -65,10 +65,10 @@ use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
     AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
-    DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
-    NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
-    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleBurnMode, ToggleContextPicker,
-    ToggleNavigationMenu, ToggleOptionsMenu,
+    DeleteRecentlyOpenThread, EditAssistantMessage, EditUserMessage, ExpandMessageEditor, Follow,
+    InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, TextThreadStore, ThreadEvent,
+    ToggleBurnMode, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -3064,6 +3064,37 @@ impl AgentPanel {
         }
         key_context
     }
+
+    fn edit_last_message(&self, role: Role, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.active_view, ActiveView::Thread { .. }) {
+            return;
+        }
+
+        self.thread.update(cx, |active_thread, cx| {
+            if active_thread.editing_message_id().is_some() {
+                return;
+            }
+
+            let thread = active_thread.thread().read(cx);
+            let messages: Vec<_> = thread.messages().collect();
+            let Some(message) = messages.iter().rev().find(|m| m.role == role) else {
+                return;
+            };
+            let (id, segments, creases) = (
+                message.id,
+                message.segments.clone(),
+                message.creases.clone(),
+            );
+
+            match role {
+                Role::Assistant => active_thread
+                    .start_editing_assistant_message(id, &segments, &creases, None, window, cx),
+                Role::User => active_thread
+                    .start_editing_user_message(id, &segments, &creases, None, window, cx),
+                _ => {}
+            }
+        });
+    }
 }
 
 impl Render for AgentPanel {
@@ -3113,6 +3144,12 @@ impl Render for AgentPanel {
                 this.continue_conversation(window, cx);
             }))
             .on_action(cx.listener(Self::toggle_burn_mode))
+            .on_action(cx.listener(|this, _: &EditAssistantMessage, window, cx| {
+                this.edit_last_message(Role::Assistant, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &EditUserMessage, window, cx| {
+                this.edit_last_message(Role::User, window, cx);
+            }))
             .child(self.render_toolbar(window, cx))
             .children(self.render_upsell(window, cx))
             .children(self.render_trial_end_upsell(window, cx))

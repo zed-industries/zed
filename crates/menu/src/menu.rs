@@ -14,6 +14,7 @@ actions!(
     [
         Cancel,
         Confirm,
+        SaveEdit,
         SecondaryConfirm,
         SelectPrevious,
         SelectNext,

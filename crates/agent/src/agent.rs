@@ -93,6 +93,8 @@ actions!(
         ContinueThread,
         ContinueWithBurnMode,
         ToggleBurnMode,
+        EditAssistantMessage,
+        EditUserMessage,
     ]
 );
 
