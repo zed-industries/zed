@@ -9377,7 +9377,7 @@ impl Editor {
             return;
         }
         if self.has_active_inline_completion() {
-            self.accept_edit_prediction(&AcceptEditPrediction::default(), window, cx);
+            self.accept_edit_prediction(&AcceptEditPrediction, window, cx);
             return;
         }
         if self.read_only(cx) {
