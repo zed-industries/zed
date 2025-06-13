@@ -110,7 +110,7 @@ impl RenderOnce for Callout {
                                 |this| {
                                     this.child(
                                         h_flex()
-                                            .gap_1()
+                                            .gap_0p5()
                                             .when_some(self.secondary_action, |this, action| {
                                                 this.child(action)
                                             })

@@ -502,7 +502,7 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
         if !model?.model.supports_max_mode() {
@@ -717,7 +717,7 @@ impl MessageEditor {
                             .child(
                                 h_flex()
                                     .child(self.render_follow_toggle(cx))
-                                    .children(self.render_max_mode_toggle(cx)),
+                                    .children(self.render_burn_mode_toggle(cx)),
                             )
                             .child(
                                 h_flex()
@@ -1256,7 +1256,7 @@ impl MessageEditor {
                         .icon(icon)
                         .title(title)
                         .description(
-                            "Start a new thread from a summary to continue the conversation.",
+                            "To continue, start a new thread from a summary or turn burn mode on.",
                         )
                         .primary_action(
                             Button::new("start-new-thread", "Start New Thread")
@@ -1267,6 +1267,13 @@ impl MessageEditor {
                                         Box::new(NewThread { from_thread_id }),
                                         cx,
                                     );
+                                })),
+                        )
+                        .secondary_action(
+                            IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(|this, _event, window, cx| {
+                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                                 })),
                         ),
                 ),
@@ -1466,6 +1473,8 @@ impl Render for MessageEditor {
                 total_token_usage.ratio()
             });
 
+        let burn_mode_enabled = thread.completion_mode() == CompletionMode::Burn;
+
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
@@ -1482,7 +1491,7 @@ impl Render for MessageEditor {
 
                 if usage_callout.is_some() {
                     usage_callout
-                } else if token_usage_ratio != TokenUsageRatio::Normal {
+                } else if token_usage_ratio != TokenUsageRatio::Normal && !burn_mode_enabled {
                     self.render_token_limit_callout(line_height, token_usage_ratio, cx)
                 } else {
                     None
