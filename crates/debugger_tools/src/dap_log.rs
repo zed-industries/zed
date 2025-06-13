@@ -52,8 +52,8 @@ struct DapLogView {
 pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     debug_sessions: VecDeque<DebugAdapterState>,
-    rpc_tx: UnboundedSender<(SessionId, IoKind, Option<String>, String)>,
-    adapter_log_tx: UnboundedSender<(SessionId, IoKind, Option<String>, String)>,
+    rpc_tx: UnboundedSender<(SessionId, IoKind, Option<SharedString>, SharedString)>,
+    adapter_log_tx: UnboundedSender<(SessionId, IoKind, Option<SharedString>, SharedString)>,
 }
 
 struct ProjectState {
@@ -62,7 +62,7 @@ struct ProjectState {
 
 struct DebugAdapterState {
     id: SessionId,
-    log_messages: VecDeque<String>,
+    log_messages: VecDeque<SharedString>,
     rpc_messages: RpcMessages,
     adapter_name: DebugAdapterName,
     has_adapter_logs: bool,
@@ -70,9 +70,9 @@ struct DebugAdapterState {
 }
 
 struct RpcMessages {
-    messages: VecDeque<String>,
+    messages: VecDeque<SharedString>,
     last_message_kind: Option<MessageKind>,
-    initialization_sequence: Vec<String>,
+    initialization_sequence: Vec<SharedString>,
     last_init_message_kind: Option<MessageKind>,
 }
 
@@ -122,7 +122,8 @@ impl DebugAdapterState {
 
 impl LogStore {
     pub fn new(cx: &Context<Self>) -> Self {
-        let (rpc_tx, mut rpc_rx) = unbounded::<(SessionId, IoKind, Option<String>, String)>();
+        let (rpc_tx, mut rpc_rx) =
+            unbounded::<(SessionId, IoKind, Option<SharedString>, SharedString)>();
         cx.spawn(async move |this, cx| {
             while let Some((session_id, io_kind, command, message)) = rpc_rx.next().await {
                 if let Some(this) = this.upgrade() {
@@ -138,7 +139,7 @@ impl LogStore {
         .detach_and_log_err(cx);
 
         let (adapter_log_tx, mut adapter_log_rx) =
-            unbounded::<(SessionId, IoKind, Option<String>, String)>();
+            unbounded::<(SessionId, IoKind, Option<SharedString>, SharedString)>();
         cx.spawn(async move |this, cx| {
             while let Some((session_id, io_kind, _, message)) = adapter_log_rx.next().await {
                 if let Some(this) = this.upgrade() {
@@ -202,8 +203,8 @@ impl LogStore {
         &mut self,
         id: SessionId,
         io_kind: IoKind,
-        command: Option<String>,
-        message: String,
+        command: Option<SharedString>,
+        message: SharedString,
         cx: &mut Context<Self>,
     ) {
         let Some(debug_client_state) = self.get_debug_adapter_state(id) else {
@@ -212,7 +213,7 @@ impl LogStore {
 
         let is_init_seq = command.as_ref().is_some_and(|command| {
             matches!(
-                command.as_str(),
+                command.as_ref(),
                 "attach" | "launch" | "initialize" | "configurationDone"
             )
         });
@@ -229,7 +230,7 @@ impl LogStore {
             Self::get_debug_adapter_entry(
                 &mut rpc_messages.messages,
                 id,
-                kind.label().to_string(),
+                kind.label().into(),
                 LogKind::Rpc,
                 cx,
             );
@@ -248,7 +249,7 @@ impl LogStore {
             if rpc_messages.last_init_message_kind != Some(kind) {
                 rpc_messages
                     .initialization_sequence
-                    .push(kind.label().to_owned());
+                    .push(SharedString::from(kind.label()));
                 rpc_messages.last_init_message_kind = Some(kind);
             }
             rpc_messages.initialization_sequence.push(entry);
@@ -261,7 +262,7 @@ impl LogStore {
         &mut self,
         id: SessionId,
         io_kind: IoKind,
-        message: String,
+        message: SharedString,
         cx: &mut Context<Self>,
     ) {
         let Some(debug_adapter_state) = self.get_debug_adapter_state(id) else {
@@ -269,11 +270,7 @@ impl LogStore {
         };
 
         let message = match io_kind {
-            IoKind::StdErr => {
-                let mut message = message.clone();
-                message.insert_str(0, "stderr: ");
-                message
-            }
+            IoKind::StdErr => format!("stderr: {message}").into(),
             _ => message,
         };
 
@@ -288,12 +285,12 @@ impl LogStore {
     }
 
     fn get_debug_adapter_entry(
-        log_lines: &mut VecDeque<String>,
+        log_lines: &mut VecDeque<SharedString>,
         id: SessionId,
-        message: String,
+        message: SharedString,
         kind: LogKind,
         cx: &mut Context<Self>,
-    ) -> String {
+    ) -> SharedString {
         while log_lines.len() >= RpcMessages::MESSAGE_QUEUE_LIMIT {
             log_lines.pop_front();
         }
@@ -307,6 +304,7 @@ impl LogStore {
                 )
                 .ok()
             })
+            .map(|string| SharedString::from(string))
             .unwrap_or(message)
         } else {
             message
@@ -366,8 +364,8 @@ impl LogStore {
                     .unbounded_send((
                         session_id,
                         io_kind,
-                        command.map(ToOwned::to_owned),
-                        message.to_owned(),
+                        command.map(|command| command.to_owned().into()),
+                        message.to_owned().into(),
                     ))
                     .ok();
             },
@@ -381,8 +379,8 @@ impl LogStore {
                     .unbounded_send((
                         session_id,
                         io_kind,
-                        command.map(ToOwned::to_owned),
-                        message.to_owned(),
+                        command.map(|command| command.to_owned().into()),
+                        message.to_owned().into(),
                     ))
                     .ok();
             },
@@ -403,14 +401,20 @@ impl LogStore {
         cx.notify();
     }
 
-    fn log_messages_for_session(&mut self, session_id: SessionId) -> Option<&mut VecDeque<String>> {
+    fn log_messages_for_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Option<&mut VecDeque<SharedString>> {
         self.debug_sessions
             .iter_mut()
             .find(|session| session.id == session_id)
             .map(|state| &mut state.log_messages)
     }
 
-    fn rpc_messages_for_session(&mut self, session_id: SessionId) -> Option<&mut VecDeque<String>> {
+    fn rpc_messages_for_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Option<&mut VecDeque<SharedString>> {
         self.debug_sessions.iter_mut().find_map(|state| {
             if state.id == session_id {
                 Some(&mut state.rpc_messages.messages)
@@ -423,7 +427,7 @@ impl LogStore {
     fn initialization_sequence_for_session(
         &mut self,
         session_id: SessionId,
-    ) -> Option<&mut Vec<String>> {
+    ) -> Option<&mut Vec<SharedString>> {
         self.debug_sessions.iter_mut().find_map(|state| {
             if state.id == session_id {
                 Some(&mut state.rpc_messages.initialization_sequence)
@@ -710,7 +714,7 @@ impl DapLogView {
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
                 .rpc_messages_for_session(session_id)
-                .map(|state| log_contents(state.iter()))
+                .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
             self.current_view = Some((session_id, LogKind::Rpc));
@@ -752,7 +756,7 @@ impl DapLogView {
         let message_log = self.log_store.update(cx, |log_store, _| {
             log_store
                 .log_messages_for_session(session_id)
-                .map(|state| log_contents(state.iter()))
+                .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(message_log) = message_log {
             self.current_view = Some((session_id, LogKind::Adapter));
@@ -781,7 +785,7 @@ impl DapLogView {
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
                 .initialization_sequence_for_session(session_id)
-                .map(|state| log_contents(state.iter()))
+                .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
             self.current_view = Some((session_id, LogKind::Rpc));
@@ -815,12 +819,9 @@ impl DapLogView {
     }
 }
 
-fn log_contents<'a>(lines: impl Iterator<Item = &'a String>) -> String {
-    // let (a, b) = lines.as_slices();
-    // let a = a.iter().map(move |v| v.as_ref());
-    // let b = b.iter().map(move |v| v.as_ref());
+fn log_contents(lines: impl Iterator<Item = SharedString>) -> String {
     lines.fold(String::new(), |mut acc, el| {
-        acc.push_str(el);
+        acc.push_str(&el);
         acc.push('\n');
         acc
     })
@@ -998,7 +999,7 @@ impl Focusable for DapLogView {
 pub enum Event {
     NewLogEntry {
         id: SessionId,
-        entry: String,
+        entry: SharedString,
         kind: LogKind,
     },
 }
@@ -1017,7 +1018,7 @@ impl LogStore {
             .collect()
     }
 
-    pub fn rpc_messages_for_session_id(&self, session_id: SessionId) -> Vec<String> {
+    pub fn rpc_messages_for_session_id(&self, session_id: SessionId) -> Vec<SharedString> {
         self.debug_sessions
             .iter()
             .find(|adapter_state| adapter_state.id == session_id)
@@ -1028,7 +1029,7 @@ impl LogStore {
             .into()
     }
 
-    pub fn log_messages_for_session_id(&self, session_id: SessionId) -> Vec<String> {
+    pub fn log_messages_for_session_id(&self, session_id: SessionId) -> Vec<SharedString> {
         self.debug_sessions
             .iter()
             .find(|adapter_state| adapter_state.id == session_id)
