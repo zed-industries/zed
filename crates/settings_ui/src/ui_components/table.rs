@@ -349,7 +349,7 @@ impl TableInteractionState {
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table<const COLS: usize = 3> {
     striped: bool,
-    width: Length,
+    width: Option<Length>,
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
@@ -363,7 +363,7 @@ impl<const COLS: usize> Table<COLS> {
     pub fn new() -> Self {
         Table {
             striped: false,
-            width: Length::Auto,
+            width: None,
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
@@ -399,11 +399,20 @@ impl<const COLS: usize> Table<COLS> {
     }
 
     /// Sets the width of the table.
+    /// Will enable horizontal scrolling if [`Self::interactable`] is also called.
     pub fn width(mut self, width: impl Into<Length>) -> Self {
-        self.width = width.into();
+        self.width = Some(width.into());
         self
     }
 
+    /// Enables interaction (primarily scrolling) with the table.
+    ///
+    /// Vertical scrolling will be enabled by default if the table is taller than its container.
+    ///
+    /// Horizontal scrolling will only be enabled if [`Self::width`] is also called, otherwise
+    /// the list will always shrink the table columns to fit their contents I.e. If [`Self::uniform_list`]
+    /// is used without a width and with [`Self::interactable`], the [`ListHorizontalSizingBehavior`] will
+    /// be set to [`ListHorizontalSizingBehavior::FitList`].
     pub fn interactable(mut self, interaction_state: &Entity<TableInteractionState>) -> Self {
         self.interaction_state = Some(interaction_state.downgrade());
         self
@@ -557,7 +566,6 @@ impl<const COLS: usize> TableRenderContext<COLS> {
 
 impl<const COLS: usize> RenderOnce for Table<COLS> {
     fn render(mut self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // match self.ro
         let table_context = TableRenderContext::new(&self);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
 
@@ -572,8 +580,10 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             px(0.)
         };
 
+        let width = self.width;
+
         let table = div()
-            .w(self.width)
+            .when_some(width, |this, width| this.w(width))
             .h_full()
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
@@ -617,9 +627,11 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             .size_full()
                             .flex_grow()
                             .with_sizing_behavior(ListSizingBehavior::Auto)
-                            .with_horizontal_sizing_behavior(
-                                ListHorizontalSizingBehavior::Unconstrained,
-                            )
+                            .with_horizontal_sizing_behavior(if width.is_some() {
+                                ListHorizontalSizingBehavior::Unconstrained
+                            } else {
+                                ListHorizontalSizingBehavior::FitList
+                            })
                             .when_some(
                                 interaction_state.as_ref(),
                                 |this, state| {
@@ -648,24 +660,27 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         })
                     }),
             )
-            .when_some(interaction_state.as_ref(), |this, interaction_state| {
-                this.map(|this| {
-                    TableInteractionState::render_horizantal_scrollbar_track(
-                        interaction_state,
-                        this,
-                        scroll_track_size,
-                        cx,
-                    )
-                })
-                .map(|this| {
-                    TableInteractionState::render_horizontal_scrollbar(
-                        interaction_state,
-                        this,
-                        h_scroll_offset,
-                        cx,
-                    )
-                })
-            });
+            .when_some(
+                width.and(interaction_state.as_ref()),
+                |this, interaction_state| {
+                    this.map(|this| {
+                        TableInteractionState::render_horizantal_scrollbar_track(
+                            interaction_state,
+                            this,
+                            scroll_track_size,
+                            cx,
+                        )
+                    })
+                    .map(|this| {
+                        TableInteractionState::render_horizontal_scrollbar(
+                            interaction_state,
+                            this,
+                            h_scroll_offset,
+                            cx,
+                        )
+                    })
+                },
+            );
 
         if let Some(interaction_state) = interaction_state.as_ref() {
             table
