@@ -452,14 +452,13 @@ impl Prettier {
                             },
                         })
                     })?
-                    .context("prettier params calculation")?;
+                    .context("building prettier request")?;
 
                 let response = local
                     .server
                     .request::<Format>(params)
                     .await
-                    .into_response()
-                    .context("prettier format")?;
+                    .into_response()?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }

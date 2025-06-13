@@ -39,7 +39,7 @@ use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Callout, Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionIntent;
@@ -502,7 +502,7 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
         if !model?.model.supports_max_mode() {
@@ -717,7 +717,7 @@ impl MessageEditor {
                             .child(
                                 h_flex()
                                     .child(self.render_follow_toggle(cx))
-                                    .children(self.render_max_mode_toggle(cx)),
+                                    .children(self.render_burn_mode_toggle(cx)),
                             )
                             .child(
                                 h_flex()
@@ -1175,6 +1175,7 @@ impl MessageEditor {
             .map_or(false, |model| {
                 model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
             });
+
         if !is_using_zed_provider {
             return None;
         }
@@ -1229,14 +1230,6 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            "Thread reached the token limit"
-        } else {
-            "Thread reaching the token limit soon"
-        };
-
-        let message = "Start a new thread from a summary to continue the conversation.";
-
         let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
             Icon::new(IconName::X)
                 .color(Color::Error)
@@ -1247,19 +1240,43 @@ impl MessageEditor {
                 .size(IconSize::XSmall)
         };
 
+        let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
+            "Thread reached the token limit"
+        } else {
+            "Thread reaching the token limit soon"
+        };
+
         Some(
             div()
-                .child(ui::Callout::multi_line(
-                    title,
-                    message,
-                    icon,
-                    "Start New Thread",
-                    Box::new(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id().clone());
-                        window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
-                    })),
-                ))
-                .line_height(line_height),
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .child(
+                    Callout::new()
+                        .line_height(line_height)
+                        .icon(icon)
+                        .title(title)
+                        .description(
+                            "To continue, start a new thread from a summary or turn burn mode on.",
+                        )
+                        .primary_action(
+                            Button::new("start-new-thread", "Start New Thread")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let from_thread_id = Some(this.thread.read(cx).id().clone());
+                                    window.dispatch_action(
+                                        Box::new(NewThread { from_thread_id }),
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .secondary_action(
+                            IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(|this, _event, window, cx| {
+                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                                })),
+                        ),
+                ),
         )
     }
 
@@ -1456,6 +1473,8 @@ impl Render for MessageEditor {
                 total_token_usage.ratio()
             });
 
+        let burn_mode_enabled = thread.completion_mode() == CompletionMode::Burn;
+
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
@@ -1472,7 +1491,7 @@ impl Render for MessageEditor {
 
                 if usage_callout.is_some() {
                     usage_callout
-                } else if token_usage_ratio != TokenUsageRatio::Normal {
+                } else if token_usage_ratio != TokenUsageRatio::Normal && !burn_mode_enabled {
                     self.render_token_limit_callout(line_height, token_usage_ratio, cx)
                 } else {
                     None

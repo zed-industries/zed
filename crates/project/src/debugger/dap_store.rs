@@ -287,11 +287,17 @@ impl DapStore {
         adapter: DebugAdapterName,
         label: SharedString,
         cx: &mut App,
-    ) -> Option<DebugScenario> {
-        DapRegistry::global(cx)
-            .locators()
-            .values()
-            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
+    ) -> Task<Option<DebugScenario>> {
+        let locators = DapRegistry::global(cx).locators();
+
+        cx.background_spawn(async move {
+            for locator in locators.values() {
+                if let Some(scenario) = locator.create_scenario(&build, &label, &adapter).await {
+                    return Some(scenario);
+                }
+            }
+            None
+        })
     }
 
     pub fn run_debug_locator(

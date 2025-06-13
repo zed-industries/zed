@@ -56,6 +56,8 @@ actions!(
     ]
 );
 
+actions!(dev, [CopyDebugAdapterArguments]);
+
 pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);
     workspace::FollowableViewRegistry::register::<DebugSession>(cx);

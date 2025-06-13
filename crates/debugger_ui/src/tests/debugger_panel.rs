@@ -469,14 +469,19 @@ async fn test_handle_start_debugging_request(
 
             // We should preserve the original binary (params to spawn process etc.) except for launch params
             // (as they come from reverse spawn request).
-            let mut original_binary = parent_session.read(cx).binary().clone();
+            let mut original_binary = parent_session.read(cx).binary().cloned().unwrap();
             original_binary.request_args = StartDebuggingRequestArguments {
                 request: StartDebuggingRequestArgumentsRequest::Launch,
                 configuration: fake_config.clone(),
             };
 
             assert_eq!(
-                current_sessions[1].read(cx).session(cx).read(cx).binary(),
+                current_sessions[1]
+                    .read(cx)
+                    .session(cx)
+                    .read(cx)
+                    .binary()
+                    .unwrap(),
                 &original_binary
             );
         })
