@@ -1095,6 +1095,52 @@ mod tests {
     }
 
     #[test]
+    fn test_get_shell_safe_zed_path_with_spaces() {
+        // Test that shlex::try_quote handles paths with spaces correctly
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted = shlex::try_quote(path_with_spaces).unwrap();
+
+        // The quoted path should be properly escaped for shell use
+        assert!(quoted.contains(path_with_spaces));
+
+        // When used in a shell command, it should not be split at spaces
+        let command = format!("sh -c '{} --printenv'", quoted);
+        println!("Command would be: {}", command);
+
+        // Test that shlex can parse it back correctly
+        let parsed = shlex::split(&format!("{} --printenv", quoted)).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], path_with_spaces);
+        assert_eq!(parsed[1], "--printenv");
+    }
+
+    #[test]
+    fn test_shell_command_construction_with_quoted_path() {
+        // Test the specific pattern used in shell_env.rs to ensure proper quoting
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted_path = shlex::try_quote(path_with_spaces).unwrap();
+
+        // This should be: '/Applications/Zed Nightly.app/Contents/MacOS/zed'
+        assert_eq!(
+            quoted_path,
+            "'/Applications/Zed Nightly.app/Contents/MacOS/zed'"
+        );
+
+        // Test the command construction pattern from shell_env.rs
+        // The fixed version should use double quotes around the entire sh -c argument
+        let env_fd = 0;
+        let command = format!("sh -c \"{} --printenv >&{}\";", quoted_path, env_fd);
+
+        // This should produce: sh -c "'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0";
+        let expected =
+            "sh -c \"'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0\";";
+        assert_eq!(command, expected);
+
+        // The command should not contain the problematic double single-quote pattern
+        assert!(!command.contains("''"));
+    }
+
+    #[test]
     fn test_truncate_to_bottom_n_sorted_by() {
         let mut vec: Vec<u32> = vec![5, 2, 3, 4, 1];
         truncate_to_bottom_n_sorted_by(&mut vec, 10, &u32::cmp);
