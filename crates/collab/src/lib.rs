@@ -347,7 +347,7 @@ fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
         .stripe_api_key
         .as_ref()
         .context("missing stripe_api_key")?;
-    Ok(stripe::Client::new(api_key))
+    Ok(stripe::Client::new(api_key).with_strategy(stripe::RequestStrategy::Retry(5)))
 }
 
 async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::Client> {
