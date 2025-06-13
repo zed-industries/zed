@@ -207,6 +207,7 @@ impl KeymapEditor {
     fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("KeymapEditor");
+        dispatch_context.add("BufferSearchBar");
         dispatch_context.add("menu");
 
         // todo! track key context in keybind edit modal
@@ -266,6 +267,21 @@ impl KeymapEditor {
             cx.notify();
         }
     }
+
+    fn focus_search(
+        &mut self,
+        _: &search::FocusSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .filter_editor
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            window.focus(&self.filter_editor.focus_handle(cx));
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -295,6 +311,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::focus_search))
             .size_full()
             .bg(theme.colors().background)
             .id("keymap-editor")

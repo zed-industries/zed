@@ -25,6 +25,7 @@ log.workspace = true
 menu.workspace = true
 paths.workspace = true
 project.workspace = true
+search.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
