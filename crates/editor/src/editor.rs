@@ -5801,9 +5801,11 @@ impl Editor {
                                         tasks.column,
                                     )),
                                 });
-                        let debug_scenarios = editor.update(cx, |editor, cx| {
-                            editor.debug_scenarios(&resolved_tasks, &buffer, cx)
-                        })?;
+                        let debug_scenarios = editor
+                            .update(cx, |editor, cx| {
+                                editor.debug_scenarios(&resolved_tasks, &buffer, cx)
+                            })?
+                            .await;
                         anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
                     }
                 })
@@ -5859,7 +5861,7 @@ impl Editor {
         resolved_tasks: &Option<ResolvedTasks>,
         buffer: &Entity<Buffer>,
         cx: &mut App,
-    ) -> Vec<task::DebugScenario> {
+    ) -> Task<Vec<task::DebugScenario>> {
         if cx.has_flag::<DebuggerFeatureFlag>() {
             maybe!({
                 let project = self.project.as_ref()?;
@@ -5877,21 +5879,27 @@ impl Editor {
 
                 dap_store.update(cx, |dap_store, cx| {
                     for (_, task) in &resolved_tasks.templates {
-                        if let Some(scenario) = dap_store.debug_scenario_for_build_task(
+                        let maybe_scenario = dap_store.debug_scenario_for_build_task(
                             task.original_task().clone(),
                             debug_adapter.clone().into(),
                             task.display_label().to_owned().into(),
                             cx,
-                        ) {
-                            scenarios.push(scenario);
-                        }
+                        );
+                        scenarios.push(maybe_scenario);
                     }
                 });
-                Some(scenarios)
+                Some(cx.background_spawn(async move {
+                    let scenarios = futures::future::join_all(scenarios)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    scenarios
+                }))
             })
-            .unwrap_or_default()
+            .unwrap_or_else(|| Task::ready(vec![]))
         } else {
-            vec![]
+            Task::ready(vec![])
         }
     }
 

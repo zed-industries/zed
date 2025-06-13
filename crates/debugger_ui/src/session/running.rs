@@ -855,7 +855,7 @@ impl RunningState {
                     debug_assert!(!config_is_valid);
                     Some(locator_name)
                 } else if !config_is_valid {
-                    dap_store
+                    let task = dap_store
                         .update(cx, |this, cx| {
                             this.debug_scenario_for_build_task(
                                 task.original_task().clone(),
@@ -863,17 +863,21 @@ impl RunningState {
                                 task.display_label().to_owned().into(),
                                 cx,
                             )
-                            .and_then(|scenario| {
-                                match scenario.build {
-                                    Some(BuildTaskDefinition::Template {
-                                        locator_name, ..
-                                    }) => locator_name,
-                                    _ => None,
-                                }
-                            })
+
+                        });
+                    if let Ok(t) = task {
+                        t.await.and_then(|scenario| {
+                            match scenario.build {
+                                Some(BuildTaskDefinition::Template {
+                                    locator_name, ..
+                                }) => locator_name,
+                                _ => None,
+                            }
                         })
-                        .ok()
-                        .flatten()
+                    } else {
+                        None
+                    }
+
                 } else {
                     None
                 };
