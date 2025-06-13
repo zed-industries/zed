@@ -547,13 +547,10 @@ impl Focusable for MarkdownPreviewView {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreviewEvent {}
-
-impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
+impl EventEmitter<()> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
-    type Event = PreviewEvent;
+    type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::FileDoc))

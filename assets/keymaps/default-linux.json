@@ -493,6 +493,8 @@
       "ctrl-\\": "pane::SplitRight",
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
       "ctrl-shift-v": "markdown::OpenPreview",
+      "ctrl-k s": "svg::OpenPreviewToTheSide",
+      "ctrl-shift-s": "svg::OpenPreview",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
       "alt-,": "editor::GoToPreviousHunk"

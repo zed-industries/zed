@@ -547,6 +547,8 @@
       "cmd-\\": "pane::SplitRight",
       "cmd-k v": "markdown::OpenPreviewToTheSide",
       "cmd-shift-v": "markdown::OpenPreview",
+      "cmd-k s": "svg::OpenPreviewToTheSide",
+      "cmd-shift-s": "svg::OpenPreview",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
