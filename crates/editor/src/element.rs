@@ -1773,7 +1773,7 @@ impl EditorElement {
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
 
-        if minimap_settings.on_active_pane() && !snapshot.is_focused {
+        if minimap_settings.on_active_editor() && !snapshot.is_focused {
             let editor = self.editor.read(cx);
             let focus_handle = &editor.focus_handle;
             if let Some(workspace) = editor.workspace() {
