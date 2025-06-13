@@ -43,6 +43,8 @@ use std::{
     ops::Range,
 };
 
+pub(crate) use events::MacNativeEvent;
+
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
