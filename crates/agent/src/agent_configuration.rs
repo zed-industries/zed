@@ -1,4 +1,4 @@
-mod add_context_server_modal;
+mod configure_context_server_extension_modal;
 mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -12,8 +12,9 @@ use context_server::ContextServerId;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyView, App, Corner, Entity, EventEmitter, FocusHandle,
-    Focusable, ScrollHandle, Subscription, Transformation, percentage,
+    Focusable, ScrollHandle, Subscription, Transformation, WeakEntity, percentage,
 };
+use language::LanguageRegistry;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use project::{
     context_server_store::{ContextServerStatus, ContextServerStore},
@@ -25,9 +26,10 @@ use ui::{
     Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+use workspace::Workspace;
 use zed_actions::ExtensionCategoryFilter;
 
-pub(crate) use add_context_server_modal::AddContextServerModal;
+pub(crate) use configure_context_server_extension_modal::ConfigureContextServerExtensionModal;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
@@ -35,6 +37,8 @@ use crate::AddContextServer;
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
+    language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
@@ -51,6 +55,8 @@ impl AgentConfiguration {
         fs: Arc<dyn Fs>,
         context_server_store: Entity<ContextServerStore>,
         tools: Entity<ToolWorkingSet>,
+        language_registry: Arc<LanguageRegistry>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -81,6 +87,8 @@ impl AgentConfiguration {
 
         let mut this = Self {
             fs,
+            language_registry,
+            workspace,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             context_server_store,
@@ -528,23 +536,38 @@ impl AgentConfiguration {
             .menu({
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
+                let language_registry = self.language_registry.clone();
+                let workspace = self.workspace.clone();
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                        menu.entry("Configure Server", None, |_, _| {})
-                            .entry("Open Logs", None, |_, _| {})
-                            .separator()
-                            .entry("Delete", None, {
-                                let fs = fs.clone();
-                                let context_server_id = context_server_id.clone();
-                                move |_, cx| {
-                                    update_settings_file::<ProjectSettings>(fs.clone(), cx, {
-                                        let context_server_id = context_server_id.clone();
-                                        move |settings, _| {
-                                            settings.context_servers.remove(&context_server_id.0);
-                                        }
-                                    });
-                                }
-                            })
+                        menu.entry("Configure Server", None, {
+                            let context_server_id = context_server_id.clone();
+                            let workspace = workspace.clone();
+                            let language_registry = language_registry.clone();
+                            move |window, cx| {
+                                ConfigureContextServerModal::for_existing_server(
+                                    context_server_id.clone(),
+                                    language_registry.clone(),
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .entry("Open Logs", None, |_, _| {})
+                        .separator()
+                        .entry("Delete", None, {
+                            let fs = fs.clone();
+                            let context_server_id = context_server_id.clone();
+                            move |_, cx| {
+                                update_settings_file::<ProjectSettings>(fs.clone(), cx, {
+                                    let context_server_id = context_server_id.clone();
+                                    move |settings, _| {
+                                        settings.context_servers.remove(&context_server_id.0);
+                                    }
+                                });
+                            }
+                        })
                     }))
                 }
             });

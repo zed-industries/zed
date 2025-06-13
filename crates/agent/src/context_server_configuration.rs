@@ -15,7 +15,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::agent_configuration::ConfigureContextServerModal;
+use crate::agent_configuration::ConfigureContextServerExtensionModal;
 
 pub(crate) fn init(language_registry: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, cx: &mut App) {
     cx.observe_new(move |_: &mut Workspace, window, cx| {
@@ -153,7 +153,7 @@ fn show_configure_mcp_modal(
         this.update_in(cx, |this, window, cx| {
             let workspace = cx.entity().downgrade();
             this.toggle_modal(window, cx, |window, cx| {
-                ConfigureContextServerModal::new(
+                ConfigureContextServerExtensionModal::new(
                     configurations.into_iter(),
                     context_server_store,
                     jsonc_language,

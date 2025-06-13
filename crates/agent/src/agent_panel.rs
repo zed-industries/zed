@@ -1168,8 +1168,17 @@ impl AgentPanel {
         let fs = self.fs.clone();
 
         self.set_active_view(ActiveView::Configuration, window, cx);
-        self.configuration =
-            Some(cx.new(|cx| AgentConfiguration::new(fs, context_server_store, tools, window, cx)));
+        self.configuration = Some(cx.new(|cx| {
+            AgentConfiguration::new(
+                fs,
+                context_server_store,
+                tools,
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+        }));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
