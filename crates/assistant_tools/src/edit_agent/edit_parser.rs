@@ -87,7 +87,7 @@ impl EditParser {
                         *start = false;
                     }
 
-                    let line_hint = line_hint.clone();
+                    let line_hint = *line_hint;
                     if let Some(tag_range) = self.find_end_tag() {
                         let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
@@ -185,8 +185,7 @@ impl EditParser {
         LINE_HINT_REGEX
             .captures(tag)
             .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().parse::<u32>().ok())
-            .flatten()
+            .and_then(|m| m.as_str().parse::<u32>().ok())
     }
 
     pub fn finish(self) -> EditParserMetrics {

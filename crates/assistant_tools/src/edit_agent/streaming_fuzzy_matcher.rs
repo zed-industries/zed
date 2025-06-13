@@ -195,8 +195,10 @@ impl StreamingFuzzyMatcher {
 
     /// Return the best match with starting position close enough to line_hint.
     pub fn select_best_match(&self) -> Option<Range<usize>> {
-        // Allow line hint to be off by that many lines
-        const LINE_HINT_TOLERANCE: u32 = 50;
+        // Allow line hint to be off by that many lines.
+        // Higher values increase probability of applying edits to a wrong place,
+        // Lower values increase edits failures and overall conversation length.
+        const LINE_HINT_TOLERANCE: u32 = 200;
 
         if self.matches.is_empty() {
             return None;
@@ -207,7 +209,7 @@ impl StreamingFuzzyMatcher {
         }
 
         let Some(line_hint) = self.line_hint else {
-            // Multiple ambigous matches
+            // Multiple ambiguous matches
             return None;
         };
 
