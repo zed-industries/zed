@@ -2393,7 +2393,7 @@ impl EditorElement {
             editor
                 .inline_blame_popover
                 .as_ref()
-                .and_then(|state| Some((state.popover_state.clone(), state.position)))
+                .map(|state| (state.popover_state.clone(), state.position))
         }) else {
             return;
         };
