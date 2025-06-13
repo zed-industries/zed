@@ -892,11 +892,11 @@ impl Session {
         &self.capabilities
     }
 
-    pub fn binary(&self) -> &DebugAdapterBinary {
-        let Mode::Running(local_mode) = &self.mode else {
-            panic!("Session is not running");
-        };
-        &local_mode.binary
+    pub fn binary(&self) -> Option<&DebugAdapterBinary> {
+        match &self.mode {
+            Mode::Building => None,
+            Mode::Running(running_mode) => Some(&running_mode.binary),
+        }
     }
 
     pub fn adapter(&self) -> DebugAdapterName {

@@ -2,10 +2,10 @@ use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
-    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewProcessModal,
-    NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop, ToggleExpandItem,
-    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
+    ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
+    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
+    NewProcessModal, NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop,
+    ToggleExpandItem, ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
 use anyhow::Result;
 use dap::adapters::DebugAdapterName;
@@ -16,9 +16,9 @@ use dap::{
 };
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
-    actions, anchored, deferred,
+    Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
+    WeakEntity, actions, anchored, deferred,
 };
 
 use language::Buffer;
@@ -30,6 +30,7 @@ use settings::Settings;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
+use util::maybe;
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -335,7 +336,7 @@ impl DebugPanel {
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let label = curr_session.read(cx).label().clone();
         let adapter = curr_session.read(cx).adapter().clone();
-        let binary = curr_session.read(cx).binary().clone();
+        let binary = curr_session.read(cx).binary().cloned().unwrap();
         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
 
         cx.spawn_in(window, async move |this, cx| {
@@ -388,7 +389,10 @@ impl DebugPanel {
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let label = self.label_for_child_session(&parent_session, request, cx);
         let adapter = parent_session.read(cx).adapter().clone();
-        let mut binary = parent_session.read(cx).binary().clone();
+        let Some(mut binary) = parent_session.read(cx).binary().cloned() else {
+            log::error!("Attempted to start a child-session without a binary");
+            return;
+        };
         binary.request_args = request.clone();
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
@@ -514,6 +518,26 @@ impl DebugPanel {
                 cx.notify();
             });
             self.context_menu = Some((context_menu, position, subscription));
+        }
+    }
+
+    fn copy_debug_adapter_arguments(
+        &mut self,
+        _: &CopyDebugAdapterArguments,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let content = maybe!({
+            let mut session = self.active_session()?.read(cx).session(cx);
+            while let Some(parent) = session.read(cx).parent_session().cloned() {
+                session = parent;
+            }
+            let binary = session.read(cx).binary()?;
+            let content = serde_json::to_string_pretty(&binary).ok()?;
+            Some(content)
+        });
+        if let Some(content) = content {
+            cx.write_to_clipboard(ClipboardItem::new_string(content));
         }
     }
 
@@ -1348,6 +1372,7 @@ impl Render for DebugPanel {
                 });
                 cx.notify();
             }))
+            .on_action(cx.listener(Self::copy_debug_adapter_arguments))
             .when(self.active_session.is_some(), |this| {
                 this.on_mouse_down(
                     MouseButton::Right,
