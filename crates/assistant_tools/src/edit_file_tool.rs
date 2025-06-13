@@ -69,13 +69,13 @@ pub struct EditFileToolInput {
     /// start each path with one of the project's root directories.
     ///
     /// The following examples assume we have two root directories in the project:
-    /// - backend
-    /// - frontend
+    /// - /a/b/backend
+    /// - /c/d/frontend
     ///
     /// <example>
     /// `backend/src/main.rs`
     ///
-    /// Notice how the file path starts with root-1. Without that, the path
+    /// Notice how the file path starts with `backend`. Without that, the path
     /// would be ambiguous and the call would fail!
     /// </example>
     ///
