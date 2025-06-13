@@ -208,7 +208,7 @@ use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
     ViewId, Workspace, WorkspaceId, WorkspaceSettings,
-    item::{ItemHandle, PreviewTabsSettings},
+    item::{ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
@@ -899,7 +899,6 @@ struct InlineBlamePopoverState {
 
 struct InlineBlamePopover {
     position: gpui::Point<Pixels>,
-    show_task: Option<Task<()>>,
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
@@ -1007,6 +1006,7 @@ pub struct Editor {
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<()>)>,
     inline_blame_popover: Option<InlineBlamePopover>,
+    inline_blame_popover_show_task: Option<Task<()>>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
@@ -1222,10 +1222,55 @@ impl Default for SelectionHistoryMode {
     }
 }
 
+#[derive(Debug)]
+pub struct SelectionEffects {
+    nav_history: bool,
+    completions: bool,
+    scroll: Option<Autoscroll>,
+}
+
+impl Default for SelectionEffects {
+    fn default() -> Self {
+        Self {
+            nav_history: true,
+            completions: true,
+            scroll: Some(Autoscroll::fit()),
+        }
+    }
+}
+impl SelectionEffects {
+    pub fn scroll(scroll: Autoscroll) -> Self {
+        Self {
+            scroll: Some(scroll),
+            ..Default::default()
+        }
+    }
+
+    pub fn no_scroll() -> Self {
+        Self {
+            scroll: None,
+            ..Default::default()
+        }
+    }
+
+    pub fn completions(self, completions: bool) -> Self {
+        Self {
+            completions,
+            ..self
+        }
+    }
+
+    pub fn nav_history(self, nav_history: bool) -> Self {
+        Self {
+            nav_history,
+            ..self
+        }
+    }
+}
+
 struct DeferredSelectionEffectsState {
     changed: bool,
-    should_update_completions: bool,
-    autoscroll: Option<Autoscroll>,
+    effects: SelectionEffects,
     old_cursor_position: Anchor,
     history_entry: SelectionHistoryEntry,
 }
@@ -1498,7 +1543,7 @@ impl InlayHintRefreshReason {
 }
 
 pub enum FormatTarget {
-    Buffers,
+    Buffers(HashSet<Entity<Buffer>>),
     Ranges(Vec<Range<MultiBufferPoint>>),
 }
 
@@ -1893,6 +1938,7 @@ impl Editor {
             mouse_context_menu: None,
             completion_tasks: Vec::new(),
             inline_blame_popover: None,
+            inline_blame_popover_show_task: None,
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
@@ -2708,7 +2754,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
-        should_update_completions: bool,
+        effects: SelectionEffects,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2766,12 +2812,14 @@ impl Editor {
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
 
-        self.push_to_nav_history(
-            *old_cursor_position,
-            Some(new_cursor_position.to_point(buffer)),
-            false,
-            cx,
-        );
+        if effects.nav_history {
+            self.push_to_nav_history(
+                *old_cursor_position,
+                Some(new_cursor_position.to_point(buffer)),
+                false,
+                cx,
+            );
+        }
 
         if local {
             if let Some(buffer_id) = new_cursor_position.buffer_id {
@@ -2802,7 +2850,7 @@ impl Editor {
             let completion_position = completion_menu.map(|menu| menu.initial_position);
             drop(context_menu);
 
-            if should_update_completions {
+            if effects.completions {
                 if let Some(completion_position) = completion_position {
                     let start_offset = selection_start.to_offset(buffer);
                     let position_matches = start_offset == completion_position.to_offset(buffer);
@@ -3009,43 +3057,23 @@ impl Editor {
     /// effects of selection change occur at the end of the transaction.
     pub fn change_selections<R>(
         &mut self,
-        autoscroll: Option<Autoscroll>,
+        effects: impl Into<SelectionEffects>,
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        self.change_selections_inner(true, autoscroll, window, cx, change)
-    }
-
-    pub(crate) fn change_selections_without_updating_completions<R>(
-        &mut self,
-        autoscroll: Option<Autoscroll>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
-    ) -> R {
-        self.change_selections_inner(false, autoscroll, window, cx, change)
-    }
-
-    fn change_selections_inner<R>(
-        &mut self,
-        should_update_completions: bool,
-        autoscroll: Option<Autoscroll>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
-    ) -> R {
+        let effects = effects.into();
         if let Some(state) = &mut self.deferred_selection_effects_state {
-            state.autoscroll = autoscroll.or(state.autoscroll);
-            state.should_update_completions = should_update_completions;
+            state.effects.scroll = effects.scroll.or(state.effects.scroll);
+            state.effects.completions = effects.completions;
+            state.effects.nav_history |= effects.nav_history;
             let (changed, result) = self.selections.change_with(cx, change);
             state.changed |= changed;
             return result;
         }
         let mut state = DeferredSelectionEffectsState {
             changed: false,
-            should_update_completions,
-            autoscroll,
+            effects,
             old_cursor_position: self.selections.newest_anchor().head(),
             history_entry: SelectionHistoryEntry {
                 selections: self.selections.disjoint_anchors(),
@@ -3095,19 +3123,13 @@ impl Editor {
         if state.changed {
             self.selection_history.push(state.history_entry);
 
-            if let Some(autoscroll) = state.autoscroll {
+            if let Some(autoscroll) = state.effects.scroll {
                 self.request_autoscroll(autoscroll, cx);
             }
 
             let old_cursor_position = &state.old_cursor_position;
 
-            self.selections_did_change(
-                true,
-                &old_cursor_position,
-                state.should_update_completions,
-                window,
-                cx,
-            );
+            self.selections_did_change(true, &old_cursor_position, state.effects, window, cx);
 
             if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
@@ -3227,9 +3249,13 @@ impl Editor {
             _ => {}
         }
 
-        let auto_scroll = EditorSettings::get_global(cx).autoscroll_on_clicks;
+        let effects = if EditorSettings::get_global(cx).autoscroll_on_clicks {
+            SelectionEffects::scroll(Autoscroll::fit())
+        } else {
+            SelectionEffects::no_scroll()
+        };
 
-        self.change_selections(auto_scroll.then(Autoscroll::fit), window, cx, |s| {
+        self.change_selections(effects, window, cx, |s| {
             s.set_pending(pending_selection, pending_mode)
         });
     }
@@ -4016,8 +4042,8 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_without_updating_completions(
-                Some(Autoscroll::fit()),
+            this.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()).completions(false),
                 window,
                 cx,
                 |s| s.select(new_selections),
@@ -5776,9 +5802,11 @@ impl Editor {
                                         tasks.column,
                                     )),
                                 });
-                        let debug_scenarios = editor.update(cx, |editor, cx| {
-                            editor.debug_scenarios(&resolved_tasks, &buffer, cx)
-                        })?;
+                        let debug_scenarios = editor
+                            .update(cx, |editor, cx| {
+                                editor.debug_scenarios(&resolved_tasks, &buffer, cx)
+                            })?
+                            .await;
                         anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
                     }
                 })
@@ -5834,7 +5862,7 @@ impl Editor {
         resolved_tasks: &Option<ResolvedTasks>,
         buffer: &Entity<Buffer>,
         cx: &mut App,
-    ) -> Vec<task::DebugScenario> {
+    ) -> Task<Vec<task::DebugScenario>> {
         if cx.has_flag::<DebuggerFeatureFlag>() {
             maybe!({
                 let project = self.project.as_ref()?;
@@ -5852,21 +5880,27 @@ impl Editor {
 
                 dap_store.update(cx, |dap_store, cx| {
                     for (_, task) in &resolved_tasks.templates {
-                        if let Some(scenario) = dap_store.debug_scenario_for_build_task(
+                        let maybe_scenario = dap_store.debug_scenario_for_build_task(
                             task.original_task().clone(),
                             debug_adapter.clone().into(),
                             task.display_label().to_owned().into(),
                             cx,
-                        ) {
-                            scenarios.push(scenario);
-                        }
+                        );
+                        scenarios.push(maybe_scenario);
                     }
                 });
-                Some(scenarios)
+                Some(cx.background_spawn(async move {
+                    let scenarios = futures::future::join_all(scenarios)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    scenarios
+                }))
             })
-            .unwrap_or_default()
+            .unwrap_or_else(|| Task::ready(vec![]))
         } else {
-            vec![]
+            Task::ready(vec![])
         }
     }
 
@@ -6243,71 +6277,65 @@ impl Editor {
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
-            cx.notify();
         } else {
             let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_entry = blame_entry.clone();
             let show_task = cx.spawn(async move |editor, cx| {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(delay))
                     .await;
                 editor
                     .update(cx, |editor, cx| {
-                        if let Some(state) = &mut editor.inline_blame_popover {
-                            state.show_task = None;
-                            cx.notify();
-                        }
+                        editor.inline_blame_popover_show_task.take();
+                        let Some(blame) = editor.blame.as_ref() else {
+                            return;
+                        };
+                        let blame = blame.read(cx);
+                        let details = blame.details_for_entry(&blame_entry);
+                        let markdown = cx.new(|cx| {
+                            Markdown::new(
+                                details
+                                    .as_ref()
+                                    .map(|message| message.message.clone())
+                                    .unwrap_or_default(),
+                                None,
+                                None,
+                                cx,
+                            )
+                        });
+                        editor.inline_blame_popover = Some(InlineBlamePopover {
+                            position,
+                            hide_task: None,
+                            popover_bounds: None,
+                            popover_state: InlineBlamePopoverState {
+                                scroll_handle: ScrollHandle::new(),
+                                commit_message: details,
+                                markdown,
+                            },
+                        });
+                        cx.notify();
                     })
                     .ok();
             });
-            let Some(blame) = self.blame.as_ref() else {
-                return;
-            };
-            let blame = blame.read(cx);
-            let details = blame.details_for_entry(&blame_entry);
-            let markdown = cx.new(|cx| {
-                Markdown::new(
-                    details
-                        .as_ref()
-                        .map(|message| message.message.clone())
-                        .unwrap_or_default(),
-                    None,
-                    None,
-                    cx,
-                )
-            });
-            self.inline_blame_popover = Some(InlineBlamePopover {
-                position,
-                show_task: Some(show_task),
-                hide_task: None,
-                popover_bounds: None,
-                popover_state: InlineBlamePopoverState {
-                    scroll_handle: ScrollHandle::new(),
-                    commit_message: details,
-                    markdown,
-                },
-            });
+            self.inline_blame_popover_show_task = Some(show_task);
         }
     }
 
     fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
+        self.inline_blame_popover_show_task.take();
         if let Some(state) = &mut self.inline_blame_popover {
-            if state.show_task.is_some() {
-                self.inline_blame_popover.take();
-                cx.notify();
-            } else {
-                let hide_task = cx.spawn(async move |editor, cx| {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(100))
-                        .await;
-                    editor
-                        .update(cx, |editor, cx| {
-                            editor.inline_blame_popover.take();
-                            cx.notify();
-                        })
-                        .ok();
-                });
-                state.hide_task = Some(hide_task);
-            }
+            let hide_task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.inline_blame_popover.take();
+                        cx.notify();
+                    })
+                    .ok();
+            });
+            state.hide_task = Some(hide_task);
         }
     }
 
@@ -15601,7 +15629,7 @@ impl Editor {
         Some(self.perform_format(
             project,
             FormatTrigger::Manual,
-            FormatTarget::Buffers,
+            FormatTarget::Buffers(self.buffer.read(cx).all_buffers()),
             window,
             cx,
         ))
@@ -15636,10 +15664,6 @@ impl Editor {
         ))
     }
 
-    fn save_non_dirty_buffers(&self, cx: &App) -> bool {
-        self.is_singleton(cx) && EditorSettings::get_global(cx).save_non_dirty_buffers
-    }
-
     fn perform_format(
         &mut self,
         project: Entity<Project>,
@@ -15650,13 +15674,7 @@ impl Editor {
     ) -> Task<Result<()>> {
         let buffer = self.buffer.clone();
         let (buffers, target) = match target {
-            FormatTarget::Buffers => {
-                let mut buffers = buffer.read(cx).all_buffers();
-                if trigger == FormatTrigger::Save && !self.save_non_dirty_buffers(cx) {
-                    buffers.retain(|buffer| buffer.read(cx).is_dirty());
-                }
-                (buffers, LspFormatTarget::Buffers)
-            }
+            FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
             FormatTarget::Ranges(selection_ranges) => {
                 let multi_buffer = buffer.read(cx);
                 let snapshot = multi_buffer.read(cx);
@@ -16179,7 +16197,13 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, true, window, cx);
+        self.selections_did_change(
+            false,
+            &old_cursor_position,
+            SelectionEffects::default(),
+            window,
+            cx,
+        );
     }
 
     pub fn transact(
@@ -17101,7 +17125,16 @@ impl Editor {
         }
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, window, cx).detach_and_log_err(cx);
+            self.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
         }
     }
 
@@ -17133,7 +17166,16 @@ impl Editor {
         });
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, window, cx).detach_and_log_err(cx);
+            self.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
         }
     }
 

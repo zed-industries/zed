@@ -1,8 +1,4 @@
-use std::{
-    ops::Range,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
     App, Application, Bounds, Context, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
@@ -22,7 +18,7 @@ pub struct Quote {
     open: f64,
     high: f64,
     low: f64,
-    timestamp: Instant,
+    timestamp: Duration,
     volume: i64,
     turnover: f64,
     ttm: f64,
@@ -50,8 +46,7 @@ impl Quote {
         let open = prev_close + rng.gen_range(-3.0..3.0);
         let high = (prev_close + rng.gen_range::<f64, _>(0.0..10.0)).max(open);
         let low = (prev_close - rng.gen_range::<f64, _>(0.0..10.0)).min(open);
-        // Randomize the timestamp in the past 24 hours
-        let timestamp = Instant::now() - Duration::from_secs(rng.gen_range(0..86400));
+        let timestamp = Duration::from_secs(rng.gen_range(0..86400));
         let volume = rng.gen_range(1_000_000..100_000_000);
         let turnover = last_done * volume as f64;
         let symbol = {
@@ -170,7 +165,7 @@ impl TableRow {
                     .child(format!("{:.2}%", self.quote.change())),
                 "timestamp" => div()
                     .text_color(color)
-                    .child(format!("{:?}", self.quote.timestamp.elapsed().as_secs())),
+                    .child(format!("{:?}", self.quote.timestamp.as_secs())),
                 "open" => div()
                     .text_color(color)
                     .child(format!("{:.2}", self.quote.open)),

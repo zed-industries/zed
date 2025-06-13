@@ -400,7 +400,7 @@ mod tests {
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::{path, separator};
+    use util::path;
     use workspace::{AppState, Workspace};
 
     use crate::task_contexts;
@@ -524,7 +524,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
@@ -556,7 +556,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
