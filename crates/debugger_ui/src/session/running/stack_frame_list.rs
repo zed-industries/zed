@@ -5,9 +5,10 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton, Stateful,
-    Subscription, Task, WeakEntity, list,
+    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState, MouseButton,
+    Stateful, Subscription, Task, WeakEntity, list,
 };
+use util::debug_panic;
 
 use crate::StackTraceView;
 use language::PointUtf16;
@@ -43,6 +44,8 @@ pub struct StackFrameList {
 #[derive(Debug, PartialEq, Eq)]
 pub enum StackFrameEntry {
     Normal(dap::StackFrame),
+    /// Used to indicate that the frame is artificial and is a visual label or separator
+    Label(dap::StackFrame),
     Collapsed(Vec<dap::StackFrame>),
 }
 
@@ -99,18 +102,18 @@ impl StackFrameList {
         &self.entries
     }
 
-    pub(crate) fn flatten_entries(&self, show_collapsed: bool) -> Vec<dap::StackFrame> {
+    pub(crate) fn flatten_entries(
+        &self,
+        show_collapsed: bool,
+        show_labels: bool,
+    ) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
             .flat_map(|frame| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
-                StackFrameEntry::Collapsed(frames) => {
-                    if show_collapsed {
-                        frames.clone()
-                    } else {
-                        vec![]
-                    }
-                }
+                StackFrameEntry::Label(frame) if show_labels => vec![frame.clone()],
+                StackFrameEntry::Collapsed(frames) if show_collapsed => frames.clone(),
+                _ => vec![],
             })
             .collect::<Vec<_>>()
     }
@@ -176,9 +179,7 @@ impl StackFrameList {
             .and_then(|ix| self.entries.get(ix))
             .and_then(|entry| match entry {
                 StackFrameEntry::Normal(stack_frame) => Some(stack_frame.id),
-                StackFrameEntry::Collapsed(stack_frames) => {
-                    stack_frames.first().map(|stack_frame| stack_frame.id)
-                }
+                StackFrameEntry::Collapsed(_) | StackFrameEntry::Label(_) => None,
             });
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
@@ -202,6 +203,9 @@ impl StackFrameList {
                 Some(dap::StackFramePresentationHint::Deemphasize)
                 | Some(dap::StackFramePresentationHint::Subtle) => {
                     collapsed_entries.push(stack_frame.dap.clone());
+                }
+                Some(dap::StackFramePresentationHint::Label) => {
+                    entries.push(StackFrameEntry::Label(stack_frame.dap.clone()));
                 }
                 _ => {
                     let collapsed_entries = std::mem::take(&mut collapsed_entries);
@@ -239,9 +243,7 @@ impl StackFrameList {
         } else if let Some(old_selected_frame_id) = old_selected_frame_id {
             let ix = self.entries.iter().position(|entry| match entry {
                 StackFrameEntry::Normal(frame) => frame.id == old_selected_frame_id,
-                StackFrameEntry::Collapsed(frames) => {
-                    frames.iter().any(|frame| frame.id == old_selected_frame_id)
-                }
+                StackFrameEntry::Collapsed(_) | StackFrameEntry::Label(_) => false,
             });
             self.selected_ix = ix;
         }
@@ -261,6 +263,7 @@ impl StackFrameList {
             .entries
             .iter()
             .flat_map(|entry| match entry {
+                StackFrameEntry::Label(stack_frame) => std::slice::from_ref(stack_frame),
                 StackFrameEntry::Normal(stack_frame) => std::slice::from_ref(stack_frame),
                 StackFrameEntry::Collapsed(stack_frames) => stack_frames.as_slice(),
             })
@@ -383,6 +386,33 @@ impl StackFrameList {
         self.session.update(cx, |state, cx| {
             state.restart_stack_frame(stack_frame_id, cx)
         });
+    }
+
+    fn render_label_entry(
+        &self,
+        stack_frame: &dap::StackFrame,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        h_flex()
+            .rounded_md()
+            .justify_between()
+            .w_full()
+            .group("")
+            .id(("label-stack-frame", stack_frame.id))
+            .p_1()
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .child(
+                v_flex().justify_center().gap_0p5().child(
+                    Label::new(stack_frame.name.clone())
+                        .size(LabelSize::Small)
+                        .weight(FontWeight::BOLD)
+                        .truncate()
+                        .color(Color::Info),
+                ),
+            )
+            .into_any()
     }
 
     fn render_normal_entry(
@@ -549,6 +579,7 @@ impl StackFrameList {
 
     fn render_entry(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match &self.entries[ix] {
+            StackFrameEntry::Label(stack_frame) => self.render_label_entry(stack_frame, cx),
             StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(ix, stack_frame, cx),
             StackFrameEntry::Collapsed(stack_frames) => {
                 self.render_collapsed_entry(ix, stack_frames, cx)
@@ -664,6 +695,9 @@ impl StackFrameList {
                 let stack_frame = stack_frame.clone();
                 self.go_to_stack_frame_inner(stack_frame, window, cx)
                     .detach_and_log_err(cx)
+            }
+            StackFrameEntry::Label(_) => {
+                debug_panic!("You should not be able to select a label stack frame")
             }
             StackFrameEntry::Collapsed(_) => self.expand_collapsed_entry(ix, cx),
         }
