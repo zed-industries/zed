@@ -1,3 +1,6 @@
+use blade_graphics as gpu;
+use collections::HashMap;
+use futures::channel::oneshot::Receiver;
 use std::{
     cell::{Ref, RefCell, RefMut},
     ffi::c_void,
@@ -5,10 +8,20 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use blade_graphics as gpu;
-use collections::HashMap;
-use futures::channel::oneshot::Receiver;
 
+use crate::platform::{
+    PlatformAtlas, PlatformInputHandler, PlatformWindow,
+    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+};
+use crate::scene::Scene;
+use crate::{
+    AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
+    PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowKind, WindowParams, px, size,
+};
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
@@ -21,13 +34,6 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
-use crate::platform::{
-    PlatformAtlas, PlatformInputHandler, PlatformWindow,
-    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
-    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
-};
-use crate::scene::Scene;
-use crate::{AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels, PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px, size, WindowKind};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -119,10 +125,10 @@ pub struct WaylandLayerSurfaceState {
 impl WaylandSurfaceState {
     fn ack_configure(&self, serial: u32) {
         match self {
-            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {xdg_surface, ..}) => {
+            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.ack_configure(serial);
             }
-            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {layer_surface, ..}) => {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
                 layer_surface.ack_configure(serial);
             }
         }
@@ -146,10 +152,10 @@ impl WaylandSurfaceState {
 
     fn set_geometry(&self, x: i32, y: i32, width: i32, height: i32) {
         match self {
-            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {xdg_surface, ..}) => {
+            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
-            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {layer_surface, ..}) => {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
                 // cannot set window position of a layer surface
                 layer_surface.set_size(width as u32, height as u32);
             }
@@ -158,7 +164,11 @@ impl WaylandSurfaceState {
 
     fn destroy(&mut self) {
         match self {
-            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, toplevel, decoration: _decoration }) => {
+            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
+                xdg_surface,
+                toplevel,
+                decoration: _decoration,
+            }) => {
                 toplevel.destroy();
                 xdg_surface.destroy();
             }
@@ -326,20 +336,29 @@ impl WaylandWindow {
             // Matching on layer_shell here means that if kind is Overlay, but the compositor doesn't support layer_shell,
             // we end up defaulting to xdg_surface anyway
             (WindowKind::Overlay, Some(layer_shell)) => {
-                let layer_surface = layer_shell
-                    .get_layer_surface(&surface, None, Layer::Overlay, "".to_string(), &globals.qh, surface.id());
+                let layer_surface = layer_shell.get_layer_surface(
+                    &surface,
+                    None,
+                    Layer::Overlay,
+                    "".to_string(),
+                    &globals.qh,
+                    surface.id(),
+                );
 
                 let width = params.bounds.size.width.0;
                 let height = params.bounds.size.height.0;
                 layer_surface.set_size(width as u32, height as u32);
-                layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand);
+                layer_surface.set_keyboard_interactivity(
+                    zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
+                );
 
                 WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface })
             }
             _ => {
-                let xdg_surface = globals
-                    .wm_base
-                    .get_xdg_surface(&surface, &globals.qh, surface.id());
+                let xdg_surface =
+                    globals
+                        .wm_base
+                        .get_xdg_surface(&surface, &globals.qh, surface.id());
 
                 let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
 
@@ -352,13 +371,17 @@ impl WaylandWindow {
                     .decoration_manager
                     .as_ref()
                     .map(|decoration_manager| {
-                        decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id())
+                        decoration_manager.get_toplevel_decoration(
+                            &toplevel,
+                            &globals.qh,
+                            surface.id(),
+                        )
                     });
 
                 WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
                     xdg_surface,
                     toplevel,
-                    decoration
+                    decoration,
                 })
             }
         };
@@ -635,7 +658,11 @@ impl WaylandWindowStatePtr {
 
     pub fn handle_layersurface_event(&self, event: zwlr_layer_surface_v1::Event) -> bool {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { width, height, serial } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                width,
+                height,
+                serial,
+            } => {
                 let mut size = if width == 0 || height == 0 {
                     None
                 } else {
@@ -647,7 +674,7 @@ impl WaylandWindowStatePtr {
                     size,
                     fullscreen: false,
                     maximized: false,
-                    tiling: Tiling::default()
+                    tiling: Tiling::default(),
                 });
                 drop(state);
 
@@ -660,7 +687,7 @@ impl WaylandWindowStatePtr {
                 // unlike xdg, we don't have a choice here: the surface is closing.
                 true
             }
-            _ => false
+            _ => false,
         }
     }
 
