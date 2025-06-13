@@ -36,6 +36,7 @@ use gpui::{
     Task, WeakEntity,
 };
 
+use rpc::ErrorExt;
 use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
@@ -108,6 +109,7 @@ impl ThreadStatus {
 pub struct Thread {
     dap: dap::Thread,
     stack_frames: Vec<StackFrame>,
+    stack_frames_error: Option<anyhow::Error>,
     _has_stopped: bool,
 }
 
@@ -116,6 +118,7 @@ impl From<dap::Thread> for Thread {
         Self {
             dap,
             stack_frames: Default::default(),
+            stack_frames_error: None,
             _has_stopped: false,
         }
     }
@@ -1961,7 +1964,11 @@ impl Session {
         .detach();
     }
 
-    pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
+    pub fn stack_frames(
+        &mut self,
+        thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<StackFrame>> {
         if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped
             && self.requests.contains_key(&ThreadsCommand.type_id())
             && self.threads.contains_key(&thread_id)
@@ -1977,48 +1984,65 @@ impl Session {
                     levels: None,
                 },
                 move |this, stack_frames, cx| {
-                    let stack_frames = stack_frames.log_err()?;
-
-                    let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                        thread.stack_frames =
-                            stack_frames.iter().cloned().map(StackFrame::from).collect();
-                    });
+                    let entry =
+                        this.threads
+                            .entry(thread_id)
+                            .and_modify(|thread| match &stack_frames {
+                                Ok(stack_frames) => {
+                                    thread.stack_frames = stack_frames
+                                        .iter()
+                                        .cloned()
+                                        .map(StackFrame::from)
+                                        .collect();
+                                    thread.stack_frames_error = None;
+                                }
+                                Err(error) => {
+                                    thread.stack_frames.clear();
+                                    thread.stack_frames_error = Some(error.cloned());
+                                }
+                            });
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
                         "Sent request for thread_id that doesn't exist"
                     );
-
-                    this.stack_frames.extend(
-                        stack_frames
-                            .iter()
-                            .filter(|frame| {
-                                // Workaround for JavaScript debug adapter sending out "fake" stack frames for delineating await points. This is fine,
-                                // except that they always use an id of 0 for it, which collides with other (valid) stack frames.
-                                !(frame.id == 0
-                                    && frame.line == 0
-                                    && frame.column == 0
-                                    && frame.presentation_hint
-                                        == Some(StackFramePresentationHint::Label))
-                            })
-                            .cloned()
-                            .map(|frame| (frame.id, StackFrame::from(frame))),
-                    );
+                    if let Ok(stack_frames) = stack_frames {
+                        this.stack_frames.extend(
+                            stack_frames
+                                .iter()
+                                .filter(|frame| {
+                                    // Workaround for JavaScript debug adapter sending out "fake" stack frames for delineating await points. This is fine,
+                                    // except that they always use an id of 0 for it, which collides with other (valid) stack frames.
+                                    !(frame.id == 0
+                                        && frame.line == 0
+                                        && frame.column == 0
+                                        && frame.presentation_hint
+                                            == Some(StackFramePresentationHint::Label))
+                                })
+                                .cloned()
+                                .map(|frame| (frame.id, StackFrame::from(frame))),
+                        );
+                    }
 
                     this.invalidate_command_type::<ScopesCommand>();
                     this.invalidate_command_type::<VariablesCommand>();
 
                     cx.emit(SessionEvent::StackTrace);
-                    cx.notify();
-                    Some(stack_frames)
+                    None
                 },
                 cx,
             );
         }
 
-        self.threads
-            .get(&thread_id)
-            .map(|thread| thread.stack_frames.clone())
-            .unwrap_or_default()
+        match self.threads.get(&thread_id) {
+            Some(thread) => {
+                if let Some(error) = &thread.stack_frames_error {
+                    Err(error.cloned())
+                } else {
+                    Ok(thread.stack_frames.clone())
+                }
+            }
+            None => Ok(Vec::new()),
+        }
     }
 
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {

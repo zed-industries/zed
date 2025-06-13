@@ -115,21 +115,19 @@ impl StackFrameList {
             .collect::<Vec<_>>()
     }
 
-    fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
-        self.state
-            .read_with(cx, |state, _| state.thread_id)
-            .ok()
-            .flatten()
-            .map(|thread_id| {
-                self.session
-                    .update(cx, |this, cx| this.stack_frames(thread_id, cx))
-            })
-            .unwrap_or_default()
+    fn stack_frames(&self, cx: &mut App) -> Result<Vec<StackFrame>> {
+        if let Ok(Some(thread_id)) = self.state.read_with(cx, |state, _| state.thread_id) {
+            self.session
+                .update(cx, |this, cx| this.stack_frames(thread_id, cx))
+        } else {
+            Ok(Vec::default())
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
         self.stack_frames(cx)
+            .unwrap_or_default()
             .into_iter()
             .map(|stack_frame| stack_frame.dap.clone())
             .collect()
@@ -151,7 +149,7 @@ impl StackFrameList {
             let debounce = this
                 .update(cx, |this, cx| {
                     let new_stack_frames = this.stack_frames(cx);
-                    new_stack_frames.is_empty() && !this.entries.is_empty()
+                    new_stack_frames.unwrap_or_default().is_empty() && !this.entries.is_empty()
                 })
                 .ok()
                 .unwrap_or_default();
@@ -187,7 +185,18 @@ impl StackFrameList {
         let mut first_stack_frame = None;
         let mut first_not_subtle_frame = None;
 
-        let stack_frames = self.stack_frames(cx);
+        let stack_frames = match self.stack_frames(cx) {
+            Ok(stack_frames) => stack_frames,
+            Err(e) => {
+                self.error = Some(format!("{}", e).into());
+                self.entries.clear();
+                self.selected_ix = None;
+                self.list_state.reset(0);
+                cx.emit(StackFrameListEvent::BuiltEntries);
+                cx.notify();
+                return;
+            }
+        };
         for stack_frame in &stack_frames {
             match stack_frame.dap.presentation_hint {
                 Some(dap::StackFramePresentationHint::Deemphasize) => {
@@ -214,8 +223,7 @@ impl StackFrameList {
         if !collapsed_entries.is_empty() {
             entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
         }
-
-        std::mem::swap(&mut self.entries, &mut entries);
+        self.entries = entries;
 
         if let Some(ix) = first_not_subtle_frame
             .or(first_stack_frame)
@@ -676,11 +684,17 @@ impl Render for StackFrameList {
             .when_some(self.error.clone(), |el, error| {
                 el.child(
                     h_flex()
+                        .bg(cx.theme().status().warning_background)
                         .border_b_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(cx.theme().status().warning_border)
                         .pl_1()
-                        .child(Icon::new(IconName::Warning))
-                        .child(Label::new(error)),
+                        .child(Icon::new(IconName::Warning).color(Color::Warning))
+                        .gap_2()
+                        .child(
+                            Label::new(error)
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        ),
                 )
             })
             .child(self.render_list(window, cx))
