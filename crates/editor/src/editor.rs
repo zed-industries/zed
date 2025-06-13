@@ -6306,7 +6306,6 @@ impl Editor {
                             },
                         });
                         cx.notify();
-                        println!("show notify");
                     })
                     .ok();
             });
@@ -6325,7 +6324,6 @@ impl Editor {
                     .update(cx, |editor, cx| {
                         editor.inline_blame_popover.take();
                         cx.notify();
-                        println!("removing popover, notify");
                     })
                     .ok();
             });
