@@ -2198,7 +2198,9 @@ impl Workspace {
                             // )
                             window.draw(cx);
                         }
-                    })?;
+                        window.wait_until_finished_handling_keystrokes()
+                    })?
+                    .await;
                 }
 
                 *keystrokes.borrow_mut() = Default::default();

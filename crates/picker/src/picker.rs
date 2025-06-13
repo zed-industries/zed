@@ -643,6 +643,7 @@ impl<D: PickerDelegate> Picker<D> {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
         self.matches_updated(window, cx);
+        let done = window.finished_handled_keystroke_after();
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -661,6 +662,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .unwrap()
                 })?;
                 delegate_pending_update_matches.await;
+                drop(done);
                 this.update_in(cx, |this, window, cx| {
                     this.matches_updated(window, cx);
                 })
