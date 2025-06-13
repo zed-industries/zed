@@ -26,6 +26,7 @@ use std::{
     cmp::Reverse,
     fmt::{self, Display},
     io::Write as _,
+    path::Path,
     str::FromStr,
     sync::mpsc,
 };
@@ -1556,6 +1557,7 @@ impl EditAgentTest {
             .collect::<Vec<_>>();
         let worktrees = vec![WorktreeContext {
             root_name: "root".to_string(),
+            abs_path: Path::new("/path/to/root").into(),
             rules_file: None,
         }];
         let prompt_builder = PromptBuilder::new(None)?;
