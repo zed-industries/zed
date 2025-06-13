@@ -263,6 +263,26 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 #[cfg(unix)]
+/// Returns a shell escaped path for the current zed executable
+pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let zed_path = std::env::current_exe()
+        .context("Failed to determine current zed executable path.")?
+        .to_string_lossy()
+        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
+        .to_string();
+
+    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+    // errors are introduced in the future :(
+    let zed_path_escaped =
+        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
+
+    return Ok(zed_path_escaped.to_string());
+}
+
+#[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
