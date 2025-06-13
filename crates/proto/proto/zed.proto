@@ -391,7 +391,12 @@ message Envelope {
 
         GetDocumentDiagnostics get_document_diagnostics = 350;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 351;
-        PullWorkspaceDiagnostics pull_workspace_diagnostics = 352; // current max
+        PullWorkspaceDiagnostics pull_workspace_diagnostics = 352;
+
+        GetDocumentColor get_document_color = 353;
+        GetDocumentColorResponse get_document_color_response = 354;
+        GetColorPresentation get_color_presentation = 355;
+        GetColorPresentationResponse get_color_presentation_response = 356; // current max
 
     }
 

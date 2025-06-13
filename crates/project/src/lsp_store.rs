@@ -3,9 +3,9 @@ pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
-    CodeAction, Completion, CompletionResponse, CompletionSource, CoreCompletion, Hover, InlayHint,
-    LspAction, LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction, PulledDiagnostics,
-    ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CompletionResponse, CompletionSource, CoreCompletion, DocumentColor,
+    Hover, InlayHint, LspAction, LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction,
+    PulledDiagnostics, ResolveState, Symbol, ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -89,7 +89,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, Point};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -3487,15 +3487,8 @@ pub struct LspStore {
 
 struct BufferLspColorData {
     buffer_version: Global,
-    server_data: HashMap<LanguageServerId, Arc<[LspColor]>>,
-    data_subscription: watch::Sender<Arc<[LspColor]>>,
-}
-
-pub struct LspColor {
-    pub buffer_range: Range<Point>,
-    pub lsp_range: lsp::Range,
-    pub color: lsp::Color,
-    // TODO kb resolve (textDocument/colorPresentation)
+    server_data: HashMap<LanguageServerId, Arc<[DocumentColor]>>,
+    data_subscription: watch::Sender<Arc<[DocumentColor]>>,
 }
 
 pub enum LspStoreEvent {
@@ -3568,6 +3561,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_inlay_hints);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
+        client.add_entity_request_handler(Self::handle_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
@@ -7096,9 +7090,14 @@ impl LspStore {
             }
         }
         match envelope.payload.request {
-            Some(proto::multi_lsp_query::Request::GetHover(get_hover)) => {
+            Some(proto::multi_lsp_query::Request::GetHover(message)) => {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&message.version))
+                    })?
+                    .await?;
                 let get_hover =
-                    GetHover::from_proto(get_hover, lsp_store.clone(), buffer.clone(), cx.clone())
+                    GetHover::from_proto(message, lsp_store.clone(), buffer.clone(), cx.clone())
                         .await?;
                 let all_hovers = lsp_store
                     .update(&mut cx, |this, cx| {
@@ -7128,9 +7127,14 @@ impl LspStore {
                         .collect(),
                 })
             }
-            Some(proto::multi_lsp_query::Request::GetCodeActions(get_code_actions)) => {
+            Some(proto::multi_lsp_query::Request::GetCodeActions(message)) => {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&message.version))
+                    })?
+                    .await?;
                 let get_code_actions = GetCodeActions::from_proto(
-                    get_code_actions,
+                    message,
                     lsp_store.clone(),
                     buffer.clone(),
                     cx.clone(),
@@ -7165,9 +7169,14 @@ impl LspStore {
                         .collect(),
                 })
             }
-            Some(proto::multi_lsp_query::Request::GetSignatureHelp(get_signature_help)) => {
+            Some(proto::multi_lsp_query::Request::GetSignatureHelp(message)) => {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&message.version))
+                    })?
+                    .await?;
                 let get_signature_help = GetSignatureHelp::from_proto(
-                    get_signature_help,
+                    message,
                     lsp_store.clone(),
                     buffer.clone(),
                     cx.clone(),
@@ -7204,14 +7213,15 @@ impl LspStore {
                         .collect(),
                 })
             }
-            Some(proto::multi_lsp_query::Request::GetCodeLens(get_code_lens)) => {
-                let get_code_lens = GetCodeLens::from_proto(
-                    get_code_lens,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
+            Some(proto::multi_lsp_query::Request::GetCodeLens(message)) => {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&message.version))
+                    })?
+                    .await?;
+                let get_code_lens =
+                    GetCodeLens::from_proto(message, lsp_store.clone(), buffer.clone(), cx.clone())
+                        .await?;
 
                 let code_lens_actions = lsp_store
                     .update(&mut cx, |project, cx| {
@@ -7286,6 +7296,50 @@ impl LspStore {
                                 proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
                                     GetDocumentDiagnostics::response_to_proto(
                                         lsp_diagnostic,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetDocumentColor(message)) => {
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(deserialize_version(&message.version))
+                    })?
+                    .await?;
+                let get_document_color = GetDocumentColor::from_proto(
+                    message,
+                    lsp_store.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_colors = lsp_store
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            None::<usize>,
+                            get_document_color,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_colors
+                        .map(|color| proto::LspResponse {
+                            response: Some(
+                                proto::lsp_response::Response::GetDocumentColorResponse(
+                                    GetDocumentColor::response_to_proto(
+                                        color,
                                         project,
                                         sender_id,
                                         &buffer_version,
@@ -8278,6 +8332,14 @@ impl LspStore {
                 cx,
             )
         })
+    }
+
+    async fn handle_color_presentation(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetColorPresentation>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetColorPresentationResponse> {
+        todo!("TODO kb")
     }
 
     async fn handle_resolve_inlay_hint(
