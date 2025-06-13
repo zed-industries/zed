@@ -429,6 +429,7 @@ circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
+console = { version = "0.15.11", default-features = false, features = ["ansi-parsing"] }
 convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"

@@ -30,6 +30,7 @@ anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+console.workspace = true
 dap.workspace = true
 dap_adapters = { workspace = true, optional = true }
 db.workspace = true

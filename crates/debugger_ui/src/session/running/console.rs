@@ -139,8 +139,9 @@ impl Console {
             let mut to_insert = String::default();
             for event in events {
                 use std::fmt::Write;
-
-                _ = write!(to_insert, "{}\n", event.output.trim_end());
+                
+                let output = ::console::strip_ansi_codes(event.output.trim_end());
+                _ = write!(to_insert, "{output}\n");
             }
 
             console.set_read_only(false);
