@@ -1097,14 +1097,7 @@ impl EditorElement {
                 editor.hide_blame_popover(cx);
             }
         } else {
-            if editor
-                .inline_blame_popover
-                .as_ref()
-                .and_then(|state| state.popover_bounds)
-                .map_or(false, |bounds| !bounds.contains(&event.position))
-            {
-                editor.hide_blame_popover(cx);
-            }
+            editor.hide_blame_popover(cx);
         }
 
         let breakpoint_indicator = if gutter_hovered {
@@ -2397,13 +2390,10 @@ impl EditorElement {
         cx: &mut App,
     ) {
         let Some((popover_state, target_point)) = self.editor.read_with(cx, |editor, _| {
-            editor.inline_blame_popover.as_ref().and_then(|state| {
-                if state.show_task.is_none() {
-                    Some((state.popover_state.clone(), state.position))
-                } else {
-                    None
-                }
-            })
+            editor
+                .inline_blame_popover
+                .as_ref()
+                .and_then(|state| Some((state.popover_state.clone(), state.position)))
         }) else {
             return;
         };
