@@ -520,17 +520,13 @@ impl TransportDelegate {
             Err(e) => return ConnectionResult::Result(Err(e)),
         };
 
-        let message = match serde_json::from_str::<Message>(message_str)
-            .context("deserializing server message")
-        {
-            Ok(message) => message,
-            Err(e) => return ConnectionResult::Result(Err(e)),
-        };
+        let message =
+            serde_json::from_str::<Message>(message_str).context("deserializing server message");
 
         if let Some(log_handlers) = log_handlers {
             let command = match &message {
-                Message::Request(request) => Some(request.command.as_str()),
-                Message::Response(response) => Some(response.command.as_str()),
+                Ok(Message::Request(request)) => Some(request.command.as_str()),
+                Ok(Message::Response(response)) => Some(response.command.as_str()),
                 _ => None,
             };
 
@@ -541,7 +537,7 @@ impl TransportDelegate {
             }
         }
 
-        ConnectionResult::Result(Ok(message))
+        ConnectionResult::Result(message)
     }
 
     pub async fn shutdown(&self) -> Result<()> {
