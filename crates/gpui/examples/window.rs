@@ -1,11 +1,11 @@
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Task,
-    Timer, Window, WindowBounds, WindowControlArea, WindowKind, WindowOptions, actions, div,
-    prelude::*, px, rgb, size,
+    AnyView, App, Application, Bounds, Context, Entity, KeyBinding, PromptButton, PromptLevel,
+    SharedString, Task, Timer, Window, WindowBounds, WindowControlArea, WindowKind, WindowOptions,
+    actions, div, prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
-    custom_titlebar: bool,
+    title_bar: Option<Entity<AppTitleBar>>,
     value: f64,
     _task: Option<Task<()>>,
 }
@@ -28,8 +28,14 @@ impl SubWindow {
             None
         };
 
+        let title_bar = if custom_titlebar {
+            Some(cx.new(|_| AppTitleBar))
+        } else {
+            None
+        };
+
         Self {
-            custom_titlebar,
+            title_bar,
             value: 0.0,
             _task,
         }
@@ -51,6 +57,74 @@ fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> imp
         .on_click(move |_, window, cx| on_click(window, cx))
 }
 
+struct AppTitleBar;
+
+impl Render for AppTitleBar {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("titlebar")
+            .flex()
+            .h(px(32.))
+            .text_color(gpui::white())
+            .w_full()
+            .justify_between()
+            .child(
+                div()
+                    .px_3()
+                    .bg(gpui::black())
+                    .window_control_area(WindowControlArea::Drag)
+                    .flex()
+                    .items_center()
+                    .flex_1()
+                    .child("Custom Titlebar"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .id("minimize")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(32.))
+                            .window_control_area(WindowControlArea::Min)
+                            .bg(gpui::black())
+                            .hover(|this| this.bg(gpui::black().opacity(0.95)))
+                            .text_color(gpui::white())
+                            .child("_"),
+                    )
+                    .child(
+                        div()
+                            .id("maximize")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(32.))
+                            .window_control_area(WindowControlArea::Max)
+                            .bg(gpui::black())
+                            .hover(|this| this.bg(gpui::black().opacity(0.95)))
+                            .text_color(gpui::white())
+                            .child("+"),
+                    )
+                    .child(
+                        div()
+                            .id("close")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(32.))
+                            .window_control_area(WindowControlArea::Close)
+                            .bg(gpui::black())
+                            .hover(|this| this.bg(gpui::red().opacity(0.95)))
+                            .text_color(gpui::white())
+                            .child("x"),
+                    ),
+            )
+    }
+}
+
 impl Render for SubWindow {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -59,69 +133,9 @@ impl Render for SubWindow {
             .bg(rgb(0xffffff))
             .size_full()
             .gap_2()
-            .when(self.custom_titlebar, |cx| {
-                cx.child(
-                    div()
-                        .id("titlebar")
-                        .flex()
-                        .h(px(32.))
-                        .text_color(gpui::white())
-                        .w_full()
-                        .justify_between()
-                        .child(
-                            div()
-                                .px_3()
-                                .bg(gpui::black())
-                                .window_control_area(WindowControlArea::Drag)
-                                .flex()
-                                .items_center()
-                                .flex_1()
-                                .child("Custom Titlebar"),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_shrink_0()
-                                .child(
-                                    div()
-                                        .id("minimize")
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .size(px(32.))
-                                        .window_control_area(WindowControlArea::Min)
-                                        .bg(gpui::black())
-                                        .hover(|this| this.bg(gpui::black().opacity(0.95)))
-                                        .text_color(gpui::white())
-                                        .child("_"),
-                                )
-                                .child(
-                                    div()
-                                        .id("maximize")
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .size(px(32.))
-                                        .window_control_area(WindowControlArea::Max)
-                                        .bg(gpui::black())
-                                        .hover(|this| this.bg(gpui::black().opacity(0.95)))
-                                        .text_color(gpui::white())
-                                        .child("+"),
-                                )
-                                .child(
-                                    div()
-                                        .id("close")
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .size(px(32.))
-                                        .window_control_area(WindowControlArea::Close)
-                                        .bg(gpui::black())
-                                        .hover(|this| this.bg(gpui::red().opacity(0.95)))
-                                        .text_color(gpui::white())
-                                        .child("x"),
-                                ),
-                        ),
+            .when_some(self.title_bar.clone(), |this, title_bar| {
+                this.child(
+                    AnyView::from(title_bar).cached(gpui::StyleRefinement::default().h(px(32.))),
                 )
             })
             .child(
@@ -131,8 +145,8 @@ impl Render for SubWindow {
                     .flex()
                     .flex_col()
                     .child("SubWindow with custom TitleBar.")
-                    .when(self.custom_titlebar, |cx| {
-                        cx.child(div().py_4().child(format!("Value: {}", self.value)))
+                    .when(self.title_bar.is_some(), |this| {
+                        this.child(div().py_4().child(format!("Value: {}", self.value)))
                     }),
             )
     }
