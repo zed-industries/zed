@@ -10,7 +10,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install Rust
+    - name: Install test runner
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
       run: cargo install cargo-nextest --locked
@@ -23,4 +23,4 @@ runs:
     - name: Run tests
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
-      run: cargo nextest run --workspace --no-fail-fast --config='profile.dev.debug="limited"'
+      run: cargo nextest run --workspace --no-fail-fast
