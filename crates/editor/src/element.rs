@@ -1078,47 +1078,46 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
+        let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.mouse_cursor_hidden = false;
 
-        let mouse_over_diff_control = position_map
-            .diff_hunk_control_bounds
-            .iter()
-            .any(|(_, bounds)| bounds.contains(&event.position));
+        let point_for_position = position_map.point_for_position(event.position);
+        let valid_point = point_for_position.previous_valid;
 
-        if text_hitbox.is_hovered(window) || mouse_over_diff_control {
-            let point_for_position = position_map.point_for_position(event.position);
-            let current_row = point_for_position.previous_valid.row();
+        let hovered_diff_hunk_row = if text_hovered {
+            let hovered_diff_control = position_map
+                .diff_hunk_control_bounds
+                .iter()
+                .find(|(_, bounds)| bounds.contains(&event.position))
+                .map(|(row, _)| *row);
 
-            let mut hovered_diff_hunk_row = None;
-
-            if mouse_over_diff_control {
-                hovered_diff_hunk_row = position_map
-                    .diff_hunk_control_bounds
-                    .iter()
-                    .find(|(_, bounds)| bounds.contains(&event.position))
-                    .map(|(row, _)| *row);
+            if let Some(control_row) = hovered_diff_control {
+                Some(control_row)
             } else {
-                for (hunk, _) in &position_map.display_hunks {
+                let current_row = valid_point.row();
+                position_map.display_hunks.iter().find_map(|(hunk, _)| {
                     if let DisplayDiffHunk::Unfolded {
                         display_row_range, ..
                     } = hunk
                     {
                         if display_row_range.contains(&current_row) {
-                            hovered_diff_hunk_row = Some(display_row_range.start);
-                            break;
+                            Some(display_row_range.start)
+                        } else {
+                            None
                         }
+                    } else {
+                        None
                     }
-                }
+                })
             }
+        } else {
+            None
+        };
 
-            if hovered_diff_hunk_row != editor.hovered_diff_hunk_row {
-                editor.hovered_diff_hunk_row = hovered_diff_hunk_row;
-                cx.notify();
-            }
-        } else if editor.hovered_diff_hunk_row.is_some() {
-            editor.hovered_diff_hunk_row = None;
+        if hovered_diff_hunk_row != editor.hovered_diff_hunk_row {
+            editor.hovered_diff_hunk_row = hovered_diff_hunk_row;
             cx.notify();
         }
 
@@ -1140,12 +1139,9 @@ impl EditorElement {
         }
 
         let breakpoint_indicator = if gutter_hovered {
-            let new_point = position_map
-                .point_for_position(event.position)
-                .previous_valid;
             let buffer_anchor = position_map
                 .snapshot
-                .display_point_to_anchor(new_point, Bias::Left);
+                .display_point_to_anchor(valid_point, Bias::Left);
 
             if let Some((buffer_snapshot, file)) = position_map
                 .snapshot
@@ -1200,7 +1196,7 @@ impl EditorElement {
                 }
 
                 Some(PhantomBreakpointIndicator {
-                    display_row: new_point.row(),
+                    display_row: valid_point.row(),
                     is_active: is_visible,
                     collides_with_existing_breakpoint: has_existing_breakpoint,
                 })
@@ -1219,9 +1215,7 @@ impl EditorElement {
         }
 
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_hitbox.is_hovered(window) {
-            let point_for_position = position_map.point_for_position(event.position);
-
+        if text_hovered {
             editor.update_hovered_link(
                 point_for_position,
                 &position_map.snapshot,
