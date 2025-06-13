@@ -773,7 +773,6 @@ pub struct DocumentColor {
     pub buffer_range: Range<text::Point>,
     pub lsp_range: lsp::Range,
     pub color: lsp::Color,
-    // TODO kb resolve (textDocument/colorPresentation)
 }
 
 #[derive(Clone)]
