@@ -13,9 +13,9 @@ use gpui::{AsyncApp, BackgroundExecutor, Task};
 #[cfg(unix)]
 use smol::fs;
 #[cfg(unix)]
-use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
+use smol::net::unix::UnixListener;
 #[cfg(unix)]
-use util::ResultExt as _;
+use util::{ResultExt as _, fs::make_file_executable};
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -120,7 +120,7 @@ impl AskPassSession {
             shebang = "#!/bin/sh",
         );
         fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
+        make_file_executable(&askpass_script_path).await?;
 
         Ok(Self {
             script_path: askpass_script_path,

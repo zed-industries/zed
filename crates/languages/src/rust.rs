@@ -25,7 +25,11 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::archive::extract_zip;
 use util::merge_json_value_into;
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{
+    ResultExt,
+    fs::{make_file_executable, remove_matching},
+    maybe,
+};
 
 use crate::language_settings::language_settings;
 
@@ -226,14 +230,7 @@ impl LspAdapter for RustLspAdapter {
             };
 
             // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &server_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
+            make_file_executable(&server_path).await?;
         }
 
         Ok(LanguageServerBinary {
