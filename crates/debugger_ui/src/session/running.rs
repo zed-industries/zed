@@ -993,7 +993,7 @@ impl RunningState {
         let cwd = Some(&request.cwd)
             .filter(|cwd| cwd.len() > 0)
             .map(PathBuf::from)
-            .or_else(|| session.binary().cwd.clone());
+            .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut args = request.args.clone();
 
