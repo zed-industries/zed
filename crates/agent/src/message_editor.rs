@@ -39,7 +39,7 @@ use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Callout, Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionIntent;
@@ -1175,6 +1175,7 @@ impl MessageEditor {
             .map_or(false, |model| {
                 model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
             });
+
         if !is_using_zed_provider {
             return None;
         }
@@ -1229,14 +1230,6 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            "Thread reached the token limit"
-        } else {
-            "Thread reaching the token limit soon"
-        };
-
-        let message = "Start a new thread from a summary to continue the conversation.";
-
         let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
             Icon::new(IconName::X)
                 .color(Color::Error)
@@ -1247,19 +1240,36 @@ impl MessageEditor {
                 .size(IconSize::XSmall)
         };
 
+        let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
+            "Thread reached the token limit"
+        } else {
+            "Thread reaching the token limit soon"
+        };
+
         Some(
             div()
-                .child(ui::Callout::multi_line(
-                    title,
-                    message,
-                    icon,
-                    "Start New Thread",
-                    Box::new(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id().clone());
-                        window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
-                    })),
-                ))
-                .line_height(line_height),
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .child(
+                    Callout::new()
+                        .line_height(line_height)
+                        .icon(icon)
+                        .title(title)
+                        .description(
+                            "Start a new thread from a summary to continue the conversation.",
+                        )
+                        .primary_action(
+                            Button::new("upgrade", "Start New Thread")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let from_thread_id = Some(this.thread.read(cx).id().clone());
+                                    window.dispatch_action(
+                                        Box::new(NewThread { from_thread_id }),
+                                        cx,
+                                    );
+                                })),
+                        ),
+                ),
         )
     }
 
@@ -1467,6 +1477,7 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))
+            // .children(self.render_usage_callout(line_height, cx))
             .children({
                 let usage_callout = self.render_usage_callout(line_height, cx);
 
@@ -1475,7 +1486,7 @@ impl Render for MessageEditor {
                 } else if token_usage_ratio != TokenUsageRatio::Normal {
                     self.render_token_limit_callout(line_height, token_usage_ratio, cx)
                 } else {
-                    None
+                    self.render_token_limit_callout(line_height, token_usage_ratio, cx)
                 }
             })
     }
