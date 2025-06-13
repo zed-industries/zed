@@ -5892,7 +5892,7 @@ impl Editor {
                     let scenarios = futures::future::join_all(scenarios)
                         .await
                         .into_iter()
-                        .filter_map(std::convert::identity)
+                        .flatten()
                         .collect::<Vec<_>>();
                     scenarios
                 }))

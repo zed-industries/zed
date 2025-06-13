@@ -1275,7 +1275,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let inventory = cx.update(|cx| Inventory::new(fs, cx));
-        inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, _| {
             inventory
                 .update_file_based_scenarios(
                     TaskSettingsLocation::Global(Path::new("")),
@@ -1291,31 +1291,40 @@ mod tests {
                     ),
                 )
                 .unwrap();
+        });
 
-            let (_, scenario) = inventory
-                .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                .1
+        let (_, scenario) = inventory
+            .update(cx, |this, cx| {
+                this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+            })
+            .await
+            .1
+            .first()
+            .unwrap()
+            .clone();
+
+        inventory.update(cx, |this, _| {
+            this.scenario_scheduled(scenario.clone());
+        });
+
+        assert_eq!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
                 .first()
                 .unwrap()
-                .clone();
+                .clone(),
+            scenario
+        );
 
-            inventory.scenario_scheduled(scenario.clone());
-
-            assert_eq!(
-                inventory
-                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                    .0
-                    .first()
-                    .unwrap()
-                    .clone(),
-                scenario
-            );
-
-            inventory
-                .update_file_based_scenarios(
-                    TaskSettingsLocation::Global(Path::new("")),
-                    Some(
-                        r#"
+        inventory.update(cx, |this, _| {
+            this.update_file_based_scenarios(
+                TaskSettingsLocation::Global(Path::new("")),
+                Some(
+                    r#"
                         [{
                             "label": "test scenario",
                             "adapter": "Delve",
@@ -1323,25 +1332,29 @@ mod tests {
                             "program": "wowzer",
                         }]
                         "#,
-                    ),
-                )
-                .unwrap();
+                ),
+            )
+            .unwrap();
+        });
 
-            assert_eq!(
-                inventory
-                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                    .0
-                    .first()
-                    .unwrap()
-                    .adapter,
-                "Delve",
-            );
-
+        assert_eq!(
             inventory
-                .update_file_based_scenarios(
-                    TaskSettingsLocation::Global(Path::new("")),
-                    Some(
-                        r#"
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .first()
+                .unwrap()
+                .adapter,
+            "Delve",
+        );
+
+        inventory.update(cx, |this, _| {
+            this.update_file_based_scenarios(
+                TaskSettingsLocation::Global(Path::new("")),
+                Some(
+                    r#"
                         [{
                             "label": "testing scenario",
                             "adapter": "Delve",
@@ -1349,18 +1362,21 @@ mod tests {
                             "program": "wowzer",
                         }]
                         "#,
-                    ),
-                )
-                .unwrap();
-
-            assert_eq!(
-                inventory
-                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                    .0
-                    .first(),
-                None
-            );
+                ),
+            )
+            .unwrap();
         });
+
+        assert_eq!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .first(),
+            None
+        );
     }
 
     #[gpui::test]
