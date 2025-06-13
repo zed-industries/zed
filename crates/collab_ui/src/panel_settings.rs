@@ -56,7 +56,7 @@ pub struct NotificationPanelSettings {
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
-    /// Default: false
+    /// Default: true
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
