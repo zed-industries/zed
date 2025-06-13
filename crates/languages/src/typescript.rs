@@ -1136,26 +1136,23 @@ mod tests {
             language_settings::init(cx);
         });
 
-        let package_json_0 = json!({
-            "dependencies": {
-                "mocha": "1.0.0"
-            },
-            "scripts": {
-                "test": "mocha"
-            }
-        })
-        .to_string();
-
         let package_json_1 = json!({
             "dependencies": {
+                "mocha": "1.0.0",
                 "vitest": "1.0.0"
+            },
+            "scripts": {
+                "test": ""
             }
         })
         .to_string();
 
-        let package_json_3 = json!({
-            "dependencies": {
-                "mocha": "1.0.0"
+        let package_json_2 = json!({
+            "devDependencies": {
+                "vitest": "2.0.0"
+            },
+            "scripts": {
+                "test": ""
             }
         })
         .to_string();
@@ -1164,22 +1161,11 @@ mod tests {
         fs.insert_tree(
             path!("/root"),
             json!({
-                "package.json": package_json_0,
-                "worktree_above_package": {
-                    "sub": {
-                        "package.json": package_json_1,
-                        "sub": {
-                            "file1.js": "",
-                        }
-                    }
-                },
-                "worktree_below_package": {
-                    "file2.js": ""
-                },
-                "worktree_with_package": {
-                    "package.json": package_json_3,
-                    "file3.js": ""
-                },
+                "package.json": package_json_1,
+                "sub": {
+                    "package.json": package_json_2,
+                    "file.js": "",
+                }
             }),
         )
         .await;
@@ -1189,8 +1175,8 @@ mod tests {
             .update(|cx| {
                 provider.combined_package_json_data(
                     fs.clone(),
-                    path!("/root/worktree_with_package").as_ref(),
-                    path!("file1.js").as_ref(),
+                    path!("/root").as_ref(),
+                    "sub/file1.js".as_ref(),
                     cx,
                 )
             })
@@ -1200,40 +1186,23 @@ mod tests {
             package_json_data,
             PackageJsonData {
                 jest_package_path: None,
-                mocha_package_path: Some(
-                    Path::new(path!("/root/worktree_with_package/package.json")).into()
-                ),
-                vitest_package_path: None,
+                mocha_package_path: Some(Path::new(path!("/root/package.json")).into()),
+                vitest_package_path: Some(Path::new(path!("/root/sub/package.json")).into()),
                 jasmine_package_path: None,
-                scripts: Default::default(),
+                scripts: [
+                    (
+                        Path::new(path!("/root/package.json")).into(),
+                        "test".to_owned()
+                    ),
+                    (
+                        Path::new(path!("/root/sub/package.json")).into(),
+                        "test".to_owned()
+                    )
+                ]
+                .into_iter()
+                .collect(),
                 package_manager: None,
             }
         );
-
-        let provider = TypeScriptContextProvider::new();
-        let package_json_data = cx
-            .update(|cx| {
-                provider.combined_package_json_data(
-                    fs,
-                    path!("/root/worktree_above_package").as_ref(),
-                    path!("sub/sub/file1.js").as_ref(),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        pretty_assertions::assert_eq!(
-            package_json_data,
-            PackageJsonData {
-                jest_package_path: None,
-                mocha_package_path: None,
-                vitest_package_path: Some(
-                    Path::new(path!("/root/worktree_above_package/sub/package.json")).into()
-                ),
-                jasmine_package_path: None,
-                scripts: Default::default(),
-                package_manager: None,
-            }
-        )
     }
 }
