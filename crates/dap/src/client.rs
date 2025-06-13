@@ -218,7 +218,7 @@ impl DebugAdapterClient {
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
     where
-        F: 'static + Send + FnMut(IoKind, &str),
+        F: 'static + Send + FnMut(IoKind, Option<&str>, &str),
     {
         self.transport_delegate.add_log_handler(f, kind);
     }
