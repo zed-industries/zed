@@ -357,6 +357,8 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    // Whether to disable click-through behavior.
+    disable_click_through: bool,
 }
 
 impl MacWindowState {
@@ -516,6 +518,8 @@ impl MacWindow {
             show,
             display_id,
             window_min_size,
+            #[cfg(target_os = "macos")]
+            disable_click_through_mac,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -640,6 +644,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
+                disable_click_through: disable_click_through_mac,
             })));
 
             (*native_window).set_ivar(
@@ -1072,6 +1077,11 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_disable_click_through(&self, disable: bool) {
+        self.0.lock().disable_click_through = disable;
     }
 
     fn minimize(&self) {
@@ -1977,8 +1987,14 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
 extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    lock.first_mouse = true;
-    YES
+
+    if lock.disable_click_through {
+        // Don't accept first mouse when click-through is disabled
+        NO
+    } else {
+        lock.first_mouse = true;
+        YES
+    }
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {
