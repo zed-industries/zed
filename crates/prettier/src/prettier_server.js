@@ -52,18 +52,17 @@ async function handleBuffer(prettier) {
     try {
       message = JSON.parse(messageText);
     } catch (e) {
-      sendResponse(makeError(`Failed to parse message '${messageText}': ${e}`));
+      sendResponse(makeError(`Parse error in request message: ${e}\nMessage: ${messageText}`));
       continue;
     }
     // allow concurrent request handling by not `await`ing the message handling promise (async function)
     handleMessage(message, prettier).catch((e) => {
-      const errorMessage = message;
-      if ((errorMessage.params || {}).text !== undefined) {
-        errorMessage.params.text = "..snip..";
+      if ((message.params || {}).text !== undefined) {
+        message.params.text = "..snip..";
       }
       sendResponse({
         id: message.id,
-        ...makeError(`error during message '${JSON.stringify(errorMessage)}' handling: ${e}`),
+        ...makeError(`${e}\nWhile handling prettier request: ${JSON.stringify(message)}`),
       });
     });
   }
