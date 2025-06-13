@@ -304,7 +304,7 @@ impl LogStore {
                 )
                 .ok()
             })
-            .map(|string| SharedString::from(string))
+            .map(SharedString::from)
             .unwrap_or(message)
         } else {
             message
@@ -391,9 +391,8 @@ impl LogStore {
     fn clean_sessions(&mut self, cx: &mut Context<Self>) {
         let mut to_remove = self.debug_sessions.len().saturating_sub(MAX_SESSIONS);
         self.debug_sessions.retain(|session| {
-            if dbg!(to_remove) > 0 && dbg!(session.is_terminated) {
+            if to_remove > 0 && session.is_terminated {
                 to_remove -= 1;
-                dbg!("Removing a session");
                 return false;
             }
             true
@@ -694,13 +693,11 @@ impl DapLogView {
             .debug_sessions
             .iter()
             .rev()
-            .filter_map(|state| {
-                Some(DapMenuItem {
-                    session_id: state.id,
-                    adapter_name: state.adapter_name.clone(),
-                    has_adapter_logs: state.has_adapter_logs,
-                    selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
-                })
+            .map(|state| DapMenuItem {
+                session_id: state.id,
+                adapter_name: state.adapter_name.clone(),
+                has_adapter_logs: state.has_adapter_logs,
+                selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
             })
             .collect::<Vec<_>>()
     }
