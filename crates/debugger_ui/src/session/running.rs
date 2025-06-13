@@ -1012,7 +1012,8 @@ impl RunningState {
             None
         };
 
-        let mut envs: HashMap<String, String> = Default::default();
+        let mut envs: HashMap<String, String> =
+            self.session.read(cx).task_context().project_env.clone();
         if let Some(Value::Object(env)) = &request.env {
             for (key, value) in env {
                 let value_str = match (key.as_str(), value) {
