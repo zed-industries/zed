@@ -8,6 +8,7 @@ use hickory_resolver::{TokioAsyncResolver, config::LookupIpStrategy, system_conf
 use http_client::Url;
 use http_proxy::{HttpProxyType, connect_http_proxy_stream, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_socks_proxy_stream, parse_socks_proxy};
+use tokio_socks::{IntoTargetAddr, TargetAddr};
 use util::ResultExt;
 
 pub(crate) async fn connect_proxy_stream(
@@ -43,10 +44,6 @@ enum ProxyType<'t> {
 
 async fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)> {
     let scheme = proxy.scheme();
-    let host = resolve_proxy_url_if_needed(proxy.host()?.to_string())
-        .await
-        .log_err()?;
-    let port = proxy.port_or_known_default()?;
     let proxy_type = match scheme {
         scheme if scheme.starts_with("socks") => {
             Some(ProxyType::SocksProxy(parse_socks_proxy(scheme, proxy)))
@@ -56,21 +53,34 @@ async fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)>
         }
         _ => None,
     }?;
+    let (ip, port) = {
+        let host = proxy.host()?.to_string();
+        let port = proxy.port_or_known_default()?;
+        resolve_proxy_url_if_needed((host, port)).await.log_err()?
+    };
 
-    Some(((host, port), proxy_type))
+    Some(((ip, port), proxy_type))
 }
 
-async fn resolve_proxy_url_if_needed(proxy_domain: String) -> Result<String> {
-    let (config, mut opts) = system_conf::read_system_conf().unwrap();
-    opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-    let resolver = TokioAsyncResolver::tokio(config, opts);
-    let ip = resolver
-        .lookup_ip(proxy_domain.as_str())
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No IP found for proxy domain {proxy_domain}"))?;
-    Ok(ip.to_string())
+async fn resolve_proxy_url_if_needed(proxy: (String, u16)) -> Result<(String, u16)> {
+    let proxy = proxy
+        .into_target_addr()
+        .context("Failed to parse proxy addr")?;
+    match proxy {
+        TargetAddr::Domain(domain, port) => {
+            let (config, mut opts) = system_conf::read_system_conf().unwrap();
+            opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+            let resolver = TokioAsyncResolver::tokio(config, opts);
+            let ip = resolver
+                .lookup_ip(domain.as_ref())
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No IP found for proxy domain {domain}"))?;
+            Ok((ip.to_string(), port))
+        }
+        TargetAddr::Ip(ip_addr) => Ok((ip_addr.ip().to_string(), ip_addr.port())),
+    }
 }
 
 pub(crate) trait AsyncReadWrite:
