@@ -41,11 +41,11 @@ impl DapLocator for CargoLocator {
     fn name(&self) -> SharedString {
         SharedString::new_static("rust-cargo-locator")
     }
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
         if build_config.command != "cargo" {
             return None;
@@ -77,7 +77,7 @@ impl DapLocator for CargoLocator {
         }
 
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
             build: Some(BuildTaskDefinition::Template {
                 task_template,

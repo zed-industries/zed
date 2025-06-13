@@ -89,11 +89,11 @@ impl DapLocator for GoLocator {
         SharedString::new_static("go-debug-locator")
     }
 
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
         if build_config.command != "go" {
             return None;
@@ -170,7 +170,7 @@ impl DapLocator for GoLocator {
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
-                    adapter: adapter.0,
+                    adapter: adapter.0.clone(),
                     build: None,
                     config: config,
                     tcp_connection: None,
@@ -214,7 +214,7 @@ impl DapLocator for GoLocator {
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
-                    adapter: adapter.0,
+                    adapter: adapter.0.clone(),
                     build: None,
                     config,
                     tcp_connection: None,
