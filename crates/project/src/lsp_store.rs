@@ -5881,6 +5881,68 @@ impl LspStore {
         }
     }
 
+    fn get_document_colors(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<DocumentColor>>> {
+        if let Some((client, project_id)) = self.upstream_client() {
+            let request_task = client.request(proto::MultiLspQuery {
+                project_id,
+                buffer_id: buffer.read(cx).remote_id().to_proto(),
+                version: serialize_version(&buffer.read(cx).version()),
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetDocumentColor(
+                    GetDocumentColor {}.to_proto(project_id, buffer.read(cx)),
+                )),
+            });
+            cx.spawn(async move |project, cx| {
+                let Some(project) = project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let colors = join_all(
+                    request_task
+                        .await
+                        .log_err()
+                        .map(|response| response.responses)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetDocumentColorResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|color_response| {
+                            let response = GetDocumentColor {}.response_from_proto(
+                                color_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            );
+                            async move { response.await.log_err().unwrap_or_default() }
+                        }),
+                )
+                .await
+                .into_iter()
+                .flatten()
+                .collect();
+                Ok(colors)
+            })
+        } else {
+            let document_colors_task =
+                self.request_multiple_lsp_locally(&buffer, None::<usize>, GetDocumentColor, cx);
+            cx.spawn(async move |_, _| {
+                Ok(document_colors_task.await.into_iter().flatten().collect())
+            })
+        }
+    }
+
     pub fn signature_help<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
