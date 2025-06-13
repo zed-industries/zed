@@ -236,7 +236,8 @@ impl DapStore {
                     let binary = DebugAdapterBinary::from_proto(response)?;
                     let mut ssh_command = ssh_client.read_with(cx, |ssh, _| {
                         anyhow::Ok(SshCommand {
-                            arguments: ssh.ssh_args().context("SSH arguments not found")?,
+                            // TODO:
+                            arguments: ssh.ssh_args().context("SSH arguments not found")?.0,
                         })
                     })??;
 
