@@ -148,6 +148,7 @@ impl CommitModal {
                 }
             }
             git_panel.set_modal_open(true, cx);
+            git_panel.load_local_committer(cx);
         });
 
         let dock = workspace.dock_at_position(git_panel.position(window, cx));

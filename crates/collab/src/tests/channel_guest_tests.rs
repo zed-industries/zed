@@ -180,7 +180,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .get_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
+        .update_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
         .await
         .unwrap();
 

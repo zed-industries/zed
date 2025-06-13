@@ -208,7 +208,7 @@ use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
     ViewId, Workspace, WorkspaceId, WorkspaceSettings,
-    item::{ItemHandle, PreviewTabsSettings},
+    item::{ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
@@ -899,7 +899,6 @@ struct InlineBlamePopoverState {
 
 struct InlineBlamePopover {
     position: gpui::Point<Pixels>,
-    show_task: Option<Task<()>>,
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
@@ -912,6 +911,7 @@ enum SelectionDragState {
     ReadyToDrag {
         selection: Selection<Anchor>,
         click_position: gpui::Point<Pixels>,
+        mouse_down_time: Instant,
     },
     /// State when the mouse is dragging the selection in the editor.
     Dragging {
@@ -1006,6 +1006,7 @@ pub struct Editor {
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<()>)>,
     inline_blame_popover: Option<InlineBlamePopover>,
+    inline_blame_popover_show_task: Option<Task<()>>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
@@ -1087,6 +1088,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    hovered_diff_hunk_row: Option<DisplayRow>,
     pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
@@ -1221,10 +1223,55 @@ impl Default for SelectionHistoryMode {
     }
 }
 
+#[derive(Debug)]
+pub struct SelectionEffects {
+    nav_history: bool,
+    completions: bool,
+    scroll: Option<Autoscroll>,
+}
+
+impl Default for SelectionEffects {
+    fn default() -> Self {
+        Self {
+            nav_history: true,
+            completions: true,
+            scroll: Some(Autoscroll::fit()),
+        }
+    }
+}
+impl SelectionEffects {
+    pub fn scroll(scroll: Autoscroll) -> Self {
+        Self {
+            scroll: Some(scroll),
+            ..Default::default()
+        }
+    }
+
+    pub fn no_scroll() -> Self {
+        Self {
+            scroll: None,
+            ..Default::default()
+        }
+    }
+
+    pub fn completions(self, completions: bool) -> Self {
+        Self {
+            completions,
+            ..self
+        }
+    }
+
+    pub fn nav_history(self, nav_history: bool) -> Self {
+        Self {
+            nav_history,
+            ..self
+        }
+    }
+}
+
 struct DeferredSelectionEffectsState {
     changed: bool,
-    should_update_completions: bool,
-    autoscroll: Option<Autoscroll>,
+    effects: SelectionEffects,
     old_cursor_position: Anchor,
     history_entry: SelectionHistoryEntry,
 }
@@ -1497,7 +1544,7 @@ impl InlayHintRefreshReason {
 }
 
 pub enum FormatTarget {
-    Buffers,
+    Buffers(HashSet<Entity<Buffer>>),
     Ranges(Vec<Range<MultiBufferPoint>>),
 }
 
@@ -1892,6 +1939,7 @@ impl Editor {
             mouse_context_menu: None,
             completion_tasks: Vec::new(),
             inline_blame_popover: None,
+            inline_blame_popover_show_task: None,
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
@@ -1969,6 +2017,7 @@ impl Editor {
 
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
+            hovered_diff_hunk_row: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
@@ -2707,7 +2756,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
-        should_update_completions: bool,
+        effects: SelectionEffects,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2765,12 +2814,14 @@ impl Editor {
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
 
-        self.push_to_nav_history(
-            *old_cursor_position,
-            Some(new_cursor_position.to_point(buffer)),
-            false,
-            cx,
-        );
+        if effects.nav_history {
+            self.push_to_nav_history(
+                *old_cursor_position,
+                Some(new_cursor_position.to_point(buffer)),
+                false,
+                cx,
+            );
+        }
 
         if local {
             if let Some(buffer_id) = new_cursor_position.buffer_id {
@@ -2801,7 +2852,7 @@ impl Editor {
             let completion_position = completion_menu.map(|menu| menu.initial_position);
             drop(context_menu);
 
-            if should_update_completions {
+            if effects.completions {
                 if let Some(completion_position) = completion_position {
                     let start_offset = selection_start.to_offset(buffer);
                     let position_matches = start_offset == completion_position.to_offset(buffer);
@@ -3008,43 +3059,23 @@ impl Editor {
     /// effects of selection change occur at the end of the transaction.
     pub fn change_selections<R>(
         &mut self,
-        autoscroll: Option<Autoscroll>,
+        effects: impl Into<SelectionEffects>,
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        self.change_selections_inner(true, autoscroll, window, cx, change)
-    }
-
-    pub(crate) fn change_selections_without_updating_completions<R>(
-        &mut self,
-        autoscroll: Option<Autoscroll>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
-    ) -> R {
-        self.change_selections_inner(false, autoscroll, window, cx, change)
-    }
-
-    fn change_selections_inner<R>(
-        &mut self,
-        should_update_completions: bool,
-        autoscroll: Option<Autoscroll>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
-    ) -> R {
+        let effects = effects.into();
         if let Some(state) = &mut self.deferred_selection_effects_state {
-            state.autoscroll = autoscroll.or(state.autoscroll);
-            state.should_update_completions = should_update_completions;
+            state.effects.scroll = effects.scroll.or(state.effects.scroll);
+            state.effects.completions = effects.completions;
+            state.effects.nav_history |= effects.nav_history;
             let (changed, result) = self.selections.change_with(cx, change);
             state.changed |= changed;
             return result;
         }
         let mut state = DeferredSelectionEffectsState {
             changed: false,
-            should_update_completions,
-            autoscroll,
+            effects,
             old_cursor_position: self.selections.newest_anchor().head(),
             history_entry: SelectionHistoryEntry {
                 selections: self.selections.disjoint_anchors(),
@@ -3094,19 +3125,13 @@ impl Editor {
         if state.changed {
             self.selection_history.push(state.history_entry);
 
-            if let Some(autoscroll) = state.autoscroll {
+            if let Some(autoscroll) = state.effects.scroll {
                 self.request_autoscroll(autoscroll, cx);
             }
 
             let old_cursor_position = &state.old_cursor_position;
 
-            self.selections_did_change(
-                true,
-                &old_cursor_position,
-                state.should_update_completions,
-                window,
-                cx,
-            );
+            self.selections_did_change(true, &old_cursor_position, state.effects, window, cx);
 
             if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
@@ -3226,9 +3251,13 @@ impl Editor {
             _ => {}
         }
 
-        let auto_scroll = EditorSettings::get_global(cx).autoscroll_on_clicks;
+        let effects = if EditorSettings::get_global(cx).autoscroll_on_clicks {
+            SelectionEffects::scroll(Autoscroll::fit())
+        } else {
+            SelectionEffects::no_scroll()
+        };
 
-        self.change_selections(auto_scroll.then(Autoscroll::fit), window, cx, |s| {
+        self.change_selections(effects, window, cx, |s| {
             s.set_pending(pending_selection, pending_mode)
         });
     }
@@ -4015,8 +4044,8 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_without_updating_completions(
-                Some(Autoscroll::fit()),
+            this.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()).completions(false),
                 window,
                 cx,
                 |s| s.select(new_selections),
@@ -5711,70 +5740,60 @@ impl Editor {
         drop(context_menu);
         let snapshot = self.snapshot(window, cx);
         let deployed_from = action.deployed_from.clone();
-        let mut task = self.code_actions_task.take();
         let action = action.clone();
-        cx.spawn_in(window, async move |editor, cx| {
-            while let Some(prev_task) = task {
-                prev_task.await.log_err();
-                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
+        self.completion_tasks.clear();
+        self.discard_inline_completion(false, cx);
+
+        let multibuffer_point = match &action.deployed_from {
+            Some(CodeActionSource::Indicator(row)) | Some(CodeActionSource::RunMenu(row)) => {
+                DisplayPoint::new(*row, 0).to_point(&snapshot)
             }
+            _ => self.selections.newest::<Point>(cx).head(),
+        };
+        let Some((buffer, buffer_row)) = snapshot
+            .buffer_snapshot
+            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+            .and_then(|(buffer_snapshot, range)| {
+                self.buffer()
+                    .read(cx)
+                    .buffer(buffer_snapshot.remote_id())
+                    .map(|buffer| (buffer, range.start.row))
+            })
+        else {
+            return;
+        };
+        let buffer_id = buffer.read(cx).remote_id();
+        let tasks = self
+            .tasks
+            .get(&(buffer_id, buffer_row))
+            .map(|t| Arc::new(t.to_owned()));
 
-            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
-                if editor.focus_handle.is_focused(window) {
-                    let multibuffer_point = match &action.deployed_from {
-                        Some(CodeActionSource::Indicator(row)) => {
-                            DisplayPoint::new(*row, 0).to_point(&snapshot)
-                        }
-                        _ => editor.selections.newest::<Point>(cx).head(),
-                    };
-                    let (buffer, buffer_row) = snapshot
-                        .buffer_snapshot
-                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
-                        .and_then(|(buffer_snapshot, range)| {
-                            editor
-                                .buffer
-                                .read(cx)
-                                .buffer(buffer_snapshot.remote_id())
-                                .map(|buffer| (buffer, range.start.row))
-                        })?;
-                    let (_, code_actions) = editor
-                        .available_code_actions
-                        .clone()
-                        .and_then(|(location, code_actions)| {
-                            let snapshot = location.buffer.read(cx).snapshot();
-                            let point_range = location.range.to_point(&snapshot);
-                            let point_range = point_range.start.row..=point_range.end.row;
-                            if point_range.contains(&buffer_row) {
-                                Some((location, code_actions))
-                            } else {
-                                None
-                            }
-                        })
-                        .unzip();
-                    let buffer_id = buffer.read(cx).remote_id();
-                    let tasks = editor
-                        .tasks
-                        .get(&(buffer_id, buffer_row))
-                        .map(|t| Arc::new(t.to_owned()));
-                    if tasks.is_none() && code_actions.is_none() {
-                        return None;
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let project = self.project.clone();
+
+        let code_actions_task = match deployed_from {
+            Some(CodeActionSource::RunMenu(_)) => Task::ready(None),
+            _ => self.code_actions(buffer_row, window, cx),
+        };
+
+        let runnable_task = match deployed_from {
+            Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
+            _ => {
+                let mut task_context_task = Task::ready(None);
+                if let Some(tasks) = &tasks {
+                    if let Some(project) = project {
+                        task_context_task =
+                            Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
                     }
+                }
 
-                    editor.completion_tasks.clear();
-                    editor.discard_inline_completion(false, cx);
-                    let task_context =
-                        tasks
-                            .as_ref()
-                            .zip(editor.project.clone())
-                            .map(|(tasks, project)| {
-                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
-                            });
+                cx.spawn_in(window, {
+                    let buffer = buffer.clone();
+                    async move |editor, cx| {
+                        let task_context = task_context_task.await;
 
-                    Some(cx.spawn_in(window, async move |editor, cx| {
-                        let task_context = match task_context {
-                            Some(task_context) => task_context.await,
-                            None => None,
-                        };
                         let resolved_tasks =
                             tasks
                                 .zip(task_context.clone())
@@ -5785,102 +5804,142 @@ impl Editor {
                                         tasks.column,
                                     )),
                                 });
-                        let debug_scenarios = editor.update(cx, |editor, cx| {
-                            if cx.has_flag::<DebuggerFeatureFlag>() {
-                                maybe!({
-                                    let project = editor.project.as_ref()?;
-                                    let dap_store = project.read(cx).dap_store();
-                                    let mut scenarios = vec![];
-                                    let resolved_tasks = resolved_tasks.as_ref()?;
-                                    let buffer = buffer.read(cx);
-                                    let language = buffer.language()?;
-                                    let file = buffer.file();
-                                    let debug_adapter =
-                                        language_settings(language.name().into(), file, cx)
-                                            .debuggers
-                                            .first()
-                                            .map(SharedString::from)
-                                            .or_else(|| {
-                                                language
-                                                    .config()
-                                                    .debuggers
-                                                    .first()
-                                                    .map(SharedString::from)
-                                            })?;
-
-                                    dap_store.update(cx, |dap_store, cx| {
-                                        for (_, task) in &resolved_tasks.templates {
-                                            if let Some(scenario) = dap_store
-                                                .debug_scenario_for_build_task(
-                                                    task.original_task().clone(),
-                                                    debug_adapter.clone().into(),
-                                                    task.display_label().to_owned().into(),
-                                                    cx,
-                                                )
-                                            {
-                                                scenarios.push(scenario);
-                                            }
-                                        }
-                                    });
-                                    Some(scenarios)
-                                })
-                                .unwrap_or_default()
-                            } else {
-                                vec![]
-                            }
-                        })?;
-                        let spawn_straight_away = quick_launch
-                            && resolved_tasks
-                                .as_ref()
-                                .map_or(false, |tasks| tasks.templates.len() == 1)
-                            && code_actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty())
-                            && debug_scenarios.is_empty();
-                        if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
-                            crate::hover_popover::hide_hover(editor, cx);
-                            *editor.context_menu.borrow_mut() =
-                                Some(CodeContextMenu::CodeActions(CodeActionsMenu {
-                                    buffer,
-                                    actions: CodeActionContents::new(
-                                        resolved_tasks,
-                                        code_actions,
-                                        debug_scenarios,
-                                        task_context.unwrap_or_default(),
-                                    ),
-                                    selected_item: Default::default(),
-                                    scroll_handle: UniformListScrollHandle::default(),
-                                    deployed_from,
-                                }));
-                            if spawn_straight_away {
-                                if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction { item_ix: Some(0) },
-                                    window,
-                                    cx,
-                                ) {
-                                    cx.notify();
-                                    return task;
-                                }
-                            }
-                            cx.notify();
-                            Task::ready(Ok(()))
-                        }) {
-                            task.await
-                        } else {
-                            Ok(())
-                        }
-                    }))
-                } else {
-                    Some(Task::ready(Ok(())))
-                }
-            })?;
-            if let Some(task) = spawned_test_task {
-                task.await?;
+                        let debug_scenarios = editor
+                            .update(cx, |editor, cx| {
+                                editor.debug_scenarios(&resolved_tasks, &buffer, cx)
+                            })?
+                            .await;
+                        anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
+                    }
+                })
             }
+        };
 
-            anyhow::Ok(())
+        cx.spawn_in(window, async move |editor, cx| {
+            let (resolved_tasks, debug_scenarios, task_context) = runnable_task.await?;
+            let code_actions = code_actions_task.await;
+            let spawn_straight_away = quick_launch
+                && resolved_tasks
+                    .as_ref()
+                    .map_or(false, |tasks| tasks.templates.len() == 1)
+                && code_actions
+                    .as_ref()
+                    .map_or(true, |actions| actions.is_empty())
+                && debug_scenarios.is_empty();
+
+            editor.update_in(cx, |editor, window, cx| {
+                crate::hover_popover::hide_hover(editor, cx);
+                *editor.context_menu.borrow_mut() =
+                    Some(CodeContextMenu::CodeActions(CodeActionsMenu {
+                        buffer,
+                        actions: CodeActionContents::new(
+                            resolved_tasks,
+                            code_actions,
+                            debug_scenarios,
+                            task_context.unwrap_or_default(),
+                        ),
+                        selected_item: Default::default(),
+                        scroll_handle: UniformListScrollHandle::default(),
+                        deployed_from,
+                    }));
+                if spawn_straight_away {
+                    if let Some(task) = editor.confirm_code_action(
+                        &ConfirmCodeAction { item_ix: Some(0) },
+                        window,
+                        cx,
+                    ) {
+                        cx.notify();
+                        return task;
+                    }
+                }
+
+                Task::ready(Ok(()))
+            })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn debug_scenarios(
+        &mut self,
+        resolved_tasks: &Option<ResolvedTasks>,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Vec<task::DebugScenario>> {
+        if cx.has_flag::<DebuggerFeatureFlag>() {
+            maybe!({
+                let project = self.project.as_ref()?;
+                let dap_store = project.read(cx).dap_store();
+                let mut scenarios = vec![];
+                let resolved_tasks = resolved_tasks.as_ref()?;
+                let buffer = buffer.read(cx);
+                let language = buffer.language()?;
+                let file = buffer.file();
+                let debug_adapter = language_settings(language.name().into(), file, cx)
+                    .debuggers
+                    .first()
+                    .map(SharedString::from)
+                    .or_else(|| language.config().debuggers.first().map(SharedString::from))?;
+
+                dap_store.update(cx, |dap_store, cx| {
+                    for (_, task) in &resolved_tasks.templates {
+                        let maybe_scenario = dap_store.debug_scenario_for_build_task(
+                            task.original_task().clone(),
+                            debug_adapter.clone().into(),
+                            task.display_label().to_owned().into(),
+                            cx,
+                        );
+                        scenarios.push(maybe_scenario);
+                    }
+                });
+                Some(cx.background_spawn(async move {
+                    let scenarios = futures::future::join_all(scenarios)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    scenarios
+                }))
+            })
+            .unwrap_or_else(|| Task::ready(vec![]))
+        } else {
+            Task::ready(vec![])
+        }
+    }
+
+    fn code_actions(
+        &mut self,
+        buffer_row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Rc<[AvailableCodeAction]>>> {
+        let mut task = self.code_actions_task.take();
+        cx.spawn_in(window, async move |editor, cx| {
+            while let Some(prev_task) = task {
+                prev_task.await.log_err();
+                task = editor
+                    .update(cx, |this, _| this.code_actions_task.take())
+                    .ok()?;
+            }
+
+            editor
+                .update(cx, |editor, cx| {
+                    editor
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some(code_actions)
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .ok()
+                .flatten()
+        })
     }
 
     pub fn confirm_code_action(
@@ -6220,71 +6279,65 @@ impl Editor {
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
-            cx.notify();
         } else {
             let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_entry = blame_entry.clone();
             let show_task = cx.spawn(async move |editor, cx| {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(delay))
                     .await;
                 editor
                     .update(cx, |editor, cx| {
-                        if let Some(state) = &mut editor.inline_blame_popover {
-                            state.show_task = None;
-                            cx.notify();
-                        }
+                        editor.inline_blame_popover_show_task.take();
+                        let Some(blame) = editor.blame.as_ref() else {
+                            return;
+                        };
+                        let blame = blame.read(cx);
+                        let details = blame.details_for_entry(&blame_entry);
+                        let markdown = cx.new(|cx| {
+                            Markdown::new(
+                                details
+                                    .as_ref()
+                                    .map(|message| message.message.clone())
+                                    .unwrap_or_default(),
+                                None,
+                                None,
+                                cx,
+                            )
+                        });
+                        editor.inline_blame_popover = Some(InlineBlamePopover {
+                            position,
+                            hide_task: None,
+                            popover_bounds: None,
+                            popover_state: InlineBlamePopoverState {
+                                scroll_handle: ScrollHandle::new(),
+                                commit_message: details,
+                                markdown,
+                            },
+                        });
+                        cx.notify();
                     })
                     .ok();
             });
-            let Some(blame) = self.blame.as_ref() else {
-                return;
-            };
-            let blame = blame.read(cx);
-            let details = blame.details_for_entry(&blame_entry);
-            let markdown = cx.new(|cx| {
-                Markdown::new(
-                    details
-                        .as_ref()
-                        .map(|message| message.message.clone())
-                        .unwrap_or_default(),
-                    None,
-                    None,
-                    cx,
-                )
-            });
-            self.inline_blame_popover = Some(InlineBlamePopover {
-                position,
-                show_task: Some(show_task),
-                hide_task: None,
-                popover_bounds: None,
-                popover_state: InlineBlamePopoverState {
-                    scroll_handle: ScrollHandle::new(),
-                    commit_message: details,
-                    markdown,
-                },
-            });
+            self.inline_blame_popover_show_task = Some(show_task);
         }
     }
 
     fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
+        self.inline_blame_popover_show_task.take();
         if let Some(state) = &mut self.inline_blame_popover {
-            if state.show_task.is_some() {
-                self.inline_blame_popover.take();
-                cx.notify();
-            } else {
-                let hide_task = cx.spawn(async move |editor, cx| {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(100))
-                        .await;
-                    editor
-                        .update(cx, |editor, cx| {
-                            editor.inline_blame_popover.take();
-                            cx.notify();
-                        })
-                        .ok();
-                });
-                state.hide_task = Some(hide_task);
-            }
+            let hide_task = cx.spawn(async move |editor, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.inline_blame_popover.take();
+                        cx.notify();
+                    })
+                    .ok();
+            });
+            state.hide_task = Some(hide_task);
         }
     }
 
@@ -7920,7 +7973,7 @@ impl Editor {
                 window.focus(&editor.focus_handle(cx));
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
-                        deployed_from: Some(CodeActionSource::Indicator(row)),
+                        deployed_from: Some(CodeActionSource::RunMenu(row)),
                         quick_launch,
                     },
                     window,
@@ -15582,7 +15635,7 @@ impl Editor {
         Some(self.perform_format(
             project,
             FormatTrigger::Manual,
-            FormatTarget::Buffers,
+            FormatTarget::Buffers(self.buffer.read(cx).all_buffers()),
             window,
             cx,
         ))
@@ -15627,13 +15680,7 @@ impl Editor {
     ) -> Task<Result<()>> {
         let buffer = self.buffer.clone();
         let (buffers, target) = match target {
-            FormatTarget::Buffers => {
-                let mut buffers = buffer.read(cx).all_buffers();
-                if trigger == FormatTrigger::Save {
-                    buffers.retain(|buffer| buffer.read(cx).is_dirty());
-                }
-                (buffers, LspFormatTarget::Buffers)
-            }
+            FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
             FormatTarget::Ranges(selection_ranges) => {
                 let multi_buffer = buffer.read(cx);
                 let snapshot = multi_buffer.read(cx);
@@ -16156,7 +16203,13 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, true, window, cx);
+        self.selections_did_change(
+            false,
+            &old_cursor_position,
+            SelectionEffects::default(),
+            window,
+            cx,
+        );
     }
 
     pub fn transact(
@@ -17078,7 +17131,16 @@ impl Editor {
         }
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, window, cx).detach_and_log_err(cx);
+            self.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
         }
     }
 
@@ -17110,7 +17172,16 @@ impl Editor {
         });
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, window, cx).detach_and_log_err(cx);
+            self.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
         }
     }
 
@@ -21546,8 +21617,8 @@ impl EditorSnapshot {
             return None;
         }
 
-        let em_width = cx.text_system().em_width(font_id, font_size).log_err()?;
-        let em_advance = cx.text_system().em_advance(font_id, font_size).log_err()?;
+        let ch_width = cx.text_system().ch_width(font_id, font_size).log_err()?;
+        let ch_advance = cx.text_system().ch_advance(font_id, font_size).log_err()?;
 
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
@@ -21560,9 +21631,10 @@ impl EditorSnapshot {
             .show_line_numbers
             .unwrap_or(gutter_settings.line_numbers);
         let line_gutter_width = if show_line_numbers {
-            // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
+            // Avoid flicker-like gutter resizes when the line number gains another digit by
+            // only resizing the gutter on files with > 10**min_line_number_digits lines.
             let min_width_for_number_on_gutter =
-                em_advance * gutter_settings.min_line_number_digits as f32;
+                ch_advance * gutter_settings.min_line_number_digits as f32;
             max_line_number_width.max(min_width_for_number_on_gutter)
         } else {
             0.0.into()
@@ -21585,20 +21657,20 @@ impl EditorSnapshot {
                         + MAX_RELATIVE_TIMESTAMP.len()
                         + SPACING_WIDTH;
 
-                    em_advance * max_char_count
+                    ch_advance * max_char_count
                 });
 
         let is_singleton = self.buffer_snapshot.is_singleton();
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if !is_singleton {
-            em_width * 4.0
+            ch_width * 4.0
         } else if show_runnables || show_breakpoints {
-            em_width * 3.0
+            ch_width * 3.0
         } else if show_git_gutter && show_line_numbers {
-            em_width * 2.0
+            ch_width * 2.0
         } else if show_git_gutter || show_line_numbers {
-            em_width
+            ch_width
         } else {
             px(0.)
         };
@@ -21606,11 +21678,11 @@ impl EditorSnapshot {
         let shows_folds = is_singleton && gutter_settings.folds;
 
         let right_padding = if shows_folds && show_line_numbers {
-            em_width * 4.0
+            ch_width * 4.0
         } else if shows_folds || (!is_singleton && show_line_numbers) {
-            em_width * 3.0
+            ch_width * 3.0
         } else if show_line_numbers {
-            em_width
+            ch_width
         } else {
             px(0.)
         };

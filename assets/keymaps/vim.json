@@ -184,6 +184,8 @@
       "z f": "editor::FoldSelectedRanges",
       "z shift-m": "editor::FoldAll",
       "z shift-r": "editor::UnfoldAll",
+      "z l": "vim::ColumnRight",
+      "z h": "vim::ColumnLeft",
       "shift-z shift-q": ["pane::CloseActiveItem", { "save_intent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "save_intent": "save_all" }],
       // Count support

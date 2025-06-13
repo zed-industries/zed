@@ -179,11 +179,26 @@ impl TasksModal {
         };
         let mut new_candidates = used_tasks;
         new_candidates.extend(lsp_tasks);
+        let hide_vscode = current_resolved_tasks.iter().any(|(kind, _)| match kind {
+            TaskSourceKind::Worktree {
+                id: _,
+                directory_in_worktree: dir,
+                id_base: _,
+            } => dir.ends_with(".zed"),
+            _ => false,
+        });
         // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
         // We should move the filter to new_candidates instead of on current
         // and add a test for this
         new_candidates.extend(current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
-            add_current_language_tasks || !matches!(task_kind, TaskSourceKind::Language { .. })
+            match task_kind {
+                TaskSourceKind::Worktree {
+                    directory_in_worktree: dir,
+                    ..
+                } => !(hide_vscode && dir.ends_with(".vscode")),
+                TaskSourceKind::Language { .. } => add_current_language_tasks,
+                _ => true,
+            }
         }));
         self.picker.update(cx, |picker, cx| {
             picker.delegate.task_contexts = task_contexts;
