@@ -3,20 +3,30 @@
 mod http_proxy;
 mod socks_proxy;
 
+use std::sync::LazyLock;
+
 use anyhow::{Context as _, Result};
+use hickory_resolver::{
+    AsyncResolver, TokioAsyncResolver,
+    config::LookupIpStrategy,
+    name_server::{GenericConnector, TokioRuntimeProvider},
+    system_conf,
+};
 use http_client::Url;
 use http_proxy::{HttpProxyType, connect_http_proxy_stream, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_socks_proxy_stream, parse_socks_proxy};
+use tokio_socks::{IntoTargetAddr, TargetAddr};
+use util::ResultExt;
 
 pub(crate) async fn connect_proxy_stream(
     proxy: &Url,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
-    let Some(((proxy_domain, proxy_port), proxy_type)) = parse_proxy_type(proxy) else {
+    let Some(((proxy_domain, proxy_port), proxy_type)) = parse_proxy_type(proxy).await else {
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
         // so any fallback could expose users to significant risks.
-        anyhow::bail!("Parsing proxy url failed");
+        anyhow::bail!("Parsing proxy url type failed");
     };
 
     // Connect to proxy and wrap protocol later
@@ -39,10 +49,8 @@ enum ProxyType<'t> {
     HttpProxy(HttpProxyType<'t>),
 }
 
-fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)> {
+async fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)> {
     let scheme = proxy.scheme();
-    let host = proxy.host()?.to_string();
-    let port = proxy.port_or_known_default()?;
     let proxy_type = match scheme {
         scheme if scheme.starts_with("socks") => {
             Some(ProxyType::SocksProxy(parse_socks_proxy(scheme, proxy)))
@@ -52,8 +60,38 @@ fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)> {
         }
         _ => None,
     }?;
+    let (ip, port) = {
+        let host = proxy.host()?.to_string();
+        let port = proxy.port_or_known_default()?;
+        resolve_proxy_url_if_needed((host, port)).await.log_err()?
+    };
 
-    Some(((host, port), proxy_type))
+    Some(((ip, port), proxy_type))
+}
+
+static SYSTEM_DNS_RESOLVER: LazyLock<AsyncResolver<GenericConnector<TokioRuntimeProvider>>> =
+    LazyLock::new(|| {
+        let (config, mut opts) = system_conf::read_system_conf().unwrap();
+        opts.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+        TokioAsyncResolver::tokio(config, opts)
+    });
+
+async fn resolve_proxy_url_if_needed(proxy: (String, u16)) -> Result<(String, u16)> {
+    let proxy = proxy
+        .into_target_addr()
+        .context("Failed to parse proxy addr")?;
+    match proxy {
+        TargetAddr::Domain(domain, port) => {
+            let ip = SYSTEM_DNS_RESOLVER
+                .lookup_ip(domain.as_ref())
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No IP found for proxy domain {domain}"))?;
+            Ok((ip.to_string(), port))
+        }
+        TargetAddr::Ip(ip_addr) => Ok((ip_addr.ip().to_string(), ip_addr.port())),
+    }
 }
 
 pub(crate) trait AsyncReadWrite:
