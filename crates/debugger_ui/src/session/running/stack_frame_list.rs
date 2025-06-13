@@ -667,7 +667,10 @@ impl StackFrameList {
     }
 
     fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().p_1().child(list(self.list_state.clone()).size_full())
+        div()
+            .p_1()
+            .size_full()
+            .child(list(self.list_state.clone()).size_full())
     }
 }
 
