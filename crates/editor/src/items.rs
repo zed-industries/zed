@@ -1,6 +1,7 @@
 use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, SelectionEffects,
+    ToPoint as _,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
     scroll::ScrollAnchor,
@@ -611,12 +612,13 @@ impl Item for Editor {
             if newest_selection.head() == offset {
                 false
             } else {
-                let nav_history = self.nav_history.take();
                 self.set_scroll_anchor(scroll_anchor, window, cx);
-                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_ranges([offset..offset])
-                });
-                self.nav_history = nav_history;
+                self.change_selections(
+                    SelectionEffects::default().nav_history(false),
+                    window,
+                    cx,
+                    |s| s.select_ranges([offset..offset]),
+                );
                 true
             }
         } else {
