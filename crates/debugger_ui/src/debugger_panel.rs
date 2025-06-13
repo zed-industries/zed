@@ -404,7 +404,11 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-            Self::register_session(this, session, false, cx).await?;
+            // Focus child sessions if the parent has never emitted a stopped event;
+            // this improves our JavaScript experience, as it always spawns a "main" session that then spawns subsessions.
+            let parent_ever_stopped =
+                parent_session.update(cx, |this, _| this.has_ever_stopped())?;
+            Self::register_session(this, session, !parent_ever_stopped, cx).await?;
             task.await
         })
         .detach_and_log_err(cx);

@@ -443,18 +443,20 @@ async fn test_handle_start_debugging_request(
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
-            // Active session does not change on spawn.
+            // Active session changes on spawn, as the parent has never stopped.
             let active_session = debug_panel
                 .read(cx)
                 .active_session()
                 .unwrap()
                 .read(cx)
                 .session(cx);
-
-            assert_eq!(active_session, sessions[0].read(cx).session(cx));
-            assert!(active_session.read(cx).parent_session().is_none());
-
             let current_sessions = debug_panel.read(cx).sessions();
+            assert_eq!(active_session, current_sessions[1].read(cx).session(cx));
+            assert_eq!(
+                active_session.read(cx).parent_session(),
+                Some(&current_sessions[0].read(cx).session(cx))
+            );
+
             assert_eq!(current_sessions.len(), 2);
             assert_eq!(current_sessions[0], sessions[0]);
 
