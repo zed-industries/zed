@@ -768,7 +768,7 @@ pub struct DirectoryItem {
     pub is_dir: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DocumentColor {
     pub buffer_range: Range<text::Point>,
     pub lsp_range: lsp::Range,

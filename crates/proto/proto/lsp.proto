@@ -747,6 +747,7 @@ message LspResponse {
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
         GetDocumentColorResponse get_document_color_response = 6;
     }
+    uint64 server_id = 7;
 }
 
 message LanguageServerIdForName {

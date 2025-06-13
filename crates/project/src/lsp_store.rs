@@ -321,7 +321,7 @@ impl LocalLspStore {
                             if let Some(lsp_store) = this.upgrade() {
                                 lsp_store
                                     .update(cx, |lsp_store, cx| {
-                                        lsp_store.remove_result_ids(server_id);
+                                        lsp_store.cleanup_lsp_data(server_id);
                                         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id))
                                     })
                                     .ok();
@@ -3482,13 +3482,12 @@ pub struct LspStore {
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    document_color_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspColorData>>,
+    buffer_lsp_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspData>>,
 }
 
-struct BufferLspColorData {
+struct BufferLspData {
     buffer_version: Global,
-    server_data: HashMap<LanguageServerId, Arc<[DocumentColor]>>,
-    data_subscription: watch::Sender<Arc<[DocumentColor]>>,
+    colors: Option<Vec<DocumentColor>>,
 }
 
 pub enum LspStoreEvent {
@@ -3717,7 +3716,7 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
-            document_color_data: HashMap::default(),
+            buffer_lsp_data: HashMap::default(),
             active_entry: None,
 
             _maintain_workspace_config,
@@ -3774,7 +3773,7 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
-            document_color_data: HashMap::default(),
+            buffer_lsp_data: HashMap::default(),
             active_entry: None,
             toolchain_store,
             _maintain_workspace_config,
@@ -5074,7 +5073,13 @@ impl LspStore {
                 },
                 cx,
             );
-            cx.spawn(async move |_, _| Ok(all_actions_task.await.into_iter().flatten().collect()))
+            cx.spawn(async move |_, _| {
+                Ok(all_actions_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, actions)| actions)
+                    .collect())
+            })
         }
     }
 
@@ -5134,7 +5139,13 @@ impl LspStore {
         } else {
             let code_lens_task =
                 self.request_multiple_lsp_locally(buffer_handle, None::<usize>, GetCodeLens, cx);
-            cx.spawn(async move |_, _| Ok(code_lens_task.await.into_iter().flatten().collect()))
+            cx.spawn(async move |_, _| {
+                Ok(code_lens_task
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, code_lens)| code_lens)
+                    .collect())
+            })
         }
     }
 
@@ -5881,11 +5892,52 @@ impl LspStore {
         }
     }
 
-    fn get_document_colors(
+    pub fn document_colors(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<DocumentColor>>> {
+    ) -> Option<Shared<Task<Vec<DocumentColor>>>> {
+        let buffer = buffer.read(cx);
+        let buffer_version = buffer.version();
+        let abs_path = crate::File::from_dyn(buffer.file())?.abs_path(cx);
+
+        let mut has_later_versions = false;
+        let mut received_colors_data = false;
+        let buffer_lsp_data = self
+            .buffer_lsp_data
+            .values()
+            .filter_map(|data| data.get(&abs_path))
+            .filter(|data| {
+                has_later_versions |= data.buffer_version.changed_since(&buffer_version);
+                data.buffer_version == buffer_version
+            })
+            .filter_map(|data| {
+                let colors = data.colors.as_deref()?;
+                received_colors_data = true;
+                Some(colors)
+            })
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if buffer_lsp_data.is_empty() {
+            if received_colors_data {
+                return None;
+            } else if has_later_versions {
+                return None;
+            }
+            //
+            todo!("TODO kb")
+        } else {
+            Some(Task::ready(buffer_lsp_data).shared())
+        }
+    }
+
+    fn fetch_document_colors(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<(LanguageServerId, Vec<DocumentColor>)>>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
                 project_id,
@@ -5911,26 +5963,33 @@ impl LspStore {
                         .into_iter()
                         .filter_map(|lsp_response| match lsp_response.response? {
                             proto::lsp_response::Response::GetDocumentColorResponse(response) => {
-                                Some(response)
+                                Some((
+                                    LanguageServerId::from_proto(lsp_response.server_id),
+                                    response,
+                                ))
                             }
                             unexpected => {
                                 debug_panic!("Unexpected response: {unexpected:?}");
                                 None
                             }
                         })
-                        .map(|color_response| {
+                        .map(|(server_id, color_response)| {
                             let response = GetDocumentColor {}.response_from_proto(
                                 color_response,
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
                             );
-                            async move { response.await.log_err().unwrap_or_default() }
+                            async move { (server_id, response.await.log_err().unwrap_or_default()) }
                         }),
                 )
                 .await
                 .into_iter()
-                .flatten()
+                .fold(HashMap::default(), |mut acc, (server_id, colors)| {
+                    acc.entry(server_id).or_insert_with(Vec::new).extend(colors);
+                    acc
+                })
+                .into_iter()
                 .collect();
                 Ok(colors)
             })
@@ -5938,7 +5997,15 @@ impl LspStore {
             let document_colors_task =
                 self.request_multiple_lsp_locally(&buffer, None::<usize>, GetDocumentColor, cx);
             cx.spawn(async move |_, _| {
-                Ok(document_colors_task.await.into_iter().flatten().collect())
+                Ok(document_colors_task
+                    .await
+                    .into_iter()
+                    .fold(HashMap::default(), |mut acc, (server_id, colors)| {
+                        acc.entry(server_id).or_insert_with(Vec::new).extend(colors);
+                        acc
+                    })
+                    .into_iter()
+                    .collect())
             })
         }
     }
@@ -6010,7 +6077,7 @@ impl LspStore {
                 all_actions_task
                     .await
                     .into_iter()
-                    .flatten()
+                    .flat_map(|(_, actions)| actions)
                     .filter(|help| !help.label.is_empty())
                     .collect::<Vec<_>>()
             })
@@ -6088,7 +6155,7 @@ impl LspStore {
                 all_actions_task
                     .await
                     .into_iter()
-                    .filter_map(|hover| remove_empty_hover_blocks(hover?))
+                    .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
                     .collect::<Vec<Hover>>()
             })
         }
@@ -7021,7 +7088,7 @@ impl LspStore {
         position: Option<P>,
         request: R,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<R::Response>>
+    ) -> Task<Vec<(LanguageServerId, R::Response)>>
     where
         P: ToOffset,
         R: LspCommand + Clone,
@@ -7051,20 +7118,21 @@ impl LspStore {
         let mut response_results = server_ids
             .into_iter()
             .map(|server_id| {
-                self.request_lsp(
+                let task = self.request_lsp(
                     buffer.clone(),
                     LanguageServerToQuery::Other(server_id),
                     request.clone(),
                     cx,
-                )
+                );
+                async move { (server_id, task.await) }
             })
             .collect::<FuturesUnordered<_>>();
 
         cx.spawn(async move |_, _| {
             let mut responses = Vec::with_capacity(response_results.len());
-            while let Some(response_result) = response_results.next().await {
+            while let Some((server_id, response_result)) = response_results.next().await {
                 if let Some(response) = response_result.log_err() {
-                    responses.push(response);
+                    responses.push((server_id, response));
                 }
             }
             responses
@@ -7172,10 +7240,13 @@ impl LspStore {
                     })?
                     .await
                     .into_iter()
-                    .filter_map(|hover| remove_empty_hover_blocks(hover?));
+                    .filter_map(|(server_id, hover)| {
+                        Some((server_id, remove_empty_hover_blocks(hover?)?))
+                    });
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
                     responses: all_hovers
-                        .map(|hover| proto::LspResponse {
+                        .map(|(server_id, hover)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
                             response: Some(proto::lsp_response::Response::GetHoverResponse(
                                 GetHover::response_to_proto(
                                     Some(hover),
@@ -7217,7 +7288,8 @@ impl LspStore {
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
                     responses: all_actions
-                        .map(|code_actions| proto::LspResponse {
+                        .map(|(server_id, code_actions)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
                             response: Some(proto::lsp_response::Response::GetCodeActionsResponse(
                                 GetCodeActions::response_to_proto(
                                     code_actions,
@@ -7259,7 +7331,8 @@ impl LspStore {
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
                     responses: all_signatures
-                        .map(|signature_help| proto::LspResponse {
+                        .map(|(server_id, signature_help)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
                             response: Some(
                                 proto::lsp_response::Response::GetSignatureHelpResponse(
                                     GetSignatureHelp::response_to_proto(
@@ -7299,7 +7372,8 @@ impl LspStore {
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
                     responses: code_lens_actions
-                        .map(|actions| proto::LspResponse {
+                        .map(|(server_id, actions)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
                             response: Some(proto::lsp_response::Response::GetCodeLensResponse(
                                 GetCodeLens::response_to_proto(
                                     actions,
@@ -7331,29 +7405,30 @@ impl LspStore {
                         .into_iter()
                         .map(|server_id| {
                             let result_id = lsp_store.result_id(server_id, buffer_id, cx);
-                            lsp_store.request_lsp(
+                            let task = lsp_store.request_lsp(
                                 buffer.clone(),
                                 LanguageServerToQuery::Other(server_id),
                                 GetDocumentDiagnostics {
                                     previous_result_id: result_id,
                                 },
                                 cx,
-                            )
+                            );
+                            async move { (server_id, task.await) }
                         })
                         .collect::<Vec<_>>()
                 })?;
 
                 let all_diagnostics_responses = join_all(pull_diagnostics).await;
                 let mut all_diagnostics = Vec::new();
-                for response in all_diagnostics_responses {
-                    let response = response?;
-                    all_diagnostics.push(response);
+                for (server_id, response) in all_diagnostics_responses {
+                    all_diagnostics.push((server_id, response?));
                 }
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
                     responses: all_diagnostics
                         .into_iter()
-                        .map(|lsp_diagnostic| proto::LspResponse {
+                        .map(|(server_id, lsp_diagnostic)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
                             response: Some(
                                 proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
                                     GetDocumentDiagnostics::response_to_proto(
@@ -7397,11 +7472,12 @@ impl LspStore {
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
                     responses: all_colors
-                        .map(|color| proto::LspResponse {
+                        .map(|(server_id, colors)| proto::LspResponse {
+                            server_id: server_id.to_proto(),
                             response: Some(
                                 proto::lsp_response::Response::GetDocumentColorResponse(
                                     GetDocumentColor::response_to_proto(
-                                        color,
+                                        colors,
                                         project,
                                         sender_id,
                                         &buffer_version,
@@ -8970,7 +9046,7 @@ impl LspStore {
         local.language_server_watched_paths.remove(&server_id);
         let server_state = local.language_servers.remove(&server_id);
         cx.notify();
-        self.remove_result_ids(server_id);
+        self.cleanup_lsp_data(server_id);
         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
         cx.spawn(async move |_, cx| {
             Self::shutdown_language_server(server_state, name, cx).await;
@@ -9859,7 +9935,8 @@ impl LspStore {
         }
     }
 
-    fn remove_result_ids(&mut self, for_server: LanguageServerId) {
+    fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
+        self.buffer_lsp_data.remove(&for_server);
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
         }
