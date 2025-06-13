@@ -836,8 +836,8 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "2.4.4";
-    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
+    const CURRENT_VERSION: &'static str = "3.0.10";
+    const CURRENT_VERSION_TAG_NAME: &'static str = "release/3.0.10";
 
     #[cfg(not(windows))]
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -915,9 +915,7 @@ impl LspAdapter for EsLintLspAdapter {
                     "enable": true
                 }
             },
-            "experimental": {
-                "useFlatConfig": use_flat_config,
-            },
+            "useFlatConfig": use_flat_config,
         });
 
         let override_options = cx.update(|cx| {
