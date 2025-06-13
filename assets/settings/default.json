@@ -402,11 +402,11 @@
     "show": "never",
     // Where to show the minimap in the editor.
     // This setting can take two values:
-    // 1. Show the minimap on the focused pane only:
+    // 1. Show the minimap on the focused editor only:
     //    "active_editor"
-    // 2. Show the minimap on all open panes:
+    // 2. Show the minimap on all open editors:
     //    "all_editors" (default)
-    "display_scope": "all_editors",
+    "display_in": "all_editors",
     // When to show the minimap thumb.
     // This setting can take two values:
     // 1. Show the minimap thumb if the mouse is over the minimap:

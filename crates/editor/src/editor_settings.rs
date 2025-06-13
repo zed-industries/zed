@@ -197,14 +197,14 @@ pub enum ShowMinimap {
 
 /// Where to show the minimap in the editor.
 ///
-/// Default: all_panes
+/// Default: all_editors
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayIn {
-    /// Show on all open panes.
+    /// Show on all open editors.
     #[default]
     AllEditors,
-    /// Show the minimap on the focused pane only.
+    /// Show the minimap on the active editor only.
     ActiveEditor,
 }
 
