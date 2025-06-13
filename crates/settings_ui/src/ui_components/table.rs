@@ -4,7 +4,7 @@ use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
     AppContext, Axis, Context, Entity, FocusHandle, FontWeight, Length,
     ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Stateful, Task,
-    UniformListScrollHandle, WeakEntity, uniform_list,
+    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
 use settings::Settings as _;
 use ui::{
@@ -448,8 +448,9 @@ pub fn render_row<const COLS: usize>(
     table_context: TableRenderContext<COLS>,
     cx: &App,
 ) -> AnyElement {
+    let is_striped = table_context.striped;
     let is_last = row_index == table_context.total_row_count - 1;
-    let bg = if row_index % 2 == 1 && table_context.striped {
+    let bg = if row_index % 2 == 1 && is_striped {
         Some(cx.theme().colors().text.opacity(0.05))
     } else {
         None
@@ -461,26 +462,33 @@ pub fn render_row<const COLS: usize>(
 
     div()
         .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .px_1p5()
-        .py_1()
-        .when_some(bg, |row, bg| row.bg(bg))
-        .when(!is_last, |row| {
-            row.border_b_1().border_color(cx.theme().colors().border)
-        })
+        .border_2()
+        .border_color(transparent_black())
         .when(is_selected, |row| {
-            row.border_2()
-                .border_color(cx.theme().colors().panel_focused_border)
+            row.border_color(cx.theme().colors().panel_focused_border)
         })
-        .children(
-            items
-                .map(IntoElement::into_any_element)
-                .into_iter()
-                .zip(column_widths)
-                .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px_1p5()
+                .py_1()
+                .when_some(bg, |row, bg| row.bg(bg))
+                .when(!is_striped, |row| {
+                    row.border_b_1()
+                        .border_color(transparent_black())
+                        .when(!is_last, |row| row.border_color(cx.theme().colors().border))
+                })
+                .children(
+                    items
+                        .map(IntoElement::into_any_element)
+                        .into_iter()
+                        .zip(column_widths)
+                        .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
+                ),
         )
         .into_any_element()
 }
