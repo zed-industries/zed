@@ -30,7 +30,7 @@ use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
-use util::{path, separator};
+use util::path;
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -198,7 +198,7 @@ async fn test_sharing_an_ssh_remote_project(
                 .path()
                 .to_string_lossy()
                 .to_string(),
-            separator!("src/renamed.rs").to_string()
+            path!("src/renamed.rs").to_string()
         );
     });
 }
