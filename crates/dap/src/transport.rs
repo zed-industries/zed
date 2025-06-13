@@ -25,7 +25,9 @@ use util::ConnectionResult;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
-pub type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
+pub(crate) type IoMessage = str;
+pub(crate) type Command = str;
+pub type IoHandler = Box<dyn Send + FnMut(IoKind, Option<&Command>, &IoMessage)>;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum LogKind {
@@ -296,7 +298,7 @@ impl TransportDelegate {
             if let Some(log_handlers) = log_handlers.as_ref() {
                 for (kind, handler) in log_handlers.lock().iter_mut() {
                     if matches!(kind, LogKind::Adapter) {
-                        handler(IoKind::StdOut, line.as_str());
+                        handler(IoKind::StdOut, None, line.as_str());
                     }
                 }
             }
@@ -330,6 +332,12 @@ impl TransportDelegate {
                         }
                     }
 
+                    let command = match &message {
+                        Message::Request(request) => Some(request.command.as_str()),
+                        Message::Response(response) => Some(response.command.as_str()),
+                        _ => None,
+                    };
+
                     let message = match serde_json::to_string(&message) {
                         Ok(message) => message,
                         Err(e) => break Err(e.into()),
@@ -338,7 +346,7 @@ impl TransportDelegate {
                     if let Some(log_handlers) = log_handlers.as_ref() {
                         for (kind, log_handler) in log_handlers.lock().iter_mut() {
                             if matches!(kind, LogKind::Rpc) {
-                                log_handler(IoKind::StdIn, &message);
+                                log_handler(IoKind::StdIn, command, &message);
                             }
                         }
                     }
@@ -423,7 +431,7 @@ impl TransportDelegate {
                 Ok(_) => {
                     for (kind, log_handler) in log_handlers.lock().iter_mut() {
                         if matches!(kind, LogKind::Adapter) {
-                            log_handler(IoKind::StdErr, buffer.as_str());
+                            log_handler(IoKind::StdErr, None, buffer.as_str());
                         }
                     }
 
@@ -512,17 +520,28 @@ impl TransportDelegate {
             Err(e) => return ConnectionResult::Result(Err(e)),
         };
 
+        let message = match serde_json::from_str::<Message>(message_str)
+            .context("deserializing server message")
+        {
+            Ok(message) => message,
+            Err(e) => return ConnectionResult::Result(Err(e)),
+        };
+
         if let Some(log_handlers) = log_handlers {
+            let command = match &message {
+                Message::Request(request) => Some(request.command.as_str()),
+                Message::Response(response) => Some(response.command.as_str()),
+                _ => None,
+            };
+
             for (kind, log_handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Rpc) {
-                    log_handler(IoKind::StdOut, message_str);
+                    log_handler(IoKind::StdOut, command, message_str);
                 }
             }
         }
 
-        ConnectionResult::Result(
-            serde_json::from_str::<Message>(message_str).context("deserializing server message"),
-        )
+        ConnectionResult::Result(Ok(message))
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -558,7 +577,7 @@ impl TransportDelegate {
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
     where
-        F: 'static + Send + FnMut(IoKind, &str),
+        F: 'static + Send + FnMut(IoKind, Option<&Command>, &IoMessage),
     {
         let mut log_handlers = self.log_handlers.lock();
         log_handlers.push((kind, Box::new(f)));
