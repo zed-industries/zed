@@ -1391,12 +1391,7 @@ impl Session {
     fn fetch<T: DapCommand + PartialEq + Eq + Hash>(
         &mut self,
         request: T,
-        process_result: impl FnOnce(
-            &mut Self,
-            Result<T::Response>,
-            &mut Context<Self>,
-        ) -> Option<T::Response>
-        + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
         const {
@@ -1425,7 +1420,10 @@ impl Session {
                 &self.capabilities,
                 &self.mode,
                 command,
-                process_result,
+                |this, result, cx| {
+                    process_result(this, result, cx);
+                    None
+                },
                 cx,
             );
             let task = cx
@@ -1439,17 +1437,6 @@ impl Session {
             vacant.insert(task);
             cx.notify();
         }
-    }
-
-    pub async fn request2<T: DapCommand + PartialEq + Eq + Hash>(
-        &self,
-        request: T,
-    ) -> Result<T::Response> {
-        if !T::is_supported(&self.capabilities) {
-            anyhow::bail!("DAP request {:?} is not supported", request);
-        }
-
-        self.mode.request_dap(request).await
     }
 
     fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
@@ -1538,18 +1525,18 @@ impl Session {
         self.fetch(
             dap_command::ThreadsCommand,
             |this, result, cx| {
-                let result = result.log_err()?;
+                let Some(result) = result.log_err() else {
+                    return;
+                };
 
                 this.threads = result
-                    .iter()
+                    .into_iter()
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone())))
                     .collect();
 
                 this.invalidate_command_type::<StackTraceCommand>();
                 cx.emit(SessionEvent::Threads);
                 cx.notify();
-
-                Some(result)
             },
             cx,
         );
@@ -1569,13 +1556,13 @@ impl Session {
         self.fetch(
             dap_command::ModulesCommand,
             |this, result, cx| {
-                let result = result.log_err()?;
+                let Some(result) = result.log_err() else {
+                    return;
+                };
 
-                this.modules = result.iter().cloned().collect();
+                this.modules = result;
                 cx.emit(SessionEvent::Modules);
                 cx.notify();
-
-                Some(result)
             },
             cx,
         );
@@ -1654,11 +1641,12 @@ impl Session {
         self.fetch(
             dap_command::LoadedSourcesCommand,
             |this, result, cx| {
-                let result = result.log_err()?;
-                this.loaded_sources = result.iter().cloned().collect();
+                let Some(result) = result.log_err() else {
+                    return;
+                };
+                this.loaded_sources = result;
                 cx.emit(SessionEvent::LoadedSources);
                 cx.notify();
-                Some(result)
             },
             cx,
         );
@@ -2008,7 +1996,7 @@ impl Session {
                     if let Ok(stack_frames) = stack_frames {
                         this.stack_frames.extend(
                             stack_frames
-                                .iter()
+                                .into_iter()
                                 .filter(|frame| {
                                     // Workaround for JavaScript debug adapter sending out "fake" stack frames for delineating await points. This is fine,
                                     // except that they always use an id of 0 for it, which collides with other (valid) stack frames.
@@ -2018,7 +2006,6 @@ impl Session {
                                         && frame.presentation_hint
                                             == Some(StackFramePresentationHint::Label))
                                 })
-                                .cloned()
                                 .map(|frame| (frame.id, StackFrame::from(frame))),
                         );
                     }
@@ -2027,7 +2014,6 @@ impl Session {
                     this.invalidate_command_type::<VariablesCommand>();
 
                     cx.emit(SessionEvent::StackTrace);
-                    None
                 },
                 cx,
             );
@@ -2054,9 +2040,11 @@ impl Session {
             self.fetch(
                 ScopesCommand { stack_frame_id },
                 move |this, scopes, cx| {
-                    let scopes = scopes.log_err()?;
+                    let Some(scopes) = scopes.log_err() else {
+                        return
+                    };
 
-                    for scope in scopes .iter(){
+                    for scope in scopes.iter() {
                         this.variables(scope.variables_reference, cx);
                     }
 
@@ -2064,7 +2052,7 @@ impl Session {
                         .stack_frames
                         .entry(stack_frame_id)
                         .and_modify(|stack_frame| {
-                            stack_frame.scopes = scopes.clone();
+                            stack_frame.scopes = scopes;
                         });
 
                     cx.emit(SessionEvent::Variables);
@@ -2073,8 +2061,6 @@ impl Session {
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
                         "Sent scopes request for stack_frame_id that doesn't exist or hasn't been fetched"
                     );
-
-                    Some(scopes)
                 },
                 cx,
             );
@@ -2116,13 +2102,14 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                let variables = variables.log_err()?;
-                this.variables
-                    .insert(variables_reference, variables.clone());
+                let Some(variables) = variables.log_err() else {
+                    return;
+                };
+
+                this.variables.insert(variables_reference, variables);
 
                 cx.emit(SessionEvent::Variables);
                 cx.emit(SessionEvent::InvalidateInlineValue);
-                Some(variables)
             },
             cx,
         );
@@ -2233,9 +2220,10 @@ impl Session {
         self.fetch(
             LocationsCommand { reference },
             move |this, response, _| {
-                let response = response.log_err()?;
-                this.locations.insert(reference, response.clone());
-                Some(response)
+                let Some(response) = response.log_err() else {
+                    return;
+                };
+                this.locations.insert(reference, response);
             },
             cx,
         );
