@@ -180,7 +180,7 @@ impl EditParser {
 
     fn parse_line_hint(&self, tag: &str) -> Option<u32> {
         static LINE_HINT_REGEX: std::sync::LazyLock<Regex> =
-            std::sync::LazyLock::new(|| Regex::new(r#"line=(?:"|)(\d+)"#).unwrap());
+            std::sync::LazyLock::new(|| Regex::new(r#"line=(?:"?)(\d+)"#).unwrap());
 
         LINE_HINT_REGEX
             .captures(tag)
@@ -461,13 +461,13 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_line_hints(mut rng: StdRng) {
-        // Line hint provided, and it's a range
+        // Line hint is a single quoted line number
         let mut parser = EditParser::new();
 
         let edits = parse_random_chunks(
             r#"
-            <old_text line_hint="23:50">original code</old_text>
-            <new_text>updated code</new_text>"#,
+                    <old_text line="23">original code</old_text>
+                    <new_text>updated code</new_text>"#,
             &mut parser,
             &mut rng,
         );
@@ -477,12 +477,28 @@ mod tests {
         assert_eq!(edits[0].line_hint, Some(23));
         assert_eq!(edits[0].new_text, "updated code");
 
-        // Line hint provided, and it's a single number (line number)
+        // Line hint is a single unquoted line number
         let mut parser = EditParser::new();
 
         let edits = parse_random_chunks(
             r#"
-            <old_text line_hint="23">original code</old_text>
+                    <old_text line=45>original code</old_text>
+                    <new_text>updated code</new_text>"#,
+            &mut parser,
+            &mut rng,
+        );
+
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].old_text, "original code");
+        assert_eq!(edits[0].line_hint, Some(45));
+        assert_eq!(edits[0].new_text, "updated code");
+
+        // Line hint is a range
+        let mut parser = EditParser::new();
+
+        let edits = parse_random_chunks(
+            r#"
+            <old_text line="23:50">original code</old_text>
             <new_text>updated code</new_text>"#,
             &mut parser,
             &mut rng,
