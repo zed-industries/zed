@@ -166,7 +166,7 @@ pub struct LocalLspStore {
     _subscription: gpui::Subscription,
     lsp_tree: Entity<LanguageServerTree>,
     registered_buffers: HashMap<BufferId, usize>,
-    buffer_pull_diagnostics_result_ids: HashMap<PathBuf, HashMap<LanguageServerId, Option<String>>>,
+    buffer_pull_diagnostics_result_ids: HashMap<LanguageServerId, HashMap<PathBuf, Option<String>>>,
 }
 
 impl LocalLspStore {
@@ -2299,9 +2299,9 @@ impl LocalLspStore {
         buffer.update(cx, |buffer, cx| {
             if let Some(abs_path) = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)) {
                 self.buffer_pull_diagnostics_result_ids
-                    .entry(abs_path)
+                    .entry(server_id)
                     .or_default()
-                    .insert(server_id, result_id);
+                    .insert(abs_path, result_id);
             }
 
             buffer.update_diagnostics(server_id, set, cx)
@@ -3144,9 +3144,8 @@ impl LocalLspStore {
             self.last_workspace_edits_by_language_server
                 .remove(server_id_to_remove);
             self.language_servers.remove(server_id_to_remove);
-            for values_per_server in self.buffer_pull_diagnostics_result_ids.values_mut() {
-                values_per_server.remove(server_id_to_remove);
-            }
+            self.buffer_pull_diagnostics_result_ids
+                .remove(server_id_to_remove);
             cx.emit(LspStoreEvent::LanguageServerRemoved(*server_id_to_remove));
         }
         servers_to_remove.into_keys().collect()
@@ -3798,19 +3797,6 @@ impl LspStore {
                     local.initialize_buffer(buffer, cx);
                     if local.registered_buffers.contains_key(&buffer_id) {
                         local.register_buffer_with_language_servers(buffer, cx);
-                    }
-                }
-            }
-            BufferStoreEvent::BufferDropped(buffer_id) => {
-                let abs_path = self
-                    .buffer_store
-                    .read(cx)
-                    .get(*buffer_id)
-                    .and_then(|b| File::from_dyn(b.read(cx).file()))
-                    .map(|f| f.abs_path(cx));
-                if let Some(local) = self.as_local_mut() {
-                    if let Some(abs_path) = abs_path {
-                        local.buffer_pull_diagnostics_result_ids.remove(&abs_path);
                     }
                 }
             }
@@ -9737,9 +9723,7 @@ impl LspStore {
 
     fn remove_result_ids(&mut self, for_server: LanguageServerId) {
         if let Some(local) = self.as_local_mut() {
-            for values_per_server in local.buffer_pull_diagnostics_result_ids.values_mut() {
-                values_per_server.remove(&for_server);
-            }
+            local.buffer_pull_diagnostics_result_ids.remove(&for_server);
         }
     }
 
@@ -9757,8 +9741,8 @@ impl LspStore {
             .map(|f| f.abs_path(cx))?;
         self.as_local()?
             .buffer_pull_diagnostics_result_ids
-            .get(&abs_path)?
             .get(&server_id)?
+            .get(&abs_path)?
             .clone()
     }
 
@@ -9768,10 +9752,10 @@ impl LspStore {
         };
         local
             .buffer_pull_diagnostics_result_ids
-            .iter()
-            .filter_map(|(file_path, result_ids)| {
-                Some((file_path.clone(), result_ids.get(&server_id)?.clone()?))
-            })
+            .get(&server_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|(abs_path, result_id)| Some((abs_path.clone(), result_id.clone()?)))
             .collect()
     }
 
