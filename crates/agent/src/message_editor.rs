@@ -1259,7 +1259,7 @@ impl MessageEditor {
                             "Start a new thread from a summary to continue the conversation.",
                         )
                         .primary_action(
-                            Button::new("upgrade", "Start New Thread")
+                            Button::new("start-new-thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     let from_thread_id = Some(this.thread.read(cx).id().clone());
