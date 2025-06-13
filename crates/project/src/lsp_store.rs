@@ -3488,7 +3488,7 @@ pub struct LspStore {
 type DocumentColorTask = Shared<Task<std::result::Result<Vec<DocumentColor>, Arc<anyhow::Error>>>>;
 
 struct LspData {
-    // TODO kb is it correct? should I use mtime?
+    // TODO use MTime from the buffer instead
     buffer_version: Global,
     buffer_lsp_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspData>>,
     colors_update: HashMap<PathBuf, DocumentColorTask>,

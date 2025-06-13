@@ -19116,6 +19116,22 @@ impl Editor {
                                     project
                                         .register_buffer_with_language_servers(&edited_buffer, cx)
                                 });
+
+                            let task = project.lsp_store().update(cx, |lsp_store, cx| {
+                                lsp_store.document_colors(edited_buffer.clone(), cx)
+                            });
+                            match task {
+                                Some(task) => {
+                                    cx.background_spawn(async move {
+                                        let aa = task.await;
+                                        dbg!(aa);
+                                    })
+                                    .detach();
+                                }
+                                None => {
+                                    dbg!("(((");
+                                }
+                            }
                         });
                         if edited_buffer.read(cx).file().is_some() {
                             self.pull_diagnostics(
