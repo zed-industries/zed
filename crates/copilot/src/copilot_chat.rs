@@ -9,7 +9,7 @@ use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, prelude::*};
+use gpui::{App, AsyncApp, Global, Task, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
@@ -349,6 +349,7 @@ pub struct CopilotChat {
     settings: CopilotChatSettings,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    update_models_task: Option<Task<Result<()>>>,
 }
 
 pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
@@ -395,8 +396,10 @@ impl CopilotChat {
                 let oauth_token = extract_oauth_token(contents);
 
                 this.update(cx, |this, cx| {
-                    this.oauth_token = oauth_token.clone();
-                    cx.notify();
+                    if oauth_token.is_some() {
+                        this.oauth_token = oauth_token.clone();
+                        cx.notify();
+                    }
                 })?;
 
                 if oauth_token.is_some() {
@@ -413,6 +416,7 @@ impl CopilotChat {
             models: None,
             settings,
             client,
+            update_models_task: None,
         };
         if this.oauth_token.is_some() {
             cx.spawn(async move |this, mut cx| Self::update_models(&this, &mut cx).await)
@@ -503,11 +507,10 @@ impl CopilotChat {
         let same_settings = self.settings == settings;
         self.settings = settings;
         if !same_settings {
-            cx.spawn(async move |this, cx| {
+            self.update_models_task = Some(cx.spawn(async move |this, cx| {
                 Self::update_models(&this, cx).await?;
                 Ok::<_, anyhow::Error>(())
-            })
-            .detach();
+            }));
         }
     }
 }
@@ -614,7 +617,10 @@ fn extract_oauth_token(contents: String) -> Option<String> {
             v.as_object().and_then(|obj| {
                 obj.iter().find_map(|(key, value)| {
                     if key.starts_with("github.com") {
-                        value["oauth_token"].as_str().map(|v| v.to_string())
+                        value["oauth_token"]
+                            .as_str()
+                            .filter(|v| !v.is_empty())
+                            .map(|v| v.to_string())
                     } else {
                         None
                     }
