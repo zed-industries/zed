@@ -37,10 +37,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -262,6 +262,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) keyboard_mapper: Box<dyn PlatformKeyboardMapper>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
@@ -308,6 +309,7 @@ impl App {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
+        let keyboard_mapper = platform.keyboard_mapper();
         let keyboard_layout = platform.keyboard_layout();
 
         let app = Rc::new_cyclic(|this| AppCell {
@@ -333,6 +335,7 @@ impl App {
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                keyboard_mapper,
                 keyboard_layout,
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
@@ -369,6 +372,7 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
+                    cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_layout_observers
                         .clone()
@@ -411,6 +415,11 @@ impl App {
         }
 
         self.quitting = false;
+    }
+
+    /// Get the keyboard mapper of current keyboard layout
+    pub fn keyboard_mapper(&self) -> &dyn PlatformKeyboardMapper {
+        self.keyboard_mapper.as_ref()
     }
 
     /// Get the id of the current keyboard layout

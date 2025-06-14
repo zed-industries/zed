@@ -538,8 +538,22 @@ mod test {
             })
             .unwrap();
 
-        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
-        cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
+        cx.dispatch_keystroke(
+            *window,
+            Keystroke {
+                modifiers: crate::Modifiers::none(),
+                key: "a".to_owned(),
+                key_char: None,
+            },
+        );
+        cx.dispatch_keystroke(
+            *window,
+            Keystroke {
+                modifiers: crate::Modifiers::control(),
+                key: "g".to_owned(),
+                key_char: None,
+            },
+        );
 
         window
             .update(cx, |test_view, _, _| {

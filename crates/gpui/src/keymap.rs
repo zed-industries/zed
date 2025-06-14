@@ -310,7 +310,11 @@ mod tests {
         assert!(
             keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[Keystroke {
+                        modifiers: crate::Modifiers::control(),
+                        key: "a".to_owned(),
+                        key_char: None
+                    }],
                     &[KeyContext::parse("barf").unwrap()],
                 )
                 .0
@@ -319,7 +323,11 @@ mod tests {
         assert!(
             !keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[Keystroke {
+                        modifiers: crate::Modifiers::control(),
+                        key: "a".to_owned(),
+                        key_char: None
+                    }],
                     &[KeyContext::parse("editor").unwrap()],
                 )
                 .0
@@ -330,7 +338,11 @@ mod tests {
         assert!(
             keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[Keystroke {
+                        modifiers: crate::Modifiers::control(),
+                        key: "a".to_owned(),
+                        key_char: None
+                    }],
                     &[KeyContext::parse("editor mode=full").unwrap()],
                 )
                 .0
@@ -341,7 +353,11 @@ mod tests {
         assert!(
             keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-b").unwrap()],
+                    &[Keystroke {
+                        modifiers: crate::Modifiers::control(),
+                        key: "b".to_owned(),
+                        key_char: None
+                    }],
                     &[KeyContext::parse("barf").unwrap()],
                 )
                 .0
@@ -360,8 +376,16 @@ mod tests {
         let mut keymap = Keymap::default();
         keymap.add_bindings(bindings.clone());
 
-        let space = || Keystroke::parse("space").unwrap();
-        let w = || Keystroke::parse("w").unwrap();
+        let space = || Keystroke {
+            modifiers: crate::Modifiers::none(),
+            key: "space".to_owned(),
+            key_char: None,
+        };
+        let w = || Keystroke {
+            modifiers: crate::Modifiers::none(),
+            key: "w".to_owned(),
+            key_char: None,
+        };
 
         let space_w = [space(), w()];
         let space_w_w = [space(), w(), w()];
