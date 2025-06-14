@@ -29,6 +29,7 @@ use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
     Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
 };
+use helix_mode_setting::HelixModeSetting;
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -189,6 +190,7 @@ impl_actions!(
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
     vim_mode_setting::init(cx);
+    helix_mode_setting::init(cx);
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
@@ -445,7 +447,11 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                vim.switch_mode(vim.default_mode(cx), false, window, cx)
+                if HelixModeSetting::get_global(cx).0 {
+                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                } else {
+                    vim.switch_mode(Mode::Normal, false, window, cx)
+                }
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -748,10 +754,6 @@ impl Vim {
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
-    pub fn default_mode(&self, cx: &App) -> Mode {
-        VimSettings::get_global(cx).default_mode
-    }
-
     pub fn editor(&self) -> Option<Entity<Editor>> {
         self.editor.upgrade()
     }
@@ -766,7 +768,7 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0
+        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
