@@ -543,9 +543,39 @@ impl VariableList {
         }
     }
 
+    fn deploy_watcher_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            menu.action("Copy Name", CopyVariableName.boxed_clone())
+                .action("Copy Value", CopyVariableValue.boxed_clone())
+                .action("Remove Watcher", RemoveWatcher.boxed_clone())
+                .context(self.focus_handle.clone())
+        });
+
+        cx.focus_view(&context_menu, window);
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this.open_context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                }) {
+                    cx.focus_self(window);
+                }
+                this.open_context_menu.take();
+                cx.notify();
+            },
+        );
+
+        self.open_context_menu = Some((context_menu, position, subscription));
+    }
+
     fn deploy_variable_context_menu(
         &mut self,
-        _variable: ListEntry,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -585,13 +615,18 @@ impl VariableList {
         let Some(selection) = self.selection.as_ref() else {
             return;
         };
+
         let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
             return;
         };
-        let Some(variable) = entry.as_variable() else {
-            return;
+
+        let variable_name = match &entry.dap_kind {
+            EntryKind::Variable(dap) => dap.name.clone(),
+            EntryKind::Watcher(watcher) => watcher.expression.to_string(),
+            EntryKind::Scope(_) => return,
         };
-        cx.write_to_clipboard(ClipboardItem::new_string(variable.name.clone()));
+
+        cx.write_to_clipboard(ClipboardItem::new_string(variable_name));
     }
 
     fn copy_variable_value(
@@ -603,13 +638,18 @@ impl VariableList {
         let Some(selection) = self.selection.as_ref() else {
             return;
         };
+
         let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
             return;
         };
-        let Some(variable) = entry.as_variable() else {
-            return;
+
+        let variable_value = match &entry.dap_kind {
+            EntryKind::Variable(dap) => dap.value.clone(),
+            EntryKind::Watcher(watcher) => watcher.value.to_string(),
+            EntryKind::Scope(_) => return,
         };
-        cx.write_to_clipboard(ClipboardItem::new_string(variable.value.clone()));
+
+        cx.write_to_clipboard(ClipboardItem::new_string(variable_value));
     }
 
     fn edit_variable(&mut self, _: &EditVariable, window: &mut Window, cx: &mut Context<Self>) {
@@ -891,6 +931,14 @@ impl VariableList {
                         }
                     }))
                 })
+                .on_secondary_mouse_down(cx.listener({
+                    let path = path.clone();
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        this.selection = Some(path.clone());
+                        this.deploy_watcher_context_menu(event.position, window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
                 .child(
                     h_flex()
                         .gap_1()
@@ -1067,6 +1115,7 @@ impl VariableList {
             .size_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
+                let path = path.clone();
                 move |this, _, _window, cx| {
                     this.selection = Some(path.clone());
                     cx.notify();
@@ -1095,15 +1144,10 @@ impl VariableList {
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
-                    let variable = variable.clone();
+                    let path = path.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
-                        this.selection = Some(variable.path.clone());
-                        this.deploy_variable_context_menu(
-                            variable.clone(),
-                            event.position,
-                            window,
-                            cx,
-                        );
+                        this.selection = Some(path.clone());
+                        this.deploy_variable_context_menu(event.position, window, cx);
                         cx.stop_propagation();
                     }
                 }))
