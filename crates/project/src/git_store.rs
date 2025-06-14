@@ -292,7 +292,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
-    Updated { full_scan: bool },
+    Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
 }
 
@@ -1496,7 +1496,7 @@ impl GitStore {
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, cx| repo.apply_remote_update(update, cx)
+                |repo, cx| repo.apply_remote_update(update, is_new, cx)
             })?;
 
             this.active_repo_id.get_or_insert_with(|| {
@@ -3597,7 +3597,10 @@ impl Repository {
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
                                 let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated { full_scan: false });
+                                cx.emit(RepositoryEvent::Updated {
+                                    full_scan: false,
+                                    new_instance: false,
+                                });
                                 snapshot
                             })?;
                             if let Some(updates_tx) = updates_tx {
@@ -3942,6 +3945,7 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
+        is_new: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
@@ -3975,7 +3979,10 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated { full_scan: true });
+        cx.emit(RepositoryEvent::Updated {
+            full_scan: true,
+            new_instance: is_new,
+        });
         Ok(())
     }
 
@@ -4305,7 +4312,10 @@ impl Repository {
                                 .ok();
                         }
                     }
-                    cx.emit(RepositoryEvent::Updated { full_scan: false });
+                    cx.emit(RepositoryEvent::Updated {
+                        full_scan: false,
+                        new_instance: false,
+                    });
                 })
             },
         );
@@ -4565,7 +4575,10 @@ async fn compute_snapshot(
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
-        events.push(RepositoryEvent::Updated { full_scan: true });
+        events.push(RepositoryEvent::Updated {
+            full_scan: true,
+            new_instance: false,
+        });
     }
 
     // Cache merge conflict paths so they don't change from staging/unstaging,
