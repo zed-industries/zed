@@ -2,7 +2,6 @@ use std::{
     alloc,
     cell::Cell,
     ops::{Deref, DerefMut},
-    ptr,
     rc::Rc,
 };
 
@@ -20,11 +19,29 @@ impl Drop for ArenaElement {
     }
 }
 
+struct OutsideElement {
+    value: *mut u8,
+    layout: alloc::Layout,
+    drop: unsafe fn(*mut u8),
+}
+
+impl Drop for OutsideElement {
+    #[inline(always)]
+    fn drop(&mut self) {
+        unsafe {
+            (self.drop)(self.value);
+            alloc::dealloc(self.value, self.layout);
+        }
+    }
+}
+
 pub struct Arena {
     start: *mut u8,
     end: *mut u8,
     offset: *mut u8,
     elements: Vec<ArenaElement>,
+    outside_elements: Vec<OutsideElement>,
+    outside_byte_count: usize,
     valid: Rc<Cell<bool>>,
 }
 
@@ -39,11 +56,14 @@ impl Arena {
                 end,
                 offset: start,
                 elements: Vec::new(),
+                outside_elements: Vec::new(),
+                outside_byte_count: 0,
                 valid: Rc::new(Cell::new(true)),
             }
         }
     }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize {
         self.offset as usize - self.start as usize
     }
@@ -52,11 +72,46 @@ impl Arena {
         self.end as usize - self.start as usize
     }
 
+    /// Clears the arena contents, dropping all elements. All `ArenaBox` provided by this arena are
+    /// invalidated and will panic if dereferenced.
     pub fn clear(&mut self) {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
+        self.outside_elements.clear();
+        self.outside_byte_count = 0;
         self.offset = self.start;
+    }
+
+    /// Like `clear`, but also grows the arena if it needed to make allocations outside the arena.
+    /// The new capacity will have at least enough space for those allocations, and at least
+    /// `size_increment_bytes` beyond that - at most `2 * size_increment_bytes`.
+    pub fn clear_and_grow_if_needed(&mut self, size_increment_in_bytes: usize) {
+        if self.outside_byte_count == 0 {
+            self.clear();
+        } else {
+            let additional_bytes =
+                (self.outside_byte_count / size_increment_in_bytes + 2) * size_increment_in_bytes;
+            let old_size = self.capacity();
+            let new_size = old_size + additional_bytes;
+
+            // free instead of keeping its capacity, often it won't be needed again
+            self.outside_elements = Vec::new();
+
+            self.clear();
+
+            let old_layout = alloc::Layout::from_size_align(old_size, 1).unwrap();
+            unsafe {
+                alloc::dealloc(self.start, old_layout);
+            }
+
+            let new_layout = alloc::Layout::from_size_align(new_size, 1).unwrap();
+            unsafe {
+                self.start = alloc::alloc(new_layout);
+                self.end = self.start.add(new_size);
+                self.offset = self.start;
+            }
+        }
     }
 
     #[inline(always)]
@@ -67,7 +122,7 @@ impl Arena {
             F: FnOnce() -> T,
         {
             unsafe {
-                ptr::write(ptr, f());
+                std::ptr::write(ptr, f());
             }
         }
 
@@ -81,21 +136,38 @@ impl Arena {
             let layout = alloc::Layout::new::<T>();
             let offset = self.offset.add(self.offset.align_offset(layout.align()));
             let next_offset = offset.add(layout.size());
-            assert!(next_offset <= self.end, "not enough space in Arena");
 
-            let result = ArenaBox {
-                ptr: offset.cast(),
-                valid: self.valid.clone(),
-            };
+            if next_offset <= self.end {
+                let ptr = offset.cast();
+                inner_writer(ptr, f);
 
-            inner_writer(result.ptr, f);
-            self.elements.push(ArenaElement {
-                value: offset,
-                drop: drop::<T>,
-            });
-            self.offset = next_offset;
+                self.elements.push(ArenaElement {
+                    value: offset,
+                    drop: drop::<T>,
+                });
+                self.offset = next_offset;
 
-            result
+                ArenaBox {
+                    ptr,
+                    valid: self.valid.clone(),
+                }
+            } else {
+                let value = alloc::alloc(layout);
+                let ptr = value.cast();
+                inner_writer(ptr, f);
+
+                self.outside_byte_count += layout.size();
+                self.outside_elements.push(OutsideElement {
+                    value,
+                    layout,
+                    drop: drop::<T>,
+                });
+
+                ArenaBox {
+                    ptr,
+                    valid: self.valid.clone(),
+                }
+            }
         }
     }
 }
@@ -181,7 +253,15 @@ mod tests {
 
     #[test]
     fn test_arena() {
-        let mut arena = Arena::new(1024);
+        run_test_arena(Arena::new(20))
+    }
+
+    #[test]
+    fn test_arena_with_outside_allocation() {
+        run_test_arena(Arena::new(0));
+    }
+
+    fn run_test_arena(mut arena: Arena) {
         let a = arena.alloc(|| 1u64);
         let b = arena.alloc(|| 2u32);
         let c = arena.alloc(|| 3u16);
@@ -192,6 +272,8 @@ mod tests {
         assert_eq!(*d, 4);
 
         arena.clear();
+        assert_eq!(arena.len(), 0);
+
         let a = arena.alloc(|| 5u64);
         let b = arena.alloc(|| 6u32);
         let c = arena.alloc(|| 7u16);
@@ -215,18 +297,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not enough space in Arena")]
-    fn test_arena_overflow() {
-        let mut arena = Arena::new(16);
-        arena.alloc(|| 1u64);
-        arena.alloc(|| 2u64);
-        // This should panic.
-        arena.alloc(|| 3u64);
+    fn test_arena_alignment() {
+        let mut arena = Arena::new(256);
+        run_test_arena_alignment(&mut arena);
+        assert_eq!(arena.capacity(), 256);
+        assert!(arena.outside_elements.is_empty());
     }
 
     #[test]
-    fn test_arena_alignment() {
-        let mut arena = Arena::new(256);
+    fn test_arena_alignment_with_outside_allocation() {
+        let mut arena = Arena::new(0);
+        run_test_arena_alignment(&mut arena);
+        assert_eq!(arena.capacity(), 0);
+        assert!(!arena.outside_elements.is_empty());
+    }
+
+    fn run_test_arena_alignment(arena: &mut Arena) {
         let x1 = arena.alloc(|| 1u8);
         let x2 = arena.alloc(|| 2u16);
         let x3 = arena.alloc(|| 3u32);
@@ -241,15 +327,53 @@ mod tests {
 
         assert_eq!(x1.ptr.align_offset(std::mem::align_of_val(&*x1)), 0);
         assert_eq!(x2.ptr.align_offset(std::mem::align_of_val(&*x2)), 0);
+        assert_eq!(x3.ptr.align_offset(std::mem::align_of_val(&*x3)), 0);
+        assert_eq!(x4.ptr.align_offset(std::mem::align_of_val(&*x4)), 0);
+        assert_eq!(x5.ptr.align_offset(std::mem::align_of_val(&*x5)), 0);
     }
 
     #[test]
     #[should_panic(expected = "attempted to dereference an ArenaRef after its Arena was cleared")]
     fn test_arena_use_after_clear() {
-        let mut arena = Arena::new(16);
+        run_test_arena_use_after_clear(Arena::new(16))
+    }
+
+    #[test]
+    #[should_panic(expected = "attempted to dereference an ArenaRef after its Arena was cleared")]
+    fn test_arena_use_after_clear_with_outside_allocation() {
+        run_test_arena_use_after_clear(Arena::new(0))
+    }
+
+    fn run_test_arena_use_after_clear(mut arena: Arena) {
         let value = arena.alloc(|| 1u64);
 
         arena.clear();
         let _read_value = *value;
+    }
+
+    #[test]
+    fn test_arena_clear_and_grow_if_needed() {
+        if align_of::<u8>() != 1 {
+            return;
+        }
+
+        let mut arena = Arena::new(2);
+        arena.alloc(|| 1u8);
+        arena.alloc(|| 2u8);
+        arena.alloc(|| 3u8);
+        arena.alloc(|| [4u8; 5]);
+
+        assert_eq!(arena.outside_elements.len(), 2);
+
+        arena.clear_and_grow_if_needed(2);
+        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.capacity(), 12);
+
+        arena.alloc(|| 1u8);
+        arena.alloc(|| 2u8);
+
+        arena.clear_and_grow_if_needed(2);
+        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.capacity(), 12);
     }
 }

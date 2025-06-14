@@ -205,9 +205,12 @@ slotmap::new_key_type! {
     pub struct FocusId;
 }
 
+const MEGABYTE: usize = 1024 * 1024;
+const ELEMENT_ARENA_INITIAL_SIZE: usize = 8 * MEGABYTE;
+const ELEMENT_ARENA_SIZE_INCREMENT: usize = 2 * MEGABYTE;
+
 thread_local! {
-    /// 8MB wasn't quite enough...
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(ELEMENT_ARENA_INITIAL_SIZE));
 }
 
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
@@ -1760,11 +1763,17 @@ impl Window {
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
         ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
+            let capacity_before = element_arena.capacity();
+            element_arena.clear_and_grow_if_needed(ELEMENT_ARENA_SIZE_INCREMENT);
+            let capacity_after = element_arena.capacity();
+            if capacity_after > capacity_before {
+                log::warn!(
+                    "Grew element arena from {}mb to {}mb. \
+                    This may indicate that too many elements are being used.",
+                    capacity_before / MEGABYTE,
+                    capacity_after / MEGABYTE
+                );
             }
-            element_arena.clear();
         });
 
         self.invalidator.set_phase(DrawPhase::Focus);
