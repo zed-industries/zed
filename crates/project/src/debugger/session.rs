@@ -26,7 +26,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
 };
 use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
@@ -122,6 +122,14 @@ impl From<dap::Thread> for Thread {
             _has_stopped: false,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Watcher {
+    pub expression: SharedString,
+    pub value: SharedString,
+    pub variables_reference: u64,
+    pub presentation_hint: Option<VariablePresentationHint>,
 }
 
 pub enum Mode {
@@ -610,6 +618,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
+    watchers: HashMap<SharedString, Watcher>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
@@ -700,6 +709,7 @@ pub enum SessionEvent {
     Stopped(Option<ThreadId>),
     StackTrace,
     Variables,
+    Watchers,
     Threads,
     InvalidateInlineValue,
     CapabilitiesLoaded,
@@ -766,6 +776,7 @@ impl Session {
                 child_session_ids: HashSet::default(),
                 parent_session,
                 capabilities: Capabilities::default(),
+                watchers: HashMap::default(),
                 variables: Default::default(),
                 stack_frames: Default::default(),
                 thread_states: ThreadStates::default(),
@@ -2104,6 +2115,53 @@ impl Session {
             .flatten()
             .cloned()
             .collect()
+    }
+
+    pub fn watchers(&self) -> &HashMap<SharedString, Watcher> {
+        &self.watchers
+    }
+
+    pub fn add_watcher(
+        &mut self,
+        expression: SharedString,
+        frame_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let request = self.mode.request_dap(EvaluateCommand {
+            expression: expression.to_string(),
+            context: Some(EvaluateArgumentsContext::Watch),
+            frame_id: Some(frame_id),
+            source: None,
+        });
+
+        cx.spawn(async move |this, cx| {
+            let response = request.await?;
+
+            this.update(cx, |session, cx| {
+                session.watchers.insert(
+                    expression.clone(),
+                    Watcher {
+                        expression,
+                        value: response.result.into(),
+                        variables_reference: response.variables_reference,
+                        presentation_hint: response.presentation_hint,
+                    },
+                );
+                cx.emit(SessionEvent::Watchers);
+            })
+        })
+    }
+
+    pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
+        let watches = self.watchers.clone();
+        for (_, watch) in watches.into_iter() {
+            self.add_watcher(watch.expression.clone(), frame_id, cx)
+                .detach();
+        }
+    }
+
+    pub fn remove_watcher(&mut self, expression: SharedString) {
+        self.watchers.remove(&expression);
     }
 
     pub fn variables(
