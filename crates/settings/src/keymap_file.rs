@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingSourceIndex, NoAction, SharedString,
 };
 use schemars::{
     JsonSchema,
@@ -151,9 +151,21 @@ impl KeymapFile {
         parse_json_with_comments::<Self>(content)
     }
 
-    pub fn load_asset(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
+    pub fn load_asset(
+        asset_path: &str,
+        source: Option<KeyBindingSourceIndex>,
+        cx: &App,
+    ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { key_bindings } => Ok(key_bindings),
+            KeymapFileLoadResult::Success { mut key_bindings } => match source {
+                Some(source) => Ok({
+                    for key_binding in &mut key_bindings {
+                        key_binding.set_source(source);
+                    }
+                    key_bindings
+                }),
+                None => Ok(key_bindings),
+            },
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
             }

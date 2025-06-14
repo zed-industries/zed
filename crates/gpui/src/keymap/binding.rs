@@ -2,7 +2,9 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
+use crate::{
+    Action, InvalidKeystrokeError, KeyBindingContextPredicate, KeyBindingSourceIndex, Keystroke,
+};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
@@ -10,6 +12,7 @@ pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
     pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
     pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+    pub(crate) source: Option<KeyBindingSourceIndex>,
 }
 
 impl Clone for KeyBinding {
@@ -18,6 +21,7 @@ impl Clone for KeyBinding {
             action: self.action.boxed_clone(),
             keystrokes: self.keystrokes.clone(),
             context_predicate: self.context_predicate.clone(),
+            source: self.source.clone(),
         }
     }
 }
@@ -59,7 +63,19 @@ impl KeyBinding {
             keystrokes,
             action,
             context_predicate,
+            source: None,
         })
+    }
+
+    /// Set the source of this binding.
+    pub fn with_source(mut self, source: KeyBindingSourceIndex) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    /// Set the source of this binding.
+    pub fn set_source(&mut self, source: KeyBindingSourceIndex) {
+        self.source = Some(source);
     }
 
     /// Check if the given keystrokes match this binding.
@@ -90,6 +106,11 @@ impl KeyBinding {
     /// Get the predicate used to match this binding
     pub fn predicate(&self) -> Option<Rc<KeyBindingContextPredicate>> {
         self.context_predicate.as_ref().map(|rc| rc.clone())
+    }
+
+    /// Get the source of this binding, if one was set
+    pub fn source(&self) -> Option<KeyBindingSourceIndex> {
+        self.source
     }
 }
 

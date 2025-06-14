@@ -613,10 +613,10 @@ pub trait InteractiveElement: Sized {
     /// Track the focus state of the given focus handle on this element.
     /// If the focus handle is focused by the application, this element will
     /// apply its focused styles.
-    fn track_focus(mut self, focus_handle: &FocusHandle) -> FocusableWrapper<Self> {
+    fn track_focus(mut self, focus_handle: &FocusHandle) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
-        FocusableWrapper { element: self }
+        self
     }
 
     /// Set the keymap context for this element. This will be used to determine
@@ -980,15 +980,35 @@ pub trait InteractiveElement: Sized {
         self.interactivity().block_mouse_except_scroll();
         self
     }
+
+    /// Set the given styles to be applied when this element, specifically, is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
+
+    /// Set the given styles to be applied when this element is inside another element that is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
 /// that require state.
 pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set this element to focusable.
-    fn focusable(mut self) -> FocusableWrapper<Self> {
+    fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
-        FocusableWrapper { element: self }
+        self
     }
 
     /// Set the overflow x and y to scroll.
@@ -1114,27 +1134,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         Self: Sized,
     {
         self.interactivity().hoverable_tooltip(build_tooltip);
-        self
-    }
-}
-
-/// A trait for providing focus related APIs to interactive elements
-pub trait FocusableElement: InteractiveElement {
-    /// Set the given styles to be applied when this element, specifically, is focused.
-    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
-        self
-    }
-
-    /// Set the given styles to be applied when this element is inside another element that is focused.
-    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 }
@@ -2777,126 +2776,6 @@ impl GroupHitboxes {
     }
 }
 
-/// A wrapper around an element that can be focused.
-pub struct FocusableWrapper<E> {
-    /// The element that is focusable
-    pub element: E,
-}
-
-impl<E: InteractiveElement> FocusableElement for FocusableWrapper<E> {}
-
-impl<E> InteractiveElement for FocusableWrapper<E>
-where
-    E: InteractiveElement,
-{
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.element.interactivity()
-    }
-}
-
-impl<E: StatefulInteractiveElement> StatefulInteractiveElement for FocusableWrapper<E> {}
-
-impl<E> Styled for FocusableWrapper<E>
-where
-    E: Styled,
-{
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.element.style()
-    }
-}
-
-impl FocusableWrapper<Div> {
-    /// Add a listener to be called when the children of this `Div` are prepainted.
-    /// This allows you to store the [`Bounds`] of the children for later use.
-    pub fn on_children_prepainted(
-        mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.element = self.element.on_children_prepainted(listener);
-        self
-    }
-}
-
-impl<E> Element for FocusableWrapper<E>
-where
-    E: Element,
-{
-    type RequestLayoutState = E::RequestLayoutState;
-    type PrepaintState = E::PrepaintState;
-
-    fn id(&self) -> Option<ElementId> {
-        self.element.id()
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        self.element.source_location()
-    }
-
-    fn request_layout(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, inspector_id, window, cx)
-    }
-
-    fn prepaint(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> E::PrepaintState {
-        self.element
-            .prepaint(id, inspector_id, bounds, state, window, cx)
-    }
-
-    fn paint(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.element.paint(
-            id,
-            inspector_id,
-            bounds,
-            request_layout,
-            prepaint,
-            window,
-            cx,
-        )
-    }
-}
-
-impl<E> IntoElement for FocusableWrapper<E>
-where
-    E: IntoElement,
-{
-    type Element = E::Element;
-
-    fn into_element(self) -> Self::Element {
-        self.element.into_element()
-    }
-}
-
-impl<E> ParentElement for FocusableWrapper<E>
-where
-    E: ParentElement,
-{
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.element.extend(elements)
-    }
-}
-
 /// A wrapper around an element that can store state, produced after assigning an ElementId.
 pub struct Stateful<E> {
     pub(crate) element: E,
@@ -2926,8 +2805,6 @@ where
         self.element.interactivity()
     }
 }
-
-impl<E: FocusableElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
 where

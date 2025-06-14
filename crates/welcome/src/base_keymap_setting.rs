@@ -22,39 +22,30 @@ pub enum BaseKeymap {
 
 impl Display for BaseKeymap {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BaseKeymap::VSCode => write!(f, "VSCode"),
-            BaseKeymap::JetBrains => write!(f, "JetBrains"),
-            BaseKeymap::SublimeText => write!(f, "Sublime Text"),
-            BaseKeymap::Atom => write!(f, "Atom"),
-            BaseKeymap::TextMate => write!(f, "TextMate"),
-            BaseKeymap::Emacs => write!(f, "Emacs (beta)"),
-            BaseKeymap::Cursor => write!(f, "Cursor (beta)"),
-            BaseKeymap::None => write!(f, "None"),
-        }
+        f.write_str(self.name())
     }
 }
 
 impl BaseKeymap {
     #[cfg(target_os = "macos")]
     pub const OPTIONS: [(&'static str, Self); 7] = [
-        ("VSCode (Default)", Self::VSCode),
-        ("Atom", Self::Atom),
-        ("JetBrains", Self::JetBrains),
-        ("Sublime Text", Self::SublimeText),
-        ("Emacs (beta)", Self::Emacs),
-        ("TextMate", Self::TextMate),
-        ("Cursor (beta)", Self::Cursor),
+        (Self::VSCode.name(), Self::VSCode),
+        (Self::Atom.name(), Self::Atom),
+        (Self::JetBrains.name(), Self::JetBrains),
+        (Self::SublimeText.name(), Self::SublimeText),
+        (Self::Emacs.name(), Self::Emacs),
+        (Self::TextMate.name(), Self::TextMate),
+        (Self::Cursor.name(), Self::Cursor),
     ];
 
     #[cfg(not(target_os = "macos"))]
     pub const OPTIONS: [(&'static str, Self); 6] = [
-        ("VSCode (Default)", Self::VSCode),
-        ("Atom", Self::Atom),
-        ("JetBrains", Self::JetBrains),
-        ("Sublime Text", Self::SublimeText),
-        ("Emacs (beta)", Self::Emacs),
-        ("Cursor (beta)", Self::Cursor),
+        (Self::VSCode.name(), Self::VSCode),
+        (Self::Atom.name(), Self::Atom),
+        (Self::JetBrains.name(), Self::JetBrains),
+        (Self::SublimeText.name(), Self::SublimeText),
+        (Self::Emacs.name(), Self::Emacs),
+        (Self::Cursor.name(), Self::Cursor),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {
@@ -80,6 +71,19 @@ impl BaseKeymap {
             BaseKeymap::TextMate => None,
             BaseKeymap::VSCode => None,
             BaseKeymap::None => None,
+        }
+    }
+
+    pub const fn name(&self) -> &'static str {
+        match self {
+            BaseKeymap::JetBrains => "JetBrains",
+            BaseKeymap::SublimeText => "Sublime Text",
+            BaseKeymap::Atom => "Atom",
+            BaseKeymap::Emacs => "Emacs (Beta)",
+            BaseKeymap::Cursor => "Cursor (Beta)",
+            BaseKeymap::TextMate => "TextMate",
+            BaseKeymap::VSCode => "VSCode (Default)",
+            BaseKeymap::None => "None",
         }
     }
 

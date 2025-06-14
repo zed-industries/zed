@@ -50,7 +50,7 @@ pub trait Action: Any + Send {
     fn partial_eq(&self, action: &dyn Action) -> bool;
 
     /// Get the name of this action, for displaying in UI
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Get the name of this action for debugging
     fn debug_name() -> &'static str
