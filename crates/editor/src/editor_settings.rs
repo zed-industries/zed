@@ -150,6 +150,7 @@ impl Minimap {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
+    pub min_line_number_digits: usize,
     pub line_numbers: bool,
     pub runnables: bool,
     pub breakpoints: bool,
@@ -609,6 +610,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
+    /// Minimum number of characters to reserve space for in the gutter.
+    ///
+    /// Default: 4
+    pub min_line_number_digits: Option<usize>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true

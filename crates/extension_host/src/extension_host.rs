@@ -132,6 +132,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionUninstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
 }
 
@@ -842,6 +843,8 @@ impl ExtensionStore {
         let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
+        let extension_manifest = self.extension_manifest_for_id(&extension_id).cloned();
+
         match self.outstanding_operations.entry(extension_id.clone()) {
             btree_map::Entry::Occupied(_) => return,
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
@@ -877,6 +880,17 @@ impl ExtensionStore {
                 },
             )
             .await?;
+
+            this.update(cx, |_, cx| {
+                cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = extension_manifest {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
 
             anyhow::Ok(())
         })
@@ -1682,12 +1696,15 @@ impl ExtensionStore {
 
     pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
         let connection_options = client.read(cx).connection_options();
-        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
-            return;
+        let ssh_url = connection_options.ssh_url();
+
+        if let Some(existing_client) = self.ssh_clients.get(&ssh_url) {
+            if existing_client.upgrade().is_some() {
+                return;
+            }
         }
 
-        self.ssh_clients
-            .insert(connection_options.ssh_url(), client.downgrade());
+        self.ssh_clients.insert(ssh_url, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

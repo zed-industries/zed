@@ -71,13 +71,21 @@ impl PhpDebugAdapter {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
+        let mut configuration = task_definition.config.clone();
+        if let Some(obj) = configuration.as_object_mut() {
+            obj.entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+        }
+
         Ok(DebugAdapterBinary {
-            command: delegate
-                .node_runtime()
-                .binary_path()
-                .await?
-                .to_string_lossy()
-                .into_owned(),
+            command: Some(
+                delegate
+                    .node_runtime()
+                    .binary_path()
+                    .await?
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             arguments: vec![
                 adapter_path
                     .join(Self::ADAPTER_PATH)
@@ -93,7 +101,7 @@ impl PhpDebugAdapter {
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
-                configuration: task_definition.config.clone(),
+                configuration,
                 request: <Self as DebugAdapter>::request_kind(self, &task_definition.config)?,
             },
         })

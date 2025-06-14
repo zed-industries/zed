@@ -4497,8 +4497,10 @@ impl OutlinePanel {
                 let multi_buffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
-                uniform_list(cx.entity().clone(), "entries", items_len, {
-                    move |outline_panel, range, window, cx| {
+                uniform_list(
+                    "entries",
+                    items_len,
+                    cx.processor(move |outline_panel, range: Range<usize>, window, cx| {
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4555,8 +4557,8 @@ impl OutlinePanel {
                                 ),
                             })
                             .collect()
-                    }
-                })
+                    }),
+                )
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(self.max_width_item_index)
