@@ -545,7 +545,7 @@ impl VariableList {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
                 .action("Edit Value", EditVariable.boxed_clone())
-                .action("Add Watch", AddWatch.boxed_clone())
+                .action("Add Watcher", AddWatch.boxed_clone())
                 .context(self.focus_handle.clone())
         });
 
