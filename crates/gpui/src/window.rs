@@ -205,12 +205,18 @@ slotmap::new_key_type! {
     pub struct FocusId;
 }
 
-const MEGABYTE: usize = 1024 * 1024;
-const ELEMENT_ARENA_INITIAL_SIZE: usize = 8 * MEGABYTE;
+// use a smaller arena size in debug mode to more commonly exercise changing size
+#[cfg(debug_assertions)]
+const ELEMENT_ARENA_MIN_SIZE: usize = 2 * MEGABYTE;
+#[cfg(not(debug_assertions))]
+const ELEMENT_ARENA_MIN_SIZE: usize = 8 * MEGABYTE;
 const ELEMENT_ARENA_SIZE_INCREMENT: usize = 2 * MEGABYTE;
+const ELEMENT_ARENA_MAX_UNDERUSE_COUNT: usize = 10000;
+const MEGABYTE: usize = 1024 * 1024;
 
 thread_local! {
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(ELEMENT_ARENA_INITIAL_SIZE));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(ELEMENT_ARENA_MIN_SIZE));
+    pub(crate) static ELEMENT_ARENA_UNDERUSE_COUNT: RefCell<usize> = RefCell::new(0);
 }
 
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
@@ -1762,19 +1768,7 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let capacity_before = element_arena.capacity();
-            element_arena.clear_and_grow_if_needed(ELEMENT_ARENA_SIZE_INCREMENT);
-            let capacity_after = element_arena.capacity();
-            if capacity_after > capacity_before {
-                log::warn!(
-                    "Grew element arena from {}mb to {}mb. \
-                    This may indicate that too many elements are being used.",
-                    capacity_before / MEGABYTE,
-                    capacity_after / MEGABYTE
-                );
-            }
-        });
+        self.clear_element_arena();
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -1816,6 +1810,47 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+    }
+
+    fn clear_element_arena(&mut self) {
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            // the arena could be much larger than needed, so reclaim memory if this capacity hasn't
+            // been used recently
+            let capacity = element_arena.capacity();
+            let should_shrink = ELEMENT_ARENA_UNDERUSE_COUNT.with_borrow_mut(|underuse_count| {
+                if capacity > ELEMENT_ARENA_MIN_SIZE && element_arena.bytes_used() < capacity / 2 {
+                    *underuse_count += 1;
+                    *underuse_count > ELEMENT_ARENA_MAX_UNDERUSE_COUNT
+                } else {
+                    *underuse_count = 0;
+                    false
+                }
+            });
+
+            if should_shrink {
+                element_arena.clear_and_shrink_or_grow(ELEMENT_ARENA_SIZE_INCREMENT);
+            } else {
+                element_arena.clear_and_grow_if_needed(ELEMENT_ARENA_SIZE_INCREMENT);
+            }
+
+            let capacity_after = element_arena.capacity();
+            if capacity_after != capacity {
+                if capacity_after > 8 * MEGABYTE {
+                    log::warn!(
+                        "Element arena changed size from {}mb to {}mb. \
+                        This may indicate that too many elements are being used.",
+                        capacity / MEGABYTE,
+                        capacity_after / MEGABYTE
+                    );
+                } else {
+                    log::info!(
+                        "Element arena changed size from {}mb to {}mb.",
+                        capacity / MEGABYTE,
+                        capacity_after / MEGABYTE
+                    )
+                }
+            }
+        });
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {

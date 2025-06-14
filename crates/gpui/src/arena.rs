@@ -63,9 +63,10 @@ impl Arena {
         }
     }
 
-    #[allow(unused)]
-    pub fn len(&self) -> usize {
-        self.offset as usize - self.start as usize
+    /// Total number of bytes allocated inside and outside the arena. When there are outside
+    /// allocations this may be larger than `capacity`.
+    pub fn bytes_used(&self) -> usize {
+        self.offset as usize - self.start as usize + self.outside_byte_count
     }
 
     pub fn capacity(&self) -> usize {
@@ -84,34 +85,67 @@ impl Arena {
     }
 
     /// Like `clear`, but also grows the arena if it needed to make allocations outside the arena.
-    /// The new capacity will have at least enough space for those allocations, and at least
-    /// `size_increment_bytes` beyond that - at most `2 * size_increment_bytes`.
+    /// The new capacity will be a multiple of `size_increment_in_bytes` that is 1 larger than
+    /// needed.
     pub fn clear_and_grow_if_needed(&mut self, size_increment_in_bytes: usize) {
         if self.outside_byte_count == 0 {
             self.clear();
-        } else {
-            let additional_bytes =
-                (self.outside_byte_count / size_increment_in_bytes + 2) * size_increment_in_bytes;
-            let old_size = self.capacity();
-            let new_size = old_size + additional_bytes;
-
-            // free instead of keeping its capacity, often it won't be needed again
-            self.outside_elements = Vec::new();
-
-            self.clear();
-
-            let old_layout = alloc::Layout::from_size_align(old_size, 1).unwrap();
-            unsafe {
-                alloc::dealloc(self.start, old_layout);
-            }
-
-            let new_layout = alloc::Layout::from_size_align(new_size, 1).unwrap();
-            unsafe {
-                self.start = alloc::alloc(new_layout);
-                self.end = self.start.add(new_size);
-                self.offset = self.start;
-            }
+            return;
         }
+
+        let old_size = self.capacity();
+        let new_size = Self::bytes_needed_to_arena_size(
+            old_size + self.outside_byte_count,
+            size_increment_in_bytes,
+        );
+
+        // free instead of keeping its capacity, often it won't be needed again
+        self.outside_elements = Vec::new();
+
+        self.clear();
+
+        let old_layout = alloc::Layout::from_size_align(old_size, 1).unwrap();
+        unsafe {
+            alloc::dealloc(self.start, old_layout);
+        }
+
+        let new_layout = alloc::Layout::from_size_align(new_size, 1).unwrap();
+        unsafe {
+            self.start = alloc::alloc(new_layout);
+            self.end = self.start.add(new_size);
+            self.offset = self.start;
+        }
+    }
+
+    /// Like `clear_and_grow_if_needed` but also shrinks the arena allocation to be a multiple of
+    /// `size_increment_bytes` if possible (based on the currently used bytes).
+    pub fn clear_and_shrink_or_grow(&mut self, size_increment_in_bytes: usize) {
+        if self.outside_byte_count > 0 {
+            self.clear_and_grow_if_needed(size_increment_in_bytes);
+            return;
+        }
+
+        let old_size = self.capacity();
+        let new_size = Self::bytes_needed_to_arena_size(self.bytes_used(), size_increment_in_bytes);
+        if new_size + size_increment_in_bytes >= old_size {
+            self.clear();
+            return;
+        }
+
+        self.clear();
+
+        let old_layout = alloc::Layout::from_size_align(old_size, 1).unwrap();
+        unsafe {
+            // typically this should not copy the memory and instead shrink in place - ideally there
+            // would be a way to ensure a copy doesn't happen
+            self.start = alloc::realloc(self.start, old_layout, new_size);
+            self.end = self.start.add(new_size);
+            self.offset = self.start;
+        }
+    }
+
+    fn bytes_needed_to_arena_size(bytes_used: usize, size_increment: usize) -> usize {
+        (bytes_used / size_increment + 2) * size_increment
     }
 
     #[inline(always)]
@@ -272,7 +306,7 @@ mod tests {
         assert_eq!(*d, 4);
 
         arena.clear();
-        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.bytes_used(), 0);
 
         let a = arena.alloc(|| 5u64);
         let b = arena.alloc(|| 6u32);
@@ -366,14 +400,61 @@ mod tests {
         assert_eq!(arena.outside_elements.len(), 2);
 
         arena.clear_and_grow_if_needed(2);
-        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.bytes_used(), 0);
         assert_eq!(arena.capacity(), 12);
 
         arena.alloc(|| 1u8);
         arena.alloc(|| 2u8);
 
         arena.clear_and_grow_if_needed(2);
-        assert_eq!(arena.len(), 0);
+        assert_eq!(arena.bytes_used(), 0);
         assert_eq!(arena.capacity(), 12);
+    }
+
+    #[test]
+    fn test_arena_clear_and_shrink_or_grow() {
+        if align_of::<u8>() != 1 {
+            return;
+        }
+
+        let mut arena = Arena::new(256);
+        arena.alloc(|| 1u8);
+
+        arena.clear_and_shrink_or_grow(2);
+        assert_eq!(arena.bytes_used(), 0);
+        assert_eq!(arena.capacity(), 4);
+
+        arena.alloc(|| 1u8);
+        arena.alloc(|| 2u8);
+        arena.alloc(|| 3u8);
+        arena.alloc(|| 4u8);
+        arena.alloc(|| 5u8);
+
+        arena.clear_and_shrink_or_grow(2);
+        assert_eq!(arena.bytes_used(), 0);
+        assert_eq!(arena.capacity(), 8);
+
+        arena.alloc(|| 1u8);
+        arena.alloc(|| 2u8);
+        arena.alloc(|| 3u8);
+        arena.alloc(|| 4u8);
+        arena.alloc(|| 5u8);
+
+        arena.clear_and_shrink_or_grow(2);
+        assert_eq!(arena.bytes_used(), 0);
+        assert_eq!(arena.capacity(), 8);
+
+        arena.alloc(|| 1u8);
+        arena.alloc(|| 2u8);
+        arena.alloc(|| 3u8);
+        arena.alloc(|| 4u8);
+        arena.alloc(|| 5u8);
+        arena.alloc(|| 6u8);
+        arena.alloc(|| 7u8);
+        arena.alloc(|| 8u8);
+
+        arena.clear_and_shrink_or_grow(2);
+        assert_eq!(arena.bytes_used(), 0);
+        assert_eq!(arena.capacity(), 8);
     }
 }
