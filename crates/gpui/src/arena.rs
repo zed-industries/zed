@@ -1,5 +1,5 @@
 use std::{
-    alloc,
+    alloc::{self, handle_alloc_error},
     cell::Cell,
     ops::{Deref, DerefMut},
     rc::Rc,
@@ -50,6 +50,9 @@ impl Arena {
         unsafe {
             let layout = alloc::Layout::from_size_align(size_in_bytes, 1).unwrap();
             let start = alloc::alloc(layout);
+            if start.is_null() {
+                handle_alloc_error(layout);
+            }
             let end = start.add(size_in_bytes);
             Self {
                 start,
@@ -112,6 +115,9 @@ impl Arena {
         let new_layout = alloc::Layout::from_size_align(new_size, 1).unwrap();
         unsafe {
             self.start = alloc::alloc(new_layout);
+            if self.start.is_null() {
+                handle_alloc_error(new_layout)
+            }
             self.end = self.start.add(new_size);
             self.offset = self.start;
         }
@@ -138,7 +144,12 @@ impl Arena {
         unsafe {
             // typically this should not copy the memory and instead shrink in place - ideally there
             // would be a way to ensure a copy doesn't happen
-            self.start = alloc::realloc(self.start, old_layout, new_size);
+            let new_start = alloc::realloc(self.start, old_layout, new_size);
+            if new_start.is_null() {
+                let new_layout = alloc::Layout::from_size_align(new_size, 1).unwrap();
+                handle_alloc_error(new_layout);
+            }
+            self.start = new_start;
             self.end = self.start.add(new_size);
             self.offset = self.start;
         }
