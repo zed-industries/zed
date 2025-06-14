@@ -49,6 +49,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use util::ResultExt;
 use worktree::Worktree;
@@ -619,6 +620,7 @@ pub struct Session {
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
+    task_context: TaskContext,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -733,6 +735,7 @@ impl Session {
         parent_session: Option<Entity<Session>>,
         label: SharedString,
         adapter: DebugAdapterName,
+        task_context: TaskContext,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
@@ -783,10 +786,15 @@ impl Session {
                 exception_breakpoints: Default::default(),
                 label,
                 adapter,
+                task_context,
             };
 
             this
         })
+    }
+
+    pub fn task_context(&self) -> &TaskContext {
+        &self.task_context
     }
 
     pub fn worktree(&self) -> Option<Entity<Worktree>> {
