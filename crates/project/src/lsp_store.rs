@@ -24,7 +24,6 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::{TypedEnvelope, proto};
-use clock::Global;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
@@ -3488,8 +3487,7 @@ pub struct LspStore {
 type DocumentColorTask = Shared<Task<std::result::Result<Vec<DocumentColor>, Arc<anyhow::Error>>>>;
 
 struct LspData {
-    // TODO use MTime from the buffer instead
-    buffer_version: Global,
+    mtime: MTime,
     buffer_lsp_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspData>>,
     colors_update: HashMap<PathBuf, DocumentColorTask>,
 }
@@ -5910,7 +5908,7 @@ impl LspStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
-        let buffer_version = buffer.read(cx).version();
+        let buffer_mtime = buffer.read(cx).saved_mtime()?;
         let abs_path = crate::File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
 
         let mut has_later_versions = false;
@@ -5920,8 +5918,8 @@ impl LspStore {
             .as_ref()
             .into_iter()
             .filter(|lsp_data| {
-                has_later_versions |= lsp_data.buffer_version.changed_since(&buffer_version);
-                lsp_data.buffer_version == buffer_version
+                has_later_versions |= lsp_data.mtime.bad_is_greater_than(buffer_mtime);
+                lsp_data.mtime == buffer_mtime
             })
             .flat_map(|lsp_data| lsp_data.buffer_lsp_data.values())
             .filter_map(|buffer_data| buffer_data.get(&abs_path))
@@ -5945,10 +5943,10 @@ impl LspStore {
                 || self
                     .lsp_data
                     .as_ref()
-                    .is_some_and(|lsp_data| buffer_version.changed_since(&lsp_data.buffer_version))
+                    .is_some_and(|lsp_data| buffer_mtime.bad_is_greater_than(lsp_data.mtime))
             {
                 self.lsp_data = Some(LspData {
-                    buffer_version: buffer_version.clone(),
+                    mtime: buffer_mtime,
                     buffer_lsp_data: HashMap::default(),
                     colors_update: HashMap::default(),
                 });
@@ -5995,7 +5993,7 @@ impl LspStore {
                             "Document lsp data got updated between fetch and update for path {task_abs_path:?}"
                         ))?;
                         let mut lsp_colors = Vec::new();
-                        anyhow::ensure!(lsp_data.buffer_version == buffer_version, "Buffer lsp data got updated between fetch and update for path {task_abs_path:?}");
+                        anyhow::ensure!(lsp_data.mtime == buffer_mtime, "Buffer lsp data got updated between fetch and update for path {task_abs_path:?}");
                         for (server_id, colors) in fetched_colors {
                             let colors_lsp_data = &mut lsp_data.buffer_lsp_data.entry(server_id).or_default().entry(task_abs_path.clone()).or_default().colors;
                             anyhow::ensure!(colors_lsp_data.is_none(), "Document colors got updated between fetch and update for path {task_abs_path:?}");
