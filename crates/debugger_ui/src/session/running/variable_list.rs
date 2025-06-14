@@ -285,8 +285,7 @@ impl VariableList {
         let watches = self.session.read(cx).watchers().clone();
         stack.extend(
             watches
-                .values()
-                .into_iter()
+                .into_values()
                 .map(|watcher| {
                     (
                         watcher.variables_reference,
@@ -303,9 +302,7 @@ impl VariableList {
         while let Some((container_reference, variables_reference, mut path, dap_kind)) = stack.pop()
         {
             match &dap_kind {
-                EntryKind::Watcher(watcher) => {
-                    path = path.with_child(watcher.expression.clone().into())
-                }
+                EntryKind::Watcher(watcher) => path = path.with_child(watcher.expression.clone()),
                 EntryKind::Variable(dap) => path = path.with_name(dap.name.clone().into()),
                 EntryKind::Scope(dap) => path = path.with_child(dap.name.clone().into()),
             }
