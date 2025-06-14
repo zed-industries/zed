@@ -70,6 +70,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub sort_by_path: Option<bool>,
+
+    /// Whether to collapse untracked files in the diff panel.
+    ///
+    /// Default: false
+    pub collapse_untracked_diff: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -81,6 +86,7 @@ pub struct GitPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
+    pub collapse_untracked_diff: bool,
 }
 
 impl Settings for GitPanelSettings {

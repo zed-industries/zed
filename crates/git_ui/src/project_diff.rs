@@ -177,12 +177,19 @@ impl ProjectDiff {
         );
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_collapse_untracked_diff =
+            GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global::<SettingsStore>(move |this, cx| {
             let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            if is_sort_by_path != was_sort_by_path {
+            let is_collapse_untracked_diff =
+                GitPanelSettings::get_global(cx).collapse_untracked_diff;
+            if is_sort_by_path != was_sort_by_path
+                || is_collapse_untracked_diff != was_collapse_untracked_diff
+            {
                 *this.update_needed.borrow_mut() = ();
             }
-            was_sort_by_path = is_sort_by_path
+            was_sort_by_path = is_sort_by_path;
+            was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
 
@@ -461,7 +468,11 @@ impl ProjectDiff {
                     selections.select_ranges([0..0])
                 });
             }
-            if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
+            if is_excerpt_newly_added
+                && (diff_buffer.file_status.is_deleted()
+                    || (diff_buffer.file_status.is_untracked()
+                        && GitPanelSettings::get_global(cx).collapse_untracked_diff))
+            {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
             }
         });
