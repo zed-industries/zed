@@ -1,6 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use dap::adapters::{
     DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
@@ -12,17 +16,26 @@ use task::{DebugScenario, ZedDebugConfig};
 pub(crate) struct ExtensionDapAdapter {
     extension: Arc<dyn Extension>,
     debug_adapter_name: Arc<str>,
+    schema: serde_json::Value,
 }
 
 impl ExtensionDapAdapter {
     pub(crate) fn new(
         extension: Arc<dyn extension::Extension>,
         debug_adapter_name: Arc<str>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let schema = std::fs::read_to_string(extension.path_from_extension(
+            &Path::new("debug_adapter_schemas").join(debug_adapter_name.as_ref()),
+        ))
+        .with_context(|| format!("Failed to read debug adapter schema for {debug_adapter_name}"))?;
+        let schema = serde_json::Value::from_str(&schema).with_context(|| {
+            format!("Debug adapter schema for {debug_adapter_name} is not a valid JSON")
+        })?;
+        Ok(Self {
             extension,
             debug_adapter_name,
-        }
+            schema,
+        })
     }
 }
 
@@ -61,8 +74,8 @@ impl DebugAdapter for ExtensionDapAdapter {
         self.debug_adapter_name.as_ref().into()
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
-        self.extension.get_dap_schema().await.unwrap_or_default()
+    fn dap_schema(&self) -> serde_json::Value {
+        self.schema.clone()
     }
 
     async fn get_binary(

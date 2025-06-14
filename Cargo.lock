@@ -4240,6 +4240,7 @@ dependencies = [
  "gpui",
  "serde_json",
  "task",
+ "util",
  "workspace-hack",
 ]
 

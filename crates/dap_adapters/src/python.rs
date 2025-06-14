@@ -257,7 +257,7 @@ impl DebugAdapter for PythonDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
