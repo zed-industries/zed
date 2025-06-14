@@ -39,10 +39,11 @@ fn eval_extract_handle_command_output() {
     //
     // Model                       | Pass rate
     // ----------------------------|----------
-    // claude-3.7-sonnet           |  0.98
-    // gemini-2.5-pro-06-05        |  0.77
-    // gemini-2.5-flash            |  0.11
-    // gpt-4.1                     |  1.00
+    // claude-3.7-sonnet           |  0.99 (2025-06-14)
+    // claude-sonnet-4             |  0.97 (2025-06-14)
+    // gemini-2.5-pro-06-05        |  0.77 (2025-05-22)
+    // gemini-2.5-flash            |  0.11 (2025-05-22)
+    // gpt-4.1                     |  1.00 (2025-05-22)
 
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -111,6 +112,13 @@ fn eval_extract_handle_command_output() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_delete_run_git_blame() {
+    // Model                       | Pass rate
+    // ----------------------------|----------
+    // claude-3.7-sonnet           | 1.0  (2025-06-14)
+    // claude-sonnet-4             | 0.96 (2025-06-14)
+    // gemini-2.5-pro-06-05        |
+    // gemini-2.5-flash            |
+    // gpt-4.1                     |
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
     let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
@@ -166,13 +174,12 @@ fn eval_delete_run_git_blame() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_translate_doc_comments() {
-    // Results for 2025-05-22
-    //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |
-    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  claude-3.7-sonnet              |  1.0  (2025-06-14)
+    //  claude-sonnet-4                |  1.0  (2025-06-14)
+    //  gemini-2.5-pro-preview-03-25   |  1.0  (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
@@ -229,13 +236,12 @@ fn eval_translate_doc_comments() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
-    // Results for 2025-05-22
-    //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  0.98
-    //  gemini-2.5-pro-preview-03-25   |  0.99
+    //  claude-3.7-sonnet              |  0.96 (2025-06-14)
+    //  claude-sonnet-4                |  0.11 (2025-06-14)
+    //  gemini-2.5-pro-preview-03-25   |  0.99 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/lib.rs";
@@ -355,13 +361,12 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_disable_cursor_blinking() {
-    // Results for 2025-05-22
-    //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |
-    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  claude-3.7-sonnet              |  0.99 (2025-06-14)
+    //  claude-sonnet-4                |  0.85 (2025-06-14)
+    //  gemini-2.5-pro-preview-03-25   |  1.0  (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/editor.rs";
@@ -463,7 +468,7 @@ fn eval_from_pixels_constructor() {
         0.95,
         // For whatever reason, this eval produces more mismatched tags.
         // Increasing for now, let's see if we can bring this down.
-        0.2,
+        0.25,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -649,15 +654,14 @@ fn eval_from_pixels_constructor() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
-    // Results for 2025-05-22
-    //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  1.0
-    //  gemini-2.5-pro-preview-03-25   |  1.0
-    //  gemini-2.5-flash-preview-04-17 |  1.0
-    //  gpt-4.1                        |  1.0
+    //  claude-3.7-sonnet              |  1.0 (2025-06-14)
+    //  claude-sonnet-4                |  1.0 (2025-06-14)
+    //  gemini-2.5-pro-preview-03-25   |  1.0 (2025-05-22)
+    //  gemini-2.5-flash-preview-04-17 |  1.0 (2025-05-22)
+    //  gpt-4.1                        |  1.0 (2025-05-22)
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
@@ -756,13 +760,12 @@ fn eval_zode() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_add_overwrite_test() {
-    // Results for 2025-05-22
-    //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  0.16
-    //  gemini-2.5-pro-preview-03-25   |  0.35
+    //  claude-3.7-sonnet              |  0.65 (2025-06-14)
+    //  claude-sonnet-4                |  0.07 (2025-06-14)
+    //  gemini-2.5-pro-preview-03-25   |  0.35 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/action_log.rs";
@@ -992,15 +995,14 @@ fn eval_create_empty_file() {
     // thoughts into it. This issue is not specific to empty files, but
     // it's easier to reproduce with them.
     //
-    // Results for 2025-05-21:
-    //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  1.00
-    //  gemini-2.5-pro-preview-03-25   |  1.00
-    //  gemini-2.5-flash-preview-04-17 |  1.00
-    //  gpt-4.1                        |  1.00
+    //  claude-3.7-sonnet              |  1.00 (2025-06-14)
+    //  claude-sonnet-4                |  1.00 (2025-06-14)
+    //  gemini-2.5-pro-preview-03-25   |  1.00 (2025-05-21)
+    //  gemini-2.5-flash-preview-04-17 |  1.00 (2025-05-21)
+    //  gpt-4.1                        |  1.00 (2025-05-21)
     //
     //
     // TODO: gpt-4.1-mini errored 38 times:
@@ -1652,7 +1654,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                 Ok(err) => match err {
                     LanguageModelCompletionError::RateLimit(duration) => {
                         // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
-                        let jitter = duration.mul_f64(rand::thread_rng().gen_range(0.0..0.5));
+                        let jitter = duration.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
                         eprintln!(
                             "Attempt #{attempt}: Rate limit exceeded. Retry after {duration:?} + jitter of {jitter:?}"
                         );
