@@ -213,6 +213,28 @@ where
     items.sort_by(compare);
 }
 
+/// Prevents execution of the application with root privileges on Unix systems.
+///
+/// This function checks if the current process is running with root privileges
+/// and terminates the program with an error message unless explicitly allowed via the
+/// `ZED_ALLOW_ROOT` environment variable.
+#[cfg(unix)]
+pub fn prevent_root_execution() {
+    let is_root = nix::unistd::geteuid().is_root();
+    let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+    if is_root && !allow_root {
+        eprintln!(
+            "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+        );
+        std::process::exit(1);
+    }
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
@@ -1070,6 +1092,52 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_get_shell_safe_zed_path_with_spaces() {
+        // Test that shlex::try_quote handles paths with spaces correctly
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted = shlex::try_quote(path_with_spaces).unwrap();
+
+        // The quoted path should be properly escaped for shell use
+        assert!(quoted.contains(path_with_spaces));
+
+        // When used in a shell command, it should not be split at spaces
+        let command = format!("sh -c '{} --printenv'", quoted);
+        println!("Command would be: {}", command);
+
+        // Test that shlex can parse it back correctly
+        let parsed = shlex::split(&format!("{} --printenv", quoted)).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], path_with_spaces);
+        assert_eq!(parsed[1], "--printenv");
+    }
+
+    #[test]
+    fn test_shell_command_construction_with_quoted_path() {
+        // Test the specific pattern used in shell_env.rs to ensure proper quoting
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted_path = shlex::try_quote(path_with_spaces).unwrap();
+
+        // This should be: '/Applications/Zed Nightly.app/Contents/MacOS/zed'
+        assert_eq!(
+            quoted_path,
+            "'/Applications/Zed Nightly.app/Contents/MacOS/zed'"
+        );
+
+        // Test the command construction pattern from shell_env.rs
+        // The fixed version should use double quotes around the entire sh -c argument
+        let env_fd = 0;
+        let command = format!("sh -c \"{} --printenv >&{}\";", quoted_path, env_fd);
+
+        // This should produce: sh -c "'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0";
+        let expected =
+            "sh -c \"'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0\";";
+        assert_eq!(command, expected);
+
+        // The command should not contain the problematic double single-quote pattern
+        assert!(!command.contains("''"));
     }
 
     #[test]

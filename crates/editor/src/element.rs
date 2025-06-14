@@ -1072,18 +1072,56 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,
-        inline_blame_bounds: &Option<(Bounds<Pixels>, BlameEntry)>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
+        let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.mouse_cursor_hidden = false;
 
-        if let Some((bounds, blame_entry)) = inline_blame_bounds {
+        let point_for_position = position_map.point_for_position(event.position);
+        let valid_point = point_for_position.previous_valid;
+
+        let hovered_diff_control = position_map
+            .diff_hunk_control_bounds
+            .iter()
+            .find(|(_, bounds)| bounds.contains(&event.position))
+            .map(|(row, _)| *row);
+
+        let hovered_diff_hunk_row = if let Some(control_row) = hovered_diff_control {
+            Some(control_row)
+        } else {
+            if text_hovered {
+                let current_row = valid_point.row();
+                position_map.display_hunks.iter().find_map(|(hunk, _)| {
+                    if let DisplayDiffHunk::Unfolded {
+                        display_row_range, ..
+                    } = hunk
+                    {
+                        if display_row_range.contains(&current_row) {
+                            Some(display_row_range.start)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        };
+
+        if hovered_diff_hunk_row != editor.hovered_diff_hunk_row {
+            editor.hovered_diff_hunk_row = hovered_diff_hunk_row;
+            cx.notify();
+        }
+
+        if let Some((bounds, blame_entry)) = &position_map.inline_blame_bounds {
             let mouse_over_inline_blame = bounds.contains(&event.position);
             let mouse_over_popover = editor
                 .inline_blame_popover
@@ -1101,12 +1139,9 @@ impl EditorElement {
         }
 
         let breakpoint_indicator = if gutter_hovered {
-            let new_point = position_map
-                .point_for_position(event.position)
-                .previous_valid;
             let buffer_anchor = position_map
                 .snapshot
-                .display_point_to_anchor(new_point, Bias::Left);
+                .display_point_to_anchor(valid_point, Bias::Left);
 
             if let Some((buffer_snapshot, file)) = position_map
                 .snapshot
@@ -1161,7 +1196,7 @@ impl EditorElement {
                 }
 
                 Some(PhantomBreakpointIndicator {
-                    display_row: new_point.row(),
+                    display_row: valid_point.row(),
                     is_active: is_visible,
                     collides_with_existing_breakpoint: has_existing_breakpoint,
                 })
@@ -1180,9 +1215,7 @@ impl EditorElement {
         }
 
         // Don't trigger hover popover if mouse is hovering over context menu
-        if text_hitbox.is_hovered(window) {
-            let point_for_position = position_map.point_for_position(event.position);
-
+        if text_hovered {
             editor.update_hovered_link(
                 point_for_position,
                 &position_map.snapshot,
@@ -4769,7 +4802,6 @@ impl EditorElement {
         row_range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         text_hitbox: &Hitbox,
-        position_map: &PositionMap,
         newest_cursor_position: Option<DisplayPoint>,
         line_height: Pixels,
         right_margin: Pixels,
@@ -4779,14 +4811,15 @@ impl EditorElement {
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Vec<AnyElement> {
+    ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
         let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
-        let point_for_position = position_map.point_for_position(window.mouse_position());
+        let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
 
         let mut controls = vec![];
+        let mut control_bounds = vec![];
 
         let active_positions = [
-            Some(point_for_position.previous_valid),
+            hovered_diff_hunk_row.map(|row| DisplayPoint::new(row, 0)),
             newest_cursor_position,
         ];
 
@@ -4831,6 +4864,7 @@ impl EditorElement {
                 {
                     continue;
                 }
+
                 if active_positions
                     .iter()
                     .any(|p| p.map_or(false, |p| display_row_range.contains(&p.row())))
@@ -4854,6 +4888,9 @@ impl EditorElement {
 
                     let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
 
+                    let bounds = Bounds::new(gpui::Point::new(x, y), size);
+                    control_bounds.push((display_row_range.start, bounds));
+
                     window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
                         element.prepaint(window, cx)
                     });
@@ -4862,7 +4899,7 @@ impl EditorElement {
             }
         }
 
-        controls
+        (controls, control_bounds)
     }
 
     fn layout_signature_help(
@@ -6699,10 +6736,6 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let inline_blame_bounds = layout
-                .inline_blame_layout
-                .as_ref()
-                .map(|layout| (layout.bounds, layout.entry.clone()));
 
             move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -6716,14 +6749,7 @@ impl EditorElement {
                             Self::mouse_dragged(editor, event, &position_map, window, cx)
                         }
 
-                        Self::mouse_moved(
-                            editor,
-                            event,
-                            &position_map,
-                            &inline_blame_bounds,
-                            window,
-                            cx,
-                        )
+                        Self::mouse_moved(editor, event, &position_map, window, cx)
                     });
                 }
             }
@@ -8698,6 +8724,25 @@ impl Element for EditorElement {
 
                     let mode = snapshot.mode.clone();
 
+                    let (diff_hunk_controls, diff_hunk_control_bounds) = if is_read_only {
+                        (vec![], vec![])
+                    } else {
+                        self.layout_diff_hunk_controls(
+                            start_row..end_row,
+                            &row_infos,
+                            &text_hitbox,
+                            newest_selection_head,
+                            line_height,
+                            right_margin,
+                            scroll_pixel_position,
+                            &display_hunks,
+                            &highlighted_rows,
+                            self.editor.clone(),
+                            window,
+                            cx,
+                        )
+                    };
+
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
                         visible_row_range,
@@ -8710,31 +8755,16 @@ impl Element for EditorElement {
                         snapshot,
                         gutter_hitbox: gutter_hitbox.clone(),
                         text_hitbox: text_hitbox.clone(),
+                        inline_blame_bounds: inline_blame_layout
+                            .as_ref()
+                            .map(|layout| (layout.bounds, layout.entry.clone())),
+                        display_hunks: display_hunks.clone(),
+                        diff_hunk_control_bounds: diff_hunk_control_bounds.clone(),
                     });
 
                     self.editor.update(cx, |editor, _| {
                         editor.last_position_map = Some(position_map.clone())
                     });
-
-                    let diff_hunk_controls = if is_read_only {
-                        vec![]
-                    } else {
-                        self.layout_diff_hunk_controls(
-                            start_row..end_row,
-                            &row_infos,
-                            &text_hitbox,
-                            &position_map,
-                            newest_selection_head,
-                            line_height,
-                            right_margin,
-                            scroll_pixel_position,
-                            &display_hunks,
-                            &highlighted_rows,
-                            self.editor.clone(),
-                            window,
-                            cx,
-                        )
-                    };
 
                     EditorLayout {
                         mode,
@@ -9398,6 +9428,9 @@ pub(crate) struct PositionMap {
     pub snapshot: EditorSnapshot,
     pub text_hitbox: Hitbox,
     pub gutter_hitbox: Hitbox,
+    pub inline_blame_bounds: Option<(Bounds<Pixels>, BlameEntry)>,
+    pub display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
+    pub diff_hunk_control_bounds: Vec<(DisplayRow, Bounds<Pixels>)>,
 }
 
 #[derive(Debug, Copy, Clone)]

@@ -17348,6 +17348,7 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "nix 0.29.0",
  "rand 0.8.5",
  "regex",
  "rust-embed",
