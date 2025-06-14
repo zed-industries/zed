@@ -333,14 +333,18 @@ impl Tool for EditFileTool {
                 );
                 anyhow::ensure!(
                     ambiguous_ranges.is_empty(),
-                    // TODO: Include ambiguous_ranges, converted to line numbers.
-                    //       This would work best if we add `line_hint` parameter
-                    //       to edit_file_tool
-                    formatdoc! {"
-                        <old_text> matches more than one position in the file. Read the
-                        relevant sections of {input_path} again and extend <old_text> so
-                        that I can perform the requested edits.
-                    "}
+                    {
+                        let line_numbers = ambiguous_ranges
+                            .iter()
+                            .map(|range| range.start.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        formatdoc! {"
+                            <old_text> matches more than one position in the file (lines: {line_numbers}). Read the
+                            relevant sections of {input_path} again and extend <old_text> so
+                            that I can perform the requested edits.
+                        "}
+                    }
                 );
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text("No edits were made.".into()),

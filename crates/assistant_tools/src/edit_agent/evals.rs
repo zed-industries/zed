@@ -438,14 +438,21 @@ fn eval_disable_cursor_blinking() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
-    // Results for 2025-05-22
+    // Results for 2025-06-13
+    //
+    // The outcome of this evaluation depends heavily on the LINE_HINT_TOLERANCE
+    // value. Higher values improve the pass rate but may sometimes cause
+    // edits to be misapplied. In the context of this eval, this means
+    // the agent might add from_pixels tests in incorrect locations
+    // (e.g., at the beginning of the file), yet the evaluation may still
+    // rate it highly.
     //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |
-    //  gemini-2.5-pro-preview-03-25   |  0.94
-    //  gemini-2.5-flash-preview-04-17 |
+    //  claude-4.0-sonnet              |  0.99
+    //  claude-3.7-sonnet              |  0.88
+    //  gemini-2.5-pro-preview-03-25   |  0.96
     //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
