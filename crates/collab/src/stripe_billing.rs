@@ -50,6 +50,10 @@ impl StripeBilling {
         }
     }
 
+    pub fn client(&self) -> &Arc<dyn StripeClient> {
+        &self.client
+    }
+
     pub async fn initialize(&self) -> Result<()> {
         log::info!("StripeBilling: initializing");
 
