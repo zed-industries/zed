@@ -3728,16 +3728,6 @@ impl Project {
         })
     }
 
-    pub fn document_diagnostics(
-        &mut self,
-        buffer_handle: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.pull_diagnostics(buffer_handle, cx)
-        })
-    }
-
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,

@@ -5903,6 +5903,78 @@ impl LspStore {
         }
     }
 
+    pub fn pull_diagnostics_for_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let diagnostics = self.pull_diagnostics(buffer, cx);
+        cx.spawn(async move |lsp_store, cx| {
+            let diagnostics = diagnostics.await.context("pulling diagnostics")?;
+            lsp_store.update(cx, |lsp_store, cx| {
+                for diagnostics_set in diagnostics {
+                    let LspPullDiagnostics::Response {
+                        server_id,
+                        uri,
+                        diagnostics,
+                    } = diagnostics_set
+                    else {
+                        continue;
+                    };
+
+                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
+                    let disk_based_sources = adapter
+                        .as_ref()
+                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                        .unwrap_or(&[]);
+                    match diagnostics {
+                        PulledDiagnostics::Unchanged { result_id } => {
+                            lsp_store
+                                .merge_diagnostics(
+                                    server_id,
+                                    lsp::PublishDiagnosticsParams {
+                                        uri: uri.clone(),
+                                        diagnostics: Vec::new(),
+                                        version: None,
+                                    },
+                                    Some(result_id),
+                                    DiagnosticSourceKind::Pulled,
+                                    disk_based_sources,
+                                    |_, _| true,
+                                    cx,
+                                )
+                                .log_err();
+                        }
+                        PulledDiagnostics::Changed {
+                            diagnostics,
+                            result_id,
+                        } => {
+                            lsp_store
+                                .merge_diagnostics(
+                                    server_id,
+                                    lsp::PublishDiagnosticsParams {
+                                        uri: uri.clone(),
+                                        diagnostics,
+                                        version: None,
+                                    },
+                                    result_id,
+                                    DiagnosticSourceKind::Pulled,
+                                    disk_based_sources,
+                                    |old_diagnostic, _| match old_diagnostic.source_kind {
+                                        DiagnosticSourceKind::Pulled => false,
+                                        DiagnosticSourceKind::Other
+                                        | DiagnosticSourceKind::Pushed => true,
+                                    },
+                                    cx,
+                                )
+                                .log_err();
+                        }
+                    }
+                }
+            })
+        })
+    }
+
     pub fn document_colors(
         &mut self,
         buffer: Entity<Buffer>,
@@ -5967,10 +6039,6 @@ impl LspStore {
             let task_abs_path = abs_path.clone();
             let new_task = cx
                 .spawn(async move |lsp_store, cx| {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(50))
-                        .await;
-
                     let fetched_colors = match lsp_store
                         .update(cx, |lsp_store, cx| {
                             lsp_store.fetch_document_colors(buffer, cx)
