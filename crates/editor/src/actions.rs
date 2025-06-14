@@ -417,6 +417,8 @@ actions!(
         ShowSignatureHelp,
         ShowWordCompletions,
         ShuffleLines,
+        SignatureHelpNext,
+        SignatureHelpPrevious,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
