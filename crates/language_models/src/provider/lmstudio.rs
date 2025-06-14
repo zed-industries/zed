@@ -86,7 +86,7 @@ impl State {
                             .loaded_context_length
                             .or_else(|| model.max_context_length),
                         model.capabilities.supports_tool_calls(),
-                        model.capabilities.supports_images(),
+                        model.capabilities.supports_images() || model.r#type == ModelType::Vlm,
                     )
                 })
                 .collect();

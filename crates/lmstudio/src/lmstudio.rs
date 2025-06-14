@@ -83,10 +83,6 @@ impl Model {
     pub fn supports_tool_calls(&self) -> bool {
         self.supports_tool_calls
     }
-
-    pub fn supports_images(&self) -> bool {
-        self.supports_images
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
