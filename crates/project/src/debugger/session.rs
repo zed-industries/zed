@@ -126,8 +126,8 @@ impl From<dap::Thread> for Thread {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Watch {
-    pub expression: String,
-    pub value: String,
+    pub expression: SharedString,
+    pub value: SharedString,
     pub variables_reference: u64,
     pub presentation_hint: Option<VariablePresentationHint>,
 }
@@ -602,7 +602,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
-    watches: HashMap<String, Watch>,
+    watches: HashMap<SharedString, Watch>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
@@ -2097,18 +2097,18 @@ impl Session {
             .collect()
     }
 
-    pub fn watches(&self) -> &HashMap<String, Watch> {
+    pub fn watches(&self) -> &HashMap<SharedString, Watch> {
         &self.watches
     }
 
     pub fn add_watch(
         &mut self,
-        expression: String,
+        expression: SharedString,
         frame_id: u64,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let request = self.mode.request_dap(EvaluateCommand {
-            expression: expression.clone(),
+            expression: expression.to_string(),
             context: Some(EvaluateArgumentsContext::Watch),
             frame_id: Some(frame_id),
             source: None,
@@ -2122,7 +2122,7 @@ impl Session {
                     expression.clone(),
                     Watch {
                         expression,
-                        value: response.result,
+                        value: response.result.into(),
                         variables_reference: response.variables_reference,
                         presentation_hint: response.presentation_hint,
                     },
@@ -2140,9 +2140,8 @@ impl Session {
         }
     }
 
-    pub fn remove_watch(&mut self, expression: String, cx: &mut Context<Self>) {
+    pub fn remove_watch(&mut self, expression: SharedString) {
         self.watches.remove(&expression);
-        cx.notify();
     }
 
     pub fn variables(

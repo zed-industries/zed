@@ -643,7 +643,7 @@ impl VariableList {
                 .clone()
                 .unwrap_or_else(|| variable.name.clone());
 
-            session.add_watch(expression, stack_frame_id, cx)
+            session.add_watch(expression.into(), stack_frame_id, cx)
         });
 
         cx.spawn(async move |this, cx| {
@@ -669,8 +669,8 @@ impl VariableList {
             return;
         };
 
-        self.session.update(cx, |session, cx| {
-            session.remove_watch(watch.expression.clone(), cx);
+        self.session.update(cx, |session, _| {
+            session.remove_watch(watch.expression.clone());
         });
         self.build_entries(cx);
     }
