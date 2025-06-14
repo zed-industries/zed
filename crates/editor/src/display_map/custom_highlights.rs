@@ -144,6 +144,7 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
 
         chunk.text = suffix;
         self.offset += prefix.len();
+        // FIXME: chunk cloning is wrong because the bitmaps might be off
         let mut prefix = Chunk {
             text: prefix,
             ..chunk.clone()
@@ -170,5 +171,126 @@ impl Ord for HighlightEndpoint {
         self.offset
             .cmp(&other.offset)
             .then_with(|| other.is_start.cmp(&self.is_start))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MultiBuffer;
+    use gpui::App;
+    use rand::prelude::*;
+    use util::RandomCharIter;
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
+        // Generate random buffer using existing test infrastructure
+        let len = rng.gen_range(0..10000);
+        let buffer = if rng.r#gen() {
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(&mut rng, cx)
+        };
+
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+
+        // Create random highlights
+        let mut highlights = TreeMap::default();
+        let highlight_count = rng.gen_range(1..10);
+
+        for _i in 0..highlight_count {
+            let style = HighlightStyle {
+                color: Some(gpui::Hsla {
+                    h: rng.r#gen::<f32>(),
+                    s: rng.r#gen::<f32>(),
+                    l: rng.r#gen::<f32>(),
+                    a: 1.0,
+                }),
+                ..Default::default()
+            };
+
+            let mut ranges = Vec::new();
+            let range_count = rng.gen_range(1..10);
+            for _ in 0..range_count {
+                let start = rng.gen_range(0..buffer_snapshot.len());
+                let end = rng.gen_range(start..buffer_snapshot.len().min(start + 100));
+                let start_anchor = buffer_snapshot.anchor_after(start);
+                let end_anchor = buffer_snapshot.anchor_after(end);
+                ranges.push(start_anchor..end_anchor);
+            }
+
+            let type_id = TypeId::of::<()>(); // Simple type ID for testing
+            highlights.insert(type_id, Arc::new((style, ranges)));
+        }
+
+        // Get all chunks and verify their bitmaps
+        let chunks = CustomHighlightsChunks::new(
+            0..buffer_snapshot.len(),
+            false,
+            Some(&highlights),
+            &buffer_snapshot,
+        );
+
+        for chunk in chunks {
+            let chunk_text = chunk.text;
+            let chars_bitmap = chunk.chars;
+            let tabs_bitmap = chunk.tabs;
+
+            // Check empty chunks have empty bitmaps
+            if chunk_text.is_empty() {
+                assert_eq!(
+                    chars_bitmap, 0,
+                    "Empty chunk should have empty chars bitmap"
+                );
+                assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+                continue;
+            }
+
+            // Verify that chunk text doesn't exceed 128 bytes
+            assert!(
+                chunk_text.len() <= 128,
+                "Chunk text length {} exceeds 128 bytes",
+                chunk_text.len()
+            );
+
+            // Verify chars bitmap
+            let char_indices = chunk_text
+                .char_indices()
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+
+            for byte_idx in 0..chunk_text.len() {
+                let should_have_bit = char_indices.contains(&byte_idx);
+                let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != should_have_bit {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Char indices: {:?}", char_indices);
+                    eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+                    assert_eq!(
+                        has_bit, should_have_bit,
+                        "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, should_have_bit, has_bit
+                    );
+                }
+            }
+
+            // Verify tabs bitmap
+            for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+                let is_tab = byte == b'\t';
+                let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != is_tab {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                    assert_eq!(
+                        has_bit, is_tab,
+                        "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, byte as char, is_tab, has_bit
+                    );
+                }
+            }
+        }
     }
 }
