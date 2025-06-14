@@ -125,7 +125,7 @@ impl From<dap::Thread> for Thread {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Watch {
+pub struct Watcher {
     pub expression: SharedString,
     pub value: SharedString,
     pub variables_reference: u64,
@@ -602,7 +602,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
-    watches: HashMap<SharedString, Watch>,
+    watchers: HashMap<SharedString, Watcher>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
@@ -760,7 +760,7 @@ impl Session {
                 child_session_ids: HashSet::default(),
                 parent_session,
                 capabilities: Capabilities::default(),
-                watches: HashMap::default(),
+                watchers: HashMap::default(),
                 variables: Default::default(),
                 stack_frames: Default::default(),
                 thread_states: ThreadStates::default(),
@@ -2097,11 +2097,11 @@ impl Session {
             .collect()
     }
 
-    pub fn watches(&self) -> &HashMap<SharedString, Watch> {
-        &self.watches
+    pub fn watchers(&self) -> &HashMap<SharedString, Watcher> {
+        &self.watchers
     }
 
-    pub fn add_watch(
+    pub fn add_watcher(
         &mut self,
         expression: SharedString,
         frame_id: u64,
@@ -2118,9 +2118,9 @@ impl Session {
             let response = request.await?;
 
             this.update(cx, |session, cx| {
-                session.watches.insert(
+                session.watchers.insert(
                     expression.clone(),
-                    Watch {
+                    Watcher {
                         expression,
                         value: response.result.into(),
                         variables_reference: response.variables_reference,
@@ -2132,16 +2132,16 @@ impl Session {
         })
     }
 
-    pub fn refresh_watches(&mut self, frame_id: u64, cx: &mut Context<Self>) {
-        let watches = self.watches.clone();
+    pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
+        let watches = self.watchers.clone();
         for (_, watch) in watches.into_iter() {
-            self.add_watch(watch.expression.clone(), frame_id, cx)
+            self.add_watcher(watch.expression.clone(), frame_id, cx)
                 .detach();
         }
     }
 
-    pub fn remove_watch(&mut self, expression: SharedString) {
-        self.watches.remove(&expression);
+    pub fn remove_watcher(&mut self, expression: SharedString) {
+        self.watchers.remove(&expression);
     }
 
     pub fn variables(
