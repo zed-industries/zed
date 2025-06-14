@@ -201,7 +201,7 @@ impl VariableList {
                     this.edited_path.take();
                     this.selected_stack_frame_id.take();
                 }
-                SessionEvent::Variables | SessionEvent::Watches => {
+                SessionEvent::Variables | SessionEvent::Watchers => {
                     this.build_entries(cx);
                 }
                 _ => {}

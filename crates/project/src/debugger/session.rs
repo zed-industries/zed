@@ -709,7 +709,7 @@ pub enum SessionEvent {
     Stopped(Option<ThreadId>),
     StackTrace,
     Variables,
-    Watches,
+    Watchers,
     Threads,
     InvalidateInlineValue,
     CapabilitiesLoaded,
@@ -2147,7 +2147,7 @@ impl Session {
                         presentation_hint: response.presentation_hint,
                     },
                 );
-                cx.emit(SessionEvent::Watches);
+                cx.emit(SessionEvent::Watchers);
             })
         })
     }
