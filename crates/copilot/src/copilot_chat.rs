@@ -9,7 +9,7 @@ use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
-use gpui::{App, AsyncApp, Global, Task, prelude::*};
+use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
@@ -349,7 +349,6 @@ pub struct CopilotChat {
     settings: CopilotChatSettings,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
-    update_models_task: Option<Task<Result<()>>>,
 }
 
 pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
@@ -416,7 +415,6 @@ impl CopilotChat {
             models: None,
             settings,
             client,
-            update_models_task: None,
         };
         if this.oauth_token.is_some() {
             cx.spawn(async move |this, mut cx| Self::update_models(&this, &mut cx).await)
@@ -507,10 +505,11 @@ impl CopilotChat {
         let same_settings = self.settings == settings;
         self.settings = settings;
         if !same_settings {
-            self.update_models_task = Some(cx.spawn(async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 Self::update_models(&this, cx).await?;
                 Ok::<_, anyhow::Error>(())
-            }));
+            })
+            .detach();
         }
     }
 }

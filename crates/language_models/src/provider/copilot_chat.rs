@@ -27,7 +27,7 @@ use language_model::{
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     StopReason,
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{Settings, update_settings_file};
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -65,19 +65,27 @@ impl CopilotChatLanguageModelProvider {
         let state = cx.new(|cx| {
             let copilot_chat_subscription = CopilotChat::global(cx)
                 .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| cx.notify()));
+            let mut last_settings = AllLanguageModelSettings::get_global(cx)
+                .copilot_chat
+                .clone();
             State {
                 _copilot_chat_subscription: copilot_chat_subscription,
-                _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                    if let Some(copilot_chat) = CopilotChat::global(cx) {
-                        let settings = AllLanguageModelSettings::get_global(cx)
+                _settings_subscription: cx.observe_global::<AllLanguageModelSettings>(
+                    move |_, cx| {
+                        let current_settings = AllLanguageModelSettings::get_global(cx)
                             .copilot_chat
                             .clone();
-                        copilot_chat.update(cx, |chat, cx| {
-                            chat.set_settings(settings, cx);
-                        });
-                    }
-                    cx.notify();
-                }),
+                        if current_settings != last_settings {
+                            last_settings = current_settings.clone();
+                            if let Some(copilot_chat) = CopilotChat::global(cx) {
+                                copilot_chat.update(cx, |chat, cx| {
+                                    chat.set_settings(current_settings, cx);
+                                });
+                            }
+                            cx.notify();
+                        }
+                    },
+                ),
             }
         });
 
