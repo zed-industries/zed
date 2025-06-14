@@ -24,6 +24,8 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
+use itertools::FoldWhile::{Continue, Done};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
@@ -408,7 +410,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
+    pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
 }
 
@@ -697,6 +699,19 @@ impl Frame {
             self.next_inspector_instance_ids.clear();
             self.inspector_hitboxes.clear();
         }
+    }
+
+    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        self.cursor_styles
+            .iter()
+            .rev()
+            .fold_while(None, |style, request| match request.hitbox_id {
+                None => Done(Some(request.style)),
+                Some(hitbox_id) => Continue(
+                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
+                ),
+            })
+            .into_inner()
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -2157,12 +2172,24 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.map(|hitbox| hitbox.id),
+            hitbox_id: Some(hitbox.id),
             style,
         });
+    }
+
+    /// Updates the cursor style for the entire window at the platform level. A cursor
+    /// style using this method will have precedence over any cursor style set using
+    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// phase of element drawing.
+    pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.cursor_styles.push(CursorStyleRequest {
+            hitbox_id: None,
+            style,
+        })
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -3245,15 +3272,7 @@ impl Window {
         if self.is_window_hovered() {
             let style = self
                 .rendered_frame
-                .cursor_styles
-                .iter()
-                .rev()
-                .find(|request| {
-                    request
-                        .hitbox_id
-                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
-                })
-                .map(|request| request.style)
+                .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -3542,6 +3561,7 @@ impl Window {
                         .dispatch_tree
                         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
+                    window.pending_input_changed(cx);
                     window.replay_pending_input(to_replay, cx)
                 })
                 .log_err();

@@ -183,6 +183,9 @@ jobs:
       - name: Check for todo! and FIXME comments
         run: script/check-todos
 
+      - name: Check modifier use in keymaps
+        run: script/check-keymaps
+
       - name: Run style checks
         uses: ./.github/actions/check_style
 
@@ -495,6 +498,7 @@ jobs:
     needs:
       - job_spec
       - style
+      - check_docs
       - migration_checks
       # run_tests: If adding required tests, add them here and to script below.
       - workspace_hack
@@ -512,7 +516,8 @@ jobs:
           # Check dependent jobs...
           RET_CODE=0
           # Always check style
-          [[ "${{ needs.style.result }}" != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
+          [[ "${{ needs.style.result }}"      != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
+          [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
 
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
@@ -798,6 +803,7 @@ jobs:
     name: Build with Nix
     uses: ./.github/workflows/nix.yml
     if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    secrets: inherit
     with:
       flake-output: debug
       # excludes the final package to only cache dependencies
@@ -808,12 +814,12 @@ jobs:
     if: |
       startsWith(github.ref, 'refs/tags/v')
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
+    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, freebsd]
     runs-on:
       - self-hosted
       - bundle
     steps:
       - name: gh release
-        run: gh release edit $GITHUB_REF_NAME --draft=true
+        run: gh release edit $GITHUB_REF_NAME --draft=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -68,6 +68,14 @@ impl CopilotChatLanguageModelProvider {
             State {
                 _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                    if let Some(copilot_chat) = CopilotChat::global(cx) {
+                        let settings = AllLanguageModelSettings::get_global(cx)
+                            .copilot_chat
+                            .clone();
+                        copilot_chat.update(cx, |chat, cx| {
+                            chat.set_settings(settings, cx);
+                        });
+                    }
                     cx.notify();
                 }),
             }
@@ -257,13 +265,15 @@ impl LanguageModel for CopilotChatLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
+                return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG).into()))
+                    .boxed();
             }
 
             // Copilot Chat has a restriction that the final message must be from the user.
@@ -271,13 +281,13 @@ impl LanguageModel for CopilotChatLanguageModel {
             // and provide a more helpful error message.
             if !matches!(message.role, Role::User) {
                 const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
+                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG).into())).boxed();
             }
         }
 
         let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
-            Err(err) => return futures::future::ready(Err(err)).boxed(),
+            Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
         let is_streaming = copilot_request.stream;
 
@@ -854,6 +864,13 @@ impl Render for ConfigurationView {
                                         this.update_copilot_settings(cx);
                                         copilot::initiate_sign_in(window, cx)
                                     })),
+                            )
+                            .child(
+                                Label::new(
+                                    format!("You can also assign the {} environment variable and restart Zed.", copilot::copilot_chat::COPILOT_OAUTH_ENV_VAR),
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             )
                     }
                 },

@@ -530,6 +530,21 @@ impl EnvVariableReplacer {
     fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
         Self { variables }
     }
+
+    fn replace_value(&self, input: serde_json::Value) -> serde_json::Value {
+        match input {
+            serde_json::Value::String(s) => serde_json::Value::String(self.replace(&s)),
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.into_iter().map(|v| self.replace_value(v)).collect())
+            }
+            serde_json::Value::Object(obj) => serde_json::Value::Object(
+                obj.into_iter()
+                    .map(|(k, v)| (self.replace(&k), self.replace_value(v)))
+                    .collect(),
+            ),
+            _ => input,
+        }
+    }
     // Replaces occurrences of VsCode-specific environment variables with Zed equivalents.
     fn replace(&self, input: &str) -> String {
         shellexpand::env_with_context_no_errors(&input, |var: &str| {

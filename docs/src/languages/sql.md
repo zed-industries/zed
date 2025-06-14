@@ -42,7 +42,7 @@ You can add this to Zed project settings (`.zed/settings.json`) or via your Zed 
 
 ### Advanced Formatting
 
-Sql-formatter also allows more precise control by providing [sql-formatter configuration options](https://github.com/sql-formatter-org/sql-formatter#configuration-options). To provide these, create a `sql-formatter.json` file in your project:
+Sql-formatter also allows more precise control by providing [sql-formatter configuration options](https://github.com/sql-formatter-org/sql-formatter#configuration-options). To provide these, create a `.sql-formatter.json` file in your project:
 
 ```json
 {
@@ -53,7 +53,7 @@ Sql-formatter also allows more precise control by providing [sql-formatter confi
 }
 ```
 
-When using a `sql-formatter.json` file you can use a more simplified set of Zed settings since the language need not be specified inline:
+When using a `.sql-formatter.json` file you can use a more simplified set of Zed settings since the language need not be specified inline:
 
 ```json
   "languages": {

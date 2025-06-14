@@ -30,7 +30,7 @@ use unicase::UniCase;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::{line_endings, separator, uri};
+pub use util_macros::{line_endings, path, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -41,50 +41,6 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
-    };
-}
-
-/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
-/// the separator from `/` to `\`.
-/// But on non-Windows platforms, it will return the path literal as is.
-///
-/// # Examples
-/// ```rust
-/// use util::path;
-///
-/// let path = path!("/Users/user/file.txt");
-/// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "C:\\Users\\user\\file.txt");
-/// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "/Users/user/file.txt");
-/// ```
-#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
-#[macro_export]
-macro_rules! path {
-    ($path:literal) => {
-        concat!("C:", util::separator!($path))
-    };
-}
-
-/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
-/// the separator from `/` to `\`.
-/// But on non-Windows platforms, it will return the path literal as is.
-///
-/// # Examples
-/// ```rust
-/// use util::path;
-///
-/// let path = path!("/Users/user/file.txt");
-/// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "C:\\Users\\user\\file.txt");
-/// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "/Users/user/file.txt");
-/// ```
-#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
-#[macro_export]
-macro_rules! path {
-    ($path:literal) => {
-        $path
     };
 }
 
@@ -257,6 +213,28 @@ where
     items.sort_by(compare);
 }
 
+/// Prevents execution of the application with root privileges on Unix systems.
+///
+/// This function checks if the current process is running with root privileges
+/// and terminates the program with an error message unless explicitly allowed via the
+/// `ZED_ALLOW_ROOT` environment variable.
+#[cfg(unix)]
+pub fn prevent_root_execution() {
+    let is_root = nix::unistd::geteuid().is_root();
+    let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+    if is_root && !allow_root {
+        eprintln!(
+            "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+        );
+        std::process::exit(1);
+    }
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
@@ -307,6 +285,26 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 #[cfg(unix)]
+/// Returns a shell escaped path for the current zed executable
+pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let zed_path = std::env::current_exe()
+        .context("Failed to determine current zed executable path.")?
+        .to_string_lossy()
+        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
+        .to_string();
+
+    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+    // errors are introduced in the future :(
+    let zed_path_escaped =
+        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
+
+    return Ok(zed_path_escaped.to_string());
+}
+
+#[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
@@ -315,7 +313,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(Some(paths::home_dir()))? {
+    for (name, value) in shell_env::capture(paths::home_dir())? {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -1094,6 +1092,52 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_get_shell_safe_zed_path_with_spaces() {
+        // Test that shlex::try_quote handles paths with spaces correctly
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted = shlex::try_quote(path_with_spaces).unwrap();
+
+        // The quoted path should be properly escaped for shell use
+        assert!(quoted.contains(path_with_spaces));
+
+        // When used in a shell command, it should not be split at spaces
+        let command = format!("sh -c '{} --printenv'", quoted);
+        println!("Command would be: {}", command);
+
+        // Test that shlex can parse it back correctly
+        let parsed = shlex::split(&format!("{} --printenv", quoted)).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], path_with_spaces);
+        assert_eq!(parsed[1], "--printenv");
+    }
+
+    #[test]
+    fn test_shell_command_construction_with_quoted_path() {
+        // Test the specific pattern used in shell_env.rs to ensure proper quoting
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted_path = shlex::try_quote(path_with_spaces).unwrap();
+
+        // This should be: '/Applications/Zed Nightly.app/Contents/MacOS/zed'
+        assert_eq!(
+            quoted_path,
+            "'/Applications/Zed Nightly.app/Contents/MacOS/zed'"
+        );
+
+        // Test the command construction pattern from shell_env.rs
+        // The fixed version should use double quotes around the entire sh -c argument
+        let env_fd = 0;
+        let command = format!("sh -c \"{} --printenv >&{}\";", quoted_path, env_fd);
+
+        // This should produce: sh -c "'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0";
+        let expected =
+            "sh -c \"'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0\";";
+        assert_eq!(command, expected);
+
+        // The command should not contain the problematic double single-quote pattern
+        assert!(!command.contains("''"));
     }
 
     #[test]

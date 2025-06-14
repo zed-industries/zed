@@ -58,8 +58,8 @@ pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displa
     map.clip_point(point, Bias::Left)
 }
 
-/// Returns a column to the right of the current point, doing nothing
-// if that point is at the end of the line.
+/// Returns a column to the right of the current point, wrapping
+/// to the next line if that point is at the end of line.
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() < map.line_len(point.row()) {
         *point.column_mut() += 1;
@@ -266,10 +266,11 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 
     let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        // Make alt-left skip punctuation on Mac OS to respect Mac VSCode behaviour. For example: hello.| goes to |hello.
+        // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
         if is_first_iteration
             && classifier.is_punctuation(right)
             && !classifier.is_punctuation(left)
+            && left != '\n'
         {
             is_first_iteration = false;
             return false;
@@ -318,10 +319,11 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
     let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        // Make alt-right skip punctuation on Mac OS to respect the Mac behaviour. For example: |.hello goes to .hello|
+        // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
         if is_first_iteration
             && classifier.is_punctuation(left)
             && !classifier.is_punctuation(right)
+            && right != '\n'
         {
             is_first_iteration = false;
             return false;

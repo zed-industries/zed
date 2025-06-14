@@ -101,9 +101,12 @@
     // The second option is decimal.
     "unit": "binary"
   },
-  // The key to use for adding multiple cursors
-  // Currently "alt" or "cmd_or_ctrl"  (also aliased as
-  // "cmd" and "ctrl") are supported.
+  // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+  //
+  // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+  //    "alt"
+  // 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+  //    "cmd_or_ctrl" (alias: "cmd", "ctrl")
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
@@ -214,6 +217,8 @@
   "show_signature_help_after_edits": false,
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
+  // Whether to allow drag and drop text selection in buffer.
+  "drag_and_drop_selection": true,
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -302,6 +307,8 @@
   //    "all"
   // 4. Draw whitespaces at boundaries only:
   //    "boundary"
+  // 5. Draw whitespaces only after non-whitespace characters:
+  //    "trailing"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -440,7 +447,9 @@
     // Whether to show breakpoints in the gutter.
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
-    "folds": true
+    "folds": true,
+    // Minimum number of characters to reserve space for in the gutter.
+    "min_line_number_digits": 4
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.
@@ -599,7 +608,9 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
-    }
+    },
+    // Whether to hide the root entry when only one folder is open in the window.
+    "hide_root": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -1471,7 +1482,8 @@
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
-      }
+      },
+      "debuggers": ["Delve"]
     },
     "GraphQL": {
       "prettier": {
@@ -1536,18 +1548,18 @@
     "Plain Text": {
       "allow_rewrap": "anywhere"
     },
+    "Python": {
+      "debuggers": ["Debugpy"]
+    },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
+    },
+    "Rust": {
+      "debuggers": ["CodeLLDB"]
     },
     "SCSS": {
       "prettier": {
         "allowed": true
-      }
-    },
-    "SQL": {
-      "prettier": {
-        "allowed": true,
-        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Starlark": {

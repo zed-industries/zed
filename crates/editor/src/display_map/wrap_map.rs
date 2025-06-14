@@ -726,7 +726,7 @@ impl WrapSnapshot {
         self.transforms.summary().output.longest_row
     }
 
-    pub fn row_infos(&self, start_row: u32) -> WrapRows {
+    pub fn row_infos(&self, start_row: u32) -> WrapRows<'_> {
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.start().1.row();
