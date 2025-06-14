@@ -27,6 +27,7 @@ pub struct WorkspaceSettings {
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub on_last_window_closed: OnLastWindowClosed,
+    pub use_native_tabs: bool,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
 }
@@ -194,6 +195,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
     pub on_last_window_closed: Option<OnLastWindowClosed>,
+    /// Whether to use native tabs on macOS.
+    ///
+    /// Default: false
+    pub use_native_tabs: Option<bool>,
     /// Whether to resize all the panels in a dock when resizing the dock.
     ///
     /// Default: ["left"]
