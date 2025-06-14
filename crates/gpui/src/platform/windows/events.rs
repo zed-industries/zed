@@ -1227,6 +1227,7 @@ where
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
+    let capslock = current_capslock();
 
     match virtual_key {
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
@@ -1239,6 +1240,7 @@ where
             state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                capslock,
             }))
         }
         vkey => {
@@ -1369,6 +1371,12 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+#[inline]
+pub(crate) fn current_capslock() -> Capslock {
+    let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
+    Capslock { on: on }
 }
 
 fn get_client_area_insets(

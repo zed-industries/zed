@@ -2,15 +2,15 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
-    Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
+    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
     TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
@@ -796,6 +796,7 @@ pub struct Window {
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
+    capslock: Capslock,
     scale_factor: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
@@ -907,6 +908,7 @@ impl Window {
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
+        let capslock = platform_window.capslock();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
@@ -1015,6 +1017,7 @@ impl Window {
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
+                        window.capslock = window.platform_window.capslock();
                         window
                             .activation_observers
                             .clone()
@@ -1100,6 +1103,7 @@ impl Window {
             mouse_position,
             mouse_hit_test: HitTest::default(),
             modifiers,
+            capslock,
             scale_factor,
             bounds_observers: SubscriberSet::new(),
             appearance,
@@ -1726,6 +1730,11 @@ impl Window {
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
+    }
+
+    /// The current state of the keyboard's capslock
+    pub fn capslock(&self) -> Capslock {
+        self.capslock
     }
 
     fn complete_frame(&self) {
@@ -3352,6 +3361,7 @@ impl Window {
             }
             PlatformInput::ModifiersChanged(modifiers_changed) => {
                 self.modifiers = modifiers_changed.modifiers;
+                self.capslock = modifiers_changed.capslock;
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
             PlatformInput::ScrollWheel(scroll_wheel) => {
