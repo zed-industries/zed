@@ -1,6 +1,6 @@
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
-    Point, Size, platform::AtlasTextureList,
+    Point, Size, phypx, platform::AtlasTextureList,
 };
 use anyhow::Result;
 use blade_graphics as gpu;
@@ -184,8 +184,8 @@ impl BladeAtlasState {
         kind: AtlasTextureKind,
     ) -> &mut BladeAtlasTexture {
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(1024),
-            height: DevicePixels(1024),
+            width: phypx(1024),
+            height: phypx(1024),
         };
 
         let size = min_size.max(&DEFAULT_ATLAS_SIZE);
@@ -214,8 +214,8 @@ impl BladeAtlasState {
                 name: "msaa path texture",
                 format,
                 size: gpu::Extent {
-                    width: size.width.into(),
-                    height: size.height.into(),
+                    width: size.width.as_u32(),
+                    height: size.height.as_u32(),
                     depth: 1,
                 },
                 array_layer_count: 1,
@@ -246,8 +246,8 @@ impl BladeAtlasState {
             name: "atlas",
             format,
             size: gpu::Extent {
-                width: size.width.into(),
-                height: size.height.into(),
+                width: size.width.as_u32(),
+                height: size.height.as_u32(),
                 depth: 1,
             },
             array_layer_count: 1,
@@ -321,14 +321,14 @@ impl BladeAtlasState {
                     mip_level: 0,
                     array_layer: 0,
                     origin: [
-                        upload.bounds.origin.x.into(),
-                        upload.bounds.origin.y.into(),
+                        upload.bounds.origin.x.as_u32(),
+                        upload.bounds.origin.y.as_u32(),
                         0,
                     ],
                 },
                 gpu::Extent {
-                    width: upload.bounds.size.width.into(),
-                    height: upload.bounds.size.height.into(),
+                    width: upload.bounds.size.width.as_u32(),
+                    height: upload.bounds.size.height.as_u32(),
                     depth: 1,
                 },
             );
@@ -447,7 +447,7 @@ impl BladeAtlasTexture {
 
 impl From<Size<DevicePixels>> for etagere::Size {
     fn from(size: Size<DevicePixels>) -> Self {
-        etagere::Size::new(size.width.into(), size.height.into())
+        etagere::Size::new(size.width.0, size.height.0)
     }
 }
 

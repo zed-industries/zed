@@ -1,8 +1,5 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Size, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    phypx, size, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -48,7 +45,7 @@ pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
     fn resolution(&self) -> Result<Size<DevicePixels>> {
-        Ok(size(DevicePixels(1), DevicePixels(1)))
+        Ok(size(phypx(1), phypx(1)))
     }
 
     fn stream(

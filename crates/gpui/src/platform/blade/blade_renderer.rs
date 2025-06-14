@@ -4,8 +4,8 @@
 use super::{BladeAtlas, BladeContext, PATH_TEXTURE_FORMAT};
 use crate::{
     AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GpuSpecs,
-    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Shadow, Size, Underline,
+    MonochromeSprite, Path, PathId, PathVertex, PhysicalPixels, PolychromeSprite, PrimitiveBatch,
+    Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
@@ -110,7 +110,7 @@ struct ShaderSurfacesData {
     s_surface: gpu::Sampler,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
@@ -499,7 +499,7 @@ impl BladeRenderer {
                 .map_origin(|origin| origin.floor())
                 .map_size(|size| size.ceil());
             let tile = self.atlas.allocate_for_rendering(
-                clipped_bounds.size.map(Into::into),
+                clipped_bounds.size.map(PhysicalPixels::quantize),
                 AtlasTextureKind::Path,
                 &mut self.command_encoder,
             );
@@ -508,10 +508,10 @@ impl BladeRenderer {
                 .or_insert(Vec::new())
                 .extend(path.vertices.iter().map(|vertex| PathVertex {
                     xy_position: vertex.xy_position - clipped_bounds.origin
-                        + tile.bounds.origin.map(Into::into),
+                        + tile.bounds.origin.map(PhysicalPixels::unquantize),
                     st_position: vertex.st_position,
                     content_mask: ContentMask {
-                        bounds: tile.bounds.map(Into::into),
+                        bounds: tile.bounds.map(PhysicalPixels::unquantize),
                     },
                 }));
             self.path_tiles.insert(path.id, tile);
@@ -644,7 +644,7 @@ impl BladeRenderer {
                             let sprites = [PathSprite {
                                 bounds: Bounds {
                                     origin: origin.map(|p| p.floor()),
-                                    size: tile.bounds.size.map(Into::into),
+                                    size: tile.bounds.size.map(PhysicalPixels::unquantize),
                                 },
                                 color: path.color,
                                 tile: (*tile).clone(),
