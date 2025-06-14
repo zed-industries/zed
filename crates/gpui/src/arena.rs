@@ -5,6 +5,7 @@ use std::{
     rc::Rc,
 };
 
+/// A pointer into the arena used for dropping arena values.
 struct ArenaElement {
     value: *mut u8,
     drop: unsafe fn(*mut u8),
@@ -19,18 +20,17 @@ impl Drop for ArenaElement {
     }
 }
 
+/// A raw `Box` pointer, used for dropping elements outside the arena.
 struct OutsideElement {
-    value: *mut u8,
-    layout: alloc::Layout,
-    drop: unsafe fn(*mut u8),
+    raw_box: *mut u8,
+    drop_box: unsafe fn(*mut u8),
 }
 
 impl Drop for OutsideElement {
     #[inline(always)]
     fn drop(&mut self) {
         unsafe {
-            (self.drop)(self.value);
-            alloc::dealloc(self.value, self.layout);
+            (self.drop_box)(self.raw_box);
         }
     }
 }
@@ -177,6 +177,12 @@ impl Arena {
             }
         }
 
+        unsafe fn drop_box<T>(raw_box: *mut u8) {
+            unsafe {
+                let _ = Box::from_raw(raw_box.cast::<T>());
+            }
+        }
+
         unsafe {
             let layout = alloc::Layout::new::<T>();
             let offset = self.offset.add(self.offset.align_offset(layout.align()));
@@ -197,15 +203,12 @@ impl Arena {
                     valid: self.valid.clone(),
                 }
             } else {
-                let value = alloc::alloc(layout);
-                let ptr = value.cast();
-                inner_writer(ptr, f);
+                let ptr = Box::into_raw(Box::new(f()));
 
                 self.outside_byte_count += layout.size();
                 self.outside_elements.push(OutsideElement {
-                    value,
-                    layout,
-                    drop: drop::<T>,
+                    raw_box: ptr.cast(),
+                    drop_box: drop_box::<T>,
                 });
 
                 ArenaBox {
