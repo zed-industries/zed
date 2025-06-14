@@ -501,10 +501,10 @@ mod tests {
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
 
-            // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
+            // Tabbing inside of leading whitespace accepts suggestion.
             editor.tab(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
-            assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
+            assert!(!editor.has_active_inline_completion());
+            assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
             // Using AcceptEditPrediction again accepts the suggestion.
