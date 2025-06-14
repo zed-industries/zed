@@ -7726,6 +7726,8 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                         chunk.text.split_at(diff_transform_end - self.range.start);
                     self.range.start = diff_transform_end;
                     chunk.text = after;
+                    // FIXME: We should be handling bitmap for tabs and chars here
+                    // Because we do a split at operation the bitmaps will be off
                     Some(Chunk {
                         text: before,
                         ..chunk.clone()

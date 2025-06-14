@@ -729,6 +729,7 @@ mod tests {
         // assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
         // assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
         // assert_eq!(tab_snapshot.expand_tabs("\ta".chars(), 2), 5);
+        // FIXME: the test
         panic!("Fix this test")
     }
 
