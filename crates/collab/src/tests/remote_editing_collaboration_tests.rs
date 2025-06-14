@@ -1,4 +1,4 @@
-use crate::tests::TestServer;
+use crate::tests::{TestServer, rust_lang};
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
 
@@ -687,4 +687,381 @@ async fn test_remote_server_debugger(
     });
 
     shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_collab_show_document_host_access(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "settings.json": r#"{"languages":{"Rust":{"language_servers":["rust-analyzer"]}}}"#
+                },
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "main.rs": "fn main() { println!(\"Hello, world!\"); }"
+                }
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            ..Default::default()
+        },
+    );
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (_buffer_a, _handle) = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "src/lib.rs"), cx)
+        })
+        .await
+        .expect("host opens buffer with LSP");
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let target_uri = lsp::Url::from_file_path(path!("/project/src/main.rs")).unwrap();
+    let show_document_result = fake_server
+        .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
+            uri: target_uri.clone(),
+            external: Some(false),
+            take_focus: Some(true),
+            selection: Some(lsp::Range::new(
+                lsp::Position::new(0, 3),
+                lsp::Position::new(0, 7),
+            )),
+        })
+        .await
+        .into_response()
+        .unwrap();
+
+    assert!(
+        show_document_result.success,
+        "Host should have access to ShowDocument for files"
+    );
+
+    executor.run_until_parked();
+
+    let buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let content_a = buffer_a.read_with(cx_a, |buffer, _| buffer.text());
+    assert!(
+        content_a.contains("Hello, world!"),
+        "Host should access file content"
+    );
+
+    let buffer_path = buffer_a.read_with(cx_a, |buffer, cx| buffer.file().map(|f| f.full_path(cx)));
+    assert!(
+        buffer_path
+            .unwrap()
+            .to_string_lossy()
+            .ends_with("src/main.rs"),
+        "Host's opened buffer should correspond to the ShowDocument URI"
+    );
+
+    let buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let content_b = buffer_b.read_with(cx_b, |buffer, _| buffer.text());
+    assert!(
+        content_b.contains("Hello, world!"),
+        "Collaborator should be able to access docs through shared project"
+    );
+
+    let (_collaborator_buffer, _collaborator_handle) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .expect("Collaborator can access LSP through shared project");
+}
+
+#[gpui::test]
+async fn test_collab_show_document_collaborator_no_effect(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "settings.json": r#"{"languages":{"Rust":{"language_servers":["rust-analyzer"]}}}"#
+                },
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "main.rs": "fn main() { println!(\"Test!\"); }"
+                }
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+
+    client_a.language_registry().add(rust_lang());
+    let mut host_fake_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            ..Default::default()
+        },
+    );
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (_buffer_a, _handle_a) = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "src/lib.rs"), cx)
+        })
+        .await
+        .expect("host opens buffer with LSP");
+
+    let (_buffer_b, _handle_b) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "src/lib.rs"), cx)
+        })
+        .await
+        .expect("collaborator opens buffer with LSP through shared project");
+
+    let host_fake_server = host_fake_servers.next().await.unwrap();
+
+    let initial_buffer_count_a = project_a.read_with(cx_a, |project, cx| {
+        project.buffer_store().read(cx).buffers().count()
+    });
+    let initial_buffer_count_b = project_b.read_with(cx_b, |project, cx| {
+        project.buffer_store().read(cx).buffers().count()
+    });
+
+    let target_uri = lsp::Url::from_file_path(path!("/project/src/main.rs")).unwrap();
+    let show_document_result = host_fake_server
+        .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
+            uri: target_uri,
+            external: Some(false),
+            take_focus: Some(true),
+            selection: None,
+        })
+        .await
+        .into_response()
+        .unwrap();
+
+    assert!(show_document_result.success, "ShowDocument should succeed");
+    executor.run_until_parked();
+
+    let final_buffer_count_a = project_a.read_with(cx_a, |project, cx| {
+        project.buffer_store().read(cx).buffers().count()
+    });
+
+    let final_buffer_count_b = project_b.read_with(cx_b, |project, cx| {
+        project.buffer_store().read(cx).buffers().count()
+    });
+
+    assert!(
+        final_buffer_count_a >= initial_buffer_count_a,
+        "Host should have ShowDocument effect"
+    );
+    assert_eq!(
+        final_buffer_count_b, initial_buffer_count_b,
+        "Collaborator should NOT have ShowDocument effect - files should not open automatically for collaborators"
+    );
+}
+
+#[gpui::test]
+async fn test_collab_ssh_show_document_host_access(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx_a.set_name("a");
+    cx_b.set_name("b");
+    server_cx.set_name("server");
+
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/project"),
+            json!({
+                ".zed": {
+                    "settings.json": r#"{"languages":{"Rust":{"language_servers":["rust-analyzer"]}}}"#
+                },
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "main.rs": "fn main() { println!(\"SSH ShowDocument test!\"); }"
+                }
+            }),
+        )
+        .await;
+
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let mut fake_language_servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            ..Default::default()
+        },
+    );
+
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let _headless_project = server_cx.new(|cx| {
+        client::init_settings(cx);
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: NodeRuntime::unavailable(),
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+            },
+            cx,
+        )
+    });
+
+    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_ssh_project(path!("/project"), client_ssh, cx_a)
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (_buffer, _handle) = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "src/lib.rs"), cx)
+        })
+        .await
+        .expect("host opens buffer with LSP on remote server");
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let target_uri = lsp::Url::from_file_path(path!("/project/src/main.rs")).unwrap();
+    let show_document_result = fake_server
+        .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
+            uri: target_uri.clone(),
+            external: Some(false),
+            take_focus: Some(true),
+            selection: Some(lsp::Range::new(
+                lsp::Position::new(0, 3),
+                lsp::Position::new(0, 7),
+            )),
+        })
+        .await
+        .into_response()
+        .unwrap();
+
+    assert!(
+        show_document_result.success,
+        "SSH host should be able to access files"
+    );
+
+    executor.run_until_parked();
+
+    let buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let content_a = buffer_a.read_with(cx_a, |buffer, _| buffer.text());
+    let content_b = buffer_b.read_with(cx_b, |buffer, _| buffer.text());
+
+    assert!(
+        content_a.contains("SSH ShowDocument test!"),
+        "Host should access SSH file content"
+    );
+    assert_eq!(
+        content_a, content_b,
+        "Collaborator should see same SSH content as host"
+    );
+
+    let buffer_path = buffer_a.read_with(cx_a, |buffer, cx| buffer.file().map(|f| f.full_path(cx)));
+    assert!(
+        buffer_path
+            .unwrap()
+            .to_string_lossy()
+            .ends_with("src/main.rs"),
+        "SSH host's opened buffer should correspond to the ShowDocument URI"
+    );
 }
