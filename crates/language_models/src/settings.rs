@@ -429,12 +429,10 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.open_router.api_url,
                 open_router.as_ref().and_then(|s| s.api_url.clone()),
             );
-            merge(
-                &mut settings.open_router.available_models,
-                open_router
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
-            );
+
+            open_router
+                .as_ref()
+                .and_then(|s| s.available_models.clone());
 
             // Copilot Chat
             let copilot_chat = value.copilot_chat.clone().unwrap_or_default();
