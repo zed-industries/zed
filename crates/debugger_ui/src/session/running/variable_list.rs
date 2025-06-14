@@ -7,9 +7,9 @@ use gpui::{
     TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::debugger::session::{Session, SessionEvent};
+use project::debugger::session::{Session, SessionEvent, Watch};
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, prelude::*};
+use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::debug_panic;
 
 actions!(
@@ -19,7 +19,9 @@ actions!(
         CollapseSelectedEntry,
         CopyVariableName,
         CopyVariableValue,
-        EditVariable
+        EditVariable,
+        AddWatch,
+        RemoveWatch,
     ]
 );
 
@@ -38,6 +40,13 @@ pub(crate) struct EntryPath {
 }
 
 impl EntryPath {
+    fn for_watch(watch: impl Into<SharedString>) -> Self {
+        Self {
+            leaf_name: Some(watch.into()),
+            indices: Arc::new([]),
+        }
+    }
+
     fn for_scope(scope_name: impl Into<SharedString>) -> Self {
         Self {
             leaf_name: Some(scope_name.into()),
@@ -68,11 +77,19 @@ impl EntryPath {
 
 #[derive(Debug, Clone, PartialEq)]
 enum EntryKind {
+    Watch(Watch),
     Variable(dap::Variable),
     Scope(dap::Scope),
 }
 
 impl EntryKind {
+    fn as_watch(&self) -> Option<&Watch> {
+        match self {
+            EntryKind::Watch(watch) => Some(watch),
+            _ => None,
+        }
+    }
+
     fn as_variable(&self) -> Option<&dap::Variable> {
         match self {
             EntryKind::Variable(dap) => Some(dap),
@@ -90,6 +107,7 @@ impl EntryKind {
     #[allow(dead_code)]
     fn name(&self) -> &str {
         match self {
+            EntryKind::Watch(watch) => &watch.expression,
             EntryKind::Variable(dap) => &dap.name,
             EntryKind::Scope(dap) => &dap.name,
         }
@@ -103,6 +121,10 @@ struct ListEntry {
 }
 
 impl ListEntry {
+    fn as_watch(&self) -> Option<&Watch> {
+        self.dap_kind.as_watch()
+    }
+
     fn as_variable(&self) -> Option<&dap::Variable> {
         self.dap_kind.as_variable()
     }
@@ -114,6 +136,7 @@ impl ListEntry {
     fn item_id(&self) -> ElementId {
         use std::fmt::Write;
         let mut id = match &self.dap_kind {
+            EntryKind::Watch(watch) => format!("watch-{}", watch.expression),
             EntryKind::Variable(dap) => format!("variable-{}", dap.name),
             EntryKind::Scope(dap) => format!("scope-{}", dap.name),
         };
@@ -126,6 +149,7 @@ impl ListEntry {
     fn item_value_id(&self) -> ElementId {
         use std::fmt::Write;
         let mut id = match &self.dap_kind {
+            EntryKind::Watch(watch) => format!("watch-{}", watch.expression),
             EntryKind::Variable(dap) => format!("variable-{}", dap.name),
             EntryKind::Scope(dap) => format!("scope-{}", dap.name),
         };
@@ -169,7 +193,7 @@ impl VariableList {
                     this.edited_path.take();
                     this.selected_stack_frame_id.take();
                 }
-                SessionEvent::Variables => {
+                SessionEvent::Variables | SessionEvent::Watches => {
                     this.build_entries(cx);
                 }
                 _ => {}
@@ -216,6 +240,7 @@ impl VariableList {
         };
 
         let mut entries = vec![];
+
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
             session.scopes(stack_frame_id, cx).iter().cloned().collect()
         });
@@ -249,11 +274,28 @@ impl VariableList {
             })
             .collect::<Vec<_>>();
 
+        let watches = self.session.read(cx).watches().clone();
+        stack.extend(
+            watches
+                .values()
+                .into_iter()
+                .map(|watch| {
+                    (
+                        watch.variables_reference,
+                        watch.variables_reference,
+                        EntryPath::for_watch(watch.expression.clone()),
+                        EntryKind::Watch(watch.clone()),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+
         let scopes_count = stack.len();
 
         while let Some((container_reference, variables_reference, mut path, dap_kind)) = stack.pop()
         {
             match &dap_kind {
+                EntryKind::Watch(watch) => path = path.with_child(watch.expression.clone().into()),
                 EntryKind::Variable(dap) => path = path.with_name(dap.name.clone().into()),
                 EntryKind::Scope(dap) => path = path.with_child(dap.name.clone().into()),
             }
@@ -312,6 +354,9 @@ impl VariableList {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
                 self.selected_stack_frame_id = Some(*stack_frame_id);
+                self.session.update(cx, |session, cx| {
+                    session.refresh_watches(*stack_frame_id, cx);
+                });
                 self.build_entries(cx);
             }
             StackFrameListEvent::BuiltEntries => {}
@@ -323,7 +368,7 @@ impl VariableList {
             .iter()
             .filter_map(|entry| match &entry.dap_kind {
                 EntryKind::Variable(dap) => Some(dap.clone()),
-                EntryKind::Scope(_) => None,
+                EntryKind::Scope(_) | EntryKind::Watch { .. } => None,
             })
             .collect()
     }
@@ -342,6 +387,7 @@ impl VariableList {
                     .and_then(|entry| Some(entry).zip(self.entry_states.get(&entry.path)))?;
 
                 match &entry.dap_kind {
+                    EntryKind::Watch { .. } => Some(self.render_watch(entry, *state, window, cx)),
                     EntryKind::Variable(_) => Some(self.render_variable(entry, *state, window, cx)),
                     EntryKind::Scope(_) => Some(self.render_scope(entry, *state, cx)),
                 }
@@ -499,6 +545,7 @@ impl VariableList {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
                 .action("Edit Value", EditVariable.boxed_clone())
+                .action("Add Watch", AddWatch.boxed_clone())
                 .context(self.focus_handle.clone())
         });
 
@@ -573,6 +620,61 @@ impl VariableList {
         cx.notify();
     }
 
+    fn add_watch(&mut self, _: &AddWatch, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+
+        let Some(stack_frame_id) = self.selected_stack_frame_id else {
+            return;
+        };
+
+        let add_watch_task = self.session.update(cx, |session, cx| {
+            let expression = variable
+                .evaluate_name
+                .clone()
+                .unwrap_or_else(|| variable.name.clone());
+
+            session.add_watch(expression, stack_frame_id, cx)
+        });
+
+        cx.spawn(async move |this, cx| {
+            add_watch_task.await?;
+
+            this.update(cx, |this, cx| {
+                this.build_entries(cx);
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn remove_watch(&mut self, _: &RemoveWatch, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+
+        let Some(watch) = entry.as_watch() else {
+            return;
+        };
+
+        self.session.update(cx, |session, cx| {
+            session.remove_watch(watch.expression.clone(), cx);
+        });
+        self.build_entries(cx);
+    }
+
     #[track_caller]
     #[cfg(test)]
     pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
@@ -623,6 +725,7 @@ impl VariableList {
 
         for entry in self.entries.iter() {
             match &entry.dap_kind {
+                EntryKind::Watch { .. } => continue,
                 EntryKind::Variable(dap) => scopes[idx].1.push(dap.clone()),
                 EntryKind::Scope(scope) => {
                     if scopes.len() > 0 {
@@ -670,6 +773,194 @@ impl VariableList {
         });
         editor.focus_handle(cx).focus(window);
         editor
+    }
+
+    fn render_watch(
+        &self,
+        entry: &ListEntry,
+        state: EntryState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(watch) = &entry.as_watch() else {
+            debug_panic!("Called render watch on non watch variable list entry variant");
+            return div().into_any_element();
+        };
+
+        let syntax_color_for = |name| cx.theme().syntax().get(name).color;
+        let variable_name_color = if self.disabled {
+            Some(Color::Disabled.color(cx))
+        } else {
+            match &watch
+                .presentation_hint
+                .as_ref()
+                .and_then(|hint| hint.kind.as_ref())
+                .unwrap_or(&VariablePresentationHintKind::Unknown)
+            {
+                VariablePresentationHintKind::Class
+                | VariablePresentationHintKind::BaseClass
+                | VariablePresentationHintKind::InnerClass
+                | VariablePresentationHintKind::MostDerivedClass => syntax_color_for("type"),
+                VariablePresentationHintKind::Data => syntax_color_for("variable"),
+                VariablePresentationHintKind::Unknown | _ => syntax_color_for("variable"),
+            }
+        };
+        let variable_color = self
+            .disabled
+            .then(|| Color::Disabled.color(cx))
+            .or_else(|| syntax_color_for("variable.special"));
+
+        let is_selected = self
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection == &entry.path);
+        let var_ref = watch.variables_reference;
+
+        let colors = get_entry_color(cx);
+        let bg_hover_color = if !is_selected {
+            colors.hover
+        } else {
+            colors.default
+        };
+        let border_color = if is_selected {
+            colors.marked_active
+        } else {
+            colors.default
+        };
+        let path = entry.path.clone();
+
+        let weak = cx.weak_entity();
+        let focus_handle = self.focus_handle.clone();
+
+        div()
+            .id(entry.item_id())
+            .group("variable_list_entry")
+            .pl_2()
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
+            .flex()
+            .w_full()
+            .h_full()
+            .hover(|style| style.bg(bg_hover_color))
+            .on_click(cx.listener({
+                let path = path.clone();
+                move |this, _, _window, cx| {
+                    this.selection = Some(path.clone());
+                    cx.notify();
+                }
+            }))
+            .child(
+                ListItem::new(SharedString::from(format!("watch-{}", watch.expression)))
+                    .selectable(false)
+                    .disabled(self.disabled)
+                    .selectable(false)
+                    .indent_level(state.depth)
+                    .indent_step_size(px(10.))
+                    .always_show_disclosure_icon(true)
+                    .when(var_ref > 0, |list_item| {
+                        list_item.toggle(state.is_expanded).on_toggle(cx.listener({
+                            let var_path = entry.path.clone();
+                            move |this, _, _, cx| {
+                                this.session.update(cx, |session, cx| {
+                                    session.variables(var_ref, cx);
+                                });
+
+                                this.toggle_entry(&var_path, cx);
+                            }
+                        }))
+                    })
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .text_ui_sm(cx)
+                            .w_full()
+                            .child(
+                                Label::new(&watch.expression).when_some(variable_name_color, |this, color| {
+                                    this.color(Color::from(color))
+                                }),
+                            )
+                            .when(!watch.value.is_empty(), |this| {
+                                this.child(div().w_full().id(entry.item_value_id()).map(|this| {
+                                    if let Some((_, editor)) = self
+                                        .edited_path
+                                        .as_ref()
+                                        .filter(|(path, _)| path == &entry.path)
+                                    {
+                                        this.child(div().size_full().px_2().child(editor.clone()))
+                                    } else {
+                                        this.text_color(cx.theme().colors().text_muted)
+                                            .when(
+                                                !self.disabled
+                                                    && self
+                                                        .session
+                                                        .read(cx)
+                                                        .capabilities()
+                                                        .supports_set_variable
+                                                        .unwrap_or_default(),
+                                                |this| {
+                                                    let path = entry.path.clone();
+                                                    let variable_value = watch.value.clone();
+                                                    this.on_click(cx.listener(
+                                                        move |this, click: &ClickEvent, window, cx| {
+                                                            if click.down.click_count < 2 {
+                                                                return;
+                                                            }
+                                                            let editor = Self::create_variable_editor(
+                                                                &variable_value,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            this.edited_path =
+                                                                Some((path.clone(), editor));
+
+                                                            cx.notify();
+                                                        },
+                                                    ))
+                                                },
+                                            )
+                                            .child(
+                                                Label::new(format!("=  {}", &watch.value))
+                                                    .single_line()
+                                                    .truncate()
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .when_some(variable_color, |this, color| {
+                                                        this.color(Color::from(color))
+                                                    }),
+                                            )
+                                    }
+                                }))
+                            })
+                    ).end_slot(
+                        IconButton::new(
+                            SharedString::from(format!("watch-{}-remove-button", watch.expression)),
+                            IconName::Close,
+                        )
+                        .on_click({
+                            let weak = weak.clone();
+                            let path = path.clone();
+                            move |_, window, cx| {
+                                weak.update(cx, |variable_list, cx| {
+                                    variable_list.selection = Some(path.clone());
+                                    variable_list.remove_watch(&RemoveWatch, window, cx);
+                                })
+                                .ok();
+                            }
+                        })
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Remove Watch",
+                                &RemoveWatch,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        })
+                        .icon_size(ui::IconSize::Indicator)
+                )
+            )
+            .into_any()
     }
 
     fn render_scope(
@@ -751,12 +1042,9 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let dap = match &variable.dap_kind {
-            EntryKind::Variable(dap) => dap,
-            EntryKind::Scope(_) => {
-                debug_panic!("Called render variable on variable list entry kind scope");
-                return div().into_any_element();
-            }
+        let Some(dap) = &variable.as_variable() else {
+            debug_panic!("Called render variable on non variable variable list entry variant");
+            return div().into_any_element();
         };
 
         let syntax_color_for = |name| cx.theme().syntax().get(name).color;
@@ -978,6 +1266,8 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::copy_variable_name))
             .on_action(cx.listener(Self::copy_variable_value))
             .on_action(cx.listener(Self::edit_variable))
+            .on_action(cx.listener(Self::add_watch))
+            .on_action(cx.listener(Self::remove_watch))
             .child(
                 uniform_list(
                     "variable-list",

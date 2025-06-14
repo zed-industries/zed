@@ -26,7 +26,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
 };
 use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
@@ -122,6 +122,14 @@ impl From<dap::Thread> for Thread {
             _has_stopped: false,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Watch {
+    pub expression: String,
+    pub value: String,
+    pub variables_reference: u64,
+    pub presentation_hint: Option<VariablePresentationHint>,
 }
 
 pub enum Mode {
@@ -594,6 +602,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
+    watches: HashMap<String, Watch>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
@@ -684,6 +693,7 @@ pub enum SessionEvent {
     Stopped(Option<ThreadId>),
     StackTrace,
     Variables,
+    Watches,
     Threads,
     InvalidateInlineValue,
     CapabilitiesLoaded,
@@ -750,6 +760,7 @@ impl Session {
                 child_session_ids: HashSet::default(),
                 parent_session,
                 capabilities: Capabilities::default(),
+                watches: HashMap::default(),
                 variables: Default::default(),
                 stack_frames: Default::default(),
                 thread_states: ThreadStates::default(),
@@ -2084,6 +2095,54 @@ impl Session {
             .flatten()
             .cloned()
             .collect()
+    }
+
+    pub fn watches(&self) -> &HashMap<String, Watch> {
+        &self.watches
+    }
+
+    pub fn add_watch(
+        &mut self,
+        expression: String,
+        frame_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let request = self.mode.request_dap(EvaluateCommand {
+            expression: expression.clone(),
+            context: Some(EvaluateArgumentsContext::Watch),
+            frame_id: Some(frame_id),
+            source: None,
+        });
+
+        cx.spawn(async move |this, cx| {
+            let response = request.await?;
+
+            this.update(cx, |session, cx| {
+                session.watches.insert(
+                    expression.clone(),
+                    Watch {
+                        expression,
+                        value: response.result,
+                        variables_reference: response.variables_reference,
+                        presentation_hint: response.presentation_hint,
+                    },
+                );
+                cx.emit(SessionEvent::Watches);
+            })
+        })
+    }
+
+    pub fn refresh_watches(&mut self, frame_id: u64, cx: &mut Context<Self>) {
+        let watches = self.watches.clone();
+        for (_, watch) in watches.into_iter() {
+            self.add_watch(watch.expression.clone(), frame_id, cx)
+                .detach();
+        }
+    }
+
+    pub fn remove_watch(&mut self, expression: String, cx: &mut Context<Self>) {
+        self.watches.remove(&expression);
+        cx.notify();
     }
 
     pub fn variables(
