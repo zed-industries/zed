@@ -270,10 +270,15 @@ mod test {
     fn test_scroll_keys() {
         //These keys should be handled by the scrolling element directly
         //Need to signify this by returning 'None'
-        let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
-        let shift_pagedown = Keystroke::parse("shift-pagedown").unwrap();
-        let shift_home = Keystroke::parse("shift-home").unwrap();
-        let shift_end = Keystroke::parse("shift-end").unwrap();
+        let shift_key = |key: &str| Keystroke {
+            modifiers: Modifiers::shift(),
+            key: key.to_owned(),
+            key_char: None,
+        };
+        let shift_pageup = shift_key("pageup");
+        let shift_pagedown = shift_key("pagedown");
+        let shift_home = shift_key("home");
+        let shift_end = shift_key("end");
 
         let none = TermMode::NONE;
         assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
@@ -299,8 +304,13 @@ mod test {
             Some("\x1b[1;2F".into())
         );
 
-        let pageup = Keystroke::parse("pageup").unwrap();
-        let pagedown = Keystroke::parse("pagedown").unwrap();
+        let normal_key = |key: &str| Keystroke {
+            modifiers: crate::Modifiers::none(),
+            key: key.to_owned(),
+            key_char: None,
+        };
+        let pageup = normal_key("pageup");
+        let pagedown = normal_key("pagedown");
         let any = TermMode::ANY;
 
         assert_eq!(to_esc_str(&pageup, &any, false), Some("\x1b[5~".into()));
@@ -328,10 +338,15 @@ mod test {
         let app_cursor = TermMode::APP_CURSOR;
         let none = TermMode::NONE;
 
-        let up = Keystroke::parse("up").unwrap();
-        let down = Keystroke::parse("down").unwrap();
-        let left = Keystroke::parse("left").unwrap();
-        let right = Keystroke::parse("right").unwrap();
+        let generate_keystroke = |key: &str| Keystroke {
+            modifiers: Modifiers::none(),
+            key: key.to_owned(),
+            key_char: None,
+        };
+        let up = generate_keystroke("up");
+        let down = generate_keystroke("down");
+        let left = generate_keystroke("left");
+        let right = generate_keystroke("right");
 
         assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".into()));
         assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".into()));
@@ -356,12 +371,20 @@ mod test {
         for (lower, upper) in letters_lower.zip(letters_upper) {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-shift-{}", lower)).unwrap(),
+                    &Keystroke {
+                        modifiers: Modifiers::control_shift(),
+                        key: lower.to_string(),
+                        key_char: None,
+                    },
                     &mode,
                     false
                 ),
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-{}", upper)).unwrap(),
+                    &Keystroke {
+                        modifiers: Modifiers::control(),
+                        key: upper.to_string(),
+                        key_char: None,
+                    },
                     &mode,
                     false
                 ),
@@ -378,7 +401,11 @@ mod test {
         for character in ascii_printable {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
+                    &Keystroke {
+                        modifiers: Modifiers::alt(),
+                        key: character.to_string(),
+                        key_char: None,
+                    },
                     &TermMode::NONE,
                     true
                 )
@@ -396,7 +423,11 @@ mod test {
         for key in gpui_keys {
             assert_ne!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
+                    &Keystroke {
+                        modifiers: Modifiers::alt(),
+                        key: key.to_string(),
+                        key_char: None,
+                    },
                     &TermMode::NONE,
                     true
                 )
@@ -419,15 +450,78 @@ mod test {
         //    8     | Shift + Alt + Control
         // ---------+---------------------------
         // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-        assert_eq!(2, modifier_code(&Keystroke::parse("shift-a").unwrap()));
-        assert_eq!(3, modifier_code(&Keystroke::parse("alt-a").unwrap()));
-        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-a").unwrap()));
-        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-a").unwrap()));
-        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-a").unwrap()));
-        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-a").unwrap()));
+        assert_eq!(
+            2,
+            modifier_code(&Keystroke {
+                modifiers: Modifiers::shift(),
+                key: "a".into(),
+                key_char: None
+            })
+        );
+        assert_eq!(
+            3,
+            modifier_code(&Keystroke {
+                modifiers: Modifiers::alt(),
+                key: "a".into(),
+                key_char: None
+            })
+        );
+        assert_eq!(
+            4,
+            modifier_code(&Keystroke {
+                modifiers: Modifiers {
+                    shift: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                key: "a".into(),
+                key_char: None
+            })
+        );
+        assert_eq!(
+            5,
+            modifier_code(&Keystroke {
+                modifiers: Modifiers::control(),
+                key: "a".into(),
+                key_char: None
+            })
+        );
+        assert_eq!(
+            6,
+            modifier_code(&Keystroke {
+                modifiers: Modifiers {
+                    shift: true,
+                    control: true,
+                    ..Default::default()
+                },
+                key: "a".into(),
+                key_char: None
+            })
+        );
+        assert_eq!(
+            7,
+            modifier_code(&Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    control: true,
+                    ..Default::default()
+                },
+                key: "a".into(),
+                key_char: None
+            })
+        );
         assert_eq!(
             8,
-            modifier_code(&Keystroke::parse("shift-ctrl-alt-a").unwrap())
+            modifier_code(&Keystroke {
+                modifiers: Modifiers {
+                    shift: true,
+                    control: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                key: "a".into(),
+                key_char: None
+            })
         );
     }
 }
