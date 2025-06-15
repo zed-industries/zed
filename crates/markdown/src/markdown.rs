@@ -231,7 +231,7 @@ impl Markdown {
         &self.parsed_markdown
     }
 
-    pub fn escape(s: &str) -> Cow<str> {
+    pub fn escape(s: &str) -> Cow<'_, str> {
         // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
         let count = s
             .bytes()

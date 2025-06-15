@@ -339,6 +339,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_open_ai(request, &self.model, self.max_output_tokens());
@@ -437,7 +438,7 @@ pub fn into_open_ai(
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
-        max_tokens: max_output_tokens,
+        max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
@@ -647,8 +648,6 @@ pub fn count_open_ai_tokens(
             | Model::FourPointOneMini
             | Model::FourPointOneNano
             | Model::O1
-            | Model::O1Preview
-            | Model::O1Mini
             | Model::O3
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),

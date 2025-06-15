@@ -218,7 +218,7 @@ impl DebugAdapterClient {
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
     where
-        F: 'static + Send + FnMut(IoKind, &str),
+        F: 'static + Send + FnMut(IoKind, Option<&str>, &str),
     {
         self.transport_delegate.add_log_handler(f, kind);
     }
@@ -297,7 +297,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -367,7 +367,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -420,7 +420,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,

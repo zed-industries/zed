@@ -127,6 +127,9 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(unix)]
+    util::prevent_root_execution();
+
     // Exit flatpak sandbox if needed
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {

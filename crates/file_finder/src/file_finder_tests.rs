@@ -209,7 +209,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         "bandana",
         "./bandana",
         ".\\bandana",
-        util::separator!("a/bandana"),
+        util::path!("a/bandana"),
         "b/bandana",
         "b\\bandana",
         " bandana",
@@ -230,7 +230,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             assert_eq!(
                 picker.delegate.matches.len(),
                 // existence of CreateNew option depends on whether path already exists
-                if bandana_query == util::separator!("a/bandana") {
+                if bandana_query == util::path!("a/bandana") {
                     1
                 } else {
                     2
