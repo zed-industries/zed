@@ -24,6 +24,7 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServer
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
+use serde_json::json;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::collections::hash_map::Entry;
@@ -61,7 +62,15 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    copilot_chat::init(fs.clone(), http.clone(), cx);
+    let language_settings = all_language_settings(None, cx);
+    let configuration = copilot_chat::CopilotChatConfiguration {
+        enterprise_uri: language_settings
+            .edit_predictions
+            .copilot
+            .enterprise_uri
+            .clone(),
+    };
+    copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();
@@ -347,8 +356,11 @@ impl Copilot {
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
         this.start_copilot(true, false, cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
-            .detach();
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.start_copilot(true, false, cx);
+            this.send_configuration_update(cx);
+        })
+        .detach();
         this
     }
 
@@ -433,6 +445,43 @@ impl Copilot {
         }
 
         if env.is_empty() { None } else { Some(env) }
+    }
+
+    fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
+        let copilot_settings = all_language_settings(None, cx)
+            .edit_predictions
+            .copilot
+            .clone();
+
+        let settings = json!({
+            "http": {
+                "proxy": copilot_settings.proxy,
+                "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
+            },
+            "github-enterprise": {
+                "uri": copilot_settings.enterprise_uri
+            }
+        });
+
+        if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+            copilot_chat.update(cx, |chat, cx| {
+                chat.set_configuration(
+                    copilot_chat::CopilotChatConfiguration {
+                        enterprise_uri: copilot_settings.enterprise_uri.clone(),
+                    },
+                    cx,
+                );
+            });
+        }
+
+        if let Ok(server) = self.server.as_running() {
+            server
+                .lsp
+                .notify::<lsp::notification::DidChangeConfiguration>(
+                    &lsp::DidChangeConfigurationParams { settings },
+                )
+                .log_err();
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -541,12 +590,6 @@ impl Copilot {
                 .into_response()
                 .context("copilot: check status")?;
 
-            server
-                .request::<request::SetEditorInfo>(editor_info)
-                .await
-                .into_response()
-                .context("copilot: set editor info")?;
-
             anyhow::Ok((server, status))
         };
 
@@ -564,6 +607,8 @@ impl Copilot {
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
+                    // Send configuration now that the LSP is fully started
+                    this.send_configuration_update(cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
