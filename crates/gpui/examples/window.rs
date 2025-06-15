@@ -1,13 +1,53 @@
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Timer,
-    Window, WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    AnyView, App, Application, Bounds, ClickEvent, Context, Entity, KeyBinding, PromptButton,
+    PromptLevel, SharedString, Task, Timer, Window, WindowBounds, WindowControlArea, WindowKind,
+    WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
-    custom_titlebar: bool,
+    title_bar: Option<Entity<AppTitleBar>>,
+    enable_cache_view: bool,
+    value: f64,
+    _task: Option<Task<()>>,
 }
 
-fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
+impl SubWindow {
+    fn new(custom_titlebar: bool, cx: &mut Context<Self>) -> Self {
+        let _task = if custom_titlebar {
+            Some(cx.spawn(async move |this, cx| {
+                // This loop for test when continuous update, is the TitleBar draggable.
+                loop {
+                    Timer::after(std::time::Duration::from_millis(30)).await;
+
+                    _ = this.update(cx, |this, cx| {
+                        this.value = rand::random::<f64>() * 100000000.0;
+                        cx.notify();
+                    });
+                }
+            }))
+        } else {
+            None
+        };
+
+        let title_bar = if custom_titlebar {
+            Some(cx.new(|_| AppTitleBar))
+        } else {
+            None
+        };
+
+        Self {
+            title_bar,
+            value: 0.0,
+            enable_cache_view: false,
+            _task,
+        }
+    }
+}
+
+fn button(
+    text: &str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
     div()
         .id(SharedString::from(text.to_string()))
         .flex_none()
@@ -19,44 +59,109 @@ fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> imp
         .rounded_sm()
         .cursor_pointer()
         .child(text.to_string())
-        .on_click(move |_, window, cx| on_click(window, cx))
+        .on_click(move |ev, window, cx| on_click(ev, window, cx))
+}
+
+struct AppTitleBar;
+
+impl Render for AppTitleBar {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("titlebar")
+            .flex()
+            .h(px(32.))
+            .text_color(gpui::white())
+            .w_full()
+            .justify_between()
+            .child(
+                div()
+                    .px_3()
+                    .bg(gpui::black())
+                    .window_control_area(WindowControlArea::Drag)
+                    .flex()
+                    .items_center()
+                    .flex_1()
+                    .child("Custom Titlebar"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .id("minimize")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(32.))
+                            .window_control_area(WindowControlArea::Min)
+                            .bg(gpui::black())
+                            .hover(|this| this.bg(gpui::black().opacity(0.95)))
+                            .text_color(gpui::white())
+                            .child("_"),
+                    )
+                    .child(
+                        div()
+                            .id("maximize")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(32.))
+                            .window_control_area(WindowControlArea::Max)
+                            .bg(gpui::black())
+                            .hover(|this| this.bg(gpui::black().opacity(0.95)))
+                            .text_color(gpui::white())
+                            .child("+"),
+                    )
+                    .child(
+                        div()
+                            .id("close")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(32.))
+                            .window_control_area(WindowControlArea::Close)
+                            .bg(gpui::black())
+                            .hover(|this| this.bg(gpui::red().opacity(0.95)))
+                            .text_color(gpui::white())
+                            .child("x"),
+                    ),
+            )
+    }
 }
 
 impl Render for SubWindow {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .bg(rgb(0xffffff))
             .size_full()
             .gap_2()
-            .when(self.custom_titlebar, |cx| {
-                cx.child(
-                    div()
-                        .flex()
-                        .h(px(32.))
-                        .px_4()
-                        .bg(gpui::blue())
-                        .text_color(gpui::white())
-                        .w_full()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size_full()
-                                .child("Custom Titlebar"),
-                        ),
-                )
+            .when_some(self.title_bar.clone(), |this, title_bar| {
+                this.child(if self.enable_cache_view {
+                    AnyView::from(title_bar).cached(gpui::StyleRefinement::default().h(px(32.)))
+                } else {
+                    AnyView::from(title_bar)
+                })
             })
             .child(
                 div()
                     .p_8()
                     .gap_2()
-                    .child("SubWindow")
-                    .child(button("Close", |window, _| {
-                        window.remove_window();
-                    })),
+                    .flex()
+                    .flex_col()
+                    .child(button(
+                        &format!("TitleBar Cache: {}", self.enable_cache_view),
+                        cx.listener(|this, _, _, cx| {
+                            this.enable_cache_view = !this.enable_cache_view;
+                            cx.notify();
+                        }),
+                    ))
+                    .child("SubWindow with custom TitleBar.")
+                    .when(self.title_bar.is_some(), |this| {
+                        this.child(div().py_4().child(format!("Value: {}", self.value)))
+                    }),
             )
     }
 }
@@ -77,66 +182,50 @@ impl Render for WindowDemo {
             .justify_center()
             .content_center()
             .gap_2()
-            .child(button("Normal", move |_, cx| {
+            .child(button("Normal", move |_, _, cx| {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
-            .child(button("Popup", move |_, cx| {
+            .child(button("Popup", move |_, _, cx| {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
                         kind: WindowKind::PopUp,
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
-            .child(button("Custom Titlebar", move |_, cx| {
+            .child(button("Custom Titlebar", move |_, _, cx| {
                 cx.open_window(
                     WindowOptions {
                         titlebar: None,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: true,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(true, cx)),
                 )
                 .unwrap();
             }))
-            .child(button("Invisible", move |_, cx| {
+            .child(button("Invisible", move |_, _, cx| {
                 cx.open_window(
                     WindowOptions {
                         show: false,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
-            .child(button("Unmovable", move |_, cx| {
+            .child(button("Unmovable", move |_, _, cx| {
                 cx.open_window(
                     WindowOptions {
                         is_movable: false,
@@ -144,15 +233,11 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |_, cx| {
-                        cx.new(|_| SubWindow {
-                            custom_titlebar: false,
-                        })
-                    },
+                    |_, cx| cx.new(|cx| SubWindow::new(false, cx)),
                 )
                 .unwrap();
             }))
-            .child(button("Hide Application", |window, cx| {
+            .child(button("Hide Application", |_, window, cx| {
                 cx.hide();
 
                 // Restore the application after 3 seconds
@@ -165,11 +250,11 @@ impl Render for WindowDemo {
                     })
                     .detach();
             }))
-            .child(button("Resize", |window, _| {
+            .child(button("Resize", |_, window, _| {
                 let content_size = window.bounds().size;
                 window.resize(size(content_size.height, content_size.width));
             }))
-            .child(button("Prompt", |window, cx| {
+            .child(button("Prompt", |_, window, cx| {
                 let answer = window.prompt(
                     PromptLevel::Info,
                     "Are you sure?",
@@ -187,7 +272,7 @@ impl Render for WindowDemo {
                 })
                 .detach();
             }))
-            .child(button("Prompt (non-English)", |window, cx| {
+            .child(button("Prompt (non-English)", |_, window, cx| {
                 let answer = window.prompt(
                     PromptLevel::Info,
                     "Are you sure?",
