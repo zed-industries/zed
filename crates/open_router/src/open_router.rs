@@ -53,6 +53,7 @@ pub struct Model {
     pub max_tokens: usize,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
+    pub supports_reasoning: Option<bool>,
 }
 
 impl Model {
@@ -62,6 +63,7 @@ impl Model {
             Some("Auto Router"),
             Some(2000000),
             Some(true),
+            Some(false),
             Some(false),
         )
     }
@@ -76,6 +78,7 @@ impl Model {
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
+        supports_reasoning: Option<bool>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -83,6 +86,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or(2000000),
             supports_tools,
             supports_images,
+            supports_reasoning,
         }
     }
 
@@ -127,6 +131,8 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Reasoning>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,6 +158,18 @@ pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Reasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -293,6 +311,7 @@ pub struct FunctionContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
@@ -584,6 +603,11 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
                         .as_ref()
                         .map(|arch| arch.input_modalities.contains(&"image".to_string()))
                         .unwrap_or(false),
+                ),
+                supports_reasoning: Some(
+                    entry
+                        .supported_parameters
+                        .contains(&"reasoning".to_string()),
                 ),
             })
             .collect();

@@ -33,7 +33,6 @@ const PROVIDER_NAME: &str = "OpenRouter";
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
     pub api_url: String,
-    pub available_models: Vec<AvailableModel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -45,6 +44,7 @@ pub struct AvailableModel {
     pub max_completion_tokens: Option<u32>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
+    pub supports_reasoning: Option<bool>,
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -218,34 +218,9 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models_from_api = self.state.read(cx).available_models.clone();
-        let mut settings_models = Vec::new();
+        let models = self.state.read(cx).available_models.clone();
 
-        for model in &AllLanguageModelSettings::get_global(cx)
-            .open_router
-            .available_models
-        {
-            settings_models.push(open_router::Model {
-                name: model.name.clone(),
-                display_name: model.display_name.clone(),
-                max_tokens: model.max_tokens,
-                supports_tools: model.supports_tools,
-                supports_images: model.supports_images,
-            });
-        }
-
-        for settings_model in &settings_models {
-            if let Some(pos) = models_from_api
-                .iter()
-                .position(|m| m.name == settings_model.name)
-            {
-                models_from_api[pos] = settings_model.clone();
-            } else {
-                models_from_api.push(settings_model.clone());
-            }
-        }
-
-        models_from_api
+        models
             .into_iter()
             .map(|model| self.create_language_model(model))
             .collect()
@@ -392,13 +367,12 @@ pub fn into_open_router(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    add_message_content_part(
-                        open_router::MessagePart::Text { text: text },
-                        message.role,
-                        &mut messages,
-                    )
-                }
+                MessageContent::Text(text) => add_message_content_part(
+                    open_router::MessagePart::Text { text: text },
+                    message.role,
+                    &mut messages,
+                ),
+                MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
@@ -464,6 +438,16 @@ pub fn into_open_router(
         max_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             Some(false)
+        } else {
+            None
+        },
+        reasoning: if model.supports_reasoning.unwrap_or(false) {
+            Some(open_router::Reasoning {
+                effort: Some("low".to_string()),
+                max_tokens: None,
+                exclude: Some(false),
+                enabled: Some(true),
+            })
         } else {
             None
         },
@@ -557,8 +541,19 @@ impl OpenRouterEventMapper {
         };
 
         let mut events = Vec::new();
+        if let Some(reasoning) = choice.delta.reasoning.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning,
+                signature: None,
+            }));
+        }
+
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            // OpenRouter send empty content string with the reasoning content
+            // This is a workaround for the OpenRouter API bug
+            if !content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
