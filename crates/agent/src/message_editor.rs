@@ -79,6 +79,7 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+const MIN_EDITOR_LINES: usize = 4;
 const MAX_EDITOR_LINES: usize = 8;
 
 pub(crate) fn create_editor(
@@ -102,6 +103,7 @@ pub(crate) fn create_editor(
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
+                min_lines: MIN_EDITOR_LINES,
                 max_lines: MAX_EDITOR_LINES,
             },
             buffer,
@@ -253,6 +255,7 @@ impl MessageEditor {
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
+                    min_lines: MIN_EDITOR_LINES,
                     max_lines: MAX_EDITOR_LINES,
                 })
             }
@@ -675,40 +678,35 @@ impl MessageEditor {
                     .when(is_editor_expanded, |this| {
                         this.h(vh(0.8, window)).justify_between()
                     })
-                    .child(
-                        v_flex()
-                            .min_h_16()
-                            .when(is_editor_expanded, |this| this.h_full())
-                            .child({
-                                let settings = ThemeSettings::get_global(cx);
-                                let font_size = TextSize::Small
-                                    .rems(cx)
-                                    .to_pixels(settings.agent_font_size(cx));
-                                let line_height = settings.buffer_line_height.value() * font_size;
+                    .child({
+                        let settings = ThemeSettings::get_global(cx);
+                        let font_size = TextSize::Small
+                            .rems(cx)
+                            .to_pixels(settings.agent_font_size(cx));
+                        let line_height = settings.buffer_line_height.value() * font_size;
 
-                                let text_style = TextStyle {
-                                    color: cx.theme().colors().text,
-                                    font_family: settings.buffer_font.family.clone(),
-                                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                                    font_features: settings.buffer_font.features.clone(),
-                                    font_size: font_size.into(),
-                                    line_height: line_height.into(),
-                                    ..Default::default()
-                                };
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_features: settings.buffer_font.features.clone(),
+                            font_size: font_size.into(),
+                            line_height: line_height.into(),
+                            ..Default::default()
+                        };
 
-                                EditorElement::new(
-                                    &self.editor,
-                                    EditorStyle {
-                                        background: editor_bg_color,
-                                        local_player: cx.theme().players().local(),
-                                        text: text_style,
-                                        syntax: cx.theme().syntax().clone(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .into_any()
-                            }),
-                    )
+                        EditorElement::new(
+                            &self.editor,
+                            EditorStyle {
+                                background: editor_bg_color,
+                                local_player: cx.theme().players().local(),
+                                text: text_style,
+                                syntax: cx.theme().syntax().clone(),
+                                ..Default::default()
+                            },
+                        )
+                        .into_any()
+                    })
                     .child(
                         h_flex()
                             .flex_none()

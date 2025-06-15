@@ -7681,7 +7681,10 @@ impl Element for EditorElement {
                             window.request_layout(style, None, cx)
                         }
                     }
-                    EditorMode::AutoHeight { max_lines } => {
+                    EditorMode::AutoHeight {
+                        min_lines,
+                        max_lines,
+                    } => {
                         let editor_handle = cx.entity().clone();
                         let max_line_number_width =
                             self.max_line_number_width(&editor.snapshot(window, cx), window, cx);
@@ -7692,6 +7695,7 @@ impl Element for EditorElement {
                                     .update(cx, |editor, cx| {
                                         compute_auto_height_layout(
                                             editor,
+                                            min_lines,
                                             max_lines,
                                             max_line_number_width,
                                             known_dimensions,
@@ -9864,6 +9868,7 @@ pub fn register_action<T: Action>(
 
 fn compute_auto_height_layout(
     editor: &mut Editor,
+    min_lines: usize,
     max_lines: usize,
     max_line_number_width: Pixels,
     known_dimensions: Size<Option<Pixels>>,
@@ -9911,7 +9916,7 @@ fn compute_auto_height_layout(
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
     let height = scroll_height
-        .max(line_height)
+        .max(line_height * min_lines as f32)
         .min(line_height * max_lines as f32);
 
     Some(size(width, height))
@@ -10214,7 +10219,10 @@ mod tests {
 
         for editor_mode_without_invisibles in [
             EditorMode::SingleLine { auto_width: false },
-            EditorMode::AutoHeight { max_lines: 100 },
+            EditorMode::AutoHeight {
+                min_lines: 1,
+                max_lines: 100,
+            },
         ] {
             for show_line_numbers in [true, false] {
                 let invisibles = collect_invisibles_from_new_editor(
