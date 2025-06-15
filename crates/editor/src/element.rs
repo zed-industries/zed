@@ -1702,17 +1702,14 @@ impl EditorElement {
             return (Pixels::ZERO, vertical_scrollbar_width);
         }
 
-        match minimap_settings.show {
-            ShowMinimap::Auto => (
-                if scrollbars_shown {
-                    minimap_width
-                } else {
-                    Pixels::ZERO
-                },
-                vertical_scrollbar_width,
-            ),
-            _ => (minimap_width, vertical_scrollbar_width + minimap_width),
-        }
+        (
+            if minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown {
+                Pixels::ZERO
+            } else {
+                minimap_width
+            },
+            minimap_width + vertical_scrollbar_width,
+        )
     }
 
     fn prepaint_crease_toggles(
@@ -8088,7 +8085,6 @@ impl Element for EditorElement {
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
                         editor_width,
-                        minimap_width,
                         EditorSettings::get_global(cx),
                     );
 
@@ -8742,7 +8738,6 @@ impl ScrollbarLayoutInformation {
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
         editor_width: Pixels,
-        minimap_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
         let vertical_overscroll = match settings.scroll_beyond_last_line {
@@ -8759,14 +8754,7 @@ impl ScrollbarLayoutInformation {
             px(0.0)
         };
 
-        let overscroll = size(
-            right_margin
-                + longest_line_blame_width
-                + (settings.minimap.show == ShowMinimap::Auto)
-                    .then_some(minimap_width)
-                    .unwrap_or_default(),
-            vertical_overscroll,
-        );
+        let overscroll = size(right_margin + longest_line_blame_width, vertical_overscroll);
 
         let scroll_range = document_size + overscroll;
 
