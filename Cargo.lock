@@ -14606,12 +14606,12 @@ dependencies = [
  "fs",
  "gpui",
  "log",
- "paths",
  "schemars",
  "serde",
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]
