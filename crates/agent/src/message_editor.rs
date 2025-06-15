@@ -674,7 +674,7 @@ impl MessageEditor {
             .child(
                 v_flex()
                     .size_full()
-                    .gap_4()
+                    .gap_1()
                     .when(is_editor_expanded, |this| {
                         this.h(vh(0.8, window)).justify_between()
                     })
