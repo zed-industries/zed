@@ -6,6 +6,7 @@ use dap::DapRegistry;
 use extension::{ExtensionDebugAdapterProviderProxy, ExtensionHostProxy};
 use extension_dap_adapter::ExtensionDapAdapter;
 use gpui::App;
+use util::ResultExt;
 
 pub fn init(extension_host_proxy: Arc<ExtensionHostProxy>, cx: &mut App) {
     let language_server_registry_proxy = DebugAdapterRegistryProxy::new(cx);
@@ -31,10 +32,8 @@ impl ExtensionDebugAdapterProviderProxy for DebugAdapterRegistryProxy {
         extension: Arc<dyn extension::Extension>,
         debug_adapter_name: Arc<str>,
     ) {
-        self.debug_adapter_registry
-            .add_adapter(Arc::new(ExtensionDapAdapter::new(
-                extension,
-                debug_adapter_name,
-            )));
+        if let Some(adapter) = ExtensionDapAdapter::new(extension, debug_adapter_name).log_err() {
+            self.debug_adapter_registry.add_adapter(Arc::new(adapter));
+        }
     }
 }

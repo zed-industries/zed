@@ -182,7 +182,7 @@ impl DebugAdapter for JsDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "oneOf": [
                 {

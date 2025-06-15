@@ -14,6 +14,7 @@ use fs::normalize_path;
 use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
+use task::ZedDebugConfig;
 
 pub use crate::extension_events::*;
 pub use crate::extension_host_proxy::*;
@@ -144,7 +145,17 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<DebugAdapterBinary>;
 
-    async fn get_dap_schema(&self) -> Result<serde_json::Value>;
+    async fn dap_request_kind(
+        &self,
+        dap_name: Arc<str>,
+        config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest>;
+
+    async fn dap_config_to_scenario(
+        &self,
+        config: ZedDebugConfig,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<DebugScenario>;
 }
 
 pub fn parse_wasm_extension_version(

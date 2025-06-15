@@ -14,7 +14,7 @@ use crate::{
 };
 use std::{collections::BTreeMap, sync::Arc};
 
-/// Given a user build configuration, locator creates a fill-in debug target ([DebugRequest]) on behalf of the user.
+/// Given a user build configuration, locator creates a fill-in debug target ([DebugScenario]) on behalf of the user.
 #[async_trait]
 pub trait DapLocator: Send + Sync {
     fn name(&self) -> SharedString;
@@ -67,13 +67,12 @@ impl DapRegistry {
     pub async fn adapters_schema(&self) -> task::AdapterSchemas {
         let mut schemas = AdapterSchemas(vec![]);
 
-        // Clone to avoid holding lock over await points
         let adapters = self.0.read().adapters.clone();
 
         for (name, adapter) in adapters.into_iter() {
             schemas.0.push(AdapterSchema {
                 adapter: name.into(),
-                schema: adapter.dap_schema().await,
+                schema: adapter.dap_schema(),
             });
         }
 
