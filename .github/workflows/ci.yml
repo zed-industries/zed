@@ -68,7 +68,6 @@ jobs:
     name: Check Postgres and Protobuf migrations, mergability
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
@@ -116,7 +115,6 @@ jobs:
     name: Check workspace-hack crate
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -149,7 +147,7 @@ jobs:
     timeout-minutes: 60
     name: Check formatting and spelling
     needs: [job_spec]
-    if: false && github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -200,7 +198,7 @@ jobs:
     timeout-minutes: 60
     name: Check docs
     needs: [job_spec]
-    if: false && github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -222,7 +220,6 @@ jobs:
     name: (macOS) Run Clippy and tests
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -290,7 +287,6 @@ jobs:
     name: (Linux) Run Clippy and tests
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -343,7 +339,6 @@ jobs:
     name: (Linux) Build Remote Server
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
