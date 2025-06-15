@@ -534,12 +534,15 @@ message DiagnosticSummary {
 message UpdateLanguageServer {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    optional string server_name = 8;
     oneof variant {
         LspWorkStart work_start = 3;
         LspWorkProgress work_progress = 4;
         LspWorkEnd work_end = 5;
         LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
+        StatusUpdate status_update = 9;
+        RegisteredForBuffer registered_for_buffer = 10;
     }
 }
 
@@ -565,6 +568,27 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message StatusUpdate {
+    optional string message = 1;
+    Status status = 2;
+
+    enum Status {
+        Starting = 0;
+        Running = 1;
+        Stopping = 2;
+        Stopped = 3;
+        Ok = 4;
+        Info = 5;
+        Warning = 6;
+        Error = 7;
+        Other = 8;
+    }
+}
+
+message RegisteredForBuffer {
+    string buffer_abs_path = 1;
+}
 
 message LanguageServerLog {
     uint64 project_id = 1;
@@ -687,11 +711,13 @@ message AllLanguageServers {}
 message RestartLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
+    repeated uint64 server_ids = 3;
 }
 
 message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
+    repeated uint64 server_ids = 3;
 }
 
 message MultiLspQueryResponse {

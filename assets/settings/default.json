@@ -1677,6 +1677,11 @@
     //     }
     // }
   },
+  // Common language server settings.
+  "global_lsp_settings": {
+    // Whether to show the LSP servers button in the status bar.
+    "button": true
+  },
   // Jupyter settings
   "jupyter": {
     "enabled": true

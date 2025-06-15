@@ -412,10 +412,6 @@ impl PickerDelegate for BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn render_header(&self, _: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        None
-    }
-
     fn render_match(
         &self,
         ix: usize,
