@@ -44,6 +44,7 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
+jj.workspace = true
 git_hosting_providers.workspace = true
 globset.workspace = true
 gpui.workspace = true
