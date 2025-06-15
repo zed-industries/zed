@@ -68,13 +68,14 @@ impl Project {
         }
     }
 
-    pub fn ssh_details(&self, cx: &App) -> Option<(String, SshCommand)> {
+    pub fn ssh_details(&self, cx: &App) -> Option<(String, SshCommand, Option<String>)> {
         if let Some(ssh_client) = &self.ssh_client {
             let ssh_client = ssh_client.read(cx);
-            if let Some(args) = ssh_client.ssh_args() {
+            if let Some((args, ssh_askpass)) = ssh_client.ssh_args() {
                 return Some((
                     ssh_client.connection_options().host.clone(),
                     SshCommand { arguments: args },
+                    ssh_askpass,
                 ));
             }
         }
@@ -159,7 +160,7 @@ impl Project {
         env.extend(settings.env.clone());
 
         match &self.ssh_details(cx) {
-            Some((_, ssh_command)) => {
+            Some((_, ssh_command, ssh_askpass)) => {
                 let (command, args) = wrap_for_ssh(
                     ssh_command,
                     Some((&command, &args)),
@@ -169,6 +170,10 @@ impl Project {
                 );
                 let mut command = std::process::Command::new(command);
                 command.args(args);
+                if let Some(ssh_askpass) = ssh_askpass {
+                    command.env("SSH_ASKPASS_REQUIRE", "force");
+                    command.env("SSH_ASKPASS", ssh_askpass);
+                }
                 command
             }
             None => {
@@ -242,7 +247,8 @@ impl Project {
                 }
 
                 match &ssh_details {
-                    Some((host, ssh_command)) => {
+                    // TODO:
+                    Some((host, ssh_command, ssh_askpass)) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
 
                         // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
@@ -291,7 +297,8 @@ impl Project {
                 }
 
                 match &ssh_details {
-                    Some((host, ssh_command)) => {
+                    // TODO:
+                    Some((host, ssh_command, ssh_askpass)) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
