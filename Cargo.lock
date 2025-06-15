@@ -13217,6 +13217,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "debug_adapter_extension",
+ "editor",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -13255,6 +13256,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "workspace",
  "worktree",
  "zlog",
 ]
