@@ -438,14 +438,21 @@ fn eval_disable_cursor_blinking() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
-    // Results for 2025-05-22
+    // Results for 2025-06-13
+    //
+    // The outcome of this evaluation depends heavily on the LINE_HINT_TOLERANCE
+    // value. Higher values improve the pass rate but may sometimes cause
+    // edits to be misapplied. In the context of this eval, this means
+    // the agent might add from_pixels tests in incorrect locations
+    // (e.g., at the beginning of the file), yet the evaluation may still
+    // rate it highly.
     //
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |
-    //  gemini-2.5-pro-preview-03-25   |  0.94
-    //  gemini-2.5-flash-preview-04-17 |
+    //  claude-4.0-sonnet              |  0.99
+    //  claude-3.7-sonnet              |  0.88
+    //  gemini-2.5-pro-preview-03-25   |  0.96
     //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
@@ -1634,15 +1641,20 @@ impl EditAgentTest {
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
+    let mut attempt = 0;
     loop {
+        attempt += 1;
         match request().await {
             Ok(result) => return Ok(result),
             Err(err) => match err.downcast::<LanguageModelCompletionError>() {
                 Ok(err) => match err {
                     LanguageModelCompletionError::RateLimit(duration) => {
-                        // Wait until after we are allowed to try again
-                        eprintln!("Rate limit exceeded. Waiting for {duration:?}...",);
-                        Timer::after(duration).await;
+                        // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
+                        let jitter = duration.mul_f64(rand::thread_rng().gen_range(0.0..0.5));
+                        eprintln!(
+                            "Attempt #{attempt}: Rate limit exceeded. Retry after {duration:?} + jitter of {jitter:?}"
+                        );
+                        Timer::after(duration + jitter).await;
                         continue;
                     }
                     _ => return Err(err.into()),

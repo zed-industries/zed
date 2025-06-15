@@ -1,5 +1,7 @@
 //! socks proxy
 
+use std::net::SocketAddr;
+
 use anyhow::{Context as _, Result};
 use http_client::Url;
 use tokio::net::TcpStream;
@@ -7,6 +9,8 @@ use tokio_socks::{
     IntoTargetAddr, TargetAddr,
     tcp::{Socks4Stream, Socks5Stream},
 };
+
+use crate::proxy::SYSTEM_DNS_RESOLVER;
 
 use super::AsyncReadWrite;
 
@@ -73,12 +77,14 @@ pub(super) async fn connect_socks_proxy_stream(
     };
     let rpc_host = match (rpc_host, local_dns) {
         (TargetAddr::Domain(domain, port), true) => {
-            let ip_addr = tokio::net::lookup_host((domain.as_ref(), port))
+            let ip_addr = SYSTEM_DNS_RESOLVER
+                .lookup_ip(domain.as_ref())
                 .await
                 .with_context(|| format!("Failed to lookup domain {}", domain))?
+                .into_iter()
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("Failed to lookup domain {}", domain))?;
-            TargetAddr::Ip(ip_addr)
+            TargetAddr::Ip(SocketAddr::new(ip_addr, port))
         }
         (rpc_host, _) => rpc_host,
     };

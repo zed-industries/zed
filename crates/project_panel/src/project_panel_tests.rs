@@ -6,7 +6,7 @@ use project::{FakeFs, WorktreeSettings};
 use serde_json::json;
 use settings::SettingsStore;
 use std::path::{Path, PathBuf};
-use util::{path, separator};
+use util::path;
 use workspace::{
     AppState, Pane,
     item::{Item, ProjectItem},
@@ -332,10 +332,10 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
-            separator!("v root1"),
-            separator!("    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-            separator!("v root2"),
-            separator!("    > dir_2"),
+            "v root1",
+            "    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+            "v root2",
+            "    > dir_2",
         ]
     );
 
@@ -347,14 +347,14 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
-            separator!("v root1"),
-            separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
-            separator!("        > nested_dir_4/nested_dir_5"),
-            separator!("          file_a.java"),
-            separator!("          file_b.java"),
-            separator!("          file_c.java"),
-            separator!("v root2"),
-            separator!("    > dir_2"),
+            "v root1",
+            "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected",
+            "        > nested_dir_4/nested_dir_5",
+            "          file_a.java",
+            "          file_b.java",
+            "          file_c.java",
+            "v root2",
+            "    > dir_2",
         ]
     );
 
@@ -366,31 +366,31 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
-            separator!("v root1"),
-            separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-            separator!("        v nested_dir_4/nested_dir_5  <== selected"),
-            separator!("              file_d.java"),
-            separator!("          file_a.java"),
-            separator!("          file_b.java"),
-            separator!("          file_c.java"),
-            separator!("v root2"),
-            separator!("    > dir_2"),
+            "v root1",
+            "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+            "        v nested_dir_4/nested_dir_5  <== selected",
+            "              file_d.java",
+            "          file_a.java",
+            "          file_b.java",
+            "          file_c.java",
+            "v root2",
+            "    > dir_2",
         ]
     );
     toggle_expand_dir(&panel, "root2/dir_2", cx);
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
-            separator!("v root1"),
-            separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-            separator!("        v nested_dir_4/nested_dir_5"),
-            separator!("              file_d.java"),
-            separator!("          file_a.java"),
-            separator!("          file_b.java"),
-            separator!("          file_c.java"),
-            separator!("v root2"),
-            separator!("    v dir_2  <== selected"),
-            separator!("          file_1.java"),
+            "v root1",
+            "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+            "        v nested_dir_4/nested_dir_5",
+            "              file_d.java",
+            "          file_a.java",
+            "          file_b.java",
+            "          file_c.java",
+            "v root2",
+            "    v dir_2  <== selected",
+            "          file_1.java",
         ]
     );
 
@@ -414,7 +414,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &[separator!("> dir_1/nested_dir_1/nested_dir_2/nested_dir_3")],
+            &["> dir_1/nested_dir_1/nested_dir_2/nested_dir_3"],
             "Single worktree with hide_root=true should hide root and show auto-folded paths"
         );
 
@@ -426,11 +426,11 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                separator!("v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
-                separator!("    > nested_dir_4/nested_dir_5"),
-                separator!("      file_a.java"),
-                separator!("      file_b.java"),
-                separator!("      file_c.java"),
+                "v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected",
+                "    > nested_dir_4/nested_dir_5",
+                "      file_a.java",
+                "      file_b.java",
+                "      file_c.java",
             ],
             "Expanded auto-folded path with hidden root should show contents without root prefix"
         );
@@ -443,12 +443,12 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                separator!("v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                separator!("    v nested_dir_4/nested_dir_5  <== selected"),
-                separator!("          file_d.java"),
-                separator!("      file_a.java"),
-                separator!("      file_b.java"),
-                separator!("      file_c.java"),
+                "v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+                "    v nested_dir_4/nested_dir_5  <== selected",
+                "          file_d.java",
+                "      file_a.java",
+                "      file_b.java",
+                "      file_c.java",
             ],
             "Nested expansion with hidden root should maintain proper indentation"
         );
@@ -4917,12 +4917,12 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    v dir1  <== selected"),
-            separator!("        > empty1/empty2/empty3"),
-            separator!("        > ignored_dir"),
-            separator!("        > subdir1"),
-            separator!("      .gitignore"),
+            "v root",
+            "    v dir1  <== selected",
+            "        > empty1/empty2/empty3",
+            "        > ignored_dir",
+            "        > subdir1",
+            "      .gitignore",
         ],
         "Should show first level with auto-folded dirs and ignored dir visible"
     );
@@ -4939,18 +4939,18 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    v dir1  <== selected"),
-            separator!("        v empty1"),
-            separator!("            v empty2"),
-            separator!("                v empty3"),
-            separator!("                      file.txt"),
-            separator!("        > ignored_dir"),
-            separator!("        v subdir1"),
-            separator!("            > ignored_nested"),
-            separator!("              file1.txt"),
-            separator!("              file2.txt"),
-            separator!("      .gitignore"),
+            "v root",
+            "    v dir1  <== selected",
+            "        v empty1",
+            "            v empty2",
+            "                v empty3",
+            "                      file.txt",
+            "        > ignored_dir",
+            "        v subdir1",
+            "            > ignored_nested",
+            "              file1.txt",
+            "              file2.txt",
+            "      .gitignore",
         ],
         "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
     );
@@ -4975,12 +4975,12 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    v dir1  <== selected"),
-            separator!("        > empty1"),
-            separator!("        > ignored_dir"),
-            separator!("        > subdir1"),
-            separator!("      .gitignore"),
+            "v root",
+            "    v dir1  <== selected",
+            "        > empty1",
+            "        > ignored_dir",
+            "        > subdir1",
+            "      .gitignore",
         ],
         "With auto-fold disabled: should show all directories separately"
     );
@@ -4997,18 +4997,18 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    v dir1  <== selected"),
-            separator!("        v empty1"),
-            separator!("            v empty2"),
-            separator!("                v empty3"),
-            separator!("                      file.txt"),
-            separator!("        > ignored_dir"),
-            separator!("        v subdir1"),
-            separator!("            > ignored_nested"),
-            separator!("              file1.txt"),
-            separator!("              file2.txt"),
-            separator!("      .gitignore"),
+            "v root",
+            "    v dir1  <== selected",
+            "        v empty1",
+            "            v empty2",
+            "                v empty3",
+            "                      file.txt",
+            "        > ignored_dir",
+            "        v subdir1",
+            "            > ignored_nested",
+            "              file1.txt",
+            "              file2.txt",
+            "      .gitignore",
         ],
         "After expand_all without auto-fold: should expand all dirs normally, \
          expand ignored_dir itself but not its subdirs, and not expand ignored_nested"
@@ -5027,20 +5027,20 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    v dir1  <== selected"),
-            separator!("        v empty1"),
-            separator!("            v empty2"),
-            separator!("                v empty3"),
-            separator!("                      file.txt"),
-            separator!("        v ignored_dir"),
-            separator!("            v subdir"),
-            separator!("                  deep_file.txt"),
-            separator!("        v subdir1"),
-            separator!("            > ignored_nested"),
-            separator!("              file1.txt"),
-            separator!("              file2.txt"),
-            separator!("      .gitignore"),
+            "v root",
+            "    v dir1  <== selected",
+            "        v empty1",
+            "            v empty2",
+            "                v empty3",
+            "                      file.txt",
+            "        v ignored_dir",
+            "            v subdir",
+            "                  deep_file.txt",
+            "        v subdir1",
+            "            > ignored_nested",
+            "              file1.txt",
+            "              file2.txt",
+            "      .gitignore",
         ],
         "After expand_all on ignored_dir: should expand all contents of the ignored directory"
     );
@@ -5090,15 +5090,15 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                separator!("v root"),
-                separator!("    v dir1"),
-                separator!("        v subdir1"),
-                separator!("            v nested1"),
-                separator!("                  file1.txt"),
-                separator!("                  file2.txt"),
-                separator!("        v subdir2  <== selected"),
-                separator!("              file4.txt"),
-                separator!("    > dir2"),
+                "v root",
+                "    v dir1",
+                "        v subdir1",
+                "            v nested1",
+                "                  file1.txt",
+                "                  file2.txt",
+                "        v subdir2  <== selected",
+                "              file4.txt",
+                "    > dir2",
             ],
             "Initial state with everything expanded"
         );
@@ -5140,13 +5140,13 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                separator!("v root"),
-                separator!("    v dir1"),
-                separator!("        v subdir1/nested1  <== selected"),
-                separator!("              file1.txt"),
-                separator!("              file2.txt"),
-                separator!("        > subdir2"),
-                separator!("    > dir2/single_file"),
+                "v root",
+                "    v dir1",
+                "        v subdir1/nested1  <== selected",
+                "              file1.txt",
+                "              file2.txt",
+                "        > subdir2",
+                "    > dir2/single_file",
             ],
             "Initial state with some dirs expanded"
         );
@@ -5163,11 +5163,11 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        > subdir1/nested1"),
-                separator!("        > subdir2"),
-                separator!("    > dir2/single_file"),
+                "v root",
+                "    v dir1  <== selected",
+                "        > subdir1/nested1",
+                "        > subdir2",
+                "    > dir2/single_file",
             ],
             "Subdirs should be collapsed and folded with auto-fold enabled"
         );
@@ -5195,14 +5195,14 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                separator!("v root"),
-                separator!("    v dir1"),
-                separator!("        v subdir1"),
-                separator!("            v nested1  <== selected"),
-                separator!("                  file1.txt"),
-                separator!("                  file2.txt"),
-                separator!("        > subdir2"),
-                separator!("    > dir2"),
+                "v root",
+                "    v dir1",
+                "        v subdir1",
+                "            v nested1  <== selected",
+                "                  file1.txt",
+                "                  file2.txt",
+                "        > subdir2",
+                "    > dir2",
             ],
             "Initial state with some dirs expanded and auto-fold disabled"
         );
@@ -5219,11 +5219,11 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        > subdir1"),
-                separator!("        > subdir2"),
-                separator!("    > dir2"),
+                "v root",
+                "    v dir1  <== selected",
+                "        > subdir1",
+                "        > subdir2",
+                "    > dir2",
             ],
             "Subdirs should be collapsed but not folded with auto-fold disabled"
         );
@@ -5261,8 +5261,8 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    > dir1"),
+            "v root",
+            "    > dir1",
         ],
         "Initial state with nothing selected"
     );
@@ -5287,9 +5287,9 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            separator!("v root"),
-            separator!("    > dir1"),
-            separator!("      hello_from_no_selections  <== selected  <== marked"),
+            "v root",
+            "    > dir1",
+            "      hello_from_no_selections  <== selected  <== marked",
         ],
         "A new file is created under the root directory"
     );
@@ -5911,12 +5911,16 @@ fn visible_entries_as_strings(
             } else {
                 "  "
             };
+            #[cfg(windows)]
+            let filename = details.filename.replace("\\", "/");
+            #[cfg(not(windows))]
+            let filename = details.filename;
             let name = if details.is_editing {
-                format!("[EDITOR: '{}']", details.filename)
+                format!("[EDITOR: '{}']", filename)
             } else if details.is_processing {
-                format!("[PROCESSING: '{}']", details.filename)
+                format!("[PROCESSING: '{}']", filename)
             } else {
-                details.filename.clone()
+                filename
             };
             let selected = if details.is_selected {
                 "  <== selected"

@@ -13,7 +13,10 @@
         ]
         (#any-of? @_name "it" "test" "describe" "context" "suite")
         arguments: (
-            arguments . (string (string_fragment) @run)
+            arguments . [
+                (string (string_fragment) @run)
+                (identifier) @run
+            ]
         )
     ) @_js-test
 
@@ -32,7 +35,10 @@
             (#eq? @_property "each")
         )
         arguments: (
-            arguments . (string (string_fragment) @run)
+            arguments . [
+                (string (string_fragment) @run)
+                (identifier) @run
+            ]
         )
     ) @_js-test
 

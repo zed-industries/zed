@@ -93,7 +93,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TcpArguments {
     pub host: Ipv4Addr,
     pub port: u16,
@@ -179,9 +179,9 @@ impl DebugTaskDefinition {
 }
 
 /// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DebugAdapterBinary {
-    pub command: String,
+    pub command: Option<String>,
     pub arguments: Vec<String>,
     pub envs: HashMap<String, String>,
     pub cwd: Option<PathBuf>,
@@ -369,6 +369,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     }
 
     async fn dap_schema(&self) -> serde_json::Value;
+
+    fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -433,7 +437,7 @@ impl DebugAdapter for FakeAdapter {
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
-            command: "command".into(),
+            command: Some("command".into()),
             arguments: vec![],
             connection: None,
             envs: HashMap::default(),
