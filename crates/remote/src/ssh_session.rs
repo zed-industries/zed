@@ -1998,13 +1998,14 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let orig_tmp_path = tmp_path.to_string_lossy();
+        let dst_path = dst_path.to_string_lossy().replace('\\', "/");
+        let orig_tmp_path = tmp_path.to_string_lossy().replace('\\', "/");
         println!("  --> orig_tmp_path: {orig_tmp_path}");
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
             let x = shell_script!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.to_string_lossy()
+                dst_path = &dst_path
             );
             println!("  --> 1 script: {x}");
             x
@@ -2012,7 +2013,7 @@ impl SshRemoteConnection {
             let x = shell_script!(
                 "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.to_string_lossy()
+                dst_path = &dst_path
             );
             println!("  --> 2 script: {x}");
             x
