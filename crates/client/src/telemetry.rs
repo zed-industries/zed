@@ -46,7 +46,7 @@ struct TelemetryState {
     first_event_date_time: Option<Instant>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
-    project_markers: ProjectMarkers,
+    project_marker_patterns: ProjectMarkerPatterns,
 
     os_name: String,
     app_version: String,
@@ -54,7 +54,7 @@ struct TelemetryState {
 }
 
 #[derive(Debug)]
-struct ProjectMarkers(Vec<(Regex, ProjectCache)>);
+struct ProjectMarkerPatterns(Vec<(Regex, ProjectCache)>);
 
 #[derive(Debug)]
 struct ProjectCache {
@@ -195,7 +195,7 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
-            project_markers: ProjectMarkers(vec![
+            project_marker_patterns: ProjectMarkerPatterns(vec![
                 (
                     Regex::new(r"^pnpm-lock\.yaml$").unwrap(),
                     ProjectCache::new("pnpm".to_string()),
@@ -387,14 +387,11 @@ impl Telemetry {
         let project_type_names: Vec<String> = {
             let mut state = self.state.lock();
             state
-                .project_markers
+                .project_marker_patterns
                 .0
                 .iter_mut()
-                .filter_map(|(pattern, project_type_telemetry)| {
-                    if project_type_telemetry
-                        .worktree_ids_reported
-                        .contains(&worktree_id)
-                    {
+                .filter_map(|(pattern, project_cache)| {
+                    if project_cache.worktree_ids_reported.contains(&worktree_id) {
                         return None;
                     }
 
@@ -410,11 +407,9 @@ impl Telemetry {
                         return None;
                     }
 
-                    project_type_telemetry
-                        .worktree_ids_reported
-                        .insert(worktree_id);
+                    project_cache.worktree_ids_reported.insert(worktree_id);
 
-                    Some(project_type_telemetry.name.clone())
+                    Some(project_cache.name.clone())
                 })
                 .collect()
         };
