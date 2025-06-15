@@ -739,7 +739,7 @@ impl ExtensionsPage {
                             .justify_between()
                             .children(buttons.upgrade)
                             .children(buttons.configure)
-                            .child(buttons.install_or_uninstall),
+                            .child(buttons.install_or_uninstall), //
                     ),
             )
             .child(
@@ -971,6 +971,7 @@ impl ExtensionsPage {
                 ),
             },
             ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
+                //
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
