@@ -14,7 +14,8 @@ use cocoa::{
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
 use core_graphics::event::CGKeyCode;
-use objc::{msg_send, sel, sel_impl};
+use derive_more::{Deref, DerefMut};
+use objc::{msg_send, rc::StrongPtr, runtime::Object, sel, sel_impl};
 use std::{borrow::Cow, ffi::c_void};
 
 const BACKSPACE_KEY: u16 = 0x7f;
@@ -293,6 +294,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     unsafe {
         use cocoa::appkit::*;
 
+        let native_event = MacNativeEvent::from(native_event);
+
         let mut characters = native_event
             .charactersIgnoringModifiers()
             .to_str()
@@ -449,6 +452,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             },
             key,
             key_char,
+            is_composing: None,
+            native_event: Some(native_event),
         }
     }
 }
@@ -529,3 +534,39 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }
+
+#[allow(missing_docs)]
+#[derive(Clone, Deref, DerefMut)]
+pub struct MacNativeEvent(StrongPtr);
+
+impl From<*mut Object> for MacNativeEvent {
+    fn from(native_event: *mut Object) -> Self {
+        unsafe { MacNativeEvent(StrongPtr::retain(native_event)) }
+    }
+}
+
+impl From<StrongPtr> for MacNativeEvent {
+    fn from(native_event: StrongPtr) -> Self {
+        MacNativeEvent(native_event)
+    }
+}
+
+impl std::fmt::Debug for MacNativeEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::hash::Hash for MacNativeEvent {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state)
+    }
+}
+
+impl std::cmp::PartialEq for MacNativeEvent {
+    fn eq(&self, other: &Self) -> bool {
+        *self.0 == *other.0
+    }
+}
+
+impl std::cmp::Eq for MacNativeEvent {}
