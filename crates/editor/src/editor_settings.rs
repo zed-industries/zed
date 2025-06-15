@@ -130,6 +130,7 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
+    pub display_in: DisplayIn,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
@@ -138,6 +139,11 @@ pub struct Minimap {
 impl Minimap {
     pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
+    }
+
+    #[inline]
+    pub fn on_active_editor(&self) -> bool {
+        self.display_in == DisplayIn::ActiveEditor
     }
 
     pub fn with_show_override(self) -> Self {
@@ -187,6 +193,19 @@ pub enum ShowMinimap {
     /// Never show the minimap.
     #[default]
     Never,
+}
+
+/// Where to show the minimap in the editor.
+///
+/// Default: all_editors
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayIn {
+    /// Show on all open editors.
+    #[default]
+    AllEditors,
+    /// Show the minimap on the active editor only.
+    ActiveEditor,
 }
 
 /// When to show the minimap thumb.
@@ -572,6 +591,11 @@ pub struct MinimapContent {
     ///
     /// Default: never
     pub show: Option<ShowMinimap>,
+
+    /// Where to show the minimap in the editor.
+    ///
+    /// Default: all_editors
+    pub display_in: Option<DisplayIn>,
 
     /// When to show the minimap thumb.
     ///
