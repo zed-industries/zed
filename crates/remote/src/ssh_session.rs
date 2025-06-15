@@ -38,10 +38,11 @@ use smol::{
 };
 use std::{
     any::TypeId,
+    borrow::Cow,
     collections::VecDeque,
     fmt, iter,
     ops::ControlFlow,
-    path::{Path, PathBuf},
+    path::{Display, Path, PathBuf},
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
@@ -1805,7 +1806,7 @@ impl SshRemoteConnection {
                 .await;
             println!("==> extract_server_binary: {:?}", ret);
             ret?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let ret = self
@@ -1814,7 +1815,7 @@ impl SshRemoteConnection {
             .await;
         println!("==> remote server version: {:?}", ret);
         if ret.is_ok() {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -1830,11 +1831,11 @@ impl SshRemoteConnection {
 
         let platform = self.platform().await?;
 
-        let tmp_path_gz = PathBuf::from(format!(
+        let tmp_path_gz = UnixStylePathBuf::from(PathBuf::from(format!(
             "{}-download-{}.gz",
             dst_path.to_string_lossy(),
             std::process::id()
-        ));
+        )));
         if !self.socket.connection_options.upload_binary_over_ssh {
             if let Some((url, body)) = delegate
                 .get_download_params(platform, release_channel, wanted_version, cx)
@@ -1847,7 +1848,7 @@ impl SshRemoteConnection {
                     Ok(_) => {
                         self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
                             .await?;
-                        return Ok(dst_path);
+                        return Ok(dst_path.into());
                     }
                     Err(e) => {
                         log::error!(
@@ -1866,14 +1867,14 @@ impl SshRemoteConnection {
             .await?;
         self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
             .await?;
-        return Ok(dst_path);
+        return Ok(dst_path.into());
     }
 
     async fn download_binary_on_server(
         &self,
         url: &str,
         body: &str,
-        tmp_path_gz: &Path,
+        tmp_path_gz: &UnixStylePathBuf,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -2000,14 +2001,13 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let dst_path = dst_path.to_string_lossy().replace('\\', "/");
-        let orig_tmp_path = tmp_path.to_string_lossy().replace('\\', "/");
+        let orig_tmp_path = tmp_path.to_string_lossy();
         println!("  --> orig_tmp_path: {orig_tmp_path}");
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
             let x = shell_script!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path
+                dst_path = &dst_path.to_string_lossy(),
             );
             println!("  --> 1 script: {x}");
             x
@@ -2015,7 +2015,7 @@ impl SshRemoteConnection {
             let x = shell_script!(
                 "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path
+                dst_path = &dst_path.to_string_lossy()
             );
             println!("  --> 2 script: {x}");
             x
@@ -2547,6 +2547,26 @@ impl From<PathBuf> for UnixStylePathBuf {
     fn from(path: PathBuf) -> Self {
         let path = path.to_string_lossy().replace('\\', "/").into();
         Self(path)
+    }
+}
+
+impl From<UnixStylePathBuf> for PathBuf {
+    fn from(path: UnixStylePathBuf) -> Self {
+        path.0
+    }
+}
+
+impl UnixStylePathBuf {
+    fn parent(&self) -> Option<&Path> {
+        self.0.parent()
+    }
+
+    fn to_string_lossy(&self) -> Cow<str> {
+        self.0.to_string_lossy()
+    }
+
+    fn display(&self) -> Display<'_> {
+        self.0.display()
     }
 }
 
