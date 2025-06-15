@@ -2870,7 +2870,8 @@ impl Editor {
                             buffer.char_kind_before(start_offset, true) == Some(CharKind::Word)
                         } else {
                             // Snippet choices can be shown even when the cursor is in whitespace.
-                            // Dismissing the menu when actions like backspace
+                            // Dismissing the menu with actions like backspace is handled by
+                            // invalidation regions.
                             true
                         }
                     } else {
@@ -2936,22 +2937,22 @@ impl Editor {
                         let background_executor = cx.background_executor().clone();
                         let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                         self.serialize_selections = cx.background_spawn(async move {
-                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                    let db_selections = selections
-                        .iter()
-                        .map(|selection| {
-                            (
-                                selection.start.to_offset(&snapshot),
-                                selection.end.to_offset(&snapshot),
-                            )
-                        })
-                        .collect();
+                            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+                            let db_selections = selections
+                                .iter()
+                                .map(|selection| {
+                                    (
+                                        selection.start.to_offset(&snapshot),
+                                        selection.end.to_offset(&snapshot),
+                                    )
+                                })
+                                .collect();
 
-                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
-                        .await
-                        .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
-                        .log_err();
-                });
+                            DB.save_editor_selections(editor_id, workspace_id, db_selections)
+                                .await
+                                .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
+                                .log_err();
+                        });
                     }
                 }
             }

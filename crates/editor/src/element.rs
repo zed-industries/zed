@@ -7630,7 +7630,7 @@ impl Element for EditorElement {
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
-        __inspector_id: Option<&gpui::InspectorElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, ()) {
@@ -8817,7 +8817,7 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         _: Option<&GlobalElementId>,
-        __inspector_id: Option<&gpui::InspectorElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<gpui::Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
