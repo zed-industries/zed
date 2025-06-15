@@ -377,6 +377,7 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
     async fn get_dap_binary(
         &self,
         dap_name: Arc<str>,
@@ -724,7 +725,7 @@ impl IncrementalCompilationCache {
 }
 
 impl CacheStore for IncrementalCompilationCache {
-    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+    fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>> {
         self.cache.get(key).map(|v| v.into())
     }
 

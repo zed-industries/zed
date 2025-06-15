@@ -28,6 +28,9 @@ feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
+# Don't update `hickory-resolver`, it has a bug that causes it to not resolve DNS queries correctly.
+# See https://github.com/hickory-dns/hickory-dns/issues/3048
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
 http_client.workspace = true
 http_client_tls.workspace = true
 httparse = "1.10"
@@ -36,6 +39,7 @@ paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
@@ -48,7 +52,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tiny_http = "0.8"
+tiny_http.workspace = true
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true

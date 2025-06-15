@@ -60,6 +60,7 @@ pub enum IconName {
     ChevronUpDown,
     Circle,
     CircleOff,
+    CircleHelp,
     Clipboard,
     Close,
     Cloud,

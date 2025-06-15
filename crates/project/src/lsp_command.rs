@@ -3668,6 +3668,39 @@ impl LspCommand for LinkedEditingRange {
 }
 
 impl GetDocumentDiagnostics {
+    pub fn diagnostics_from_proto(
+        response: proto::GetDocumentDiagnosticsResponse,
+    ) -> Vec<LspPullDiagnostics> {
+        response
+            .pulled_diagnostics
+            .into_iter()
+            .filter_map(|diagnostics| {
+                Some(LspPullDiagnostics::Response {
+                    server_id: LanguageServerId::from_proto(diagnostics.server_id),
+                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
+                    diagnostics: if diagnostics.changed {
+                        PulledDiagnostics::Unchanged {
+                            result_id: diagnostics.result_id?,
+                        }
+                    } else {
+                        PulledDiagnostics::Changed {
+                            result_id: diagnostics.result_id,
+                            diagnostics: diagnostics
+                                .diagnostics
+                                .into_iter()
+                                .filter_map(|diagnostic| {
+                                    GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
+                                        .context("deserializing diagnostics")
+                                        .log_err()
+                                })
+                                .collect(),
+                        }
+                    },
+                })
+            })
+            .collect()
+    }
+
     fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
         let start = diagnostic.start.context("invalid start range")?;
         let end = diagnostic.end.context("invalid end range")?;
@@ -4037,21 +4070,14 @@ impl LspCommand for GetDocumentDiagnostics {
     }
 
     async fn from_proto(
-        message: proto::GetDocumentDiagnostics,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: proto::GetDocumentDiagnostics,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
-        Ok(Self {
-            previous_result_id: lsp_store
-                .update(&mut cx, |lsp_store, _| lsp_store.result_id(buffer_id))?,
-        })
+        anyhow::bail!(
+            "proto::GetDocumentDiagnostics is not expected to be converted from proto directly, as it needs `previous_result_id` fetched first"
+        )
     }
 
     fn response_to_proto(
@@ -4109,36 +4135,7 @@ impl LspCommand for GetDocumentDiagnostics {
         _: Entity<Buffer>,
         _: AsyncApp,
     ) -> Result<Self::Response> {
-        let pulled_diagnostics = response
-            .pulled_diagnostics
-            .into_iter()
-            .filter_map(|diagnostics| {
-                Some(LspPullDiagnostics::Response {
-                    server_id: LanguageServerId::from_proto(diagnostics.server_id),
-                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
-                    diagnostics: if diagnostics.changed {
-                        PulledDiagnostics::Unchanged {
-                            result_id: diagnostics.result_id?,
-                        }
-                    } else {
-                        PulledDiagnostics::Changed {
-                            result_id: diagnostics.result_id,
-                            diagnostics: diagnostics
-                                .diagnostics
-                                .into_iter()
-                                .filter_map(|diagnostic| {
-                                    GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
-                                        .context("deserializing diagnostics")
-                                        .log_err()
-                                })
-                                .collect(),
-                        }
-                    },
-                })
-            })
-            .collect();
-
-        Ok(pulled_diagnostics)
+        Ok(Self::diagnostics_from_proto(response))
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {

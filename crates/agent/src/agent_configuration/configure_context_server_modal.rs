@@ -89,7 +89,7 @@ impl ConfigureContextServerModal {
                         }),
                         settings_validator,
                         settings_editor: cx.new(|cx| {
-                            let mut editor = Editor::auto_height(16, window, cx);
+                            let mut editor = Editor::auto_height(1, 16, window, cx);
                             editor.set_text(config.default_settings.trim(), window, cx);
                             editor.set_show_gutter(false, cx);
                             editor.set_soft_wrap_mode(
