@@ -506,44 +506,48 @@ impl LineBreakpoint {
             cx.stop_propagation();
         })
         .end_hover_slot(
-            IconButton::new(
-                SharedString::from(format!(
-                    "breakpoint-ui-on-click-go-to-line-remove-{:?}/{}:{}",
-                    self.dir, self.name, self.line
-                )),
-                IconName::Close,
-            )
-            .on_click({
-                let weak = weak.clone();
-                let path = path.clone();
-                move |_, _, cx| {
-                    weak.update(cx, |breakpoint_list, cx| {
-                        breakpoint_list.edit_line_breakpoint(
-                            path.clone(),
-                            row,
-                            BreakpointEditAction::Toggle,
-                            cx,
-                        );
+            h_flex()
+                .child(
+                    IconButton::new(
+                        SharedString::from(format!(
+                            "breakpoint-ui-on-click-go-to-line-remove-{:?}/{}:{}",
+                            self.dir, self.name, self.line
+                        )),
+                        IconName::Close,
+                    )
+                    .on_click({
+                        let weak = weak.clone();
+                        let path = path.clone();
+                        move |_, _, cx| {
+                            weak.update(cx, |breakpoint_list, cx| {
+                                breakpoint_list.edit_line_breakpoint(
+                                    path.clone(),
+                                    row,
+                                    BreakpointEditAction::Toggle,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        }
                     })
-                    .ok();
-                }
-            })
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(
-                    "Unset Breakpoint",
-                    &UnsetBreakpoint,
-                    &focus_handle,
-                    window,
-                    cx,
+                    .tooltip(move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Unset Breakpoint",
+                            &UnsetBreakpoint,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    })
+                    .icon_size(ui::IconSize::XSmall),
                 )
-            })
-            .icon_size(ui::IconSize::Indicator),
+                .right_4(),
         )
         .child(
             v_flex()
                 .py_1()
                 .gap_1()
-                .min_h(px(22.))
+                .min_h(px(26.))
                 .justify_center()
                 .id(SharedString::from(format!(
                     "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
@@ -650,7 +654,7 @@ impl ExceptionBreakpoint {
             v_flex()
                 .py_1()
                 .gap_1()
-                .min_h(px(22.))
+                .min_h(px(26.))
                 .justify_center()
                 .id(("exception-breakpoint-label", ix))
                 .child(
