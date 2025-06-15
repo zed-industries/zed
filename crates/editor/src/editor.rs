@@ -475,6 +475,7 @@ pub enum EditorMode {
         auto_width: bool,
     },
     AutoHeight {
+        min_lines: usize,
         max_lines: usize,
     },
     Full {
@@ -1609,11 +1610,19 @@ impl Editor {
         )
     }
 
-    pub fn auto_height(max_lines: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn auto_height(
+        min_lines: usize,
+        max_lines: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(
-            EditorMode::AutoHeight { max_lines },
+            EditorMode::AutoHeight {
+                min_lines,
+                max_lines,
+            },
             buffer,
             None,
             window,
@@ -21884,7 +21893,7 @@ impl Render for Editor {
 
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
-            EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
+            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
             EditorMode::Full { .. } => cx.theme().colors().editor_background,
             EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
@@ -22542,6 +22551,7 @@ impl BreakpointPromptEditor {
         let prompt = cx.new(|cx| {
             let mut prompt = Editor::new(
                 EditorMode::AutoHeight {
+                    min_lines: 1,
                     max_lines: Self::MAX_LINES as usize,
                 },
                 buffer,
