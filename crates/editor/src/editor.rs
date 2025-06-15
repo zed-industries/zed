@@ -75,7 +75,7 @@ pub use element::{
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use futures::{
     FutureExt, StreamExt as _,
-    future::{self, Shared, join},
+    future::{self, Shared, join, join_all},
     stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -273,16 +273,19 @@ impl InlineValueCache {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
     InlineCompletion(usize),
-    Hint(usize),
     DebuggerValue(usize),
+    // LSP
+    Hint(usize),
+    Color(usize),
 }
 
 impl InlayId {
     fn id(&self) -> usize {
         match self {
             Self::InlineCompletion(id) => *id,
-            Self::Hint(id) => *id,
             Self::DebuggerValue(id) => *id,
+            Self::Hint(id) => *id,
+            Self::Color(id) => *id,
         }
     }
 }
@@ -1133,7 +1136,8 @@ pub struct Editor {
     inline_value_cache: InlineValueCache,
     selection_drag_state: SelectionDragState,
     drag_and_drop_selection_enabled: bool,
-    colors: Vec<(Anchor, DocumentColor)>,
+    next_color_inlay_id: usize,
+    colors: Vec<(Anchor, DocumentColor, InlayId)>,
     refresh_colors_task: Task<()>,
 }
 
@@ -2072,6 +2076,7 @@ impl Editor {
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
             colors: Vec::new(),
+            next_color_inlay_id: 0,
             refresh_colors_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
@@ -16290,20 +16295,95 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        let Some(buffer) = self.buffer().read(cx).as_singleton() else {
-            return;
-        };
         // TODO kb enabled settings. Where to put, create an "lsp" section?
 
-        let Some(task) = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.document_colors(buffer.clone(), cx)
+        let all_colors_task = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            self.buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .filter(|editor_buffer| {
+                    buffer_id
+                        .is_none_or(|buffer_id| buffer_id == editor_buffer.read(cx).remote_id())
+                })
+                .filter_map(|buffer| {
+                    let colors_task = lsp_store.document_colors(buffer, cx)?;
+                    let buffer_id = buffer.read(cx).remote_id();
+                    Some(async move { (buffer_id, colors_task.await) })
+                })
+                .collect::<Vec<_>>()
         }) else {
             return;
         };
-        cx.background_spawn(async move {
-            dbg!(task.await);
-        })
-        .detach();
+        cx.spawn(async move |editor, cx| {
+            let all_colors = join_all(all_colors_task).await;
+            let Ok((multi_buffer_snapshot, editor_excerpts)) = editor.update(cx, |editor, cx| {
+                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let editor_excerpts = multi_buffer_snapshot.excerpts().fold(
+                    HashMap::default(),
+                    |mut acc, (excerpt_id, buffer_snapshot, excerpt_range)| {
+                        let excerpt_data = acc
+                            .entry(buffer_snapshot.remote_id())
+                            .or_insert_with(Vec::new);
+                        let excerpt_point_range =
+                            excerpt_range.context.to_point_utf16(&buffer_snapshot);
+                        excerpt_data.push((excerpt_id, buffer_snapshot, excerpt_point_range));
+                        acc
+                    },
+                );
+                (multi_buffer_snapshot, editor_excerpts)
+            }) else {
+                return;
+            };
+
+            let mut new_editor_colors = Vec::<(Range<Anchor>, DocumentColor)>::with_capacity(all_colors.len());
+            for (buffer_id, colors) in all_colors {
+                let Some(excerpts) = editor_excerpts.get(&buffer_id) else {
+                    continue;
+                };
+                match colors {
+                    Ok(colors) => {
+                        for color in dbg!(colors) {
+                            let color_start = point_from_lsp(color.lsp_range.start);
+                            let color_end = point_from_lsp(color.lsp_range.end);
+
+                            for (excerpt_id, buffer_snapshot, excerpt_range) in excerpts {
+                                if excerpt_range.contains(&color_start.0) && excerpt_range.contains(&color_end.0) {
+                                    let Some(color_start_anchor) = multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, buffer_snapshot.anchor_before(buffer_snapshot.clip_point_utf16(color_start, Bias::Left))) else { continue };
+                                    let Some(color_end_anchor) = multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, buffer_snapshot.anchor_after(buffer_snapshot.clip_point_utf16(color_end, Bias::Right))) else { continue };
+
+                                    let i = new_editor_colors.binary_search_by(|(existing_range, existing_color)| {
+                                        existing_range.start.cmp(&color_start_anchor, &multi_buffer_snapshot).then_with(|| existing_range.end.cmp(&color_end_anchor, &multi_buffer_snapshot))
+                                    });
+                                    let i = match i {
+                                        Ok(i) => {
+                                            if new_editor_colors[i].1 == color {
+                                                continue;
+                                            }
+                                            i
+                                        },
+                                        Err(i) => i,
+                                    };
+                                    new_editor_colors.insert(i, (color_start_anchor..color_end_anchor, color));
+                            }
+                        }
+                    }
+                    Err(e) => log::error!("Failed to retrieve document colors: {e}"),
+                }
+            }
+
+            editor.update(cx, |editor, cx| {
+                let colors_splice = InlaySplice::default();
+                let new_editor_colors = new_editor_colors.into_iter().fuse();
+                let existing_colors = editor.colors.iter().fuse();
+                // TODO kb
+
+                if colors_splice.to_insert.is_empty() && colors_splice.to_remove.is_empty() {
+                    return;
+                }
+                editor.splice_inlays(dbg!(colors_splice));
+            }).ok();
+            }}).detach();
     }
 
     pub fn set_selections_from_remote(
@@ -19237,6 +19317,7 @@ impl Editor {
                 removed_buffer_ids,
             } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
+                self.refresh_colors(None, window, cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
@@ -19245,7 +19326,6 @@ impl Editor {
                     ids: ids.clone(),
                     removed_buffer_ids: removed_buffer_ids.clone(),
                 });
-                // TODO kb invalidate colors
             }
             multi_buffer::Event::ExcerptsEdited {
                 excerpt_ids,

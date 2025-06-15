@@ -4181,22 +4181,15 @@ impl LspCommand for GetDocumentColor {
         self,
         message: Vec<lsp::ColorInformation>,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
+        _: Entity<Buffer>,
         _: LanguageServerId,
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
-        let buffer_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         Ok(message
             .into_iter()
-            .filter_map(|color| {
-                let range = range_from_lsp(color.range.clone());
-                let start = buffer_snapshot.clip_point_utf16(range.start, Bias::Left);
-                let end = buffer_snapshot.clip_point_utf16(range.end, Bias::Left);
-                Some(DocumentColor {
-                    buffer_range: (start..end).to_point(&buffer_snapshot),
-                    lsp_range: color.range,
-                    color: color.color,
-                })
+            .map(|color| DocumentColor {
+                lsp_range: color.range,
+                color: color.color,
             })
             .collect())
     }
@@ -4267,9 +4260,7 @@ impl LspCommand for GetDocumentColor {
                 let start = PointUtf16::new(start.row, start.column);
                 let end = color.lsp_range_end?;
                 let end = PointUtf16::new(end.row, end.column);
-                let buffer_range = (start..end).to_point(&buffer_snapshot);
                 Some(DocumentColor {
-                    buffer_range,
                     lsp_range: lsp::Range {
                         start: point_to_lsp(start),
                         end: point_to_lsp(end),
