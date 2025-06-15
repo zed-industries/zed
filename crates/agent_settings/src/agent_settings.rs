@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use anyhow::{Result, bail};
-use collections::IndexMap;
+use collections::{IndexMap, IndexSet};
 use deepseek::Model as DeepseekModel;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
@@ -111,6 +111,7 @@ pub struct AgentSettings {
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
+    pub favorite_models: IndexSet<LanguageModelSelection>,
 }
 
 impl AgentSettings {
@@ -142,6 +143,28 @@ impl AgentSettings {
             provider: provider.into(),
             model,
         });
+    }
+
+    fn create_model_selection(provider: &str, model: &str) -> LanguageModelSelection {
+        LanguageModelSelection {
+            provider: provider.into(),
+            model: model.to_string(),
+        }
+    }
+
+    pub fn add_favorite_model(&mut self, provider: &str, model: &str) {
+        self.favorite_models
+            .insert(Self::create_model_selection(provider, model));
+    }
+
+    pub fn remove_favorite_model(&mut self, provider: &str, model: &str) {
+        self.favorite_models
+            .shift_remove(&Self::create_model_selection(provider, model));
+    }
+
+    pub fn is_favorite_model(&self, provider: &str, model: &str) -> bool {
+        self.favorite_models
+            .contains(&Self::create_model_selection(provider, model))
     }
 }
 
@@ -279,6 +302,7 @@ impl AgentSettingsContent {
                     preferred_completion_mode: None,
                     enable_feedback: None,
                     play_sound_when_agent_done: None,
+                    favorite_models: Default::default(),
                 },
                 VersionedAgentSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -312,6 +336,7 @@ impl AgentSettingsContent {
                 preferred_completion_mode: None,
                 enable_feedback: None,
                 play_sound_when_agent_done: None,
+                favorite_models: Default::default(),
             },
             None => AgentSettingsContentV2::default(),
         }
@@ -563,6 +588,38 @@ impl AgentSettingsContent {
             Ok(())
         })
     }
+
+    pub fn add_favorite_model(&mut self, provider: &str, model: &str) {
+        self.v2_setting(|settings| {
+            settings
+                .favorite_models
+                .insert(AgentSettings::create_model_selection(provider, model));
+            Ok(())
+        })
+        .ok();
+    }
+
+    pub fn remove_favorite_model(&mut self, provider: &str, model: &str) {
+        self.v2_setting(|settings| {
+            settings
+                .favorite_models
+                .shift_remove(&AgentSettings::create_model_selection(provider, model));
+            Ok(())
+        })
+        .ok();
+    }
+
+    pub fn is_favorite_model(&self, provider: &str, model: &str) -> bool {
+        match &self.inner {
+            Some(AgentSettingsContentInner::Versioned(versioned)) => match versioned.as_ref() {
+                VersionedAgentSettingsContent::V2(v2) => v2
+                    .favorite_models
+                    .contains(&AgentSettings::create_model_selection(provider, model)),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -599,6 +656,7 @@ impl Default for VersionedAgentSettingsContent {
             preferred_completion_mode: None,
             enable_feedback: None,
             play_sound_when_agent_done: None,
+            favorite_models: Default::default(),
         })
     }
 }
@@ -684,6 +742,11 @@ pub struct AgentSettingsContentV2 {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
+    /// List of favorite language models.
+    ///
+    /// Default: []
+    #[serde(default)]
+    favorite_models: IndexSet<LanguageModelSelection>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -704,13 +767,13 @@ impl From<CompletionMode> for zed_llm_client::CompletionMode {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
     pub model: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {
@@ -904,6 +967,10 @@ impl Settings for AgentSettings {
                 .model_parameters
                 .extend_from_slice(&value.model_parameters);
 
+            settings
+                .favorite_models
+                .extend(value.favorite_models.iter().cloned());
+
             if let Some(profiles) = value.profiles {
                 settings
                     .profiles
@@ -1036,6 +1103,7 @@ mod tests {
                             enable_feedback: None,
                             model_parameters: Vec::new(),
                             preferred_completion_mode: None,
+                            favorite_models: Default::default(),
                         })),
                     }
                 },
@@ -1117,5 +1185,40 @@ mod tests {
 
         let agent_settings: AgentSettingsTest = serde_json::from_value(settings).unwrap();
         assert!(agent_settings.agent.is_none());
+    }
+
+    #[test]
+    fn test_favorite_models_order_preservation() {
+        let mut settings = AgentSettingsContentV2::default();
+        settings.favorite_models.insert(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("openai".to_string()),
+            model: "gpt-4".to_string(),
+        });
+        settings.favorite_models.insert(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("anthropic".to_string()),
+            model: "claude-3".to_string(),
+        });
+        settings.favorite_models.insert(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("zed".to_string()),
+            model: "gemini".to_string(),
+        });
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AgentSettingsContentV2 = serde_json::from_str(&json).unwrap();
+
+        let original_order: Vec<_> = settings.favorite_models.iter().collect();
+        let deserialized_order: Vec<_> = deserialized.favorite_models.iter().collect();
+
+        assert_eq!(original_order, deserialized_order);
+        assert_eq!(deserialized.favorite_models.len(), 3);
+
+        // Order matters
+        let models: Vec<_> = deserialized.favorite_models.iter().collect();
+        assert_eq!(models[0].provider.0, "openai");
+        assert_eq!(models[0].model, "gpt-4");
+        assert_eq!(models[1].provider.0, "anthropic");
+        assert_eq!(models[1].model, "claude-3");
+        assert_eq!(models[2].provider.0, "zed");
+        assert_eq!(models[2].model, "gemini");
     }
 }

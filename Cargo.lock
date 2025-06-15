@@ -546,6 +546,7 @@ dependencies = [
  "regex",
  "rope",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "settings",
