@@ -1559,7 +1559,7 @@ impl EditorElement {
                         snapshot
                             .grapheme_at(cursor_position)
                             .or_else(|| {
-                                if cursor_column == 0 {
+                                if snapshot.is_empty() {
                                     snapshot.placeholder_text().and_then(|s| {
                                         s.graphemes(true).next().map(|s| s.to_string().into())
                                     })
