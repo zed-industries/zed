@@ -847,12 +847,14 @@ impl crate::Modifiers {
             keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
         let platform =
             keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+        let function =
+            keymap_state.mod_name_is_active(xkb::MOD_NAME_MOD3, xkb::STATE_MODS_EFFECTIVE);
         Self {
             shift,
             alt,
             control,
             platform,
-            function: false,
+            function,
         }
     }
 }
