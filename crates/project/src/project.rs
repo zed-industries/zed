@@ -915,6 +915,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_entity_request_handler(Self::handle_show_document);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1268,6 +1269,7 @@ impl Project {
             ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_entity_message_handler(Self::handle_hide_toast);
             ssh_proto.add_entity_request_handler(Self::handle_update_buffer_from_ssh);
+            ssh_proto.add_entity_request_handler(Self::handle_show_document);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -2859,6 +2861,14 @@ impl Project {
                 if most_recent_edit.replica_id == self.replica_id() {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
+            }
+            LspStoreEvent::ShowDocument {
+                uri,
+                take_focus: _,
+                selection: _,
+                external,
+            } => {
+                self.handle_show_document_from_lsp(uri, *external, cx);
             }
         }
     }
@@ -4760,6 +4770,89 @@ impl Project {
             })
             .detach_and_log_err(cx);
         buffer.read(cx).remote_id()
+    }
+
+    fn handle_show_document_from_lsp(
+        &mut self,
+        uri: &lsp::Url,
+        external: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_local() {
+            log::info!("ShowDocument RPC: opening URL {}", uri);
+            self.open_show_document_url(uri, external, cx);
+        } else if self.is_via_ssh() {
+            if let Some(ssh_client) = &self.ssh_client {
+                ssh_client
+                    .read(cx)
+                    .proto_client()
+                    .send(proto::ShowDocument {
+                        project_id: SSH_PROJECT_ID,
+                        uri: uri.to_string(),
+                    })
+                    .log_err();
+            }
+        } else {
+            log::error!("ShowDocument RPC is not supported for collaborative projects");
+        }
+    }
+
+    async fn handle_show_document(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ShowDocument>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ShowDocumentResponse> {
+        this.update(&mut cx, |this, cx| {
+            match lsp::Url::parse(&envelope.payload.uri) {
+                Ok(uri) => {
+                    if !this.is_localhost_url(&uri) {
+                        this.open_show_document_url(&uri, true, cx);
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "ShowDocument RPC: invalid URL {}: {}",
+                        envelope.payload.uri,
+                        e
+                    );
+                }
+            }
+        })?;
+        Ok(proto::ShowDocumentResponse { buffer_id: None })
+    }
+
+    // TODO: This is a temporary workaround for the fact that we don't
+    // have a way to determine if a URL is localhost or not in the LSP spec.
+    /// Checks if the given URL is a localhost URL.
+    ///
+    /// A URL is considered a localhost URL if its host is "localhost", "127.0.0.1", or "::1".
+    fn is_localhost_url(&self, uri: &lsp::Url) -> bool {
+        if let Some(host) = uri.host_str() {
+            host == "localhost" || host == "127.0.0.1" || host == "::1"
+        } else {
+            false
+        }
+    }
+
+    fn open_show_document_url(&mut self, uri: &lsp::Url, external: bool, cx: &mut Context<Self>) {
+        if external || uri.scheme() != "file" {
+            cx.open_url(uri.as_str());
+        } else {
+            match uri.to_file_path() {
+                Ok(path) => {
+                    if let Some((worktree, relative_path)) = self.find_worktree(&path, cx) {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: relative_path.into(),
+                        };
+                        self.open_buffer(project_path, cx).detach();
+                    }
+                }
+                Err(_) => {
+                    log::warn!("ShowDocument: invalid file URL: {}", uri);
+                }
+            }
+        }
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
