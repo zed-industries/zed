@@ -410,7 +410,8 @@ jobs:
       - name: Build Zed
         run: cargo build
 
-      # TODO: Add Cargo clean step
+      - name: Limit target directory size
+        run: ./script/clear-target-dir-if-larger-than.ps1 100
 
       # - name: Check dev drive space
       #   working-directory: ${{ env.ZED_WORKSPACE }}
