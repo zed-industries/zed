@@ -62,7 +62,8 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    copilot_chat::init(fs.clone(), http.clone(), cx);
+    let default_configuration = copilot_chat::CopilotChatConfiguration::default();
+    copilot_chat::init(fs.clone(), http.clone(), default_configuration, cx);
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();

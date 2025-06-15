@@ -8976,6 +8976,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "language",
  "language_model",
  "lmstudio",
  "log",
