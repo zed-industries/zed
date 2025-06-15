@@ -2834,6 +2834,7 @@ dependencies = [
  "paths",
  "postage",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "rustls-pki-types",
