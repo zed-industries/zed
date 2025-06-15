@@ -24,7 +24,7 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServer
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
-use serde_json::{Value, json};
+use serde_json::json;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::collections::hash_map::Entry;
@@ -62,8 +62,15 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    let default_configuration = copilot_chat::CopilotChatConfiguration::default();
-    copilot_chat::init(fs.clone(), http.clone(), default_configuration, cx);
+    let language_settings = all_language_settings(None, cx);
+    let configuration = copilot_chat::CopilotChatConfiguration {
+        enterprise_uri: language_settings
+            .edit_predictions
+            .copilot
+            .enterprise_uri
+            .clone(),
+    };
+    copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();
@@ -441,43 +448,39 @@ impl Copilot {
     }
 
     fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
-        let language_settings = all_language_settings(None, cx);
-        let copilot_settings = language_settings.edit_predictions.copilot.clone();
+        let copilot_settings = all_language_settings(None, cx)
+            .edit_predictions
+            .copilot
+            .clone();
 
-        let mut settings = serde_json::Map::new();
-
-        // HTTP proxy settings
-        if let Some(proxy_url) = &copilot_settings.proxy {
-            let proxy_strict_ssl = !copilot_settings.proxy_no_verify.unwrap_or(false);
-            settings.insert(
-                "http".to_string(),
-                json!({
-                    "proxy": proxy_url,
-                    "proxyStrictSSL": proxy_strict_ssl
-                }),
-            );
-        }
-
-        // GitHub Enterprise settings
-        if let Some(enterprise_uri) = &copilot_settings.enterprise_uri {
-            settings.insert(
-                "github-enterprise".to_string(),
-                json!({ "uri": enterprise_uri }),
-            );
-        }
-
-        // Only send configuration if there are settings to send
-        if !settings.is_empty() {
-            let configuration = lsp::DidChangeConfigurationParams {
-                settings: Value::Object(settings),
-            };
-
-            if let Ok(server) = self.server.as_running() {
-                server
-                    .lsp
-                    .notify::<lsp::notification::DidChangeConfiguration>(&configuration)
-                    .log_err();
+        let settings = json!({
+            "http": {
+                "proxy": copilot_settings.proxy,
+                "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
+            },
+            "github-enterprise": {
+                "uri": copilot_settings.enterprise_uri
             }
+        });
+
+        if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+            copilot_chat.update(cx, |chat, cx| {
+                chat.set_configuration(
+                    copilot_chat::CopilotChatConfiguration {
+                        enterprise_uri: copilot_settings.enterprise_uri.clone(),
+                    },
+                    cx,
+                );
+            });
+        }
+
+        if let Ok(server) = self.server.as_running() {
+            server
+                .lsp
+                .notify::<lsp::notification::DidChangeConfiguration>(
+                    &lsp::DidChangeConfigurationParams { settings },
+                )
+                .log_err();
         }
     }
 
@@ -555,37 +558,8 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let copilot_settings = cx.update(|cx| {
-                all_language_settings(None, cx)
-                    .edit_predictions
-                    .copilot
-                    .clone()
-            })?;
-            // Build configuration for initialization
-            let mut settings = serde_json::Map::new();
-
-            // HTTP proxy settings
-            if let Some(proxy_url) = &copilot_settings.proxy {
-                let proxy_strict_ssl = !copilot_settings.proxy_no_verify.unwrap_or(false);
-                settings.insert(
-                    "http".to_string(),
-                    serde_json::json!({
-                        "proxy": proxy_url,
-                        "proxyStrictSSL": proxy_strict_ssl
-                    }),
-                );
-            }
-
-            // GitHub Enterprise settings
-            if let Some(enterprise_uri) = &copilot_settings.enterprise_uri {
-                settings.insert(
-                    "github-enterprise".to_string(),
-                    serde_json::json!({ "uri": enterprise_uri }),
-                );
-            }
-
             let configuration = lsp::DidChangeConfigurationParams {
-                settings: serde_json::Value::Object(settings),
+                settings: Default::default(),
             };
 
             let editor_info = request::SetEditorInfoParams {
@@ -633,6 +607,8 @@ impl Copilot {
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
+                    // Send configuration now that the LSP is fully started
+                    this.send_configuration_update(cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
