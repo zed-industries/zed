@@ -4270,6 +4270,7 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
+ "console",
  "dap",
  "dap_adapters",
  "db",
