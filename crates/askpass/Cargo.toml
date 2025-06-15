@@ -20,5 +20,5 @@ tempfile.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 windows_net.workspace = true
