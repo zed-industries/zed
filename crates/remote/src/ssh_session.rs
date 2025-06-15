@@ -1777,7 +1777,8 @@ impl SshRemoteConnection {
             release_channel.dev_name(),
             version_str
         );
-        let dst_path = paths::remote_server_dir_relative().join(binary_name);
+        let dst_path =
+            UnixStylePathBuf::from(paths::remote_server_dir_relative().join(binary_name));
         println!("==> remote server path: {:?}", dst_path);
 
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
@@ -1788,11 +1789,12 @@ impl SshRemoteConnection {
                 .await;
             println!("==> build_local: {:?}", ret);
             let src_path = ret?;
-            let tmp_path = paths::remote_server_dir_relative().join(format!(
-                "download-{}-{}",
-                std::process::id(),
-                src_path.file_name().unwrap().to_string_lossy()
-            ));
+            let tmp_path =
+                UnixStylePathBuf::from(paths::remote_server_dir_relative().join(format!(
+                    "download-{}-{}",
+                    std::process::id(),
+                    src_path.file_name().unwrap().to_string_lossy()
+                )));
             let ret = self
                 .upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
                 .await;
@@ -1952,7 +1954,7 @@ impl SshRemoteConnection {
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        tmp_path_gz: &Path,
+        tmp_path_gz: &UnixStylePathBuf,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -1990,8 +1992,8 @@ impl SshRemoteConnection {
 
     async fn extract_server_binary(
         &self,
-        dst_path: &Path,
-        tmp_path: &Path,
+        dst_path: &UnixStylePathBuf,
+        tmp_path: &UnixStylePathBuf,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -2022,7 +2024,7 @@ impl SshRemoteConnection {
         Ok(())
     }
 
-    async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
+    async fn upload_file(&self, src_path: &Path, dest_path: &UnixStylePathBuf) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
         let mut command = util::command::new_smol_command("scp");
         let output = self
@@ -2535,6 +2537,16 @@ impl ProtoClient for ChannelClient {
 
     fn is_via_collab(&self) -> bool {
         false
+    }
+}
+
+#[derive(Debug, Clone)]
+struct UnixStylePathBuf(PathBuf);
+
+impl From<PathBuf> for UnixStylePathBuf {
+    fn from(path: PathBuf) -> Self {
+        let path = path.to_string_lossy().replace('\\', "/").into();
+        Self(path)
     }
 }
 
