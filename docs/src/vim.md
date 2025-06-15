@@ -557,15 +557,15 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 
 You can change the following settings to modify vim mode's behavior:
 
-| Property                     | Description                                                                                                                                                                                   | Default Value |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
-| use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
-| use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
-| use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
-| toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
-| custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
-| highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
+| Property                     | Description                                                                                                                                                                                                                    | Default Value |
+|------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------|
+| default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                                                   | "normal"      |
+| use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul>                                  | "always"      |
+| use_multiline_find           | Determines whether `f` and `t` can wrap lines (if so they search in the entire file):<br><ul><li>"always": wrap lines</li><li>"never": don't wrap lines</li><li>"only_helix": wrap lines when in `helix_normal` mode<li></ul>. | "only_helix"  |
+| use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                                                       | false         |
+| toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                                                          | false         |
+| custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                                                   | {}            |
+| highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                                                          | 200           |
 
 Here's an example of adding a digraph for the zombie emoji. This allows you to type `ctrl-k f z` to insert a zombie emoji. You can add as many digraphs as you like.
 
@@ -586,7 +586,7 @@ Here's an example of these settings changed:
   "vim": {
     "default_mode": "insert",
     "use_system_clipboard": "never",
-    "use_multiline_find": true,
+    "use_multiline_find": "always",
     "use_smartcase_find": true,
     "toggle_relative_line_numbers": true,
     "highlight_on_yank_duration": 50,
