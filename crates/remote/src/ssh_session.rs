@@ -1796,7 +1796,7 @@ impl SshRemoteConnection {
             let ret = self
                 .upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
                 .await;
-            println!("==> upload_local_server_binary: {:?}", ret);
+            println!("==> upload_local_server_binary: {ret:?}, from {src_path:?} to {tmp_path:?}");
             ret?;
             let ret = self
                 .extract_server_binary(&dst_path, &tmp_path, delegate, cx)
@@ -1999,18 +1999,23 @@ impl SshRemoteConnection {
         let server_mode = 0o755;
 
         let orig_tmp_path = tmp_path.to_string_lossy();
+        println!("  --> orig_tmp_path: {orig_tmp_path}");
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
-            shell_script!(
+            let x = shell_script!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
                 dst_path = &dst_path.to_string_lossy()
-            )
+            );
+            println!("  --> 1 script: {x}");
+            x
         } else {
-            shell_script!(
+            let x = shell_script!(
                 "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
                 dst_path = &dst_path.to_string_lossy()
-            )
+            );
+            println!("  --> 2 script: {x}");
+            x
         };
         self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
@@ -2121,6 +2126,16 @@ impl SshRemoteConnection {
                 cx,
             );
             log::info!("building remote server binary from source for {}", &triple);
+            let src = Path::new("./target")
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .strip_prefix("\\\\?\\")
+                .unwrap()
+                .to_owned();
+            println!("==> 1 bind src: {src}");
+            let src = src.replace('\\', "/");
+            println!("==> 2 bind src: {src}");
             run_cmd(
                 Command::new("cross")
                     .args([
@@ -2136,7 +2151,7 @@ impl SshRemoteConnection {
                     ])
                     .env(
                         "CROSS_CONTAINER_OPTS",
-                        "--mount type=bind,src=./target,dst=/app/target",
+                        &format!("--mount type=bind,src={},dst=/app/target", src),
                     ),
             )
             .await?;
@@ -2195,10 +2210,14 @@ impl SshRemoteConnection {
             }
             #[cfg(target_os = "windows")]
             {
+                let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
+                if smol::fs::metadata(&gz_path).await.is_ok() {
+                    smol::fs::remove_file(&gz_path).await?;
+                }
                 run_cmd(Command::new("7z.exe").args([
                     "a",
                     "-tgzip",
-                    &format!("target/remote_server/{}/debug/remote_server.gz", triple),
+                    &gz_path,
                     &format!("target/remote_server/{}/debug/remote_server", triple),
                 ]))
                 .await?;
