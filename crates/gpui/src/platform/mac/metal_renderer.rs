@@ -772,8 +772,8 @@ impl MetalRenderer {
                 let texture_id = prev_texture_id.take().unwrap();
                 let texture: metal::Texture = self.sprite_atlas.metal_texture(texture_id);
                 let texture_size = size(
-                    DevicePixels(texture.width() as i32),
-                    DevicePixels(texture.height() as i32),
+                    phypx(texture.width() as i32),
+                    phypx(texture.height() as i32),
                 );
 
                 command_encoder.set_vertex_buffer(
@@ -913,8 +913,8 @@ impl MetalRenderer {
 
         let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
-            DevicePixels(texture.width() as i32),
-            DevicePixels(texture.height() as i32),
+            phypx(texture.width() as i32),
+            phypx(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
         command_encoder.set_vertex_buffer(
@@ -978,8 +978,8 @@ impl MetalRenderer {
 
         let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
-            DevicePixels(texture.width() as i32),
-            DevicePixels(texture.height() as i32),
+            phypx(texture.width() as i32),
+            phypx(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.polychrome_sprites_pipeline_state);
         command_encoder.set_vertex_buffer(
