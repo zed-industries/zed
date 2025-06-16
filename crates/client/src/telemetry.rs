@@ -374,7 +374,7 @@ impl Telemetry {
             return None;
         }
 
-        let mut project_types: HashSet<String> = HashSet::new();
+        let mut project_types: HashSet<&str> = HashSet::new();
 
         for (path, _, _) in updated_entries_set.iter() {
             let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
@@ -382,13 +382,13 @@ impl Telemetry {
             };
 
             if file_name == "pnpm-lock.yaml" {
-                project_types.insert("pnpm".to_string());
+                project_types.insert("pnpm");
             } else if file_name == "yarn.lock" {
-                project_types.insert("yarn".to_string());
+                project_types.insert("yarn");
             } else if file_name == "package.json" {
-                project_types.insert("node".to_string());
+                project_types.insert("node");
             } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                project_types.insert("dotnet".to_string());
+                project_types.insert("dotnet");
             }
         }
 
@@ -398,7 +398,8 @@ impl Telemetry {
                 .insert(worktree_id);
         }
 
-        let mut project_names_vec: Vec<String> = project_types.into_iter().collect();
+        let mut project_names_vec: Vec<String> =
+            project_types.into_iter().map(String::from).collect();
         project_names_vec.sort();
         Some(project_names_vec)
     }
