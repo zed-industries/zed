@@ -2289,27 +2289,24 @@ impl Editor {
     }
 
     fn show_mouse_cursor(&mut self, cx: &mut Context<Self>) {
-        self.set_hide_mouse_cursor(false, cx)
+        if self.mouse_cursor_hidden {
+            self.mouse_cursor_hidden = false;
+            cx.notify();
+        }
     }
 
     pub fn hide_mouse_cursor(&mut self, origin: HideMouseCursorOrigin, cx: &mut Context<Self>) {
-        self.set_hide_mouse_cursor(
-            match origin {
-                HideMouseCursorOrigin::TypingAction => {
-                    matches!(
-                        self.hide_mouse_mode,
-                        HideMouseMode::OnTyping | HideMouseMode::OnTypingAndMovement
-                    )
-                }
-                HideMouseCursorOrigin::MovementAction => {
-                    matches!(self.hide_mouse_mode, HideMouseMode::OnTypingAndMovement)
-                }
-            },
-            cx,
-        );
-    }
-
-    fn set_hide_mouse_cursor(&mut self, hide_mouse_cursor: bool, cx: &mut Context<Self>) {
+        let hide_mouse_cursor = match origin {
+            HideMouseCursorOrigin::TypingAction => {
+                matches!(
+                    self.hide_mouse_mode,
+                    HideMouseMode::OnTyping | HideMouseMode::OnTypingAndMovement
+                )
+            }
+            HideMouseCursorOrigin::MovementAction => {
+                matches!(self.hide_mouse_mode, HideMouseMode::OnTypingAndMovement)
+            }
+        };
         if self.mouse_cursor_hidden != hide_mouse_cursor {
             self.mouse_cursor_hidden = hide_mouse_cursor;
             cx.notify();
