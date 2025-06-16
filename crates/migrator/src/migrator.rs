@@ -868,15 +868,14 @@ mod tests {
         assert_migrate_settings(
             r#"{
     "context_servers": {
-        "empty_server": {}
+        "empty_server": {},
+        "extension_server": {
+            "settings": {
+                "foo": "bar"
+            }
+        }
     }
 }"#,
-            // ,
-            // "extension_server": {
-            //     "settings": {
-            //         "foo": "bar"
-            //     }
-            // },
             // "custom_server": {
             //     "command": {
             //         "path": "foo",
@@ -904,16 +903,15 @@ mod tests {
         "empty_server": {
             "source": "extension",
             "settings": {}
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
         }
     }
 }"#,
-                // ,
-                // "extension_server": {
-                //     "source": "extension",
-                //     "settings": {
-                //         "foo": "bar"
-                //     }
-                // },
                 // "custom_server": {
                 //     "source": "custom",
                 //     "command": {
