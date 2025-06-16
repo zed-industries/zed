@@ -56,7 +56,11 @@ interface dap {
     }
     variant build-task-definition {
         by-name(string),
-        template(build-task-template)
+        template(build-task-definition-template-payload )
+    }
+    record build-task-definition-template-payload {
+        locator-name: option<string>,
+        template: build-task-template
     }
 
     /// Debug Scenario is the user-facing configuration type (used in debug.json). It is still concerned with what to debug and not necessarily how to do it (except for any

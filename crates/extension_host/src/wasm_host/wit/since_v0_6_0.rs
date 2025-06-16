@@ -18,6 +18,7 @@ use extension::{
 };
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
+use gpui::SharedString;
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
@@ -199,8 +200,8 @@ impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
         match value {
             BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
             BuildTaskDefinition::Template(build_task_template) => Self::Template {
-                task_template: build_task_template.into(),
-                locator_name: (),
+                task_template: build_task_template.template.into(),
+                locator_name: build_task_template.locator_name.map(SharedString::from),
             },
         }
     }
