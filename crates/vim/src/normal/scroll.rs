@@ -134,7 +134,6 @@ fn scroll_editor(
             s.move_with(|map, selection| {
                 let mut head = selection.head();
                 let top = top_anchor.to_display_point(map);
-                let starting_column = head.column();
 
                 let vertical_scroll_margin =
                     (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
@@ -185,8 +184,7 @@ fn scroll_editor(
                 } else {
                     head.row()
                 };
-                let new_head =
-                    map.clip_point(DisplayPoint::new(new_row, starting_column), Bias::Left);
+                let new_head = map.clip_point(DisplayPoint::new(new_row, top.column()), Bias::Left);
 
                 if selection.is_empty() {
                     selection.collapse_to(new_head, selection.goal)

@@ -213,9 +213,13 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) {
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
+            let buffer_point =
+                DisplayPoint::new(DisplayRow(0), scroll_position.x as u32).to_point(map);
+            let anchor = map.buffer_snapshot.anchor_at(buffer_point, Bias::Right);
+
             (
                 ScrollAnchor {
-                    anchor: Anchor::min(),
+                    anchor: anchor,
                     offset: scroll_position.max(&gpui::Point::default()),
                 },
                 0,
@@ -245,7 +249,8 @@ impl ScrollManager {
             };
 
             let scroll_top_buffer_point =
-                DisplayPoint::new(DisplayRow(scroll_top as u32), 0).to_point(map);
+                DisplayPoint::new(DisplayRow(scroll_top as u32), scroll_position.x as u32)
+                    .to_point(map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
@@ -702,8 +707,8 @@ impl Editor {
 
     /// Returns an ordering. The newest selection is:
     ///     Ordering::Equal => on screen
-    ///     Ordering::Less => above the screen
-    ///     Ordering::Greater => below the screen
+    ///     Ordering::Less => above or to the left of the screen
+    ///     Ordering::Greater => below or to the right of the screen
     pub fn newest_selection_on_screen(&self, cx: &mut App) -> Ordering {
         let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let newest_head = self
@@ -721,8 +726,12 @@ impl Editor {
             return Ordering::Less;
         }
 
-        if let Some(visible_lines) = self.visible_line_count() {
-            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32) {
+        if let (Some(visible_lines), Some(visible_columns)) =
+            (self.visible_line_count(), self.visible_column_count())
+        {
+            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
+                && newest_head.column() <= screen_top.column() + visible_columns as u32
+            {
                 return Ordering::Equal;
             }
         }
