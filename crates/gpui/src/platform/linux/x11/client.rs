@@ -349,13 +349,21 @@ impl X11Client {
         let events = xkb::EventType::STATE_NOTIFY
             | xkb::EventType::MAP_NOTIFY
             | xkb::EventType::NEW_KEYBOARD_NOTIFY;
+        let map_notify_parts = xkb::MapPart::KEY_TYPES
+            | xkb::MapPart::KEY_SYMS
+            | xkb::MapPart::MODIFIER_MAP
+            | xkb::MapPart::EXPLICIT_COMPONENTS
+            | xkb::MapPart::KEY_ACTIONS
+            | xkb::MapPart::KEY_BEHAVIORS
+            | xkb::MapPart::VIRTUAL_MODS
+            | xkb::MapPart::VIRTUAL_MOD_MAP;
         xcb_connection
             .xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
                 0u8.into(),
                 events,
-                0u8.into(),
-                0u8.into(),
+                map_notify_parts,
+                map_notify_parts,
                 &xkb::SelectEventsAux::new(),
             )
             .unwrap();
