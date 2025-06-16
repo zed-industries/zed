@@ -1,16 +1,14 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
 use std::{
     any::TypeId,
     cmp,
     iter::{self, Peekable},
     ops::Range,
-    sync::Arc,
     vec,
 };
-use sum_tree::TreeMap;
 
 use crate::display_map::TextHighlights;
 
@@ -21,7 +19,7 @@ pub struct CustomHighlightsChunks<'a> {
     multibuffer_snapshot: &'a MultiBufferSnapshot,
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
-    active_highlights: BTreeMap<TypeId, HighlightStyle>,
+    active_highlights: BTreeMap<(TypeId, usize), HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
 }
 
@@ -29,7 +27,7 @@ pub struct CustomHighlightsChunks<'a> {
 struct HighlightEndpoint {
     offset: usize,
     is_start: bool,
-    tag: TypeId,
+    tag: (TypeId, usize),
     style: HighlightStyle,
 }
 
@@ -87,7 +85,7 @@ fn create_highlight_endpoints(
                 Ok(i) | Err(i) => i,
             };
 
-            for (range, style) in &text_highlights[start_ix..] {
+            for (ix, (range, style)) in text_highlights[start_ix..].iter().enumerate() {
                 if range.start.cmp(&end, &buffer).is_ge() {
                     break;
                 }
@@ -95,13 +93,13 @@ fn create_highlight_endpoints(
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.start.to_offset(&buffer),
                     is_start: true,
-                    tag,
+                    tag: (tag, ix),
                     style: *style,
                 });
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.end.to_offset(&buffer),
                     is_start: false,
-                    tag,
+                    tag: (tag, ix),
                     style: *style,
                 });
             }

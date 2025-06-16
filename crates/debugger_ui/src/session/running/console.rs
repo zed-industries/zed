@@ -32,6 +32,8 @@ pub struct Console {
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
     update_output_task: Task<()>,
+    ansi_handler: ConsoleHandler,
+    ansi_processor: ansi::Processor<ansi::StdSyncHandler>,
     focus_handle: FocusHandle,
 }
 
@@ -102,6 +104,8 @@ impl Console {
             stack_frame_list,
             update_output_task: Task::ready(()),
             last_token: OutputToken(0),
+            ansi_handler: Default::default(),
+            ansi_processor: Default::default(),
             focus_handle,
         }
     }
@@ -137,32 +141,31 @@ impl Console {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let mut to_insert = String::default();
+        for event in events {
+            use std::fmt::Write;
+
+            _ = write!(to_insert, "{}\n", event.output.trim_end());
+        }
+
+        let len = self.ansi_handler.pos;
+        self.ansi_processor
+            .advance(&mut self.ansi_handler, to_insert.as_bytes());
+        let output = std::mem::take(&mut self.ansi_handler.output);
+        let mut spans = std::mem::take(&mut self.ansi_handler.spans);
+        if self.ansi_handler.current_range_start < len + output.len() {
+            spans.push((
+                self.ansi_handler.current_range_start..len + output.len(),
+                self.ansi_handler.current_color,
+            ));
+            self.ansi_handler.current_range_start = len + output.len();
+        }
+
         self.console.update(cx, |console, cx| {
-            let mut to_insert = String::default();
-            for event in events {
-                use std::fmt::Write;
-
-                _ = write!(to_insert, "{}\n", event.output.trim_end());
-            }
-
             struct ConsoleAnsiHighlight;
-
-            let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
-            let mut handler = ConsoleHandler::default();
-
-            parser.advance(&mut handler, to_insert.as_bytes());
-            let output = std::mem::take(&mut handler.output);
-            let mut spans = std::mem::take(&mut handler.spans);
-            if handler.current_range_start < output.len() {
-                spans.push((
-                    handler.current_range_start..output.len(),
-                    handler.current_color,
-                ));
-            }
 
             console.set_read_only(false);
             console.move_to_end(&editor::actions::MoveToEnd, window, cx);
-            let len = console.buffer().read(cx).len(cx);
             console.insert(&output, window, cx);
 
             let buffer = console.buffer().read(cx).snapshot(cx);
@@ -505,15 +508,18 @@ struct ConsoleHandler {
     spans: Vec<(Range<usize>, Option<ansi::Color>)>,
     current_range_start: usize,
     current_color: Option<ansi::Color>,
+    pos: usize,
 }
 
 impl ansi::Handler for ConsoleHandler {
     fn input(&mut self, c: char) {
         self.output.push(c);
+        self.pos += 1;
     }
 
     fn linefeed(&mut self) {
         self.output.push('\n');
+        self.pos += 1;
     }
 
     fn terminal_attribute(&mut self, attr: ansi::Attr) {
@@ -524,7 +530,7 @@ impl ansi::Handler for ConsoleHandler {
                     self.current_color,
                 ));
                 self.current_color = Some(color);
-                self.current_range_start = self.output.len();
+                self.current_range_start = self.pos;
             }
             // FIXME
             ansi::Attr::Background(_color) => {}

@@ -1085,7 +1085,7 @@ mod tests {
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
+    use std::{any::TypeId, cmp::Reverse, env};
     use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
