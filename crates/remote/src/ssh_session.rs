@@ -28,7 +28,10 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
-    proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
+    proto::{
+        self, Envelope, EnvelopedMessage, FromProto, PeerId, RequestMessage, ToProto,
+        build_typed_envelope,
+    },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -2538,14 +2541,14 @@ struct UnixStylePathBuf(PathBuf);
 
 impl From<PathBuf> for UnixStylePathBuf {
     fn from(path: PathBuf) -> Self {
-        let path = path.to_string_lossy().replace('\\', "/").into();
+        let path = path.to_proto().into();
         Self(path)
     }
 }
 
 impl From<UnixStylePathBuf> for PathBuf {
     fn from(path: UnixStylePathBuf) -> Self {
-        path.0
+        PathBuf::from_proto(path.0.to_string_lossy().into())
     }
 }
 
