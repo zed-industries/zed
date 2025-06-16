@@ -198,6 +198,7 @@ pub struct X11ClientState {
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
     previous_xkb_state: XKBStateNotiy,
+    keyboard_layout: LinuxKeyboardLayout,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
@@ -401,17 +402,22 @@ impl X11Client {
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
         let compose_state = get_xkb_compose_state(&xkb_context);
-        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
+        let layout_idx = xkb_state.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        let layout_name = xkb_state
+            .get_keymap()
+            .layout_get_name(layout_idx)
+            .to_string();
+        let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
 
+        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
         let scale_factor = resource_database
             .get_value("Xft.dpi", "Xft.dpi")
             .ok()
             .flatten()
             .map(|dpi: f32| dpi / 96.0)
             .unwrap_or(1.0);
-
         let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
             .unwrap()
             .reply()
@@ -489,6 +495,7 @@ impl X11Client {
             keyboard_focused_window: None,
             xkb: xkb_state,
             previous_xkb_state: XKBStateNotiy::default(),
+            keyboard_layout,
             ximc,
             xim_handler,
 
@@ -931,12 +938,8 @@ impl X11Client {
                     locked_layout,
                 };
                 state.xkb = xkb_state;
-                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
-                    drop(state);
-                    callback();
-                    state = self.0.borrow_mut();
-                    state.common.callbacks.keyboard_layout_change = Some(callback);
-                }
+                drop(state);
+                self.handle_keyboard_layout_change();
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
@@ -956,16 +959,6 @@ impl X11Client {
                     locked_layout: event.locked_group.into(),
                 };
 
-                if new_layout != old_layout {
-                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
-                    {
-                        drop(state);
-                        callback();
-                        state = self.0.borrow_mut();
-                        state.common.callbacks.keyboard_layout_change = Some(callback);
-                    }
-                }
-
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 if state.last_modifiers_changed_event == modifiers {
                     drop(state);
@@ -979,6 +972,10 @@ impl X11Client {
                     focused_window.handle_input(PlatformInput::ModifiersChanged(
                         ModifiersChangedEvent { modifiers },
                     ));
+                }
+
+                if new_layout != old_layout {
+                    self.handle_keyboard_layout_change();
                 }
             }
             Event::KeyPress(event) => {
@@ -1368,6 +1365,22 @@ impl X11Client {
         drop(state);
         Some(())
     }
+
+    fn handle_keyboard_layout_change(&self) {
+        let mut state = self.0.borrow_mut();
+        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        let keymap = state.xkb.get_keymap();
+        let layout_name = keymap.layout_get_name(layout_idx);
+        if layout_name != state.keyboard_layout.name() {
+            state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
+            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                drop(state);
+                callback();
+                state = self.0.borrow_mut();
+                state.common.callbacks.keyboard_layout_change = Some(callback);
+            }
+        }
+    }
 }
 
 impl LinuxClient for X11Client {
@@ -1381,14 +1394,7 @@ impl LinuxClient for X11Client {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
-        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-        Box::new(LinuxKeyboardLayout::new(
-            state
-                .xkb
-                .get_keymap()
-                .layout_get_name(layout_idx)
-                .to_string(),
-        ))
+        Box::new(state.keyboard_layout.clone())
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
