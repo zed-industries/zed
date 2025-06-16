@@ -768,7 +768,8 @@ mod tests {
         let http = FakeHttpClient::with_200_response();
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
-        // Using different worktrees, as production code blocks from reporting the same worktree twice
+        // Using different worktrees, as production code blocks from reporting a
+        // project type for the same worktree multiple times
 
         test_project_discovery_helper(
             telemetry.clone().clone(),
