@@ -200,16 +200,16 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     )
 }
 
-fn manifest_for_context_server_extension(
+fn resolve_extension_for_context_server(
     id: &ContextServerId,
     cx: &App,
-) -> Option<Arc<ExtensionManifest>> {
+) -> Option<(Arc<str>, Arc<ExtensionManifest>)> {
     ExtensionStore::global(cx)
         .read(cx)
         .installed_extensions()
         .iter()
         .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
-        .map(|(_, entry)| entry.manifest.clone())
+        .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
 }
 
 fn resolve_context_server_extension(
@@ -223,8 +223,7 @@ fn resolve_context_server_extension(
         return Task::ready(None);
     };
 
-    let manifest = manifest_for_context_server_extension(&id, cx);
-
+    let extension = resolve_extension_for_context_server(&id, cx);
     cx.spawn(async move |cx| {
         let installation = descriptor
             .configuration(worktree_store, cx)
@@ -235,8 +234,9 @@ fn resolve_context_server_extension(
 
         Some(ConfigurationTarget::Extension {
             id,
-            repository_url: manifest
-                .and_then(|manifest| manifest.repository.clone().map(|s| SharedString::from(s))),
+            repository_url: extension.and_then(|(_, manifest)| {
+                manifest.repository.clone().map(|s| SharedString::from(s))
+            }),
             installation,
         })
     })
