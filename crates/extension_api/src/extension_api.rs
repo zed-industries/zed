@@ -20,8 +20,8 @@ pub use wit::{
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
-        DebugAdapterBinary, DebugTaskDefinition, StartDebuggingRequestArguments,
-        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        DebugAdapterBinary, DebugRequest, DebugTaskDefinition, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TaskTemplate, TcpArguments, TcpArgumentsTemplate,
         resolve_tcp_template,
     },
     zed::extension::github::{
@@ -217,6 +217,22 @@ pub trait Extension: Send + Sync {
         _config: &Worktree,
     ) -> Result<DebugScenario, String> {
         Err("`dap_config_to_scenario` not implemented".to_string())
+    }
+    fn dap_locator_create_scenario(
+        &mut self,
+        _locator_name: String,
+        _build_task: TaskTemplate,
+        _resolved_label: String,
+        _debug_adapter_name: String,
+    ) -> Option<DebugScenario> {
+        None
+    }
+    fn run_dap_locator(
+        &mut self,
+        _locator_name: String,
+        _build_task: TaskTemplate,
+    ) -> Result<DebugRequest, String> {
+        Err("`run_dap_locator` not implemented".to_string())
     }
 }
 
@@ -426,6 +442,25 @@ impl wit::Guest for Component {
         worktree: &Worktree,
     ) -> Result<DebugScenario, String> {
         extension().dap_config_to_scenario(config, worktree)
+    }
+    fn dap_locator_create_scenario(
+        locator_name: String,
+        build_task: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Option<DebugScenario> {
+        extension().dap_locator_create_scenario(
+            locator_name,
+            build_task,
+            resolved_label,
+            debug_adapter_name,
+        )
+    }
+    fn run_dap_locator(
+        locator_name: String,
+        build_task: TaskTemplate,
+    ) -> Result<DebugRequest, String> {
+        extension().run_dap_locator(locator_name, build_task)
     }
 }
 
