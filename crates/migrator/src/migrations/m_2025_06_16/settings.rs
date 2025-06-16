@@ -22,22 +22,32 @@ pub const SETTINGS_PATTERNS: MigrationPatterns = &[
 const SETTINGS_CUSTOM_CONTEXT_SERVER_PATTERN: &str = r#"(document
     (object
         (pair
-            key: (string (string_content) @context_servers)
+            key: (string (string_content) @context-servers)
             value: (object
                 (pair
                     key: (string)
                     value: (object
                         (pair
+                            key: (string (string_content) @previous-key)
+                            value: (object)
+                        )*
+                        (pair
                             key: (string (string_content) @key)
                             value: (object)
                         )
-                    ) @server_settings
+                        (pair
+                            key: (string (string_content) @next-key)
+                            value: (object)
+                        )*
+                    ) @server-settings
                 )
             )
         )
     )
-    (#eq? @context_servers "context_servers")
+    (#eq? @context-servers "context_servers")
     (#eq? @key "command")
+    (#not-match? @previous-key "^settings|source$")
+    (#not-match? @next-key "^settings|source$")
 )"#;
 
 fn migrate_custom_context_server_settings(
@@ -45,7 +55,7 @@ fn migrate_custom_context_server_settings(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let server_settings_index = query.capture_index_for_name("server_settings")?;
+    let server_settings_index = query.capture_index_for_name("server-settings")?;
     let server_settings = mat.nodes_for_capture_index(server_settings_index).next()?;
     // Move forward 1 to get inside the object
     let start = server_settings.start_byte() + 1;
@@ -61,22 +71,32 @@ fn migrate_custom_context_server_settings(
 const SETTINGS_EXTENSION_CONTEXT_SERVER_PATTERN: &str = r#"(document
     (object
         (pair
-            key: (string (string_content) @context_servers)
+            key: (string (string_content) @context-servers)
             value: (object
                 (pair
                     key: (string)
                     value: (object
                         (pair
+                            key: (string (string_content) @previous-key)
+                            value: (object)
+                        )*
+                        (pair
                             key: (string (string_content) @key)
                             value: (object)
                         )
-                    ) @server_settings
+                        (pair
+                            key: (string (string_content) @next-key)
+                            value: (object)
+                        )*
+                    ) @server-settings
                 )
             )
         )
     )
-    (#eq? @context_servers "context_servers")
+    (#eq? @context-servers "context_servers")
     (#eq? @key "settings")
+    (#not-match? @previous-key "^command|source$")
+    (#not-match? @next-key "^command|source$")
 )"#;
 
 fn migrate_extension_context_server_settings(
@@ -84,7 +104,7 @@ fn migrate_extension_context_server_settings(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let server_settings_index = query.capture_index_for_name("server_settings")?;
+    let server_settings_index = query.capture_index_for_name("server-settings")?;
     let server_settings = mat.nodes_for_capture_index(server_settings_index).next()?;
     // Move forward 1 to get inside the object
     let start = server_settings.start_byte() + 1;
@@ -100,17 +120,17 @@ fn migrate_extension_context_server_settings(
 const SETTINGS_EMPTY_CONTEXT_SERVER_PATTERN: &str = r#"(document
     (object
         (pair
-            key: (string (string_content) @context_servers)
+            key: (string (string_content) @context-servers)
             value: (object
                 (pair
                     key: (string)
-                    value: (object) @server_settings
+                    value: (object) @server-settings
                 )
             )
         )
     )
-    (#eq? @context_servers "context_servers")
-    (#eq? @server_settings "{}")
+    (#eq? @context-servers "context_servers")
+    (#eq? @server-settings "{}")
 )"#;
 
 fn migrate_empty_context_server_settings(
@@ -118,7 +138,7 @@ fn migrate_empty_context_server_settings(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let server_settings_index = query.capture_index_for_name("server_settings")?;
+    let server_settings_index = query.capture_index_for_name("server-settings")?;
     let server_settings = mat.nodes_for_capture_index(server_settings_index).next()?;
 
     Some((
