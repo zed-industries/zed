@@ -4183,7 +4183,7 @@ impl LspCommand for GetDocumentColor {
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
         Ok(message
             .into_iter()
@@ -4248,10 +4248,9 @@ impl LspCommand for GetDocumentColor {
         self,
         message: proto::GetDocumentColorResponse,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        let buffer_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         Ok(message
             .colors
             .into_iter()
