@@ -64,11 +64,12 @@ workspace-hack.workspace = true
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
