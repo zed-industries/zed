@@ -447,6 +447,7 @@ pub enum SelectPhase {
     BeginColumnar {
         position: DisplayPoint,
         reset: bool,
+        mode: ColumnarMode,
         goal_column: u32,
     },
     Extend {
@@ -459,6 +460,12 @@ pub enum SelectPhase {
         scroll_delta: gpui::Point<f32>,
     },
     End,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColumnarMode {
+    FromMouse,
+    FromSelection,
 }
 
 #[derive(Clone, Debug)]
@@ -950,6 +957,7 @@ pub struct Editor {
     pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
     columnar_display_point: Option<DisplayPoint>,
+    columnar_mode: Option<ColumnarMode>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
@@ -1886,6 +1894,7 @@ impl Editor {
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
             columnar_display_point: None,
+            columnar_mode: None,
             add_selections_state: None,
             select_next_state: None,
             select_prev_state: None,
@@ -3206,7 +3215,8 @@ impl Editor {
                 position,
                 goal_column,
                 reset,
-            } => self.begin_columnar_selection(position, goal_column, reset, window, cx),
+                mode,
+            } => self.begin_columnar_selection(position, goal_column, reset, mode, window, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
@@ -3363,9 +3373,12 @@ impl Editor {
         position: DisplayPoint,
         goal_column: u32,
         reset: bool,
+        mode: ColumnarMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.columnar_mode = Some(mode);
+
         if !self.focus_handle.is_focused(window) {
             self.last_focused_descendant = None;
             window.focus(&self.focus_handle);
@@ -3385,10 +3398,13 @@ impl Editor {
                     SelectMode::Character,
                 );
             });
-            if position.column() != goal_column {
-                self.columnar_display_point = Some(DisplayPoint::new(position.row(), goal_column));
-            } else {
-                self.columnar_display_point = None;
+            if matches!(self.columnar_mode, Some(ColumnarMode::FromMouse)) {
+                if position.column() != goal_column {
+                    self.columnar_display_point =
+                        Some(DisplayPoint::new(position.row(), goal_column));
+                } else {
+                    self.columnar_display_point = None;
+                }
             }
         }
 
@@ -3537,7 +3553,10 @@ impl Editor {
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
-                if !display_map.is_block_line(row) {
+                if (matches!(self.columnar_mode, Some(ColumnarMode::FromMouse))
+                    || start_column <= display_map.line_len(row))
+                    && !display_map.is_block_line(row)
+                {
                     let start = display_map
                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
                         .to_point(display_map);
@@ -3555,15 +3574,19 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        let mut non_empty_ranges = selection_ranges
-            .iter()
-            .filter(|selection_range| selection_range.start != selection_range.end)
-            .peekable();
-
-        let ranges = if non_empty_ranges.peek().is_some() {
-            non_empty_ranges.cloned().collect()
-        } else {
-            selection_ranges
+        let ranges = match self.columnar_mode {
+            Some(ColumnarMode::FromMouse) => {
+                let mut non_empty_ranges = selection_ranges
+                    .iter()
+                    .filter(|selection_range| selection_range.start != selection_range.end)
+                    .peekable();
+                if non_empty_ranges.peek().is_some() {
+                    non_empty_ranges.cloned().collect()
+                } else {
+                    selection_ranges
+                }
+            }
+            _ => selection_ranges,
         };
 
         self.change_selections(None, window, cx, |s| {
@@ -7178,13 +7201,9 @@ impl Editor {
         )
     }
 
-    fn multi_cursor_modifier(
-        cursor_event: bool,
-        modifiers: &Modifiers,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn multi_cursor_modifier(invert: bool, modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        if cursor_event {
+        if invert {
             match multi_cursor_setting {
                 MultiCursorModifier::Alt => modifiers.alt,
                 MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
@@ -7197,8 +7216,21 @@ impl Editor {
         }
     }
 
-    fn columnar_selection_modifiers(multi_cursor_modifier: bool, modifiers: &Modifiers) -> bool {
-        modifiers.shift && multi_cursor_modifier && modifiers.number_of_modifiers() == 2
+    fn columnar_selection_mode(
+        modifiers: &Modifiers,
+        cx: &mut Context<Self>,
+    ) -> Option<ColumnarMode> {
+        if modifiers.shift && modifiers.number_of_modifiers() == 2 {
+            if Self::multi_cursor_modifier(false, modifiers, cx) {
+                Some(ColumnarMode::FromMouse)
+            } else if Self::multi_cursor_modifier(true, modifiers, cx) {
+                Some(ColumnarMode::FromSelection)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     fn update_selection_mode(
@@ -7208,10 +7240,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_cursor_modifier = Self::multi_cursor_modifier(true, modifiers, cx);
-        if !Self::columnar_selection_modifiers(multi_cursor_modifier, modifiers)
-            || self.selections.pending.is_none()
-        {
+        let Some(mode) = Self::columnar_selection_mode(modifiers, cx) else {
+            return;
+        };
+        if self.selections.pending.is_none() {
             return;
         }
 
@@ -7223,6 +7255,7 @@ impl Editor {
             SelectPhase::BeginColumnar {
                 position,
                 reset: false,
+                mode,
                 goal_column: point_for_position.exact_unclipped.column(),
             },
             window,

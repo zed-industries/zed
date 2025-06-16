@@ -1,13 +1,13 @@
 use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
-    CodeActionSource, ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs,
-    ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
-    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
-    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
+    EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
+    LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
+    PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
     SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
     ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
@@ -700,12 +700,15 @@ impl EditorElement {
         }
 
         let position = point_for_position.previous_valid;
-        let multi_cursor_modifier = Editor::multi_cursor_modifier(true, &modifiers, cx);
-        if Editor::columnar_selection_modifiers(multi_cursor_modifier, &modifiers) {
+        if let Some(mode) = Editor::columnar_selection_mode(&modifiers, cx) {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    reset: true,
+                    reset: match mode {
+                        ColumnarMode::FromMouse => true,
+                        ColumnarMode::FromSelection => false,
+                    },
+                    mode: mode,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 window,
@@ -725,7 +728,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::Begin {
                     position,
-                    add: multi_cursor_modifier,
+                    add: Editor::multi_cursor_modifier(false, &modifiers, cx),
                     click_count,
                 },
                 window,
@@ -822,6 +825,7 @@ impl EditorElement {
             SelectPhase::BeginColumnar {
                 position,
                 reset: true,
+                mode: ColumnarMode::FromMouse,
                 goal_column: point_for_position.exact_unclipped.column(),
             },
             window,
