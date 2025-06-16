@@ -728,7 +728,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::Begin {
                     position,
-                    add: Editor::multi_cursor_modifier(false, &modifiers, cx),
+                    add: Editor::multi_cursor_modifier(true, &modifiers, cx),
                     click_count,
                 },
                 window,
