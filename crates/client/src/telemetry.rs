@@ -381,15 +381,21 @@ impl Telemetry {
                 continue;
             };
 
-            if file_name == "pnpm-lock.yaml" {
-                project_types.insert("pnpm");
+            let project_type = if file_name == "pnpm-lock.yaml" {
+                Some("pnpm")
             } else if file_name == "yarn.lock" {
-                project_types.insert("yarn");
+                Some("yarn")
             } else if file_name == "package.json" {
-                project_types.insert("node");
+                Some("node")
             } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                project_types.insert("dotnet");
-            }
+                Some("dotnet")
+            } else {
+                None
+            };
+
+            if let Some(project_type) = project_type {
+                project_types.insert(project_type);
+            };
         }
 
         if !project_types.is_empty() {
