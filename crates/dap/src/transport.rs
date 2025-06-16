@@ -125,7 +125,6 @@ impl Transport {
 
 pub(crate) struct TransportDelegate {
     log_handlers: LogHandlers,
-    current_requests: Requests,
     pending_requests: Requests,
     transport: Transport,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
@@ -142,7 +141,6 @@ impl TransportDelegate {
             transport,
             server_tx: Default::default(),
             log_handlers: Default::default(),
-            current_requests: Default::default(),
             pending_requests: Default::default(),
             _tasks: Vec::new(),
         };
@@ -228,18 +226,11 @@ impl TransportDelegate {
                 }));
             }
 
-            let current_requests = self.current_requests.clone();
             let pending_requests = self.pending_requests.clone();
             let log_handler = log_handler.clone();
             self._tasks.push(cx.background_spawn(async move {
-                match Self::handle_input(
-                    params.input,
-                    client_rx,
-                    current_requests,
-                    pending_requests,
-                    log_handler,
-                )
-                .await
+                match Self::handle_input(params.input, client_rx, pending_requests, log_handler)
+                    .await
                 {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger input: {e}"),
@@ -316,7 +307,6 @@ impl TransportDelegate {
     async fn handle_input<Stdin>(
         mut server_stdin: Stdin,
         client_rx: Receiver<Message>,
-        current_requests: Requests,
         pending_requests: Requests,
         log_handlers: Option<LogHandlers>,
     ) -> Result<()>
@@ -326,12 +316,6 @@ impl TransportDelegate {
         let result = loop {
             match client_rx.recv().await {
                 Ok(message) => {
-                    if let Message::Request(request) = &message {
-                        if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
-                            pending_requests.lock().await.insert(request.seq, sender);
-                        }
-                    }
-
                     let command = match &message {
                         Message::Request(request) => Some(request.command.as_str()),
                         Message::Response(response) => Some(response.command.as_str()),
@@ -547,15 +531,12 @@ impl TransportDelegate {
             server_tx.close();
         }
 
-        let mut current_requests = self.current_requests.lock().await;
         let mut pending_requests = self.pending_requests.lock().await;
 
-        current_requests.clear();
         pending_requests.clear();
 
         self.transport.kill().await;
 
-        drop(current_requests);
         drop(pending_requests);
 
         log::debug!("Shutdown client completed");
