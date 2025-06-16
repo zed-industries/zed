@@ -7729,12 +7729,12 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     // FIXME: We should be handling bitmap for tabs and chars here
                     // Because we do a split at operation the bitmaps will be off
                     Some(Chunk {
-                        text: before,
+                        text: dbg!(before),
                         ..chunk.clone()
                     })
                 } else {
                     self.range.start = chunk_end;
-                    self.buffer_chunk.take()
+                    dbg!(self.buffer_chunk.take())
                 }
             }
             DiffTransform::DeletedHunk {
@@ -7767,12 +7767,13 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let chunk = if let Some(chunk) = chunks.next() {
                     self.range.start += chunk.text.len();
                     self.diff_base_chunks = Some((*buffer_id, chunks));
-                    chunk
+                    dbg!(chunk)
                 } else {
                     debug_assert!(has_trailing_newline);
                     self.range.start += "\n".len();
                     Chunk {
                         text: "\n",
+                        chars: 1u128,
                         ..Default::default()
                     }
                 };
@@ -7868,9 +7869,11 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 
         if self.footer_height > 0 {
             let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
+            let chars = (1 << self.footer_height) - 1;
             self.footer_height = 0;
             return Some(Chunk {
                 text,
+                chars,
                 ..Default::default()
             });
         }
