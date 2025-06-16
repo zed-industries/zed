@@ -357,7 +357,7 @@ impl AgentSettingsContent {
                             _ => None,
                         };
                         settings.provider = Some(AgentProviderContentV1::Anthropic {
-                            default_model: AnthropicModel::from_id(&model).ok(),
+                            default_model: AnthropicModel::from_id(&model),
                             api_url,
                         });
                     }

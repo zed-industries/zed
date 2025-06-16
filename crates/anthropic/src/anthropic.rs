@@ -89,52 +89,52 @@ impl Model {
         Self::Claude3_5Haiku
     }
 
-    pub fn from_id(id: &str) -> Result<Self> {
+    pub fn from_id(id: &str) -> Option<Self> {
         if id.starts_with("claude-opus-4-thinking") {
-            return Ok(Self::ClaudeOpus4Thinking);
+            return Some(Self::ClaudeOpus4Thinking);
         }
 
         if id.starts_with("claude-opus-4") {
-            return Ok(Self::ClaudeOpus4);
+            return Some(Self::ClaudeOpus4);
         }
 
         if id.starts_with("claude-sonnet-4-thinking") {
-            return Ok(Self::ClaudeSonnet4Thinking);
+            return Some(Self::ClaudeSonnet4Thinking);
         }
 
         if id.starts_with("claude-sonnet-4") {
-            return Ok(Self::ClaudeSonnet4);
+            return Some(Self::ClaudeSonnet4);
         }
 
         if id.starts_with("claude-3-7-sonnet-thinking") {
-            return Ok(Self::Claude3_7SonnetThinking);
+            return Some(Self::Claude3_7SonnetThinking);
         }
 
         if id.starts_with("claude-3-7-sonnet") {
-            return Ok(Self::Claude3_7Sonnet);
+            return Some(Self::Claude3_7Sonnet);
         }
 
         if id.starts_with("claude-3-5-sonnet") {
-            return Ok(Self::Claude3_5Sonnet);
+            return Some(Self::Claude3_5Sonnet);
         }
 
         if id.starts_with("claude-3-5-haiku") {
-            return Ok(Self::Claude3_5Haiku);
+            return Some(Self::Claude3_5Haiku);
         }
 
         if id.starts_with("claude-3-opus") {
-            return Ok(Self::Claude3Opus);
+            return Some(Self::Claude3Opus);
         }
 
         if id.starts_with("claude-3-sonnet") {
-            return Ok(Self::Claude3Sonnet);
+            return Some(Self::Claude3Sonnet);
         }
 
         if id.starts_with("claude-3-haiku") {
-            return Ok(Self::Claude3Haiku);
+            return Some(Self::Claude3Haiku);
         }
 
-        Err(anyhow!("invalid model ID: {id}"))
+        None
     }
 
     pub fn id(&self) -> &str {
@@ -336,7 +336,7 @@ pub async fn complete(
     let uri = format!("{api_url}/v1/messages");
     let beta_headers = Model::from_id(&request.model)
         .map(|model| model.beta_headers())
-        .unwrap_or_else(|_err| Model::DEFAULT_BETA_HEADERS.join(","));
+        .unwrap_or_else(|| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -491,7 +491,7 @@ pub async fn stream_completion_with_rate_limit_info(
     let uri = format!("{api_url}/v1/messages");
     let beta_headers = Model::from_id(&request.base.model)
         .map(|model| model.beta_headers())
-        .unwrap_or_else(|_err| Model::DEFAULT_BETA_HEADERS.join(","));
+        .unwrap_or_else(|| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
