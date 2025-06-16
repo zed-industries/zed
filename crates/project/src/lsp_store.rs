@@ -3498,15 +3498,9 @@ struct LspData {
     last_version_queried: HashMap<PathBuf, Global>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct BufferLspData {
     colors: Option<Vec<DocumentColor>>,
-}
-
-impl Default for BufferLspData {
-    fn default() -> Self {
-        BufferLspData { colors: None }
-    }
 }
 
 pub enum LspStoreEvent {
@@ -4937,8 +4931,8 @@ impl LspStore {
                 let resolve_task = lang_server.request::<lsp::request::ColorPresentationRequest>(
                     lsp::ColorPresentationParams {
                         text_document: make_text_document_identifier(&path)?,
-                        color: color.color.clone(),
-                        range: color.lsp_range.clone(),
+                        color: color.color,
+                        range: color.lsp_range,
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                     },
