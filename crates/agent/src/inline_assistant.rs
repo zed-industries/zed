@@ -1350,11 +1350,18 @@ impl InlineAssistant {
                 editor.clear_highlights::<InlineAssist>(cx);
             } else {
                 editor.highlight_text::<InlineAssist>(
-                    foreground_ranges,
-                    HighlightStyle {
-                        fade_out: Some(0.6),
-                        ..Default::default()
-                    },
+                    foreground_ranges
+                        .into_iter()
+                        .map(|range| {
+                            (
+                                range,
+                                HighlightStyle {
+                                    fade_out: Some(0.6),
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .collect(),
                     cx,
                 );
             }
