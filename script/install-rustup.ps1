@@ -15,7 +15,7 @@ if (Get-Command cargo -ErrorAction SilentlyContinue)
     exit
 }
 # Check if rustup and cargo are available in CARGO_HOME
-else if -not ((Test-Path $rustupPath) -and (Test-Path $cargoPath)) {
+elseif -not ((Test-Path $rustupPath) -and (Test-Path $cargoPath)) {
     Write-Output "Rustup or Cargo not found in $cargoHome, installing..."
 
     $tempDir = [System.IO.Path]::GetTempPath()
