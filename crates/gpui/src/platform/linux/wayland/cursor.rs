@@ -1,4 +1,5 @@
 use crate::Globals;
+use crate::platform::linux::DEFAULT_CURSOR_ICON_NAME;
 use util::ResultExt;
 
 use wayland_client::Connection;
@@ -82,47 +83,57 @@ impl Cursor {
         &mut self,
         wl_pointer: &WlPointer,
         serial_id: u32,
-        mut cursor_icon_name: &str,
+        mut cursor_icon_names: &[&str],
         scale: i32,
     ) {
         self.set_theme_size(self.size * scale as u32);
 
-        if let Some(theme) = &mut self.theme {
-            let mut buffer: Option<&CursorImageBuffer>;
+        let Some(theme) = &mut self.theme else {
+            log::warn!("Wayland: Unable to load cursor themes");
+            return;
+        };
 
-            if let Some(cursor) = theme.get_cursor(&cursor_icon_name) {
-                buffer = Some(&cursor[0]);
-            } else if let Some(cursor) = theme.get_cursor("default") {
-                buffer = Some(&cursor[0]);
-                cursor_icon_name = "default";
+        let mut buffer: &CursorImageBuffer;
+        'outer: {
+            for cursor_icon_name in cursor_icon_names {
+                if let Some(cursor) = theme.get_cursor(cursor_icon_name) {
+                    buffer = &cursor[0];
+                    break 'outer;
+                }
+            }
+
+            if let Some(cursor) = theme.get_cursor(DEFAULT_CURSOR_ICON_NAME) {
+                buffer = &cursor[0];
                 log::warn!(
-                    "Linux: Wayland: Unable to get cursor icon: {}. Using default cursor icon",
-                    cursor_icon_name
+                    "Wayland: Unable to get cursor icon {:?}. \
+                    Using default cursor icon: '{}'",
+                    cursor_icon_names,
+                    DEFAULT_CURSOR_ICON_NAME
                 );
             } else {
-                buffer = None;
-                log::warn!("Linux: Wayland: Unable to get default cursor too!");
-            }
-
-            if let Some(buffer) = &mut buffer {
-                let (width, height) = buffer.dimensions();
-                let (hot_x, hot_y) = buffer.hotspot();
-
-                self.surface.set_buffer_scale(scale);
-
-                wl_pointer.set_cursor(
-                    serial_id,
-                    Some(&self.surface),
-                    hot_x as i32 / scale,
-                    hot_y as i32 / scale,
+                log::warn!(
+                    "Wayland: Unable to fallback on default cursor icon '{}' for theme '{}'",
+                    DEFAULT_CURSOR_ICON_NAME,
+                    self.theme_name.as_deref().unwrap_or("default")
                 );
-
-                self.surface.attach(Some(&buffer), 0, 0);
-                self.surface.damage(0, 0, width as i32, height as i32);
-                self.surface.commit();
+                return;
             }
-        } else {
-            log::warn!("Linux: Wayland: Unable to load cursor themes");
         }
+
+        let (width, height) = buffer.dimensions();
+        let (hot_x, hot_y) = buffer.hotspot();
+
+        self.surface.set_buffer_scale(scale);
+
+        wl_pointer.set_cursor(
+            serial_id,
+            Some(&self.surface),
+            hot_x as i32 / scale,
+            hot_y as i32 / scale,
+        );
+
+        self.surface.attach(Some(&buffer), 0, 0);
+        self.surface.damage(0, 0, width as i32, height as i32);
+        self.surface.commit();
     }
 }
