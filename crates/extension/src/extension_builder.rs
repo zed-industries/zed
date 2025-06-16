@@ -98,13 +98,13 @@ impl ExtensionBuilder {
             log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
-        let debug_adapters_dir = extension_dir.join("debug_adapter_schemas");
         for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
-            let debug_adapter_schema_path = meta.schema_path.get_or_insert_with(|| {
-                debug_adapters_dir
-                    .join(debug_adapter_name.as_ref())
-                    .with_extension("json")
-            });
+            let debug_adapter_relative_schema_path =
+                meta.schema_path.clone().unwrap_or_else(|| {
+                    Path::new("debug_adapter_schemas")
+                        .join(Path::new(debug_adapter_name.as_ref()).with_extension("json"))
+                });
+            let debug_adapter_schema_path = extension_dir.join(debug_adapter_relative_schema_path);
 
             let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
                 .with_context(|| {

@@ -20,9 +20,10 @@ pub use wit::{
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
+        AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
         DebugAdapterBinary, DebugConfig, DebugRequest, DebugScenario, DebugTaskDefinition,
-        StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TaskTemplate,
-        TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
+        LaunchRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+        TaskTemplate, TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
     },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
