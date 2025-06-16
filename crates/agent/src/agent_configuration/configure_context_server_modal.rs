@@ -278,7 +278,7 @@ impl ConfigureContextServerModal {
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Task<Result<()>> {
         let Some(config) = ProjectSettings::get_global(cx)
             .context_servers
             .get(&server_id.0)
@@ -290,41 +290,37 @@ impl ConfigureContextServerModal {
                     .map(|_| ContextServerConfiguration::default())
             })
         else {
-            return;
+            return Task::ready(Err(anyhow::anyhow!("Context server not found")));
         };
 
-        window
-            .spawn(cx, async move |cx| {
-                let target = match config.command {
-                    Some(command) => Some(ConfigurationTarget::Existing {
-                        id: server_id,
-                        command,
-                    }),
-                    None => {
-                        match workspace
-                            .update(cx, |workspace, cx| {
-                                resolve_context_server_extension(
-                                    server_id,
-                                    workspace.project().read(cx).worktree_store(),
-                                    cx,
-                                )
-                            })
-                            .ok()
-                        {
-                            Some(task) => task.await,
-                            None => None,
-                        }
+        window.spawn(cx, async move |cx| {
+            let target = match config.command {
+                Some(command) => Some(ConfigurationTarget::Existing {
+                    id: server_id,
+                    command,
+                }),
+                None => {
+                    match workspace
+                        .update(cx, |workspace, cx| {
+                            resolve_context_server_extension(
+                                server_id,
+                                workspace.project().read(cx).worktree_store(),
+                                cx,
+                            )
+                        })
+                        .ok()
+                    {
+                        Some(task) => task.await,
+                        None => None,
                     }
-                };
-
-                match target {
-                    Some(target) => {
-                        Self::show_modal(target, language_registry, workspace, cx).await
-                    }
-                    None => Err(anyhow::anyhow!("Failed to resolve context server")),
                 }
-            })
-            .detach_and_log_err(cx);
+            };
+
+            match target {
+                Some(target) => Self::show_modal(target, language_registry, workspace, cx).await,
+                None => Err(anyhow::anyhow!("Failed to resolve context server")),
+            }
+        })
     }
 
     fn show_modal(

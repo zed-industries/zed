@@ -8,6 +8,7 @@ use language::LanguageRegistry;
 use project::project_settings::ProjectSettings;
 use settings::update_settings_file;
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::Workspace;
 
 use crate::agent_configuration::ConfigureContextServerModal;
@@ -86,15 +87,35 @@ fn show_configure_mcp_modal(
         return;
     }
 
-    let Some((id, _)) = manifest.context_servers.iter().next() else {
+    let ids = manifest
+        .context_servers
+        .keys()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
         return;
-    };
+    }
 
-    ConfigureContextServerModal::show_modal_for_existing_server(
-        ContextServerId(id.clone()),
-        language_registry,
-        workspace,
-        window,
-        cx,
-    );
+    window
+        .spawn(cx, async move |cx| {
+            for id in ids {
+                let Some(task) = cx
+                    .update(|window, cx| {
+                        ConfigureContextServerModal::show_modal_for_existing_server(
+                            ContextServerId(id.clone()),
+                            language_registry.clone(),
+                            workspace.clone(),
+                            window,
+                            cx,
+                        )
+                    })
+                    .ok()
+                else {
+                    continue;
+                };
+                task.await.log_err();
+            }
+        })
+        .detach();
 }

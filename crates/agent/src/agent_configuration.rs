@@ -540,8 +540,8 @@ impl AgentConfiguration {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Configure Server", None, {
                             let context_server_id = context_server_id.clone();
-                            let workspace = workspace.clone();
                             let language_registry = language_registry.clone();
+                            let workspace = workspace.clone();
                             move |window, cx| {
                                 ConfigureContextServerModal::show_modal_for_existing_server(
                                     context_server_id.clone(),
@@ -550,6 +550,7 @@ impl AgentConfiguration {
                                     window,
                                     cx,
                                 )
+                                .detach_and_log_err(cx);
                             }
                         })
                         .separator()
