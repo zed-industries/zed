@@ -341,7 +341,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::focus_search))
             .size_full()
-            .bg(theme.colors().background)
+            .bg(theme.colors().editor_background)
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
             .px_4()
