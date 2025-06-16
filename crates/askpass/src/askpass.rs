@@ -1,3 +1,5 @@
+#[cfg(not(unix))]
+use std::ffi::OsStr;
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -128,7 +130,7 @@ impl AskPassSession {
         })
     }
 
-    pub fn script_path(&self) -> &std::path::Path {
+    pub fn script_path(&self) -> impl AsRef<OsStr> {
         &self.script_path
     }
 
@@ -339,7 +341,7 @@ impl AskPassSession {
         })
     }
 
-    pub fn script_path(&self) -> &str {
+    pub fn script_path(&self) -> impl AsRef<OsStr> {
         &self.askpass_helper
     }
 
