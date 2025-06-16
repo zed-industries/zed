@@ -5890,13 +5890,13 @@ impl Editor {
                         scroll_handle: UniformListScrollHandle::default(),
                         deployed_from,
                     }));
+                cx.notify();
                 if spawn_straight_away {
                     if let Some(task) = editor.confirm_code_action(
                         &ConfirmCodeAction { item_ix: Some(0) },
                         window,
                         cx,
                     ) {
-                        cx.notify();
                         return task;
                     }
                 }
