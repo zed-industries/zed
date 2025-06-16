@@ -757,8 +757,8 @@ mod tests {
         test_project_discovery_helper(telemetry.clone(), vec!["file.vbproj"], vec!["dotnet"], 5);
         test_project_discovery_helper(telemetry.clone(), vec!["file.sln"], vec!["dotnet"], 6);
 
-        // Ensure we only detect the project type once in the presence of
-        // multiple files associated with that project type
+        // Each worktree should only send a single project type event, even when
+        // encountering multiple files associated with that project type
         test_project_discovery_helper(
             telemetry,
             vec!["global.json", "Directory.Build.props"],
