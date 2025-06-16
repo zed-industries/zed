@@ -1,10 +1,9 @@
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::http::{HeaderMap, HeaderValue};
+use http_client::http::HeaderMap;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
@@ -345,40 +344,32 @@ pub async fn complete(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
-    let serialized_request =
-        serde_json::to_string(&request).context("failed to serialize request")?;
+    let serialized_request = serde_json::to_string(&request)
+        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
     let request = request_builder
         .body(AsyncBody::from(serialized_request))
-        .context("failed to construct request body")?;
+        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
 
     let mut response = client
         .send(request)
         .await
-        .context("failed to send request to Anthropic")?;
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("failed to read response body")?;
-        let response_message: Response =
-            serde_json::from_slice(&body).context("failed to deserialize response body")?;
-        Ok(response_message)
+        .map_err(|e| AnthropicError::HttpSend(e.to_string()))?;
+    let status = response.status();
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|e| AnthropicError::ResponseBodyRead(e.to_string()))?;
+
+    if status.is_success() {
+        Ok(serde_json::from_str(&body)
+            .map_err(|e| AnthropicError::ResponseDeserialization(e.to_string()))?)
     } else {
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("failed to read response body")?;
-        let body_str =
-            std::str::from_utf8(&body).context("failed to parse response body as UTF-8")?;
-        Err(AnthropicError::Other(anyhow!(
-            "Failed to connect to API: {} {}",
-            response.status(),
-            body_str
-        )))
+        Err(AnthropicError::HttpError {
+            status: status.as_u16(),
+            body,
+        })
     }
 }
 
