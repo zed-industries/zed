@@ -89,6 +89,11 @@ pub struct SshConnectionOptions {
     pub upload_binary_over_ssh: bool,
 }
 
+pub struct SshArgs {
+    pub arguments: Vec<String>,
+    pub askpass: Option<String>,
+}
+
 #[macro_export]
 macro_rules! shell_script {
     ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
@@ -431,25 +436,25 @@ impl SshSocket {
     // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
     // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     #[cfg(not(target_os = "windows"))]
-    fn ssh_args(&self) -> (Vec<String>, Option<String>) {
-        (
-            vec![
+    fn ssh_args(&self) -> SshArgs {
+        SshArgs {
+            arguments: vec![
                 "-o".to_string(),
                 "ControlMaster=no".to_string(),
                 "-o".to_string(),
                 format!("ControlPath={}", self.socket_path.display()),
                 self.connection_options.ssh_url(),
             ],
-            None,
-        )
+            askpass: None,
+        }
     }
 
     #[cfg(target_os = "windows")]
-    fn ssh_args(&self) -> (Vec<String>, Option<String>) {
-        (
-            vec![self.connection_options.ssh_url()],
-            Some(self.askpass_content.clone()),
-        )
+    fn ssh_args(&self) -> SshArgs {
+        SshArgs {
+            arguments: vec![self.connection_options.ssh_url()],
+            askpass: Some(self.askpass_content.clone()),
+        }
     }
 }
 
@@ -1123,7 +1128,7 @@ impl SshRemoteClient {
         self.client.subscribe_to_entity(remote_id, entity);
     }
 
-    pub fn ssh_args(&self) -> Option<(Vec<String>, Option<String>)> {
+    pub fn ssh_args(&self) -> Option<SshArgs> {
         self.state
             .lock()
             .as_ref()
@@ -1352,7 +1357,7 @@ trait RemoteConnection: Send + Sync {
     fn has_been_killed(&self) -> bool;
     /// On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
     /// On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
-    fn ssh_args(&self) -> (Vec<String>, Option<String>);
+    fn ssh_args(&self) -> SshArgs;
     fn connection_options(&self) -> SshConnectionOptions;
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1381,7 +1386,7 @@ impl RemoteConnection for SshRemoteConnection {
         self.master_process.lock().is_none()
     }
 
-    fn ssh_args(&self) -> (Vec<String>, Option<String>) {
+    fn ssh_args(&self) -> SshArgs {
         self.socket.ssh_args()
     }
 
@@ -2589,7 +2594,8 @@ mod fake {
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, RemoteConnection, SshClientDelegate, SshConnectionOptions, SshPlatform,
+        ChannelClient, RemoteConnection, SshArgs, SshClientDelegate, SshConnectionOptions,
+        SshPlatform,
     };
 
     pub(super) struct FakeRemoteConnection {
@@ -2625,8 +2631,11 @@ mod fake {
             false
         }
 
-        fn ssh_args(&self) -> (Vec<String>, Option<String>) {
-            (Vec::new(), None)
+        fn ssh_args(&self) -> SshArgs {
+            SshArgs {
+                arguments: Vec::new(),
+                askpass: None,
+            }
         }
 
         fn upload_directory(
