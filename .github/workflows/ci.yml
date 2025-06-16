@@ -384,10 +384,11 @@ jobs:
     steps:
       - name: Environment Setup
         run: |
+          $RunnerDir = Split-Path -Parent $env:RUNNER_WORKSPACE
           Write-Output `
-            "RUSTUP_HOME=C:\utils\.rustup" `
-            "CARGO_HOME=C:\utils\.cargo" `
-            "PATH=C:\utils\.cargo\bin;$env:PATH" `
+            "RUSTUP_HOME=$RunnerDir\.rustup" `
+            "CARGO_HOME=$RunnerDir\.cargo" `
+            "PATH=$RunnerDir\.cargo\bin;$env:PATH" `
           >> $env:GITHUB_ENV
 
       - name: Checkout repo
@@ -395,10 +396,11 @@ jobs:
         with:
           clean: false
 
-      - name: Setup Cargo config.toml
+      - name: Setup Cargo and Rustup
         run: |
           mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
           cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
+          .\script\install-rustup.ps1
 
       - name: cargo clippy
         run: |

@@ -10,7 +10,7 @@ if ($args -notcontains "-p" -and $args -notcontains "--package")
 }
 
 # https://stackoverflow.com/questions/41324882/how-to-run-a-powershell-script-with-verbose-output/70020655#70020655
-Set-PSDebug -Trace 2
+# Set-PSDebug -Trace 2
 
 if ($env:CARGO)
 {
