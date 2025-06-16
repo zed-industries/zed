@@ -398,7 +398,7 @@ impl DebugAdapter for FakeAdapter {
         serde_json::Value::Null
     }
 
-    fn request_kind(
+    async fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -417,7 +417,7 @@ impl DebugAdapter for FakeAdapter {
         None
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let config = serde_json::to_value(zed_scenario.request).unwrap();
 
         Ok(DebugScenario {
@@ -443,7 +443,7 @@ impl DebugAdapter for FakeAdapter {
             envs: HashMap::default(),
             cwd: None,
             request_args: StartDebuggingRequestArguments {
-                request: self.request_kind(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config).await?,
                 configuration: task_definition.config.clone(),
             },
         })
