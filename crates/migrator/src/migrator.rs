@@ -873,6 +873,12 @@ mod tests {
             "settings": {
                 "foo": "bar"
             }
+        },
+        "empty_server2": {},
+        "extension_server2": {
+            "settings": {
+                "foo": "bar"
+            }
         }
     }
 }"#,
@@ -905,6 +911,16 @@ mod tests {
             "settings": {}
         },
         "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "empty_server2": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server2": {
             "source": "extension",
             "settings": {
                 "foo": "bar"
