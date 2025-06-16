@@ -522,6 +522,12 @@ impl ansi::Handler for ConsoleHandler {
         self.pos += 1;
     }
 
+    fn put_tab(&mut self, count: u16) {
+        self.output
+            .extend(std::iter::repeat('\t').take(count as usize));
+        self.pos += count as usize;
+    }
+
     fn terminal_attribute(&mut self, attr: ansi::Attr) {
         match attr {
             ansi::Attr::Foreground(color) => {
