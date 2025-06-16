@@ -176,6 +176,7 @@ impl DebugPanel {
             dap_store.new_session(
                 scenario.label.clone(),
                 DebugAdapterName(scenario.adapter.clone()),
+                task_context.clone(),
                 None,
                 cx,
             )
@@ -338,12 +339,13 @@ impl DebugPanel {
         let adapter = curr_session.read(cx).adapter().clone();
         let binary = curr_session.read(cx).binary().cloned().unwrap();
         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+        let task_context = curr_session.read(cx).task_context().clone();
 
         cx.spawn_in(window, async move |this, cx| {
             task.await;
 
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(label, adapter, None, cx);
+                let session = dap_store.new_session(label, adapter, task_context, None, cx);
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
@@ -393,11 +395,17 @@ impl DebugPanel {
             log::error!("Attempted to start a child-session without a binary");
             return;
         };
+        let task_context = parent_session.read(cx).task_context().clone();
         binary.request_args = request.clone();
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
-                let session =
-                    dap_store.new_session(label, adapter, Some(parent_session.clone()), cx);
+                let session = dap_store.new_session(
+                    label,
+                    adapter,
+                    task_context,
+                    Some(parent_session.clone()),
+                    cx,
+                );
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
