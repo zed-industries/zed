@@ -883,6 +883,18 @@ mod tests {
                 }
             }
         },
+        "invalid_server": {
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        },
         "empty_server2": {},
         "extension_server2": {
             "settings": {
@@ -897,21 +909,21 @@ mod tests {
                     "FOO": "BAR"
                 }
             }
+        },
+        "invalid_server2": {
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
         }
     }
 }"#,
-            // "invalid_server": {
-            //     "command": {
-            //         "path": "foo",
-            //         "args": ["bar"],
-            //         "env": {
-            //             "FOO": "BAR"
-            //         }
-            //     },
-            //     "settings": {
-            //         "foo": "bar"
-            //     }
-            // }
             Some(
                 r#"{
     "context_servers": {
@@ -935,6 +947,19 @@ mod tests {
                 }
             }
         },
+        "invalid_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        },
         "empty_server2": {
             "source": "extension",
             "settings": {}
@@ -954,19 +979,22 @@ mod tests {
                     "FOO": "BAR"
                 }
             }
+        },
+        "invalid_server2": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
         }
     }
 }"#,
-                // "invalid_server": {
-                //     "source": "custom",
-                //     "command": {
-                //         "path": "foo",
-                //         "args": ["bar"],
-                //         "env": {
-                //             "FOO": "BAR"
-                //         }
-                //     }
-                // }
             ),
         );
     }

@@ -46,8 +46,8 @@ const SETTINGS_CUSTOM_CONTEXT_SERVER_PATTERN: &str = r#"(document
     )
     (#eq? @context-servers "context_servers")
     (#eq? @key "command")
-    (#not-match? @previous-key "^settings|source$")
-    (#not-match? @next-key "^settings|source$")
+    (#not-eq? @previous-key "source")
+    (#not-eq? @next-key "source")
 )"#;
 
 fn migrate_custom_context_server_settings(
