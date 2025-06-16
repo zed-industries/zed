@@ -128,7 +128,6 @@ dependencies = [
  "time",
  "time_format",
  "ui",
- "ui_input",
  "urlencoding",
  "util",
  "uuid",
