@@ -891,6 +891,12 @@ impl X11Client {
                     locked_layout,
                 };
                 state.xkb = xkb_state;
+                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                    drop(state);
+                    callback();
+                    state = self.0.borrow_mut();
+                    state.common.callbacks.keyboard_layout_change = Some(callback);
+                }
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
