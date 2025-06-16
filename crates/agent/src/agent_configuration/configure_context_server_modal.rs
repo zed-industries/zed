@@ -234,9 +234,8 @@ fn resolve_context_server_extension(
 
         Some(ConfigurationTarget::Extension {
             id,
-            repository_url: extension.and_then(|(_, manifest)| {
-                manifest.repository.clone().map(|s| SharedString::from(s))
-            }),
+            repository_url: extension
+                .and_then(|(_, manifest)| manifest.repository.clone().map(SharedString::from)),
             installation,
         })
     })
