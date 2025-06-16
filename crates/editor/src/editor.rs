@@ -328,7 +328,6 @@ enum DisplayDiffHunk {
     },
 }
 
-#[derive(Copy, Clone)]
 pub enum HideMouseCursorOrigin {
     TypingAction,
     MovementAction,
