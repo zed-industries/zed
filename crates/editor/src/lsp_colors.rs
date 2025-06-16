@@ -2,7 +2,7 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::Rgba;
+use gpui::{Hsla, Rgba};
 use language::point_from_lsp;
 use lsp::LanguageServerId;
 use multi_buffer::Anchor;
@@ -12,7 +12,8 @@ use ui::{Context, Window};
 use util::post_inc;
 
 use crate::{
-    Editor, InlayId, InlaySplice, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
+    display_map::Inlay, editor_settings::DocumentColorsRenderMode,
 };
 
 #[derive(Debug, Default)]
@@ -23,25 +24,89 @@ pub(super) struct LspColorData {
 }
 
 impl LspColorData {
-    pub fn render_mode_updated(&mut self, new_render_mode: DocumentColorsRenderMode) -> bool {
+    pub fn render_mode_updated(
+        &mut self,
+        new_render_mode: DocumentColorsRenderMode,
+    ) -> Option<InlaySplice> {
         if self.render_mode == new_render_mode {
-            return false;
+            return None;
         }
         self.render_mode = new_render_mode;
-        if new_render_mode == DocumentColorsRenderMode::None {
-            self.colors.clear();
-            self.inlay_colors.clear();
+        match new_render_mode {
+            DocumentColorsRenderMode::Inlay => Some(InlaySplice {
+                to_remove: Vec::new(),
+                to_insert: self
+                    .colors
+                    .iter()
+                    .map(|(range, color, id)| {
+                        Inlay::color(
+                            id.id(),
+                            range.start,
+                            Rgba {
+                                r: color.color.red,
+                                g: color.color.green,
+                                b: color.color.blue,
+                                a: color.color.alpha,
+                            },
+                        )
+                    })
+                    .collect(),
+            }),
+            DocumentColorsRenderMode::None => {
+                self.colors.clear();
+                Some(InlaySplice {
+                    to_remove: self.inlay_colors.drain().map(|(id, _)| id).collect(),
+                    to_insert: Vec::new(),
+                })
+            }
+            DocumentColorsRenderMode::Underline
+            | DocumentColorsRenderMode::Border
+            | DocumentColorsRenderMode::Background => Some(InlaySplice {
+                to_remove: self.inlay_colors.drain().map(|(id, _)| id).collect(),
+                to_insert: Vec::new(),
+            }),
         }
-        return true;
     }
 
-    fn set_colors(&mut self, colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>) {
+    fn set_colors(&mut self, colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>) -> bool {
+        if self.colors == colors {
+            return false;
+        }
+
         self.inlay_colors = colors
             .iter()
             .enumerate()
             .map(|(i, (_, _, id))| (*id, i))
             .collect();
         self.colors = colors;
+        true
+    }
+
+    pub fn editor_display_highlights(
+        &self,
+        snapshot: &EditorSnapshot,
+    ) -> (DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>) {
+        let render_mode = self.render_mode;
+        let highlights = if render_mode == DocumentColorsRenderMode::None
+            || render_mode == DocumentColorsRenderMode::Inlay
+        {
+            Vec::new()
+        } else {
+            self.colors
+                .iter()
+                .map(|(range, color, _)| {
+                    let display_range = range.clone().to_display_points(snapshot);
+                    let color = Hsla::from(Rgba {
+                        r: color.color.red,
+                        g: color.color.green,
+                        b: color.color.blue,
+                        a: color.color.alpha,
+                    });
+                    (display_range, color)
+                })
+                .collect()
+        };
+        (render_mode, highlights)
     }
 }
 
@@ -257,10 +322,16 @@ impl Editor {
                             .extend(existing_colors.map(|(_, _, id)| *id));
                     }
 
-                    // TODO kb handle different render modes
-                    editor.colors.set_colors(new_color_inlays);
-                    if !colors_splice.to_insert.is_empty() || !colors_splice.to_remove.is_empty() {
+                    let mut updated = editor.colors.set_colors(new_color_inlays);
+                    if editor.colors.render_mode == DocumentColorsRenderMode::Inlay
+                        && (!colors_splice.to_insert.is_empty()
+                            || !colors_splice.to_remove.is_empty())
+                    {
                         editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);
+                        updated = true;
+                    }
+
+                    if updated {
                         cx.notify();
                     }
                 })
