@@ -16,7 +16,7 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use project::{
-    context_server_store::{ContextServerStatus, ContextServerStore},
+    context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::ProjectSettings,
 };
 use settings::{Settings, update_settings_file};
@@ -472,9 +472,22 @@ impl AgentConfiguration {
             .read(cx)
             .status_for_server(&context_server_id)
             .unwrap_or(ContextServerStatus::Stopped);
+        let server_configuration = self
+            .context_server_store
+            .read(cx)
+            .configuration_for_server(&context_server_id);
 
         let is_running = matches!(server_status, ContextServerStatus::Running);
         let item_id = SharedString::from(context_server_id.0.clone());
+        let is_from_extension = server_configuration
+            .as_ref()
+            .map(|config| {
+                matches!(
+                    config.as_ref(),
+                    ContextServerConfiguration::Extension { .. }
+                )
+            })
+            .unwrap_or(false);
 
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
@@ -495,6 +508,18 @@ impl AgentConfiguration {
         let tool_count = tools.len();
 
         let border_color = cx.theme().colors().border.opacity(0.6);
+
+        let (source_icon, source_tooltip) = if is_from_extension {
+            (
+                IconName::ZedMcpExtension,
+                "This MCP server was installed from an extension.",
+            )
+        } else {
+            (
+                IconName::ZedMcpCustom,
+                "This custom MCP server was installed directly.",
+            )
+        };
 
         let (status_indicator, tooltip_text) = match server_status {
             ContextServerStatus::Starting => (
@@ -615,7 +640,19 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).ml_0p5().mr_1p5())
+                            .child(Label::new(item_id).ml_0p5())
+                            .child(
+                                div()
+                                    .id("extension-source")
+                                    .mt_0p5()
+                                    .mx_1()
+                                    .tooltip(Tooltip::text(source_tooltip))
+                                    .child(
+                                        Icon::new(source_icon)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
                             .when(is_running, |this| {
                                 this.child(
                                     Label::new(if tool_count == 1 {
