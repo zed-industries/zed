@@ -44,7 +44,6 @@ impl StreamingFuzzyMatcher {
     /// Returns `Some(range)` if a match has been found with the accumulated
     /// query so far, or `None` if no suitable match exists yet.
     pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
-        // Store the line hint if provided
         if line_hint.is_some() {
             self.line_hint = line_hint;
         }

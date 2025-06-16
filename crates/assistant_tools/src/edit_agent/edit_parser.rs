@@ -43,9 +43,15 @@ pub enum EditFormat {
     /// <old_text>...</old_text>
     /// <new_text>...</new_text>
     XmlTags,
-    /// Diff-fenced format (fences are optional):
-    /// ```text
-    /// <<<<<<< SEARCH
+    /// Diff-fenced format, in which:
+    /// - Text before the SEARCH marker is ignored
+    /// - Fences are optional
+    /// - Line hint is optional.
+    ///
+    /// Example:
+    ///
+    /// ```diff
+    /// <<<<<<< SEARCH line=42
     /// ...
     /// =======
     /// ...
@@ -76,8 +82,9 @@ impl EditFormat {
         }
     }
 
-    /// Return an optimal edit format for the language model with the ability to override it
-    /// by setting the `ZED_EDIT_FORMAT` environment variable
+    /// Return an optimal edit format for the language model,
+    /// with the ability to override it by setting the
+    /// `ZED_EDIT_FORMAT` environment variable
     #[allow(dead_code)]
     pub fn from_env(model: Arc<dyn LanguageModel>) -> anyhow::Result<Self> {
         let default = EditFormat::from_model(model)?;
@@ -87,7 +94,6 @@ impl EditFormat {
 
 pub trait EditFormatParser: Send + std::fmt::Debug {
     fn push(&mut self, chunk: &str) -> SmallVec<[EditParserEvent; 1]>;
-    // fn metrics(&self) -> &EditParserMetrics;
     fn take_metrics(&mut self) -> EditParserMetrics;
 }
 
@@ -270,10 +276,6 @@ impl EditFormatParser for XmlEditParser {
         edit_events
     }
 
-    // fn metrics(&self) -> &EditParserMetrics {
-    //     &self.metrics
-    // }
-
     fn take_metrics(&mut self) -> EditParserMetrics {
         std::mem::take(&mut self.metrics)
     }
@@ -410,10 +412,6 @@ impl EditFormatParser for DiffFencedEditParser {
         }
         edit_events
     }
-
-    // fn metrics(&self) -> &EditParserMetrics {
-    //     &self.metrics
-    // }
 
     fn take_metrics(&mut self) -> EditParserMetrics {
         std::mem::take(&mut self.metrics)
@@ -902,57 +900,9 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_xml_with_line_hint(mut rng: StdRng) {
-        let mut parser = EditParser::new(EditFormat::XmlTags);
-        let events = parse_events_random_chunks(
-            "<old_text line=25>original content</old_text><new_text>updated content</new_text>",
-            &mut parser,
-            &mut rng,
-        );
-
-        // Collect all old text chunks and new text chunks
-        let mut old_text = String::new();
-        let mut new_text = String::new();
-        let mut old_line_hint = None;
-
-        for event in events {
-            match event {
-                EditParserEvent::OldTextChunk {
-                    chunk,
-                    done,
-                    line_hint,
-                } => {
-                    old_text.push_str(&chunk);
-                    if line_hint.is_some() {
-                        old_line_hint = line_hint;
-                    }
-                    if done {
-                        assert_eq!(old_text, "original content");
-                        assert_eq!(old_line_hint, Some(25));
-                    }
-                }
-                EditParserEvent::NewTextChunk { chunk, done } => {
-                    new_text.push_str(&chunk);
-                    if done {
-                        assert_eq!(new_text, "updated content");
-                    }
-                }
-            }
-        }
-
-        assert_eq!(
-            parser.finish(),
-            EditParserMetrics {
-                tags: 2,
-                mismatched_tags: 0
-            }
-        );
-    }
-
-    #[gpui::test(iterations = 100)]
     fn test_diff_fenced_with_line_hint(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::DiffFenced);
-        let events = parse_events_random_chunks(
+        let edits = parse_random_chunks(
             indoc! {"
                 <<<<<<< SEARCH line=42
                 original text
@@ -963,47 +913,17 @@ mod tests {
             &mut parser,
             &mut rng,
         );
-
-        // Collect all old text chunks and new text chunks
-        let mut old_text = String::new();
-        let mut new_text = String::new();
-        let mut old_line_hint = None;
-
-        for event in events {
-            match event {
-                EditParserEvent::OldTextChunk {
-                    chunk,
-                    done,
-                    line_hint,
-                } => {
-                    old_text.push_str(&chunk);
-                    if line_hint.is_some() {
-                        old_line_hint = line_hint;
-                    }
-                    if done {
-                        assert_eq!(old_text, "original text");
-                        assert_eq!(old_line_hint, Some(42));
-                    }
-                }
-                EditParserEvent::NewTextChunk { chunk, done } => {
-                    new_text.push_str(&chunk);
-                    if done {
-                        assert_eq!(new_text, "updated text");
-                    }
-                }
-            }
-        }
-
         assert_eq!(
-            parser.finish(),
-            EditParserMetrics {
-                tags: 0,
-                mismatched_tags: 0
-            }
+            edits,
+            vec![Edit {
+                old_text: "original text".to_string(),
+                line_hint: Some(42),
+                new_text: "updated text".to_string(),
+            }]
         );
     }
     #[gpui::test(iterations = 100)]
-    fn test_line_hints(mut rng: StdRng) {
+    fn test_xml_line_hints(mut rng: StdRng) {
         // Line hint is a single quoted line number
         let mut parser = EditParser::new(EditFormat::XmlTags);
 
@@ -1116,27 +1036,5 @@ mod tests {
         }
 
         edits
-    }
-
-    fn parse_events_random_chunks(
-        input: &str,
-        parser: &mut EditParser,
-        rng: &mut StdRng,
-    ) -> Vec<EditParserEvent> {
-        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
-        let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
-        chunk_indices.sort();
-        chunk_indices.push(input.len());
-
-        let mut events = Vec::new();
-        let mut last_ix = 0;
-        for chunk_ix in chunk_indices {
-            for event in parser.push(&input[last_ix..chunk_ix]) {
-                events.push(event);
-            }
-            last_ix = chunk_ix;
-        }
-
-        events
     }
 }
