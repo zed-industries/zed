@@ -767,9 +767,6 @@ impl InlineAssistant {
             PromptEditorEvent::CancelRequested => {
                 self.finish_assist(assist_id, true, window, cx);
             }
-            PromptEditorEvent::DismissRequested => {
-                self.dismiss_assist(assist_id, window, cx);
-            }
             PromptEditorEvent::Resized { .. } => {
                 // This only matters for the terminal inline assistant
             }

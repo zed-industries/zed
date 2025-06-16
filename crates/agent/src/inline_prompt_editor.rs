@@ -403,9 +403,7 @@ impl<T: 'static> PromptEditor<T> {
             CodegenStatus::Idle => {
                 cx.emit(PromptEditorEvent::StartRequested);
             }
-            CodegenStatus::Pending => {
-                cx.emit(PromptEditorEvent::DismissRequested);
-            }
+            CodegenStatus::Pending => {}
             CodegenStatus::Done => {
                 if self.edited_since_done {
                     cx.emit(PromptEditorEvent::StartRequested);
@@ -831,7 +829,6 @@ pub enum PromptEditorEvent {
     StopRequested,
     ConfirmRequested { execute: bool },
     CancelRequested,
-    DismissRequested,
     Resized { height_in_lines: u8 },
 }
 
