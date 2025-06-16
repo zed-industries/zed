@@ -363,10 +363,10 @@ impl Telemetry {
         updated_entries_set: &UpdatedEntriesSet,
     ) -> Vec<String> {
         let mut state = self.state.lock();
-        let mut project_names = Vec::new();
+        let mut project_names: HashSet<String> = HashSet::new();
 
         if state.worktrees_with_events_sent.contains(&worktree_id) {
-            return project_names;
+            return project_names.into_iter().collect();
         }
 
         for (path, _, _) in updated_entries_set.iter() {
@@ -375,13 +375,13 @@ impl Telemetry {
             };
 
             if file_name == "pnpm-lock.yaml" {
-                project_names.push("pnpm".to_string());
+                project_names.insert("pnpm".to_string());
             } else if file_name == "yarn.lock" {
-                project_names.push("yarn".to_string());
+                project_names.insert("yarn".to_string());
             } else if file_name == "package.json" {
-                project_names.push("node".to_string());
+                project_names.insert("node".to_string());
             } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                project_names.push("dotnet".to_string());
+                project_names.insert("dotnet".to_string());
             }
         }
 
@@ -389,7 +389,9 @@ impl Telemetry {
             state.worktrees_with_events_sent.insert(worktree_id);
         }
 
-        project_names
+        let mut project_names_vec: Vec<String> = project_names.into_iter().collect();
+        project_names_vec.sort();
+        project_names_vec
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
@@ -753,7 +755,16 @@ mod tests {
         test_project_discovery_helper(telemetry.clone(), vec!["file.csproj"], vec!["dotnet"], 3);
         test_project_discovery_helper(telemetry.clone(), vec!["file.fsproj"], vec!["dotnet"], 4);
         test_project_discovery_helper(telemetry.clone(), vec!["file.vbproj"], vec!["dotnet"], 5);
-        test_project_discovery_helper(telemetry, vec!["file.sln"], vec!["dotnet"], 6);
+        test_project_discovery_helper(telemetry.clone(), vec!["file.sln"], vec!["dotnet"], 6);
+
+        // Ensure we only detect the project type once in the presence of
+        // multiple files associated with that project type
+        test_project_discovery_helper(
+            telemetry,
+            vec!["global.json", "Directory.Build.props"],
+            vec!["dotnet"],
+            7,
+        );
     }
 
     // TODO:
