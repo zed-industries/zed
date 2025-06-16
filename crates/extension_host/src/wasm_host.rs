@@ -3,7 +3,7 @@ pub mod wit;
 use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
-use dap::StartDebuggingRequestArgumentsRequest;
+use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
@@ -33,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DebugScenario, ZedDebugConfig};
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -432,6 +432,46 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
                 Ok(kind.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn dap_locator_create_scenario(
+        &self,
+        locator_name: String,
+        build_config_template: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_dap_locator_create_scenario(
+                        store,
+                        locator_name,
+                        build_config_template,
+                        resolved_label,
+                        debug_adapter_name,
+                    )
+                    .await
+            }
+            .boxed()
+        })
+        .await
+    }
+    async fn run_dap_locator(
+        &self,
+        locator_name: String,
+        config: SpawnInTerminal,
+    ) -> Result<DebugRequest> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_run_dap_locator(store, locator_name, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))
             }
             .boxed()
         })

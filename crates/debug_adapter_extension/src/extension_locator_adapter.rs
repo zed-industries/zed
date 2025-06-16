@@ -28,12 +28,20 @@ impl DapLocator for ExtensionLocatorAdapter {
     /// Determines whether this locator can generate debug target for given task.
     async fn create_scenario(
         &self,
-        _build_config: &TaskTemplate,
-        _resolved_label: &str,
-        _adapter: &DebugAdapterName,
+        build_config: &TaskTemplate,
+        resolved_label: &str,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
-        _ = self.extension.clone();
-        None
+        self.extension
+            .dap_locator_create_scenario(
+                self.locator_name.as_ref().to_owned(),
+                build_config.clone(),
+                resolved_label.to_owned(),
+                adapter.0.as_ref().to_owned(),
+            )
+            .await
+            .ok()
+            .flatten()
     }
 
     async fn run(&self, _build_config: SpawnInTerminal) -> Result<DebugRequest> {

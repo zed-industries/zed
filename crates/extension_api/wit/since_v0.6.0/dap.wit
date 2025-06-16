@@ -44,16 +44,22 @@ interface dap {
         stop-on-entry: option<bool>,
     }
 
-    record build-task-template {
+    record task-template {
         /// Human readable name of the task to display in the UI.
         label: string,
         /// Executable command to spawn.
         command: string,
-        /// JSON-encoded configuration for a given build task.
         args: list<string>,
         env: env-vars,
         cwd: option<string>,
     }
+
+    /// A task template with substituted task variables.
+    type resolved-task = task-template;
+
+    /// A task template for building a debug target.
+    type build-task-template = task-template;
+
     variant build-task-definition {
         by-name(string),
         template(build-task-definition-template-payload )

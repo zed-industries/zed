@@ -1,6 +1,6 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        AttachRequest, BuildTaskDefinition, BuildTaskTemplate, DebugRequest, LaunchRequest,
+        AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, LaunchRequest,
         StartDebuggingRequestArguments, TcpArguments, TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
@@ -29,7 +29,7 @@ use std::{
     str::FromStr,
     sync::{Arc, OnceLock},
 };
-use task::ZedDebugConfig;
+use task::{SpawnInTerminal, ZedDebugConfig};
 use util::{archive::extract_zip, maybe};
 use wasmtime::component::{Linker, Resource};
 
@@ -153,6 +153,15 @@ impl From<task::DebugRequest> for DebugRequest {
     }
 }
 
+impl From<DebugRequest> for task::DebugRequest {
+    fn from(value: DebugRequest) -> Self {
+        match value {
+            DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
+            DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
+        }
+    }
+}
+
 impl From<task::LaunchRequest> for LaunchRequest {
     fn from(value: task::LaunchRequest) -> Self {
         Self {
@@ -163,8 +172,27 @@ impl From<task::LaunchRequest> for LaunchRequest {
         }
     }
 }
+
 impl From<task::AttachRequest> for AttachRequest {
     fn from(value: task::AttachRequest) -> Self {
+        Self {
+            process_id: value.process_id,
+        }
+    }
+}
+
+impl From<LaunchRequest> for task::LaunchRequest {
+    fn from(value: LaunchRequest) -> Self {
+        Self {
+            program: value.program,
+            cwd: value.cwd.map(|p| p.into()),
+            args: value.args,
+            env: value.envs.into_iter().collect(),
+        }
+    }
+}
+impl From<AttachRequest> for task::AttachRequest {
+    fn from(value: AttachRequest) -> Self {
         Self {
             process_id: value.process_id,
         }
@@ -206,6 +234,21 @@ impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
         }
     }
 }
+
+impl From<extension::BuildTaskDefinition> for BuildTaskDefinition {
+    fn from(value: extension::BuildTaskDefinition) -> Self {
+        match value {
+            extension::BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
+            extension::BuildTaskDefinition::Template {
+                task_template,
+                locator_name,
+            } => Self::Template(BuildTaskDefinitionTemplatePayload {
+                template: task_template.into(),
+                locator_name: locator_name.map(String::from),
+            }),
+        }
+    }
+}
 impl From<BuildTaskTemplate> for extension::BuildTaskTemplate {
     fn from(value: BuildTaskTemplate) -> Self {
         Self {
@@ -215,6 +258,17 @@ impl From<BuildTaskTemplate> for extension::BuildTaskTemplate {
             env: value.env.into_iter().collect(),
             cwd: value.cwd,
             ..Default::default()
+        }
+    }
+}
+impl From<extension::BuildTaskTemplate> for BuildTaskTemplate {
+    fn from(value: extension::BuildTaskTemplate) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            args: value.args,
+            env: value.env.into_iter().collect(),
+            cwd: value.cwd,
         }
     }
 }
@@ -230,6 +284,30 @@ impl TryFrom<DebugScenario> for extension::DebugScenario {
             config: serde_json::Value::from_str(&value.config)?,
             tcp_connection: value.tcp_connection.map(Into::into),
         })
+    }
+}
+
+impl From<extension::DebugScenario> for DebugScenario {
+    fn from(value: extension::DebugScenario) -> Self {
+        Self {
+            adapter: value.adapter.into(),
+            label: value.label.into(),
+            build: value.build.map(Into::into),
+            config: value.config.to_string(),
+            tcp_connection: value.tcp_connection.map(Into::into),
+        }
+    }
+}
+
+impl From<SpawnInTerminal> for ResolvedTask {
+    fn from(value: SpawnInTerminal) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            args: value.args,
+            env: value.env.into_iter().collect(),
+            cwd: value.cwd.map(|s| s.to_string_lossy().into_owned()),
+        }
     }
 }
 

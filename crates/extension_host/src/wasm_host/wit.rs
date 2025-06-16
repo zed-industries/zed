@@ -7,12 +7,12 @@ mod since_v0_3_0;
 mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
+use dap::DebugRequest;
 use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
-use task::DebugScenario;
-use task::ZedDebugConfig;
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 
 use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest;
 
@@ -963,6 +963,51 @@ impl Extension {
                 Ok(Ok(dap_binary.try_into()?))
             }
             _ => anyhow::bail!("`dap_config_to_scenario` not available prior to v0.6.0"),
+        }
+    }
+    pub async fn call_dap_locator_create_scenario(
+        &self,
+        store: &mut Store<WasmState>,
+        locator_name: String,
+        build_config_template: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let build_config_template = build_config_template.into();
+                let dap_binary = ext
+                    .call_dap_locator_create_scenario(
+                        store,
+                        &locator_name,
+                        &build_config_template,
+                        &resolved_label,
+                        &debug_adapter_name,
+                    )
+                    .await?;
+
+                Ok(dap_binary.map(TryInto::try_into).transpose()?)
+            }
+            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
+        }
+    }
+    pub async fn call_run_dap_locator(
+        &self,
+        store: &mut Store<WasmState>,
+        locator_name: String,
+        resolved_build_task: SpawnInTerminal,
+    ) -> Result<Result<DebugRequest, String>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let build_config_template = resolved_build_task.into();
+                let dap_request = ext
+                    .call_run_dap_locator(store, &locator_name, &build_config_template)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_request.into()))
+            }
+            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
         }
     }
 }

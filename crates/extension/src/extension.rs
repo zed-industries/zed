@@ -14,7 +14,7 @@ use fs::normalize_path;
 use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
-use task::ZedDebugConfig;
+use task::{SpawnInTerminal, ZedDebugConfig};
 
 pub use crate::extension_events::*;
 pub use crate::extension_host_proxy::*;
@@ -156,6 +156,19 @@ pub trait Extension: Send + Sync + 'static {
         config: ZedDebugConfig,
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<DebugScenario>;
+
+    async fn dap_locator_create_scenario(
+        &self,
+        locator_name: String,
+        build_config_template: BuildTaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>>;
+    async fn run_dap_locator(
+        &self,
+        locator_name: String,
+        config: SpawnInTerminal,
+    ) -> Result<DebugRequest>;
 }
 
 pub fn parse_wasm_extension_version(
