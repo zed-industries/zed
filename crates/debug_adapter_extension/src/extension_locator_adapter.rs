@@ -1,20 +1,10 @@
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-};
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use dap::{
-    DapLocator, DebugRequest,
-    adapters::{
-        DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
-    },
-};
-use extension::{Extension, WorktreeDelegate};
-use gpui::{AsyncApp, SharedString};
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
+use extension::Extension;
+use gpui::SharedString;
+use std::sync::Arc;
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct ExtensionLocatorAdapter {
     extension: Arc<dyn Extension>,
@@ -38,14 +28,15 @@ impl DapLocator for ExtensionLocatorAdapter {
     /// Determines whether this locator can generate debug target for given task.
     async fn create_scenario(
         &self,
-        build_config: &TaskTemplate,
-        resolved_label: &str,
-        adapter: &DebugAdapterName,
+        _build_config: &TaskTemplate,
+        _resolved_label: &str,
+        _adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
+        _ = self.extension.clone();
         None
     }
 
-    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
+    async fn run(&self, _build_config: SpawnInTerminal) -> Result<DebugRequest> {
         Err(anyhow::anyhow!("Not implemented"))
     }
 }
