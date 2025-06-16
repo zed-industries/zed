@@ -453,25 +453,20 @@ impl EditAgent {
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
-                let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
+                let EditParserEvent::OldTextChunk { chunk, done, line_hint } = edit_event? else {
                     break;
                 };
 
-                old_range_tx.send(matcher.push(&chunk))?;
+                old_range_tx.send(matcher.push(&chunk, line_hint))?;
                 if done {
                     break;
                 }
             }
 
             let matches = matcher.finish();
+            let best_match = matcher.select_best_match();
 
-            let old_range = if matches.len() == 1 {
-                matches.first()
-            } else {
-                // No matches or multiple ambiguous matches
-                None
-            };
-            old_range_tx.send(old_range.cloned())?;
+            old_range_tx.send(best_match.clone())?;
 
             let indent = LineIndent::from_iter(
                 matcher

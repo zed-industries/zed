@@ -1,6 +1,7 @@
 use anyhow::bail;
 use derive_more::{Add, AddAssign};
 use language_model::LanguageModel;
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -16,7 +17,7 @@ const END_TAGS: [&str; 3] = [OLD_TEXT_END_TAG, NEW_TEXT_END_TAG, EDITS_END_TAG];
 
 #[derive(Debug)]
 pub enum EditParserEvent {
-    OldTextChunk { chunk: String, done: bool },
+    OldTextChunk { chunk: String, done: bool, line_hint: Option<u32> },
     NewTextChunk { chunk: String, done: bool },
 }
 
@@ -93,7 +94,7 @@ pub struct XmlEditParser {
 #[derive(Debug, PartialEq)]
 enum XmlParserState {
     Pending,
-    WithinOldText { start: bool },
+    WithinOldText { start: bool, line_hint: Option<u32> },
     AfterOldText,
     WithinNewText { start: bool },
 }
@@ -108,7 +109,7 @@ pub struct DiffFencedEditParser {
 #[derive(Debug, PartialEq)]
 enum DiffParserState {
     Pending,
-    WithinSearch { start: bool },
+    WithinSearch { start: bool, line_hint: Option<u32> },
     WithinReplace { start: bool },
 }
 
@@ -141,6 +142,17 @@ impl XmlEditParser {
             .chain(["\n"]);
         end_prefixes.any(|prefix| self.buffer.ends_with(&prefix))
     }
+
+    fn parse_line_hint(&self, tag: &str) -> Option<u32> {
+        use std::sync::LazyLock;
+        static LINE_HINT_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"line=(?:"?)(\d+)"#).unwrap());
+
+        LINE_HINT_REGEX
+            .captures(tag)
+            .and_then(|caps| caps.get(1))
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+    }
 }
 
 impl EditFormatParser for XmlEditParser {
@@ -151,14 +163,24 @@ impl EditFormatParser for XmlEditParser {
         loop {
             match &mut self.state {
                 XmlParserState::Pending => {
-                    if let Some(start) = self.buffer.find("<old_text>") {
-                        self.buffer.drain(..start + "<old_text>".len());
-                        self.state = XmlParserState::WithinOldText { start: true };
+                    if let Some(start) = self.buffer.find("<old_text") {
+                        if let Some(tag_end) = self.buffer[start..].find('>') {
+                            let tag_end = start + tag_end + 1;
+                            let tag = &self.buffer[start..tag_end];
+                            let line_hint = self.parse_line_hint(tag);
+                            self.buffer.drain(..tag_end);
+                            self.state = XmlParserState::WithinOldText {
+                                start: true,
+                                line_hint,
+                            };
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
                 }
-                XmlParserState::WithinOldText { start } => {
+                XmlParserState::WithinOldText { start, line_hint } => {
                     if !self.buffer.is_empty() {
                         if *start && self.buffer.starts_with('\n') {
                             self.buffer.remove(0);
@@ -166,6 +188,7 @@ impl EditFormatParser for XmlEditParser {
                         *start = false;
                     }
 
+                    let line_hint = *line_hint;
                     if let Some(tag_range) = self.find_end_tag() {
                         let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
@@ -179,12 +202,13 @@ impl EditFormatParser for XmlEditParser {
 
                         self.buffer.drain(..tag_range.end);
                         self.state = XmlParserState::AfterOldText;
-                        edit_events.push(EditParserEvent::OldTextChunk { chunk, done: true });
+                        edit_events.push(EditParserEvent::OldTextChunk { chunk, done: true, line_hint });
                     } else {
                         if !self.ends_with_tag_prefix() {
                             edit_events.push(EditParserEvent::OldTextChunk {
                                 chunk: mem::take(&mut self.buffer),
                                 done: false,
+                                line_hint,
                             });
                         }
                         break;
@@ -261,6 +285,18 @@ impl DiffFencedEditParser {
             .chain(["\n"]);
         diff_prefixes.any(|prefix| self.buffer.ends_with(&prefix))
     }
+
+    fn parse_line_hint(&self, search_line: &str) -> Option<u32> {
+        use std::sync::LazyLock;
+        use regex::Regex;
+        static LINE_HINT_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"line=(?:"?)(\d+)"#).unwrap());
+
+        LINE_HINT_REGEX
+            .captures(search_line)
+            .and_then(|caps| caps.get(1))
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+    }
 }
 
 impl EditFormatParser for DiffFencedEditParser {
@@ -274,8 +310,10 @@ impl EditFormatParser for DiffFencedEditParser {
                     if let Some(diff) = self.buffer.find(SEARCH_MARKER) {
                         let search_end = diff + SEARCH_MARKER.len();
                         if let Some(newline_pos) = self.buffer[search_end..].find('\n') {
+                            let search_line = &self.buffer[diff..search_end + newline_pos];
+                            let line_hint = self.parse_line_hint(search_line);
                             self.buffer.drain(..search_end + newline_pos + 1);
-                            self.state = DiffParserState::WithinSearch { start: true };
+                            self.state = DiffParserState::WithinSearch { start: true, line_hint };
                         } else {
                             break;
                         }
@@ -283,7 +321,7 @@ impl EditFormatParser for DiffFencedEditParser {
                         break;
                     }
                 }
-                DiffParserState::WithinSearch { start } => {
+                DiffParserState::WithinSearch { start, line_hint } => {
                     if !self.buffer.is_empty() {
                         if *start && self.buffer.starts_with('\n') {
                             self.buffer.remove(0);
@@ -291,6 +329,7 @@ impl EditFormatParser for DiffFencedEditParser {
                         *start = false;
                     }
 
+                    let line_hint = *line_hint;
                     if let Some(separator_pos) = self.buffer.find(SEPARATOR_MARKER) {
                         let mut chunk = self.buffer[..separator_pos].to_string();
                         if chunk.ends_with('\n') {
@@ -301,7 +340,7 @@ impl EditFormatParser for DiffFencedEditParser {
                         if let Some(newline_pos) = self.buffer[separator_end..].find('\n') {
                             self.buffer.drain(..separator_end + newline_pos + 1);
                             self.state = DiffParserState::WithinReplace { start: true };
-                            edit_events.push(EditParserEvent::OldTextChunk { chunk, done: true });
+                            edit_events.push(EditParserEvent::OldTextChunk { chunk, done: true, line_hint });
                         } else {
                             break;
                         }
@@ -310,6 +349,7 @@ impl EditFormatParser for DiffFencedEditParser {
                             edit_events.push(EditParserEvent::OldTextChunk {
                                 chunk: mem::take(&mut self.buffer),
                                 done: false,
+                                line_hint,
                             });
                         }
                         break;
@@ -828,6 +868,94 @@ mod tests {
         );
     }
 
+    #[gpui::test(iterations = 1000)]
+    fn test_xml_with_line_hint(mut rng: StdRng) {
+        let mut parser = EditParser::new(EditFormat::XmlTags);
+        let events = parse_events_random_chunks(
+            "<old_text line=25>original content</old_text><new_text>updated content</new_text>",
+            &mut parser,
+            &mut rng
+        );
+        
+        // Collect all old text chunks and new text chunks
+        let mut old_text = String::new();
+        let mut new_text = String::new();
+        let mut old_line_hint = None;
+        
+        for event in events {
+            match event {
+                EditParserEvent::OldTextChunk { chunk, done, line_hint } => {
+                    old_text.push_str(&chunk);
+                    if line_hint.is_some() {
+                        old_line_hint = line_hint;
+                    }
+                    if done {
+                        assert_eq!(old_text, "original content");
+                        assert_eq!(old_line_hint, Some(25));
+                    }
+                }
+                EditParserEvent::NewTextChunk { chunk, done } => {
+                    new_text.push_str(&chunk);
+                    if done {
+                        assert_eq!(new_text, "updated content");
+                    }
+                }
+            }
+        }
+        
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 2,
+                mismatched_tags: 0
+            }
+        );
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_diff_fenced_with_line_hint(mut rng: StdRng) {
+        let mut parser = EditParser::new(EditFormat::DiffFenced);
+        let events = parse_events_random_chunks(
+            "<<<<<<< SEARCH line=42\noriginal text\n=======\nupdated text\n>>>>>>> REPLACE",
+            &mut parser,
+            &mut rng
+        );
+        
+        // Collect all old text chunks and new text chunks
+        let mut old_text = String::new();
+        let mut new_text = String::new();
+        let mut old_line_hint = None;
+        
+        for event in events {
+            match event {
+                EditParserEvent::OldTextChunk { chunk, done, line_hint } => {
+                    old_text.push_str(&chunk);
+                    if line_hint.is_some() {
+                        old_line_hint = line_hint;
+                    }
+                    if done {
+                        assert_eq!(old_text, "original text");
+                        assert_eq!(old_line_hint, Some(42));
+                    }
+                }
+                EditParserEvent::NewTextChunk { chunk, done } => {
+                    new_text.push_str(&chunk);
+                    if done {
+                        assert_eq!(new_text, "updated text");
+                    }
+                }
+            }
+        }
+        
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 0,
+                mismatched_tags: 0
+            }
+        );
+    }
+
     #[derive(Default, Debug, PartialEq, Eq)]
     struct Edit {
         old_text: String,
@@ -848,7 +976,7 @@ mod tests {
         for chunk_ix in chunk_indices {
             for event in parser.push(&input[last_ix..chunk_ix]) {
                 match event {
-                    EditParserEvent::OldTextChunk { chunk, done } => {
+                    EditParserEvent::OldTextChunk { chunk, done, line_hint: _ } => {
                         old_text.as_mut().unwrap().push_str(&chunk);
                         if done {
                             pending_edit.old_text = old_text.take().unwrap();
@@ -870,5 +998,23 @@ mod tests {
         }
 
         edits
+    }
+
+    fn parse_events_random_chunks(input: &str, parser: &mut EditParser, rng: &mut StdRng) -> Vec<EditParserEvent> {
+        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
+        chunk_indices.sort();
+        chunk_indices.push(input.len());
+
+        let mut events = Vec::new();
+        let mut last_ix = 0;
+        for chunk_ix in chunk_indices {
+            for event in parser.push(&input[last_ix..chunk_ix]) {
+                events.push(event);
+            }
+            last_ix = chunk_ix;
+        }
+
+        events
     }
 }
