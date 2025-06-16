@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::http::HeaderMap;
+use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
@@ -393,21 +393,24 @@ pub struct RateLimit {
 }
 
 impl RateLimit {
-    fn from_headers(resource: &str, headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let limit =
-            get_header(&format!("anthropic-ratelimit-{resource}-limit"), headers)?.parse()?;
+    fn from_headers(resource: &str, headers: &HeaderMap<HeaderValue>) -> Option<Self> {
+        let limit = get_header(&format!("anthropic-ratelimit-{resource}-limit"), headers)?
+            .parse()
+            .ok()?;
         let remaining = get_header(
             &format!("anthropic-ratelimit-{resource}-remaining"),
             headers,
         )?
-        .parse()?;
+        .parse()
+        .ok()?;
         let reset = DateTime::parse_from_rfc3339(get_header(
             &format!("anthropic-ratelimit-{resource}-reset"),
             headers,
-        )?)?
+        )?)
+        .ok()?
         .to_utc();
 
-        Ok(Self {
+        Some(Self {
             limit,
             remaining,
             reset,
@@ -448,19 +451,16 @@ impl RateLimitInfo {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
                 .map(Duration::from_secs),
-            requests: RateLimit::from_headers("requests", headers).ok(),
-            tokens: RateLimit::from_headers("tokens", headers).ok(),
-            input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
-            output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
+            requests: RateLimit::from_headers("requests", headers),
+            tokens: RateLimit::from_headers("tokens", headers),
+            input_tokens: RateLimit::from_headers("input-tokens", headers),
+            output_tokens: RateLimit::from_headers("output-tokens", headers),
         }
     }
 }
 
-fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
-    Ok(headers
-        .get(key)
-        .with_context(|| format!("missing header `{key}`"))?
-        .to_str()?)
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Option<&'a str> {
+    headers.get(key)?.to_str().ok()
 }
 
 pub async fn stream_completion_with_rate_limit_info(
@@ -490,16 +490,16 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
-    let serialized_request =
-        serde_json::to_string(&request).context("failed to serialize request")?;
+    let serialized_request = serde_json::to_string(&request)
+        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
     let request = request_builder
         .body(AsyncBody::from(serialized_request))
-        .context("failed to construct request body")?;
+        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
 
     let mut response = client
         .send(request)
         .await
-        .context("failed to send request to Anthropic")?;
+        .map_err(|e| AnthropicError::HttpSend(e.to_string()))?;
     let rate_limits = RateLimitInfo::from_headers(response.headers());
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -511,37 +511,31 @@ pub async fn stream_completion_with_rate_limit_info(
                         let line = line.strip_prefix("data: ")?;
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
-                            Err(error) => Some(Err(AnthropicError::Other(anyhow!(error)))),
+                            Err(error) => Some(Err(AnthropicError::StreamParse(error.to_string()))),
                         }
                     }
-                    Err(error) => Some(Err(AnthropicError::Other(anyhow!(error)))),
+                    Err(error) => Some(Err(AnthropicError::StreamRead(error.to_string()))),
                 }
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
     } else if let Some(retry_after) = rate_limits.retry_after {
-        Err(AnthropicError::RateLimit(retry_after))
+        Err(AnthropicError::RateLimit { retry_after })
     } else {
-        let mut body = Vec::new();
+        let mut body = String::new();
         response
             .body_mut()
-            .read_to_end(&mut body)
+            .read_to_string(&mut body)
             .await
-            .context("failed to read response body")?;
+            .map_err(|e| AnthropicError::ResponseBodyRead(e.to_string()))?;
 
-        let body_str =
-            std::str::from_utf8(&body).context("failed to parse response body as UTF-8")?;
-
-        match serde_json::from_str::<Event>(body_str) {
+        match serde_json::from_str::<Event>(&body) {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) => Err(AnthropicError::Other(anyhow!(
-                "Unexpected success response while expecting an error: '{body_str}'",
-            ))),
-            Err(_) => Err(AnthropicError::Other(anyhow!(
-                "Failed to connect to API: {} {}",
-                response.status(),
-                body_str,
-            ))),
+            Ok(_) => Err(AnthropicError::UnexpectedResponse(body)),
+            Err(_) => Err(AnthropicError::HttpError {
+                status: response.status().as_u16(),
+                body: body,
+            }),
         }
     }
 }
@@ -788,14 +782,48 @@ pub struct MessageDelta {
     pub stop_sequence: Option<String>,
 }
 
+/// Comprehensive error type for all Anthropic API operations
 #[derive(Error, Debug)]
 pub enum AnthropicError {
-    #[error("rate limit exceeded, retry after {0:?}")]
-    RateLimit(Duration),
-    #[error("an error occurred while interacting with the Anthropic API: {error_type}: {message}", error_type = .0.error_type, message = .0.message)]
+    /// Failed to construct the HTTP request body
+    #[error("failed to construct request body: {0}")]
+    RequestConstruction(String),
+
+    /// Failed to send the HTTP request
+    #[error("failed to send HTTP request to Anthropic: {0}")]
+    HttpSend(String),
+
+    /// Failed to read the response body
+    #[error("failed to read HTTP response body from Anthropic: {0}")]
+    ResponseBodyRead(String),
+
+    /// Failed to deserialize the response from JSON
+    #[error("failed to deserialize HTTP response body from Anthropic: {0}")]
+    ResponseDeserialization(String),
+
+    /// HTTP error response from the API
+    #[error("HTTP error {status}: {body}")]
+    HttpError { status: u16, body: String },
+
+    /// Rate limit exceeded
+    #[error("rate limit exceeded, retry after {retry_after:?}")]
+    RateLimit { retry_after: Duration },
+
+    /// API returned an error response
+    #[error("API error: {error_type}: {message}", error_type = .0.error_type, message = .0.message)]
     ApiError(ApiError),
-    #[error("{0}")]
-    Other(#[from] anyhow::Error),
+
+    /// Failed to parse streaming response line
+    #[error("failed to parse streaming response: {0}")]
+    StreamParse(String),
+
+    /// Failed to read from stream
+    #[error("failed to read from stream: {0}")]
+    StreamRead(String),
+
+    /// Unexpected response format
+    #[error("unexpected response: {0}")]
+    UnexpectedResponse(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
