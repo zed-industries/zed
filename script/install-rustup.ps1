@@ -11,7 +11,7 @@ $cargoPath = "$cargoHome\bin\cargo.exe"
 # Check if cargo is already available in path
 if (Get-Command cargo -ErrorAction SilentlyContinue)
 {
-    Write-Output "Cargo found: $((cargo --version 2>&1 | Select-Object -First 1))"
+    cargo --version
     exit
 }
 # Check if rustup and cargo are available in CARGO_HOME
@@ -32,7 +32,8 @@ elseif (-not ((Test-Path $rustupPath) -and (Test-Path $cargoPath))) {
     Remove-Item -Force $RustupInitPath
 
     Write-Output "Rust installation complete."
+    # This is necessary
 }
 
-Write-Output "Rustup found: $((& $rustupPath --version 2>&1 | Select-Object -First 1))"
-Write-Output "Cargo found: $((& $cargoPath --version 2>&1 | Select-Object -First 1))"
+& $rustupPath --version
+& $cargoPath --version
