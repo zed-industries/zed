@@ -26,7 +26,10 @@ use git::repository::{
 };
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
-use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{
+    ExpandCommitEditor, PopStash, RestoreTrackedFiles, StageAll, StashAll, TrashUntrackedFiles,
+    UnstageAll,
+};
 use gpui::{
     Action, Animation, AnimationExt as _, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
@@ -138,6 +141,13 @@ fn git_panel_context_menu(
                 "Unstage All",
                 UnstageAll.boxed_clone(),
             )
+            .separator()
+            .action_disabled_when(
+                !state.has_unstaged_changes,
+                "Stash All",
+                StashAll.boxed_clone(),
+            )
+            .action("Pop Stash", PopStash.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
@@ -1404,6 +1414,60 @@ impl GitPanel {
 
     pub fn total_staged_count(&self) -> usize {
         self.tracked_staged_count + self.new_staged_count + self.conflicted_staged_count
+    }
+
+    pub fn pop_stash(&mut self, _: &PopStash, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.pop_stash(None, cx))?
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash pop", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
+    pub fn stash_all(&mut self, _: &StashAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        let entries = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .map(|status_entry| &status_entry.repo_path)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_entries(entries, None, None, cx))?
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
     }
 
     pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
@@ -4354,6 +4418,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
+                    .on_action(cx.listener(Self::stash_all))
+                    .on_action(cx.listener(Self::pop_stash))
             })
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))

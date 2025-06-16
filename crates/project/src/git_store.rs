@@ -419,6 +419,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_fetch);
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
+        client.add_entity_request_handler(Self::handle_stash);
+        client.add_entity_request_handler(Self::handle_pop_stash);
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
@@ -1690,6 +1692,54 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.unstage_entries(entries, cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_stash(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Stash>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+
+        let name = envelope.payload.name.map(SharedString::from);
+        let email = envelope.payload.email.map(SharedString::from);
+        let message = envelope.payload.message.map(SharedString::from);
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_entries(entries, message, name.zip(email), cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_pop_stash(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::PopStash>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let index = envelope.payload.stash_index;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.pop_stash(index, cx)
             })?
             .await?;
 
@@ -3456,6 +3506,97 @@ impl Repository {
             .map(|entry| entry.repo_path.clone())
             .collect();
         self.unstage_entries(to_unstage, cx)
+    }
+
+    pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+        let to_stash = self
+            .cached_status()
+            .map(|entry| entry.repo_path.clone())
+            .collect();
+
+        self.stash_entries(to_stash, None, None, cx)
+    }
+
+    pub fn stash_entries(
+        &mut self,
+        entries: Vec<RepoPath>,
+        message: Option<SharedString>,
+        name_and_email: Option<(SharedString, SharedString)>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => {
+                            backend
+                                .stash_paths(entries, message, name_and_email, environment)
+                                .await
+                        }
+                        RepositoryState::Remote { project_id, client } => {
+                            let (name, email) = name_and_email.unzip();
+                            client
+                                .request(proto::Stash {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    name: name.map(String::from),
+                                    email: email.map(String::from),
+                                    message: message.map(String::from),
+                                    paths: entries
+                                        .into_iter()
+                                        .map(|repo_path| repo_path.as_ref().to_proto())
+                                        .collect(),
+                                })
+                                .await
+                                .context("sending stash request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn pop_stash(
+        &mut self,
+        index: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.pop_stash(index, environment).await,
+                        RepositoryState::Remote { project_id, client } => {
+                            client
+                                .request(proto::PopStash {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    stash_index: index,
+                                })
+                                .await
+                                .context("sending pop stash request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
     }
 
     pub fn commit(
