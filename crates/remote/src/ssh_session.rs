@@ -1583,10 +1583,6 @@ impl SshRemoteConnection {
             return Err(e.context("Failed to connect to host"));
         }
 
-        {
-            let string = String::from_utf8_lossy(&output);
-            println!("stdout: {string}<-");
-        }
         if master_process.try_status()?.is_some() {
             output.clear();
             let mut stderr = master_process.stderr.take().unwrap();
@@ -1785,7 +1781,6 @@ impl SshRemoteConnection {
         );
         let dst_path =
             UnixStylePathBuf::from(paths::remote_server_dir_relative().join(binary_name));
-        println!("==> remote server path: {:?}", dst_path);
 
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
@@ -1793,7 +1788,6 @@ impl SshRemoteConnection {
             let ret = self
                 .build_local(build_remote_server, self.platform().await?, delegate, cx)
                 .await;
-            println!("==> build_local: {:?}", ret);
             let src_path = ret?;
             let tmp_path =
                 UnixStylePathBuf::from(paths::remote_server_dir_relative().join(format!(
@@ -1804,12 +1798,10 @@ impl SshRemoteConnection {
             let ret = self
                 .upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
                 .await;
-            println!("==> upload_local_server_binary: {ret:?}, from {src_path:?} to {tmp_path:?}");
             ret?;
             let ret = self
                 .extract_server_binary(&dst_path, &tmp_path, delegate, cx)
                 .await;
-            println!("==> extract_server_binary: {:?}", ret);
             ret?;
             return Ok(dst_path.into());
         }
@@ -1818,7 +1810,6 @@ impl SshRemoteConnection {
             .socket
             .run_command(&dst_path.to_string_lossy(), &["version"])
             .await;
-        println!("==> remote server version: {:?}", ret);
         if ret.is_ok() {
             return Ok(dst_path.into());
         }
@@ -2007,14 +1998,12 @@ impl SshRemoteConnection {
         let server_mode = 0o755;
 
         let orig_tmp_path = tmp_path.to_string_lossy();
-        println!("  --> orig_tmp_path: {orig_tmp_path}");
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
             let x = shell_script!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
                 dst_path = &dst_path.to_string_lossy(),
             );
-            println!("  --> 1 script: {x}");
             x
         } else {
             let x = shell_script!(
@@ -2022,7 +2011,6 @@ impl SshRemoteConnection {
                 server_mode = &format!("{:o}", server_mode),
                 dst_path = &dst_path.to_string_lossy()
             );
-            println!("  --> 2 script: {x}");
             x
         };
         self.socket.run_command("sh", &["-c", &script]).await?;
@@ -2134,16 +2122,16 @@ impl SshRemoteConnection {
                 cx,
             );
             log::info!("building remote server binary from source for {}", &triple);
-            let src = Path::new("./target")
-                .canonicalize()
-                .unwrap()
+
+            #[cfg(target_os = "windows")]
+            let src = smol::fs::canonicalize("./target")
+                .await?
                 .to_string_lossy()
                 .strip_prefix("\\\\?\\")
                 .unwrap()
-                .to_owned();
-            println!("==> 1 bind src: {src}");
-            let src = src.replace('\\', "/");
-            println!("==> 2 bind src: {src}");
+                .replace('\\', "/");
+            #[cfg(not(target_os = "windows"))]
+            let src = "./target";
             run_cmd(
                 Command::new("cross")
                     .args([
