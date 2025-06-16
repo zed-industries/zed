@@ -335,6 +335,7 @@ impl Zeta {
 
         self.events.push_back(event);
         if self.events.len() >= MAX_EVENT_COUNT {
+            // These are halved instead of popping to improve prompt caching.
             self.events.drain(..MAX_EVENT_COUNT / 2);
         }
     }

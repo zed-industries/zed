@@ -659,6 +659,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
         self.select(selections);
     }
+
     pub fn reverse_selections(&mut self) {
         let map = &self.display_map();
         let mut new_selections: Vec<Selection<Point>> = Vec::new();

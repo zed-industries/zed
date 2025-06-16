@@ -14,7 +14,7 @@ Zed supports auto-formatting SQL using external tools like [`sql-formatter`](htt
 npm install -g sql-formatter
 ```
 
-2. Ensure `shfmt` is available in your path and check the version:
+2. Ensure `sql-formatter` is available in your path and check the version:
 
 ```sh
 which sql-formatter
