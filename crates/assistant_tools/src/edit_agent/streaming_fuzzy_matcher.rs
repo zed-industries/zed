@@ -14,7 +14,6 @@ pub struct StreamingFuzzyMatcher {
     incomplete_line: String,
     matches: Vec<Range<usize>>,
     matrix: SearchMatrix,
-    line_hint: Option<u32>,
 }
 
 impl StreamingFuzzyMatcher {
@@ -27,7 +26,6 @@ impl StreamingFuzzyMatcher {
             incomplete_line: String::new(),
             matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
-            line_hint: None,
         }
     }
 
@@ -84,41 +82,6 @@ impl StreamingFuzzyMatcher {
             self.matches = self.resolve_location_fuzzy();
         }
         self.matches.clone()
-    }
-
-    /// Select the best match from the available matches, using line hint if provided.
-    pub fn select_best_match(&self) -> Option<Range<usize>> {
-        if self.best_matches.is_empty() {
-            return None;
-        }
-
-        if self.best_matches.len() == 1 {
-            return self.best_matches.first().cloned();
-        }
-
-        // If we have a line hint and multiple matches, use it to disambiguate
-        if let Some(line_hint) = self.line_hint {
-            let line_hint = line_hint as usize;
-
-            // Convert line hint to 0-based indexing
-            let hint_line = line_hint.saturating_sub(1);
-
-            // Find the match closest to the hinted line
-            let best_match = self.best_matches.iter().min_by_key(|range| {
-                let start_line = range.start;
-                let distance = if start_line >= hint_line {
-                    start_line - hint_line
-                } else {
-                    hint_line - start_line
-                };
-                distance
-            });
-
-            return best_match.cloned();
-        }
-
-        // Fall back to first match if no line hint
-        self.best_matches.first().cloned()
     }
 
     fn resolve_location_fuzzy(&mut self) -> Vec<Range<usize>> {
