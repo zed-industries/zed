@@ -175,6 +175,7 @@ impl KeymapEditor {
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 action: action_name.into(),
+                action_input: key_binding.action_input(),
                 context: context.into(),
                 source,
             });
@@ -314,6 +315,7 @@ impl KeymapEditor {
 struct ProcessedKeybinding {
     keystroke_text: SharedString,
     action: SharedString,
+    action_input: Option<SharedString>,
     context: SharedString,
     source: Option<SharedString>,
 }
@@ -373,15 +375,23 @@ impl Render for KeymapEditor {
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
-                                    Some(
-                                        [
-                                            binding.action.clone(),
-                                            binding.keystroke_text.clone(),
-                                            binding.context.clone(),
-                                            binding.source.clone().unwrap_or_default(),
-                                        ]
-                                        .map(IntoElement::into_any_element),
-                                    )
+                                    let action = h_flex()
+                                        .items_start()
+                                        .gap_1()
+                                        .child(binding.action.clone())
+                                        .when_some(
+                                            binding.action_input.clone(),
+                                            |this, binding_input| this.child(binding_input),
+                                        );
+                                    let keystrokes = binding.keystroke_text.clone();
+                                    let context = binding.context.clone();
+                                    let source = binding.source.clone().unwrap_or_default();
+                                    Some([
+                                        action.into_any_element(),
+                                        keystrokes.into_any_element(),
+                                        context.into_any_element(),
+                                        source.into_any_element(),
+                                    ])
                                 })
                                 .collect()
                         }),

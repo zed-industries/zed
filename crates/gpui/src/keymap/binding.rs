@@ -115,6 +115,11 @@ impl KeyBinding {
     pub fn meta(&self) -> Option<KeyBindingMetaIndex> {
         self.meta
     }
+
+    /// Get the action input associated with the action for this binding
+    pub fn action_input(&self) -> Option<SharedString> {
+        self.action_input.clone()
+    }
 }
 
 impl std::fmt::Debug for KeyBinding {
