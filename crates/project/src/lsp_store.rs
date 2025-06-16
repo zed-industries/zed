@@ -5994,7 +5994,7 @@ impl LspStore {
                 lsp_data.last_version_queried.get(&abs_path) != Some(&buffer_version)
             });
 
-        let mut has_later_versions = false;
+        let mut has_other_versions = false;
         let mut received_colors_data = false;
         let mut outdated_lsp_data = false;
         let buffer_lsp_data = self
@@ -6005,7 +6005,7 @@ impl LspStore {
                 if ignore_existing_mtime {
                     return false;
                 }
-                has_later_versions |= lsp_data.mtime.bad_is_greater_than(buffer_mtime);
+                has_other_versions |= lsp_data.mtime != buffer_mtime;
                 lsp_data.mtime == buffer_mtime
             })
             .flat_map(|lsp_data| lsp_data.buffer_lsp_data.values())
@@ -6022,7 +6022,7 @@ impl LspStore {
         if buffer_lsp_data.is_empty() || for_server_id.is_some() {
             if received_colors_data && for_server_id.is_none() {
                 return None;
-            } else if has_later_versions && !ignore_existing_mtime {
+            } else if has_other_versions && !ignore_existing_mtime {
                 return None;
             }
 
@@ -6031,7 +6031,7 @@ impl LspStore {
                 || self
                     .lsp_data
                     .as_ref()
-                    .is_some_and(|lsp_data| buffer_mtime.bad_is_greater_than(lsp_data.mtime))
+                    .is_some_and(|lsp_data| buffer_mtime != lsp_data.mtime)
             {
                 self.lsp_data = Some(LspData {
                     mtime: buffer_mtime,
