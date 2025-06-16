@@ -15732,6 +15732,7 @@ dependencies = [
  "serde_json_lenient",
  "sha2",
  "shellexpand 2.1.2",
+ "smol",
  "util",
  "workspace-hack",
  "zed_actions",

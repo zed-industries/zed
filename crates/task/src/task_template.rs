@@ -1,5 +1,6 @@
-use anyhow::{Context as _, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{HashMap, HashSet};
+use gpui::{BackgroundExecutor, Task};
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -269,6 +270,27 @@ impl TaskTemplate {
                 show_rerun: true,
             },
         })
+    }
+
+    pub fn resolve_task_and_check_cwd(
+        &self,
+        id_base: &str,
+        task_context: &TaskContext,
+        executor: BackgroundExecutor,
+    ) -> Option<Task<Result<ResolvedTask>>> {
+        let resolved_task = self.resolve_task(id_base, task_context)?;
+        let task = executor.spawn(async move {
+            if let Some(cwd) = resolved_task.resolved.cwd.as_deref() {
+                match smol::fs::metadata(cwd).await {
+                    Ok(metadata) if metadata.is_dir() => Ok(resolved_task),
+                    Ok(_) => Err(anyhow!("cwd for resolved task is not a directory: {cwd:?}")),
+                    Err(e) => Err(e).context(format!("reading cwd of resolved task: {cwd:?}")),
+                }
+            } else {
+                Ok(resolved_task)
+            }
+        });
+        Some(task)
     }
 }
 
