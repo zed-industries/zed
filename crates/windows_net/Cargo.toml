@@ -12,7 +12,7 @@ workspace = true
 path = "src/windows_net.rs"
 doctest = false
 
-[dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
 async-io = "2.4"
 smol.workspace = true
@@ -20,3 +20,6 @@ windows.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]

@@ -1,3 +1,5 @@
+#![cfg(target_os = "windows")]
+
 pub mod async_net;
 pub mod listener;
 pub mod socket;
