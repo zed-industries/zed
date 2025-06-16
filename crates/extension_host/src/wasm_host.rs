@@ -418,16 +418,11 @@ impl extension::Extension for WasmExtension {
         .await
     }
 
-    async fn dap_config_to_scenario(
-        &self,
-        config: ZedDebugConfig,
-        worktree: Arc<dyn WorktreeDelegate>,
-    ) -> Result<DebugScenario> {
+    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
         self.call(|extension, store| {
             async move {
-                let resource = store.data_mut().table().push(worktree)?;
                 let kind = extension
-                    .call_dap_config_to_scenario(store, config, resource)
+                    .call_dap_config_to_scenario(store, config)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
                 Ok(kind)

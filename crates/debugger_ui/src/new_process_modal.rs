@@ -1,3 +1,4 @@
+use anyhow::bail;
 use collections::{FxHashMap, HashMap};
 use language::LanguageRegistry;
 use paths::local_debug_file_relative_path;
@@ -307,16 +308,16 @@ impl NewProcessModal {
         }
     }
 
-    fn debug_scenario(&self, debugger: &str, cx: &App) -> Option<DebugScenario> {
+    fn debug_scenario(&self, debugger: &str, cx: &App) -> Task<Option<DebugScenario>> {
         let request = match self.mode {
-            NewProcessMode::Launch => Some(DebugRequest::Launch(
-                self.configure_mode.read(cx).debug_request(cx),
-            )),
-            NewProcessMode::Attach => Some(DebugRequest::Attach(
-                self.attach_mode.read(cx).debug_request(),
-            )),
-            _ => None,
-        }?;
+            NewProcessMode::Launch => {
+                DebugRequest::Launch(self.configure_mode.read(cx).debug_request(cx))
+            }
+            NewProcessMode::Attach => {
+                DebugRequest::Attach(self.attach_mode.read(cx).debug_request())
+            }
+            _ => return Task::ready(None),
+        };
         let label = suggested_label(&request, debugger);
 
         let stop_on_entry = if let NewProcessMode::Launch = &self.mode {
@@ -328,13 +329,15 @@ impl NewProcessModal {
         let session_scenario = ZedDebugConfig {
             adapter: debugger.to_owned().into(),
             label,
-            request: request,
+            request,
             stop_on_entry,
         };
 
-        cx.global::<DapRegistry>()
-            .adapter(&session_scenario.adapter)
-            .and_then(|adapter| adapter.config_from_zed_format(session_scenario).ok())
+        let adapter = cx
+            .global::<DapRegistry>()
+            .adapter(&session_scenario.adapter);
+
+        cx.spawn(async move |_| adapter?.config_from_zed_format(session_scenario).await.ok())
     }
 
     fn start_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -356,12 +359,7 @@ impl NewProcessModal {
         //     }
         // }
 
-        let Some(debugger) = self.debugger.as_ref() else {
-            return;
-        };
-
-        let Some(config) = self.debug_scenario(debugger, cx) else {
-            log::error!("debug config not found in mode: {}", self.mode);
+        let Some(debugger) = self.debugger.clone() else {
             return;
         };
 
@@ -369,11 +367,20 @@ impl NewProcessModal {
         let Some(task_contexts) = self.task_contexts(cx) else {
             return;
         };
-        send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
+
         let task_context = task_contexts.active_context().cloned().unwrap_or_default();
         let worktree_id = task_contexts.worktree();
+        let mode = self.mode;
         cx.spawn_in(window, async move |this, cx| {
+            let Some(config) = this
+                .update(cx, |this, cx| this.debug_scenario(&debugger, cx))?
+                .await
+            else {
+                bail!("debug config not found in mode: {mode}");
+            };
+
             debug_panel.update_in(cx, |debug_panel, window, cx| {
+                send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
                 debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
             })?;
             this.update(cx, |_, cx| {
@@ -586,7 +593,7 @@ impl NewProcessModal {
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) enum NewProcessMode {
     Task,
     Launch,

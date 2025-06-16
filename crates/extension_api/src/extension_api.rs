@@ -20,9 +20,9 @@ pub use wit::{
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
-        DebugAdapterBinary, DebugRequest, DebugTaskDefinition, StartDebuggingRequestArguments,
-        StartDebuggingRequestArgumentsRequest, TaskTemplate, TcpArguments, TcpArgumentsTemplate,
-        resolve_tcp_template,
+        DebugAdapterBinary, DebugConfig, DebugRequest, DebugScenario, DebugTaskDefinition,
+        StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TaskTemplate,
+        TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
     },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
@@ -214,7 +214,6 @@ pub trait Extension: Send + Sync {
     fn dap_config_to_scenario(
         &mut self,
         _adapter_name: DebugConfig,
-        _config: &Worktree,
     ) -> Result<DebugScenario, String> {
         Err("`dap_config_to_scenario` not implemented".to_string())
     }
@@ -437,11 +436,8 @@ impl wit::Guest for Component {
             serde_json::from_str(&config).map_err(|e| format!("Failed to parse config: {e}"))?,
         )
     }
-    fn dap_config_to_scenario(
-        config: DebugConfig,
-        worktree: &Worktree,
-    ) -> Result<DebugScenario, String> {
-        extension().dap_config_to_scenario(config, worktree)
+    fn dap_config_to_scenario(config: DebugConfig) -> Result<DebugScenario, String> {
+        extension().dap_config_to_scenario(config)
     }
     fn dap_locator_create_scenario(
         locator_name: String,
