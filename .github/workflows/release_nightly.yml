@@ -311,6 +311,8 @@ jobs:
       - name: Upload Zed Nightly
         run: cargo doc -p gpui
 
+      # TODO: add upload-artifact step
+
   update-nightly-tag:
     name: Update nightly tag
     if: github.repository_owner == 'zed-industries'
