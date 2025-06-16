@@ -46,7 +46,7 @@ struct TelemetryState {
     first_event_date_time: Option<Instant>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
-    worktree_ids_reported: HashSet<WorktreeId>,
+    worktrees_with_events_sent: HashSet<WorktreeId>,
 
     os_name: String,
     app_version: String,
@@ -181,7 +181,7 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
-            worktree_ids_reported: HashSet::new(),
+            worktrees_with_events_sent: HashSet::new(),
 
             os_version: None,
             os_name: os_name(),
@@ -365,7 +365,7 @@ impl Telemetry {
         let mut state = self.state.lock();
         let mut project_names = Vec::new();
 
-        if state.worktree_ids_reported.contains(&worktree_id) {
+        if state.worktrees_with_events_sent.contains(&worktree_id) {
             return project_names;
         }
 
@@ -386,7 +386,7 @@ impl Telemetry {
         }
 
         if !project_names.is_empty() {
-            state.worktree_ids_reported.insert(worktree_id);
+            state.worktrees_with_events_sent.insert(worktree_id);
         }
 
         project_names
