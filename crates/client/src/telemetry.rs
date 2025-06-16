@@ -384,39 +384,45 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_type_names: Vec<String> = {
-            let mut state = self.state.lock();
-            state
-                .project_marker_patterns
-                .0
-                .iter_mut()
-                .filter_map(|(pattern, project_cache)| {
-                    if project_cache.worktree_ids_reported.contains(&worktree_id) {
-                        return None;
-                    }
-
-                    let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
-                        path.as_ref()
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .map(|name_str| pattern.is_match(name_str))
-                            .unwrap_or(false)
-                    });
-
-                    if !project_file_found {
-                        return None;
-                    }
-
-                    project_cache.worktree_ids_reported.insert(worktree_id);
-
-                    Some(project_cache.name.clone())
-                })
-                .collect()
-        };
+        let project_type_names = self.detect_project_types(worktree_id, updated_entries_set);
 
         for project_type_name in project_type_names {
             telemetry::event!("Project Opened", project_type = project_type_name);
         }
+    }
+
+    fn detect_project_types(
+        self: &Arc<Self>,
+        worktree_id: WorktreeId,
+        updated_entries_set: &UpdatedEntriesSet,
+    ) -> Vec<String> {
+        let mut state = self.state.lock();
+        state
+            .project_marker_patterns
+            .0
+            .iter_mut()
+            .filter_map(|(pattern, project_cache)| {
+                if project_cache.worktree_ids_reported.contains(&worktree_id) {
+                    return None;
+                }
+
+                let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
+                    path.as_ref()
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name_str| pattern.is_match(name_str))
+                        .unwrap_or(false)
+                });
+
+                if !project_file_found {
+                    return None;
+                }
+
+                project_cache.worktree_ids_reported.insert(worktree_id);
+
+                Some(project_cache.name.clone())
+            })
+            .collect()
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
@@ -583,6 +589,7 @@ mod tests {
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
+    use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
@@ -700,6 +707,87 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_project_discovery_does_not_double_report(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+        let worktree_id = 1;
+
+        // First scan of worktree 1 returns project types
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["package.json"],
+            vec!["node"],
+            worktree_id,
+        );
+
+        // Rescan of worktree 1 returns nothing as it has already been reported
+        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], vec![], worktree_id);
+    }
+
+    #[gpui::test]
+    fn test_pnpm_project_discovery(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["package.json", "pnpm-lock.yaml"],
+            vec!["node", "pnpm"],
+            1,
+        );
+    }
+
+    #[gpui::test]
+    fn test_yarn_project_discovery(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["package.json", "yarn.lock"],
+            vec!["node", "yarn"],
+            1,
+        );
+    }
+
+    #[gpui::test]
+    fn test_dotnet_project_discovery(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+
+        // Using different worktrees, as production code blocks from reporting the same worktree twice
+
+        test_project_discovery_helper(
+            telemetry.clone().clone(),
+            vec!["global.json"],
+            vec!["dotnet"],
+            1,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["Directory.Build.props"],
+            vec!["dotnet"],
+            2,
+        );
+        test_project_discovery_helper(telemetry.clone(), vec!["file.csproj"], vec!["dotnet"], 3);
+        test_project_discovery_helper(telemetry.clone(), vec!["file.fsproj"], vec!["dotnet"], 4);
+        test_project_discovery_helper(telemetry.clone(), vec!["file.vbproj"], vec!["dotnet"], 5);
+        test_project_discovery_helper(telemetry, vec!["file.sln"], vec!["dotnet"], 6);
+    }
+
     // TODO:
     // Test settings
     // Update FakeHTTPClient to keep track of the number of requests and assert on it
@@ -715,5 +803,37 @@ mod tests {
         telemetry.state.lock().events_queue.is_empty()
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
+    }
+
+    fn test_project_discovery_helper(
+        telemetry: Arc<Telemetry>,
+        file_paths: Vec<&str>,
+        expected_project_types: Vec<&str>,
+        worktree_id_num: usize,
+    ) {
+        let worktree_id = WorktreeId::from_usize(worktree_id_num);
+        let entries: Vec<_> = file_paths
+            .into_iter()
+            .enumerate()
+            .map(|(i, path)| {
+                (
+                    Arc::from(std::path::Path::new(path)),
+                    ProjectEntryId::from_proto(i as u64 + 1),
+                    PathChange::Added,
+                )
+            })
+            .collect();
+        let updated_entries: UpdatedEntriesSet = Arc::from(entries.as_slice());
+
+        let mut detected_types = telemetry.detect_project_types(worktree_id, &updated_entries);
+        detected_types.sort();
+
+        let mut expected_sorted = expected_project_types
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        expected_sorted.sort();
+
+        assert_eq!(detected_types, expected_sorted);
     }
 }
