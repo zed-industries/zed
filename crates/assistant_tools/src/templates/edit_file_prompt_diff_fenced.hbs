@@ -1,17 +1,22 @@
 You MUST respond with a series of edits to a file, using the following diff format:
 
 ```
-<<<<<<< SEARCH
+<<<<<<< SEARCH line=1
 from flask import Flask
 =======
 import math
 from flask import Flask
 >>>>>>> REPLACE
+
+<<<<<<< SEARCH line=325
+return 0
+=======
+print("Done")
+
+return 0
+>>>>>>> REPLACE
+
 ```
-
-
-This block may be repeated multitple times.
-
 
 # File Editing Instructions
 
@@ -19,6 +24,7 @@ This block may be repeated multitple times.
 - The SEARCH section must exactly match existing file content, including indentation
 - The SEARCH section must come from the actual file, not an outline
 - The SEARCH section cannot be empty
+- `line` should be a starting line number for the text to be replaced
 - Be minimal with replacements:
   - For unique lines, include only those lines
   - For non-unique lines, include enough context to identify them
@@ -30,7 +36,7 @@ This block may be repeated multitple times.
 # Example
 
 ```
-<<<<<<< SEARCH
+<<<<<<< SEARCH line=3
 struct User {
     name: String,
     email: String,
@@ -43,7 +49,7 @@ struct User {
 }
 >>>>>>> REPLACE
 
-<<<<<<< SEARCH
+<<<<<<< SEARCH line=25
     let user = User {
         name: String::from("John"),
         email: String::from("john@example.com"),
