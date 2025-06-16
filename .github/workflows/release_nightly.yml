@@ -286,6 +286,30 @@ jobs:
       - name: Upload Zed Nightly
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/upload-nightly.ps1 windows
+  gpui-docs:
+    timeout-minutes: 60
+    name: Render rust docs for gpui
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-16vcpu-ubuntu-2004
+    needs: tests
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install Linux dependencies
+        run: ./script/linux && ./script/install-mold 2.34.0
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
+
+      - name: Upload Zed Nightly
+        run: cargo doc -p gpui
 
   update-nightly-tag:
     name: Update nightly tag
