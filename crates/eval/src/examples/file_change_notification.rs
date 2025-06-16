@@ -14,7 +14,7 @@ impl Example for FileChangeNotificationExample {
             url: "https://github.com/octocat/hello-world".to_string(),
             revision: "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d".to_string(),
             language_server: None,
-            max_assertions: Some(3),
+            max_assertions: Some(1),
             profile_id: AgentProfileId::default(),
             existing_thread_json: None,
             max_turns: Some(3),

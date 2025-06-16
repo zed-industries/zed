@@ -100,6 +100,7 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/open_ai",
+    "crates/open_router",
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
@@ -164,6 +165,7 @@ members = [
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
@@ -307,6 +309,7 @@ node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
+open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
@@ -371,6 +374,7 @@ util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
@@ -401,7 +405,6 @@ async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
-async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
@@ -430,9 +433,10 @@ convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
+cpal = "0.16"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "b40956a7f4d1939da67429d941389ee306a3a308" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -520,6 +524,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "rustls-tls-native-roots",
     "socks",
     "stream",
+    "hickory-dns",
 ] }
 rsa = "0.9.6"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
@@ -572,8 +577,8 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.5", features = ["wasm"] }
-tree-sitter-bash = "0.23"
+tree-sitter = { version = "0.25.6", features = ["wasm"] }
+tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.23"
@@ -679,9 +684,7 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
-# TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
-cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
@@ -695,6 +698,8 @@ codegen-units = 16
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+cranelift-codegen-meta = { opt-level = 3 }
+cranelift-codegen-shared = { opt-level = 3 }
 resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }

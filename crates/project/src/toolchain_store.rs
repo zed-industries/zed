@@ -19,7 +19,11 @@ use rpc::{
 use settings::WorktreeId;
 use util::ResultExt as _;
 
-use crate::{ProjectEnvironment, ProjectPath, worktree_store::WorktreeStore};
+use crate::{
+    ProjectEnvironment, ProjectPath,
+    manifest_tree::{ManifestQueryDelegate, ManifestTree},
+    worktree_store::WorktreeStore,
+};
 
 pub struct ToolchainStore(ToolchainStoreInner);
 enum ToolchainStoreInner {
@@ -42,6 +46,7 @@ impl ToolchainStore {
         languages: Arc<LanguageRegistry>,
         worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
+        manifest_tree: Entity<ManifestTree>,
         cx: &mut Context<Self>,
     ) -> Self {
         let entity = cx.new(|_| LocalToolchainStore {
@@ -49,6 +54,7 @@ impl ToolchainStore {
             worktree_store,
             project_environment,
             active_toolchains: Default::default(),
+            manifest_tree,
         });
         let subscription = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
@@ -80,11 +86,11 @@ impl ToolchainStore {
         &self,
         path: ProjectPath,
         language_name: LanguageName,
-        cx: &App,
-    ) -> Task<Option<ToolchainList>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => {
-                local.read(cx).list_toolchains(path, language_name, cx)
+                local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
             }
             ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).list_toolchains(path, language_name, cx)
@@ -181,7 +187,7 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = if let Some(toolchains) = &toolchains {
+        let groups = if let Some((toolchains, _)) = &toolchains {
             toolchains
                 .groups
                 .iter()
@@ -195,8 +201,8 @@ impl ToolchainStore {
         } else {
             vec![]
         };
-        let toolchains = if let Some(toolchains) = toolchains {
-            toolchains
+        let (toolchains, relative_path) = if let Some((toolchains, relative_path)) = toolchains {
+            let toolchains = toolchains
                 .toolchains
                 .into_iter()
                 .map(|toolchain| {
@@ -207,15 +213,17 @@ impl ToolchainStore {
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (toolchains, relative_path)
         } else {
-            vec![]
+            (vec![], Arc::from(Path::new("")))
         };
 
         Ok(proto::ListToolchainsResponse {
             has_values,
             toolchains,
             groups,
+            relative_worktree_path: Some(relative_path.to_string_lossy().into_owned()),
         })
     }
     pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
@@ -231,6 +239,7 @@ struct LocalToolchainStore {
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<Path>, Toolchain>>,
+    manifest_tree: Entity<ManifestTree>,
 }
 
 #[async_trait(?Send)]
@@ -269,7 +278,7 @@ impl language::LanguageToolchainStore for RemoteStore {
     }
 }
 
-pub(crate) struct EmptyToolchainStore;
+pub struct EmptyToolchainStore;
 #[async_trait(?Send)]
 impl language::LanguageToolchainStore for EmptyToolchainStore {
     async fn active_toolchain(
@@ -312,36 +321,73 @@ impl LocalToolchainStore {
         })
     }
     pub(crate) fn list_toolchains(
-        &self,
+        &mut self,
         path: ProjectPath,
         language_name: LanguageName,
-        cx: &App,
-    ) -> Task<Option<ToolchainList>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
         let registry = self.languages.clone();
-        let Some(abs_path) = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(path.worktree_id, cx)
-            .map(|worktree| worktree.read(cx).abs_path())
-        else {
-            return Task::ready(None);
-        };
+
+        let manifest_tree = self.manifest_tree.downgrade();
+
         let environment = self.project_environment.clone();
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |this, cx| {
+            let language = cx
+                .background_spawn(registry.language_for_name(language_name.as_ref()))
+                .await
+                .ok()?;
+            let toolchains = language.toolchain_lister()?;
+            let manifest_name = toolchains.manifest_name();
+            let (snapshot, worktree) = this
+                .update(cx, |this, cx| {
+                    this.worktree_store
+                        .read(cx)
+                        .worktree_for_id(path.worktree_id, cx)
+                        .map(|worktree| (worktree.read(cx).snapshot(), worktree))
+                })
+                .ok()
+                .flatten()?;
+            let worktree_id = snapshot.id();
+            let worktree_root = snapshot.abs_path().to_path_buf();
+            let relative_path = manifest_tree
+                .update(cx, |this, cx| {
+                    this.root_for_path(
+                        path,
+                        &mut std::iter::once(manifest_name.clone()),
+                        Arc::new(ManifestQueryDelegate::new(snapshot)),
+                        cx,
+                    )
+                })
+                .ok()?
+                .remove(&manifest_name)
+                .unwrap_or_else(|| ProjectPath {
+                    path: Arc::from(Path::new("")),
+                    worktree_id,
+                });
+            let abs_path = worktree
+                .update(cx, |this, _| this.absolutize(&relative_path.path).ok())
+                .ok()
+                .flatten()?;
+
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_directory_environment(abs_path.clone(), cx)
+                    environment.get_directory_environment(abs_path.as_path().into(), cx)
                 })
                 .ok()?
                 .await;
 
             cx.background_spawn(async move {
-                let language = registry
-                    .language_for_name(language_name.as_ref())
-                    .await
-                    .ok()?;
-                let toolchains = language.toolchain_lister()?;
-                Some(toolchains.list(abs_path.to_path_buf(), project_env).await)
+                Some((
+                    toolchains
+                        .list(
+                            worktree_root,
+                            Some(relative_path.path.clone())
+                                .filter(|_| *relative_path.path != *Path::new("")),
+                            project_env,
+                        )
+                        .await,
+                    relative_path.path,
+                ))
             })
             .await
         })
@@ -404,7 +450,7 @@ impl RemoteToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<ToolchainList>> {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
         let project_id = self.project_id;
         let client = self.client.clone();
         cx.background_spawn(async move {
@@ -444,11 +490,20 @@ impl RemoteToolchainStore {
                     Some((usize::try_from(group.start_index).ok()?, group.name.into()))
                 })
                 .collect();
-            Some(ToolchainList {
-                toolchains,
-                default: None,
-                groups,
-            })
+            let relative_path = Arc::from(Path::new(
+                response
+                    .relative_worktree_path
+                    .as_deref()
+                    .unwrap_or_default(),
+            ));
+            Some((
+                ToolchainList {
+                    toolchains,
+                    default: None,
+                    groups,
+                },
+                relative_path,
+            ))
         })
     }
     pub(crate) fn active_toolchain(

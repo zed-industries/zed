@@ -133,46 +133,6 @@ impl Render for QuickActionBar {
             )
         });
 
-        let last_run_debug = self
-            .workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .debugger_provider()
-                    .map(|provider| provider.debug_scenario_scheduled_last(cx))
-                    .unwrap_or_default()
-            })
-            .ok()
-            .unwrap_or_default();
-
-        let run_button = if last_run_debug {
-            QuickActionBarButton::new(
-                "debug",
-                IconName::Debug, // TODO: use debug + play icon
-                false,
-                Box::new(debugger_ui::Start),
-                focus_handle.clone(),
-                "Debug",
-                move |_, window, cx| {
-                    window.dispatch_action(Box::new(debugger_ui::Start), cx);
-                },
-            )
-        } else {
-            let action = Box::new(tasks_ui::Spawn::ViaModal {
-                reveal_target: None,
-            });
-            QuickActionBarButton::new(
-                "run",
-                IconName::Play,
-                false,
-                action.boxed_clone(),
-                focus_handle.clone(),
-                "Spawn Task",
-                move |_, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
-                },
-            )
-        };
-
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
             IconName::ZedAssistant,
@@ -601,7 +561,6 @@ impl Render for QuickActionBar {
                 AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
-            .child(run_button)
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)

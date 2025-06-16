@@ -2566,7 +2566,7 @@ impl Snapshot {
         include_dirs: bool,
         include_ignored: bool,
         start_offset: usize,
-    ) -> Traversal {
+    ) -> Traversal<'_> {
         let mut cursor = self.entries_by_path.cursor(&());
         cursor.seek(
             &TraversalTarget::Count {
@@ -2593,19 +2593,19 @@ impl Snapshot {
         include_dirs: bool,
         include_ignored: bool,
         path: &Path,
-    ) -> Traversal {
+    ) -> Traversal<'_> {
         Traversal::new(self, include_files, include_dirs, include_ignored, path)
     }
 
-    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(true, false, include_ignored, start)
     }
 
-    pub fn directories(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn directories(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(false, true, include_ignored, start)
     }
 
-    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(true, true, include_ignored, start)
     }
 
@@ -3948,7 +3948,7 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
             Ok(path) => SanitizedPath::from(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path: {}", err);
+                log::error!("failed to canonicalize root path {root_path:?}: {err}");
                 return true;
             }
         };

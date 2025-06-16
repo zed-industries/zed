@@ -14,8 +14,9 @@ use project::{TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
-    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, Label, LabelSize,
-    ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
+    IconButton, IconButtonShape, IconName, IconSize, IconWithIndicator, Indicator, IntoElement,
+    KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div,
+    h_flex, v_flex,
 };
 
 use util::{ResultExt, truncate_and_trailoff};
@@ -161,15 +162,48 @@ impl TasksModal {
         }
     }
 
-    pub fn task_contexts_loaded(
+    pub fn tasks_loaded(
         &mut self,
         task_contexts: Arc<TaskContexts>,
+        lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        used_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        add_current_language_tasks: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let last_used_candidate_index = if used_tasks.is_empty() {
+            None
+        } else {
+            Some(used_tasks.len() - 1)
+        };
+        let mut new_candidates = used_tasks;
+        new_candidates.extend(lsp_tasks);
+        let hide_vscode = current_resolved_tasks.iter().any(|(kind, _)| match kind {
+            TaskSourceKind::Worktree {
+                id: _,
+                directory_in_worktree: dir,
+                id_base: _,
+            } => dir.ends_with(".zed"),
+            _ => false,
+        });
+        // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
+        // We should move the filter to new_candidates instead of on current
+        // and add a test for this
+        new_candidates.extend(current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
+            match task_kind {
+                TaskSourceKind::Worktree {
+                    directory_in_worktree: dir,
+                    ..
+                } => !(hide_vscode && dir.ends_with(".vscode")),
+                TaskSourceKind::Language { .. } => add_current_language_tasks,
+                _ => true,
+            }
+        }));
         self.picker.update(cx, |picker, cx| {
             picker.delegate.task_contexts = task_contexts;
-            picker.delegate.candidates = None;
+            picker.delegate.last_used_candidate_index = last_used_candidate_index;
+            picker.delegate.candidates = Some(new_candidates);
             picker.refresh(window, cx);
             cx.notify();
         })
@@ -241,13 +275,14 @@ impl PickerDelegate for TasksModalDelegate {
             Some(candidates) => Task::ready(string_match_candidates(candidates)),
             None => {
                 if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
-                    let (used, current) = task_inventory
-                        .read(cx)
-                        .used_and_current_resolved_tasks(&self.task_contexts, cx);
+                    let task_list = task_inventory.update(cx, |this, cx| {
+                        this.used_and_current_resolved_tasks(self.task_contexts.clone(), cx)
+                    });
                     let workspace = self.workspace.clone();
                     let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
                     let task_position = self.task_contexts.latest_selection;
                     cx.spawn(async move |picker, cx| {
+                        let (used, current) = task_list.await;
                         let Ok((lsp_tasks, prefer_lsp)) = workspace.update(cx, |workspace, cx| {
                             let lsp_tasks = editor::lsp_tasks(
                                 workspace.project().clone(),
@@ -295,6 +330,9 @@ impl PickerDelegate for TasksModalDelegate {
                                             .map(move |(_, task)| (kind.clone(), task))
                                     },
                                 ));
+                                // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
+                                // We should move the filter to new_candidates instead of on current
+                                // and add a test for this
                                 new_candidates.extend(current.into_iter().filter(
                                     |(task_kind, _)| {
                                         add_current_language_tasks
@@ -448,15 +486,29 @@ impl PickerDelegate for TasksModalDelegate {
             color: Color::Default,
         };
         let icon = match source_kind {
-            TaskSourceKind::Lsp(..) => Some(Icon::new(IconName::BoltFilled)),
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
-            TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
+            TaskSourceKind::Lsp {
+                language_name: name,
+                ..
+            }
+            | TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&name.to_lowercase(), cx)
                 .map(Icon::from_path),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
+        let indicator = if matches!(source_kind, TaskSourceKind::Lsp { .. }) {
+            Some(Indicator::icon(
+                Icon::new(IconName::Bolt).size(IconSize::Small),
+            ))
+        } else {
+            None
+        };
+        let icon = icon.map(|icon| {
+            IconWithIndicator::new(icon, indicator)
+                .indicator_border_color(Some(cx.theme().colors().border_transparent))
+        });
         let history_run_icon = if Some(ix) <= self.divider_index {
             Some(
                 Icon::new(IconName::HistoryRerun)
@@ -476,7 +528,7 @@ impl PickerDelegate for TasksModalDelegate {
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
-                .start_slot::<Icon>(icon)
+                .start_slot::<IconWithIndicator>(icon)
                 .end_slot::<AnyElement>(
                     h_flex()
                         .gap_1()

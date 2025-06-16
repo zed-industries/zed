@@ -32,9 +32,11 @@ use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-pub use language_registry::{LanguageName, LoadedLanguage};
+pub use language_registry::{
+    LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
-pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
+pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -323,7 +325,6 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;

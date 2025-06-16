@@ -250,6 +250,7 @@ trait AnySettingValue: 'static + Send + Sync {
         cx: &mut App,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
@@ -374,6 +375,24 @@ impl SettingsStore {
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
+    }
+
+    /// Get all values from project specific settings
+    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<Path>, &T)> {
+        self.setting_values
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .all_local_values()
+            .into_iter()
+            .map(|(id, path, any)| {
+                (
+                    id,
+                    path,
+                    any.downcast_ref::<T>()
+                        .expect("wrong value type for setting"),
+                )
+            })
+            .collect()
     }
 
     /// Override the global value for a setting.
@@ -1235,6 +1254,13 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         (key, value)
     }
 
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)> {
+        self.local_values
+            .iter()
+            .map(|(id, path, value)| (*id, path.clone(), value as _))
+            .collect()
+    }
+
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
         if let Some(SettingsLocation { worktree_id, path }) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
@@ -1323,16 +1349,23 @@ fn update_value_in_json_text<'a>(
     if let (Value::Object(old_object), Value::Object(new_object)) = (old_value, new_value) {
         for (key, old_sub_value) in old_object.iter() {
             key_path.push(key);
-            let new_sub_value = new_object.get(key).unwrap_or(&Value::Null);
-            update_value_in_json_text(
-                text,
-                key_path,
-                tab_size,
-                old_sub_value,
-                new_sub_value,
-                preserved_keys,
-                edits,
-            );
+            if let Some(new_sub_value) = new_object.get(key) {
+                // Key exists in both old and new, recursively update
+                update_value_in_json_text(
+                    text,
+                    key_path,
+                    tab_size,
+                    old_sub_value,
+                    new_sub_value,
+                    preserved_keys,
+                    edits,
+                );
+            } else {
+                // Key was removed from new object, remove the entire key-value pair
+                let (range, replacement) = replace_value_in_json_text(text, key_path, 0, None);
+                text.replace_range(range.clone(), &replacement);
+                edits.push((range, replacement));
+            }
             key_path.pop();
         }
         for (key, new_sub_value) in new_object.iter() {
@@ -1359,7 +1392,8 @@ fn update_value_in_json_text<'a>(
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());
         }
-        let (range, replacement) = replace_value_in_json_text(text, key_path, tab_size, &new_value);
+        let (range, replacement) =
+            replace_value_in_json_text(text, key_path, tab_size, Some(&new_value));
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
@@ -1369,7 +1403,7 @@ fn replace_value_in_json_text(
     text: &str,
     key_path: &[&str],
     tab_size: usize,
-    new_value: &Value,
+    new_value: Option<&Value>,
 ) -> (Range<usize>, String) {
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
         Query::new(
@@ -1435,16 +1469,64 @@ fn replace_value_in_json_text(
         }
     }
 
-    // We found the exact key we want, insert the new value
+    // We found the exact key we want
     if depth == key_path.len() {
-        let new_val = to_pretty_json(&new_value, tab_size, tab_size * depth);
-        (existing_value_range, new_val)
+        if let Some(new_value) = new_value {
+            let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
+            (existing_value_range, new_val)
+        } else {
+            let mut removal_start = first_key_start.unwrap_or(existing_value_range.start);
+            let mut removal_end = existing_value_range.end;
+
+            // Find the actual key position by looking for the key in the pair
+            // We need to extend the range to include the key, not just the value
+            if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
+                if let Some(prev_key_start) = text[..key_start].rfind('"') {
+                    removal_start = prev_key_start;
+                } else {
+                    removal_start = key_start;
+                }
+            }
+
+            // Look backward for a preceding comma first
+            let preceding_text = text.get(0..removal_start).unwrap_or("");
+            if let Some(comma_pos) = preceding_text.rfind(',') {
+                // Check if there are only whitespace characters between the comma and our key
+                let between_comma_and_key = text.get(comma_pos + 1..removal_start).unwrap_or("");
+                if between_comma_and_key.trim().is_empty() {
+                    removal_start = comma_pos;
+                }
+            } else {
+                // No preceding comma, check for trailing comma
+                if let Some(remaining_text) = text.get(existing_value_range.end..) {
+                    let mut chars = remaining_text.char_indices();
+                    while let Some((offset, ch)) = chars.next() {
+                        if ch == ',' {
+                            removal_end = existing_value_range.end + offset + 1;
+                            // Also consume whitespace after the comma
+                            while let Some((_, next_ch)) = chars.next() {
+                                if next_ch.is_whitespace() {
+                                    removal_end += next_ch.len_utf8();
+                                } else {
+                                    break;
+                                }
+                            }
+                            break;
+                        } else if !ch.is_whitespace() {
+                            break;
+                        }
+                    }
+                }
+            }
+            (removal_start..removal_end, String::new())
+        }
     } else {
         // We have key paths, construct the sub objects
         let new_key = key_path[depth];
 
         // We don't have the key, construct the nested objects
-        let mut new_value = serde_json::to_value(new_value).unwrap();
+        let mut new_value =
+            serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
         for key in key_path[(depth + 1)..].iter().rev() {
             new_value = serde_json::json!({ key.to_string(): new_value });
         }
@@ -1740,6 +1822,61 @@ mod tests {
                     "Rust": {
                         "language_setting_2": true
                     },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        // entries removed
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("JSON").unwrap();
+            },
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("Rust").unwrap();
+            },
+            r#"{
+                "languages": {
                     "JSON": {
                         "language_setting_1": false
                     }

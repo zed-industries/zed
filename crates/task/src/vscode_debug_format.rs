@@ -1,5 +1,4 @@
 use collections::HashMap;
-use gpui::SharedString;
 use serde::Deserialize;
 use util::ResultExt as _;
 
@@ -20,40 +19,35 @@ enum Request {
 struct VsCodeDebugTaskDefinition {
     r#type: String,
     name: String,
-    request: Request,
-
-    #[serde(default)]
-    program: Option<String>,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: HashMap<String, Option<String>>,
-    // TODO envFile?
-    #[serde(default)]
-    cwd: Option<String>,
     #[serde(default)]
     port: Option<u16>,
-    #[serde(default)]
-    stop_on_entry: Option<bool>,
     #[serde(flatten)]
     other_attributes: serde_json::Value,
 }
 
 impl VsCodeDebugTaskDefinition {
     fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
-        let label = replacer.replace(&self.name).into();
-        // TODO based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
+        let label = replacer.replace(&self.name);
+        let mut config = replacer.replace_value(self.other_attributes);
+        let adapter = task_type_to_adapter_name(&self.r#type);
+        if let Some(config) = config.as_object_mut() {
+            if adapter == "JavaScript" {
+                config.insert("type".to_owned(), self.r#type.clone().into());
+                if let Some(port) = self.port {
+                    config.insert("port".to_owned(), port.into());
+                }
+            }
+        }
         let definition = DebugScenario {
-            label,
+            label: label.into(),
             build: None,
-            adapter: task_type_to_adapter_name(&self.r#type),
-            // TODO host?
+            adapter: adapter.into(),
             tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
                 port: Some(port),
                 host: None,
                 timeout: None,
             }),
-            config: self.other_attributes,
+            config,
         };
         Ok(definition)
     }
@@ -62,7 +56,8 @@ impl VsCodeDebugTaskDefinition {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VsCodeDebugTaskFile {
-    version: String,
+    #[serde(default)]
+    version: Option<String>,
     configurations: Vec<VsCodeDebugTaskDefinition>,
 }
 
@@ -75,7 +70,11 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
                 "workspaceFolder".to_owned(),
                 VariableName::WorktreeRoot.to_string(),
             ),
-            // TODO other interesting variables?
+            (
+                "relativeFile".to_owned(),
+                VariableName::RelativeFile.to_string(),
+            ),
+            ("file".to_owned(), VariableName::File.to_string()),
         ]));
         let templates = file
             .configurations
@@ -86,18 +85,18 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
     }
 }
 
-// todo(debugger) figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
-fn task_type_to_adapter_name(task_type: &str) -> SharedString {
+fn task_type_to_adapter_name(task_type: &str) -> String {
     match task_type {
-        "node" => "JavaScript",
+        "pwa-node" | "node" | "node-terminal" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge"
+        | "msedge" | "pwa-msedge" => "JavaScript",
         "go" => "Delve",
         "php" => "PHP",
         "cppdbg" | "lldb" => "CodeLLDB",
         "debugpy" => "Debugpy",
+        "rdbg" => "Ruby",
         _ => task_type,
     }
     .to_owned()
-    .into()
 }
 
 #[cfg(test)]
@@ -140,7 +139,20 @@ mod tests {
                 label: "Debug my JS app".into(),
                 adapter: "JavaScript".into(),
                 config: json!({
+                    "request": "launch",
+                    "program": "${ZED_WORKTREE_ROOT}/xyz.js",
                     "showDevDebugOutput": false,
+                    "stopOnEntry": true,
+                    "args": [
+                        "--foo",
+                        "${ZED_WORKTREE_ROOT}/thing",
+                    ],
+                    "cwd": "${ZED_WORKTREE_ROOT}/${FOO}/sub",
+                    "env": {
+                        "X": "Y",
+                    },
+                    "type": "node",
+                    "port": 17,
                 }),
                 tcp_connection: Some(TcpArgumentsTemplate {
                     port: Some(17),

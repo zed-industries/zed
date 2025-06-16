@@ -869,6 +869,7 @@ impl InfoPopover {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         div()
             .id("info_popover")
+            .occlude()
             .elevation_2(cx)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
@@ -1095,14 +1096,15 @@ mod tests {
         //prompt autocompletion menu
         cx.simulate_keystroke(".");
         handle_completion_request(
-            &mut cx,
             indoc! {"
                         one.|<>
                         two
                         three
                     "},
             vec!["first_completion", "second_completion"],
+            true,
             counter.clone(),
+            &mut cx,
         )
         .await;
         cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible

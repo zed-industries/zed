@@ -3,6 +3,7 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
+mod agent_profile;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -33,9 +34,11 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{App, actions, impl_actions};
+use gpui::{App, Entity, actions, impl_actions};
 use language::LanguageRegistry;
-use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
+use language_model::{
+    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -115,6 +118,28 @@ impl ManageProfiles {
 
 impl_actions!(agent, [NewThread, ManageProfiles]);
 
+#[derive(Clone)]
+pub(crate) enum ModelUsageContext {
+    Thread(Entity<Thread>),
+    InlineAssistant,
+}
+
+impl ModelUsageContext {
+    pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        match self {
+            Self::Thread(thread) => thread.read(cx).configured_model(),
+            Self::InlineAssistant => {
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            }
+        }
+    }
+
+    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.configured_model(cx)
+            .map(|configured_model| configured_model.model)
+    }
+}
+
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -137,7 +162,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry, cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

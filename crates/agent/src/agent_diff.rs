@@ -31,7 +31,7 @@ use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{BreadcrumbText, ItemEvent, TabContentParams},
+    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 use zed_actions::assistant::ToggleFocus;
@@ -532,12 +532,12 @@ impl Item for AgentDiffPane {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, window, cx)
+        self.editor.save(options, project, window, cx)
     }
 
     fn save_as(
@@ -1086,7 +1086,7 @@ impl Render for AgentDiffToolbar {
                     .child(vertical_divider())
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
-                            IconButton::new("review", IconName::ListCollapse)
+                            IconButton::new("review", IconName::ListTodo)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Review All Files",
@@ -1116,8 +1116,13 @@ impl Render for AgentDiffToolbar {
                     return Empty.into_any();
                 };
 
-                let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
-                if is_generating {
+                let has_pending_edit_tool_use = agent_diff
+                    .read(cx)
+                    .thread
+                    .read(cx)
+                    .has_pending_edit_tool_uses();
+
+                if has_pending_edit_tool_use {
                     return div().px_2().child(spinner_icon).into_any();
                 }
 
@@ -1372,7 +1377,9 @@ impl AgentDiff {
             | ThreadEvent::ToolFinished { .. }
             | ThreadEvent::CheckpointChanged
             | ThreadEvent::ToolConfirmationNeeded
-            | ThreadEvent::CancelEditing => {}
+            | ThreadEvent::ToolUseLimitReached
+            | ThreadEvent::CancelEditing
+            | ThreadEvent::ProfileChanged => {}
         }
     }
 
@@ -1464,7 +1471,10 @@ impl AgentDiff {
         if !AgentSettings::get_global(cx).single_file_review {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
             }
             return;
@@ -1560,7 +1570,10 @@ impl AgentDiff {
 
             if in_workspace {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
                 self.reviewing_editors.remove(&editor);
             }

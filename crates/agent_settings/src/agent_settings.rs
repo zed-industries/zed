@@ -102,7 +102,7 @@ pub struct AgentSettings {
     pub using_outdated_settings_version: bool,
     pub default_profile: AgentProfileId,
     pub default_view: DefaultView,
-    pub profiles: IndexMap<AgentProfileId, AgentProfile>,
+    pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: bool,
@@ -372,6 +372,8 @@ impl AgentSettingsContent {
                                 None,
                                 None,
                                 Some(language_model.supports_tools()),
+                                Some(language_model.supports_images()),
+                                None,
                             )),
                             api_url,
                         });
@@ -529,7 +531,7 @@ impl AgentSettingsContent {
     pub fn create_profile(
         &mut self,
         profile_id: AgentProfileId,
-        profile: AgentProfile,
+        profile_settings: AgentProfileSettings,
     ) -> Result<()> {
         self.v2_setting(|settings| {
             let profiles = settings.profiles.get_or_insert_default();
@@ -540,10 +542,10 @@ impl AgentSettingsContent {
             profiles.insert(
                 profile_id,
                 AgentProfileContent {
-                    name: profile.name.into(),
-                    tools: profile.tools,
-                    enable_all_context_servers: Some(profile.enable_all_context_servers),
-                    context_servers: profile
+                    name: profile_settings.name.into(),
+                    tools: profile_settings.tools,
+                    enable_all_context_servers: Some(profile_settings.enable_all_context_servers),
+                    context_servers: profile_settings
                         .context_servers
                         .into_iter()
                         .map(|(server_id, preset)| {
@@ -689,6 +691,7 @@ pub struct AgentSettingsContentV2 {
 pub enum CompletionMode {
     #[default]
     Normal,
+    #[serde(alias = "max")]
     Burn,
 }
 
@@ -727,6 +730,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "zed.dev".into(),
                 "copilot_chat".into(),
                 "deepseek".into(),
+                "openrouter".into(),
                 "mistral".into(),
             ]),
             ..Default::default()
@@ -906,7 +910,7 @@ impl Settings for AgentSettings {
                     .extend(profiles.into_iter().map(|(id, profile)| {
                         (
                             id,
-                            AgentProfile {
+                            AgentProfileSettings {
                                 name: profile.name.into(),
                                 tools: profile.tools,
                                 enable_all_context_servers: profile

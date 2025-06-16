@@ -411,7 +411,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    pub fn buffer(&self) -> Ref<MultiBufferSnapshot> {
+    pub fn buffer(&self) -> Ref<'_, MultiBufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
@@ -659,6 +659,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
         self.select(selections);
     }
+
     pub fn reverse_selections(&mut self) {
         let map = &self.display_map();
         let mut new_selections: Vec<Selection<Point>> = Vec::new();

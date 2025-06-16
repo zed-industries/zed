@@ -106,6 +106,24 @@ impl LspAdapter for PythonLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        // Provide minimal initialization options
+        // Virtual environment configuration will be handled through workspace configuration
+        Ok(Some(json!({
+            "python": {
+                "analysis": {
+                    "autoSearchPaths": true,
+                    "useLibraryCodeForTypes": true,
+                    "autoImportCompletions": true
+                }
+            }
+        })))
+    }
+
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -128,9 +146,10 @@ impl LspAdapter for PythonLspAdapter {
 
             let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
 
+            let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: node,
-                env: None,
+                env: Some(env),
                 arguments: server_binary_arguments(&path),
             })
         }
@@ -151,7 +170,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
@@ -163,9 +182,10 @@ impl LspAdapter for PythonLspAdapter {
             )
             .await?;
 
+        let env = delegate.shell_env().await;
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            env: None,
+            env: Some(env),
             arguments: server_binary_arguments(&server_path),
         })
     }
@@ -174,7 +194,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         version: &(dyn 'static + Send + Any),
         container_dir: &PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let version = version.downcast_ref::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
@@ -192,9 +212,10 @@ impl LspAdapter for PythonLspAdapter {
         if should_install_language_server {
             None
         } else {
+            let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: self.node.binary_path().await.ok()?,
-                env: None,
+                env: Some(env),
                 arguments: server_binary_arguments(&server_path),
             })
         }
@@ -203,9 +224,11 @@ impl LspAdapter for PythonLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        let mut binary = get_cached_server_binary(container_dir, &self.node).await?;
+        binary.env = Some(delegate.shell_env().await);
+        Some(binary)
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -308,22 +331,64 @@ impl LspAdapter for PythonLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
-            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            // If we have a detected toolchain, configure Pyright to use it
             if let Some(toolchain) = toolchain {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
-                if let Some(python) = object
+
+                let interpreter_path = toolchain.path.to_string();
+
+                // Detect if this is a virtual environment
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
+                    if let Some(venv_dir) = interpreter_dir.parent() {
+                        // Check if this looks like a virtual environment
+                        if venv_dir.join("pyvenv.cfg").exists()
+                            || venv_dir.join("bin/activate").exists()
+                            || venv_dir.join("Scripts/activate.bat").exists()
+                        {
+                            // Set venvPath and venv at the root level
+                            // This matches the format of a pyrightconfig.json file
+                            if let Some(parent) = venv_dir.parent() {
+                                // Use relative path if the venv is inside the workspace
+                                let venv_path = if parent == adapter.worktree_root_path() {
+                                    ".".to_string()
+                                } else {
+                                    parent.to_string_lossy().into_owned()
+                                };
+                                object.insert("venvPath".to_string(), Value::String(venv_path));
+                            }
+
+                            if let Some(venv_name) = venv_dir.file_name() {
+                                object.insert(
+                                    "venv".to_owned(),
+                                    Value::String(venv_name.to_string_lossy().into_owned()),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Always set the python interpreter path
+                // Get or create the python section
+                let python = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
-                {
-                    python
-                        .entry("pythonPath")
-                        .or_insert(Value::String(toolchain.path.into()));
-                }
+                    .unwrap();
+
+                // Set both pythonPath and defaultInterpreterPath for compatibility
+                python.insert(
+                    "pythonPath".to_owned(),
+                    Value::String(interpreter_path.clone()),
+                );
+                python.insert(
+                    "defaultInterpreterPath".to_owned(),
+                    Value::String(interpreter_path),
+                );
             }
+
             user_settings
         })
     }
@@ -379,17 +444,19 @@ impl ContextProvider for PythonContextProvider {
             };
 
         let module_target = self.build_module_target(variables);
-        let worktree_id = location
-            .file_location
-            .buffer
-            .read(cx)
-            .file()
-            .map(|f| f.worktree_id(cx));
+        let location_file = location.file_location.buffer.read(cx).file().cloned();
+        let worktree_id = location_file.as_ref().map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
             let raw_toolchain = if let Some(worktree_id) = worktree_id {
+                let file_path = location_file
+                    .as_ref()
+                    .and_then(|f| f.path().parent())
+                    .map(Arc::from)
+                    .unwrap_or_else(|| Arc::from("".as_ref()));
+
                 toolchains
-                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
+                    .active_toolchain(worktree_id, file_path, "Python".into(), cx)
                     .await
                     .map_or_else(
                         || String::from("python3"),
@@ -398,23 +465,26 @@ impl ContextProvider for PythonContextProvider {
             } else {
                 String::from("python3")
             };
+
             let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            let raw_toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
+            let raw_toolchain_var = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
+
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain, raw_toolchain]),
+                    .chain([toolchain, raw_toolchain_var]),
             ))
         })
     }
 
     fn associated_tasks(
         &self,
+        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         let test_runner = selected_test_runner(file.as_ref(), cx);
 
         let mut tasks = vec![
@@ -518,7 +588,7 @@ impl ContextProvider for PythonContextProvider {
             }
         });
 
-        Some(TaskTemplates(tasks))
+        Task::ready(Some(TaskTemplates(tasks)))
     }
 }
 
@@ -689,9 +759,13 @@ fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
+    fn manifest_name(&self) -> language::ManifestName {
+        ManifestName::from(SharedString::new_static("pyproject.toml"))
+    }
     async fn list(
         &self,
         worktree_root: PathBuf,
+        subroot_relative_path: Option<Arc<Path>>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -702,7 +776,14 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root.clone()]);
+
+        let mut directories = vec![worktree_root.clone()];
+        if let Some(subroot_relative_path) = subroot_relative_path {
+            debug_assert!(subroot_relative_path.is_relative());
+            directories.push(worktree_root.join(subroot_relative_path));
+        }
+
+        config.workspace_directories = Some(directories);
         for locator in locators.iter() {
             locator.configure(&config);
         }

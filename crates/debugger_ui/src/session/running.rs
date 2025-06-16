@@ -8,7 +8,8 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    new_session_modal::resolve_path,
+    ToggleExpandItem,
+    new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
 
@@ -173,6 +174,10 @@ impl Item for SubView {
         self.kind.to_shared_string()
     }
 
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some(self.kind.tab_tooltip())
+    }
+
     fn tab_content(
         &self,
         params: workspace::item::TabContentParams,
@@ -281,6 +286,7 @@ pub(crate) fn new_debugger_pane(
                                 &new_pane,
                                 item_id_to_move,
                                 new_pane.read(cx).active_item_index(),
+                                true,
                                 window,
                                 cx,
                             );
@@ -343,6 +349,7 @@ pub(crate) fn new_debugger_pane(
                 false
             }
         })));
+        pane.set_can_toggle_zoom(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
@@ -399,6 +406,9 @@ pub(crate) fn new_debugger_pane(
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
+                                    .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
+                                        this.tooltip(Tooltip::text(tooltip))
+                                    })
                                     .map(|this| {
                                         let theme = cx.theme();
                                         if selected {
@@ -465,17 +475,19 @@ pub(crate) fn new_debugger_pane(
                                     },
                                 )
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |pane, _, window, cx| {
-                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                .on_click(cx.listener(move |pane, _, _, cx| {
+                                    let is_zoomed = pane.is_zoomed();
+                                    pane.set_zoomed(!is_zoomed, cx);
+                                    cx.notify();
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |window, cx| {
                                         let zoomed_text =
-                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                            if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
-                                            &workspace::ToggleZoom,
+                                            &ToggleExpandItem,
                                             &focus_handle,
                                             window,
                                             cx,
@@ -559,7 +571,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn relativlize_paths(
+    pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
         context: &TaskContext,
@@ -567,12 +579,12 @@ impl RunningState {
         match config {
             serde_json::Value::Object(obj) => {
                 obj.iter_mut()
-                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context));
             }
             serde_json::Value::Array(array) => {
                 array
                     .iter_mut()
-                    .for_each(|value| Self::relativlize_paths(None, value, context));
+                    .for_each(|value| Self::relativize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
                 // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
@@ -593,6 +605,7 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        parent_terminal: Option<Entity<DebugTerminal>>,
         serialized_pane_layout: Option<SerializedLayout>,
         dock_axis: Axis,
         window: &mut Window,
@@ -605,7 +618,8 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(|cx| DebugTerminal::empty(window, cx));
+        let debug_terminal =
+            parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -799,25 +813,25 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
-            Self::relativlize_paths(None, &mut config, &task_context);
+            Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
                 .adapter(&adapter)
-                .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.validate_config(&config));
+                .with_context(|| format!("{}: is not a valid adapter name", &adapter))
+                .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 
             let build_output = if let Some(build) = build {
-                let (task, locator_name) = match build {
+                let (task_template, locator_name) = match build {
                     BuildTaskDefinition::Template {
                         task_template,
                         locator_name,
                     } => (task_template, locator_name),
                     BuildTaskDefinition::ByName(ref label) => {
-                        let Some(task) = task_store.update(cx, |this, cx| {
-                            this.task_inventory().and_then(|inventory| {
+                        let task = task_store.update(cx, |this, cx| {
+                            this.task_inventory().map(|inventory| {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
@@ -825,14 +839,15 @@ impl RunningState {
                                     cx,
                                 )
                             })
-                        })?
-                        else {
-                            anyhow::bail!("Couldn't find task template for {:?}", build)
-                        };
+                        })?;
+                        let task = match task {
+                            Some(task) => task.await,
+                            None => None,
+                        }.with_context(|| format!("Couldn't find task template for {build:?}"))?;
                         (task, None)
                     }
                 };
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
@@ -840,7 +855,7 @@ impl RunningState {
                     debug_assert!(!config_is_valid);
                     Some(locator_name)
                 } else if !config_is_valid {
-                    dap_store
+                    let task = dap_store
                         .update(cx, |this, cx| {
                             this.debug_scenario_for_build_task(
                                 task.original_task().clone(),
@@ -848,17 +863,21 @@ impl RunningState {
                                 task.display_label().to_owned().into(),
                                 cx,
                             )
-                            .and_then(|scenario| {
-                                match scenario.build {
-                                    Some(BuildTaskDefinition::Template {
-                                        locator_name, ..
-                                    }) => locator_name,
-                                    _ => None,
-                                }
-                            })
+
+                        });
+                    if let Ok(t) = task {
+                        t.await.and_then(|scenario| {
+                            match scenario.build {
+                                Some(BuildTaskDefinition::Template {
+                                    locator_name, ..
+                                }) => locator_name,
+                                _ => None,
+                            }
                         })
-                        .ok()
-                        .flatten()
+                    } else {
+                        None
+                    }
+
                 } else {
                     None
                 };
@@ -890,7 +909,6 @@ impl RunningState {
                         weak_workspace,
                         None,
                         weak_project,
-                        false,
                         window,
                         cx,
                     )
@@ -918,15 +936,13 @@ impl RunningState {
             };
 
             if config_is_valid {
-                // Ok(DebugTaskDefinition {
-                //     label,
-                //     adapter: DebugAdapterName(adapter),
-                //     config,
-                //     tcp_connection,
-                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name =
-                    locator_name.context("Could not find a valid locator for a build task")?;
+                    locator_name.with_context(|| {
+                        format!("Could not find a valid locator for a build task and configure is invalid with error: {}", request_type.err()
+                            .map(|err| err.to_string())
+                            .unwrap_or_default())
+                    })?;
                 let request = dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
@@ -942,12 +958,15 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
-                anyhow::bail!("No request or build provided");
+                let Err(e) = request_type else {
+                    unreachable!();
+                };
+                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {
@@ -978,7 +997,7 @@ impl RunningState {
         let cwd = Some(&request.cwd)
             .filter(|cwd| cwd.len() > 0)
             .map(PathBuf::from)
-            .or_else(|| session.binary().cwd.clone());
+            .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut args = request.args.clone();
 
@@ -1041,15 +1060,7 @@ impl RunningState {
             let terminal = terminal_task.await?;
 
             let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(
-                    terminal.clone(),
-                    workspace,
-                    None,
-                    weak_project,
-                    false,
-                    window,
-                    cx,
-                )
+                TerminalView::new(terminal.clone(), workspace, None, weak_project, window, cx)
             })?;
 
             running.update_in(cx, |running, window, cx| {
@@ -1249,18 +1260,6 @@ impl RunningState {
             }
             Event::Focus => {
                 this.active_pane = source_pane.clone();
-            }
-            Event::ZoomIn => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(true, cx);
-                });
-                cx.notify();
-            }
-            Event::ZoomOut => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(false, cx);
-                });
-                cx.notify();
             }
             _ => {}
         }

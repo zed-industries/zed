@@ -292,7 +292,7 @@ impl Prettier {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(cx);
+                let params = server.default_initialize_params(false, cx);
                 let configuration = lsp::DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
@@ -343,6 +343,8 @@ impl Prettier {
                                 prettier_plugin_dir.join("plugin.js"),
                                 // this one is for @prettier/plugin-php
                                 prettier_plugin_dir.join("standalone.js"),
+                                // this one is for prettier-plugin-latex
+                                prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
                                 prettier_plugin_dir,
                             ]
                             .into_iter()
@@ -450,14 +452,13 @@ impl Prettier {
                             },
                         })
                     })?
-                    .context("prettier params calculation")?;
+                    .context("building prettier request")?;
 
                 let response = local
                     .server
                     .request::<Format>(params)
                     .await
-                    .into_response()
-                    .context("prettier format")?;
+                    .into_response()?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }

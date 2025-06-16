@@ -10,8 +10,9 @@ const DELETION_COST: u32 = 10;
 pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
     query_lines: Vec<String>,
+    line_hint: Option<u32>,
     incomplete_line: String,
-    best_match: Option<Range<usize>>,
+    matches: Vec<Range<usize>>,
     matrix: SearchMatrix,
 }
 
@@ -21,8 +22,9 @@ impl StreamingFuzzyMatcher {
         Self {
             snapshot,
             query_lines: Vec::new(),
+            line_hint: None,
             incomplete_line: String::new(),
-            best_match: None,
+            matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
         }
     }
@@ -41,9 +43,10 @@ impl StreamingFuzzyMatcher {
     ///
     /// Returns `Some(range)` if a match has been found with the accumulated
     /// query so far, or `None` if no suitable match exists yet.
-    pub fn push(&mut self, chunk: &str) -> Option<Range<usize>> {
+    pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
+        self.line_hint = line_hint;
 
         if let Some((last_pos, _)) = self.incomplete_line.match_indices('\n').next_back() {
             let complete_part = &self.incomplete_line[..=last_pos];
@@ -55,31 +58,32 @@ impl StreamingFuzzyMatcher {
 
             self.incomplete_line.replace_range(..last_pos + 1, "");
 
-            self.best_match = self.resolve_location_fuzzy();
+            self.matches = self.resolve_location_fuzzy();
         }
 
-        self.best_match.clone()
+        let best_match = self.select_best_match();
+        best_match.or_else(|| self.matches.first().cloned())
     }
 
-    /// Finish processing and return the final best match.
+    /// Finish processing and return the final best match(es).
     ///
     /// This processes any remaining incomplete line before returning the final
     /// match result.
-    pub fn finish(&mut self) -> Option<Range<usize>> {
+    pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
-            self.best_match = self.resolve_location_fuzzy();
+            self.incomplete_line.clear();
+            self.matches = self.resolve_location_fuzzy();
         }
-
-        self.best_match.clone()
+        self.matches.clone()
     }
 
-    fn resolve_location_fuzzy(&mut self) -> Option<Range<usize>> {
+    fn resolve_location_fuzzy(&mut self) -> Vec<Range<usize>> {
         let new_query_line_count = self.query_lines.len();
         let old_query_line_count = self.matrix.rows.saturating_sub(1);
         if new_query_line_count == old_query_line_count {
-            return None;
+            return Vec::new();
         }
 
         self.matrix.resize_rows(new_query_line_count + 1);
@@ -132,53 +136,98 @@ impl StreamingFuzzyMatcher {
             }
         }
 
-        // Traceback to find the best match
+        // Find all matches with the best cost
         let buffer_line_count = self.snapshot.max_point().row as usize + 1;
-        let mut buffer_row_end = buffer_line_count as u32;
         let mut best_cost = u32::MAX;
+        let mut matches_with_best_cost = Vec::new();
+
         for col in 1..=buffer_line_count {
             let cost = self.matrix.get(new_query_line_count, col).cost;
             if cost < best_cost {
                 best_cost = cost;
-                buffer_row_end = col as u32;
+                matches_with_best_cost.clear();
+                matches_with_best_cost.push(col as u32);
+            } else if cost == best_cost {
+                matches_with_best_cost.push(col as u32);
             }
         }
 
-        let mut matched_lines = 0;
-        let mut query_row = new_query_line_count;
-        let mut buffer_row_start = buffer_row_end;
-        while query_row > 0 && buffer_row_start > 0 {
-            let current = self.matrix.get(query_row, buffer_row_start as usize);
-            match current.direction {
-                SearchDirection::Diagonal => {
-                    query_row -= 1;
-                    buffer_row_start -= 1;
-                    matched_lines += 1;
+        // Find ranges for the matches
+        let mut valid_matches = Vec::new();
+        for &buffer_row_end in &matches_with_best_cost {
+            let mut matched_lines = 0;
+            let mut query_row = new_query_line_count;
+            let mut buffer_row_start = buffer_row_end;
+            while query_row > 0 && buffer_row_start > 0 {
+                let current = self.matrix.get(query_row, buffer_row_start as usize);
+                match current.direction {
+                    SearchDirection::Diagonal => {
+                        query_row -= 1;
+                        buffer_row_start -= 1;
+                        matched_lines += 1;
+                    }
+                    SearchDirection::Up => {
+                        query_row -= 1;
+                    }
+                    SearchDirection::Left => {
+                        buffer_row_start -= 1;
+                    }
                 }
-                SearchDirection::Up => {
-                    query_row -= 1;
-                }
-                SearchDirection::Left => {
-                    buffer_row_start -= 1;
-                }
+            }
+
+            let matched_buffer_row_count = buffer_row_end - buffer_row_start;
+            let matched_ratio = matched_lines as f32
+                / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
+            if matched_ratio >= 0.8 {
+                let buffer_start_ix = self
+                    .snapshot
+                    .point_to_offset(Point::new(buffer_row_start, 0));
+                let buffer_end_ix = self.snapshot.point_to_offset(Point::new(
+                    buffer_row_end - 1,
+                    self.snapshot.line_len(buffer_row_end - 1),
+                ));
+                valid_matches.push((buffer_row_start, buffer_start_ix..buffer_end_ix));
             }
         }
 
-        let matched_buffer_row_count = buffer_row_end - buffer_row_start;
-        let matched_ratio = matched_lines as f32
-            / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
-        if matched_ratio >= 0.8 {
-            let buffer_start_ix = self
-                .snapshot
-                .point_to_offset(Point::new(buffer_row_start, 0));
-            let buffer_end_ix = self.snapshot.point_to_offset(Point::new(
-                buffer_row_end - 1,
-                self.snapshot.line_len(buffer_row_end - 1),
-            ));
-            Some(buffer_start_ix..buffer_end_ix)
-        } else {
-            None
+        valid_matches.into_iter().map(|(_, range)| range).collect()
+    }
+
+    /// Return the best match with starting position close enough to line_hint.
+    pub fn select_best_match(&self) -> Option<Range<usize>> {
+        // Allow line hint to be off by that many lines.
+        // Higher values increase probability of applying edits to a wrong place,
+        // Lower values increase edits failures and overall conversation length.
+        const LINE_HINT_TOLERANCE: u32 = 200;
+
+        if self.matches.is_empty() {
+            return None;
         }
+
+        if self.matches.len() == 1 {
+            return self.matches.first().cloned();
+        }
+
+        let Some(line_hint) = self.line_hint else {
+            // Multiple ambiguous matches
+            return None;
+        };
+
+        let mut best_match = None;
+        let mut best_distance = u32::MAX;
+
+        for range in &self.matches {
+            let start_point = self.snapshot.offset_to_point(range.start);
+            let start_line = start_point.row;
+            let distance = start_line.abs_diff(line_hint);
+
+            if distance <= LINE_HINT_TOLERANCE && distance < best_distance {
+                best_distance = distance;
+                best_match = Some(range.clone());
+            }
+        }
+
+        best_match
     }
 }
 
@@ -622,6 +671,52 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_line_hint_selection() {
+        let text = indoc! {r#"
+            fn first_function() {
+                return 42;
+            }
+
+            fn second_function() {
+                return 42;
+            }
+
+            fn third_function() {
+                return 42;
+            }
+        "#};
+
+        let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.to_string());
+        let snapshot = buffer.snapshot();
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+
+        // Given a query that matches all three functions
+        let query = "return 42;\n";
+
+        // Test with line hint pointing to second function (around line 5)
+        let best_match = matcher.push(query, Some(5)).expect("Failed to match query");
+
+        let matched_text = snapshot
+            .text_for_range(best_match.clone())
+            .collect::<String>();
+        assert!(matched_text.contains("return 42;"));
+        assert_eq!(
+            best_match,
+            63..77,
+            "Expected to match `second_function` based on the line hint"
+        );
+
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+        matcher.push(query, None);
+        matcher.finish();
+        let best_match = matcher.select_best_match();
+        assert!(
+            best_match.is_none(),
+            "Best match should be None when query cannot be uniquely resolved"
+        );
+    }
+
     #[track_caller]
     fn assert_location_resolution(text_with_expected_range: &str, query: &str, rng: &mut StdRng) {
         let (text, expected_ranges) = marked_text_ranges(text_with_expected_range, false);
@@ -635,31 +730,38 @@ mod tests {
 
         // Push chunks incrementally
         for chunk in &chunks {
-            matcher.push(chunk);
+            matcher.push(chunk, None);
         }
 
-        let result = matcher.finish();
+        let actual_ranges = matcher.finish();
 
         // If no expected ranges, we expect no match
         if expected_ranges.is_empty() {
-            assert_eq!(
-                result, None,
+            assert!(
+                actual_ranges.is_empty(),
                 "Expected no match for query: {:?}, but found: {:?}",
-                query, result
+                query,
+                actual_ranges
             );
         } else {
-            let mut actual_ranges = Vec::new();
-            if let Some(range) = result {
-                actual_ranges.push(range);
-            }
-
             let text_with_actual_range = generate_marked_text(&text, &actual_ranges, false);
             pretty_assertions::assert_eq!(
                 text_with_actual_range,
                 text_with_expected_range,
-                "Query: {:?}, Chunks: {:?}",
+                indoc! {"
+                    Query: {:?}
+                    Chunks: {:?}
+                    Expected marked text: {}
+                    Actual marked text: {}
+                    Expected ranges: {:?}
+                    Actual ranges: {:?}"
+                },
                 query,
-                chunks
+                chunks,
+                text_with_expected_range,
+                text_with_actual_range,
+                expected_ranges,
+                actual_ranges
             );
         }
     }
@@ -681,14 +783,17 @@ mod tests {
 
     fn push(finder: &mut StreamingFuzzyMatcher, chunk: &str) -> Option<String> {
         finder
-            .push(chunk)
+            .push(chunk, None)
             .map(|range| finder.snapshot.text_for_range(range).collect::<String>())
     }
 
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
-        finder
-            .finish()
-            .map(|range| snapshot.text_for_range(range).collect::<String>())
+        let matches = finder.finish();
+        if let Some(range) = matches.first() {
+            Some(snapshot.text_for_range(range.clone()).collect::<String>())
+        } else {
+            None
+        }
     }
 }

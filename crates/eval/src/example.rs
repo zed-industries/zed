@@ -246,6 +246,7 @@ impl ExampleContext {
                 | ThreadEvent::StreamedAssistantThinking(_, _)
                 | ThreadEvent::UsePendingTools { .. }
                 | ThreadEvent::CompletionCanceled => {}
+                ThreadEvent::ToolUseLimitReached => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,
@@ -293,6 +294,7 @@ impl ExampleContext {
                 | ThreadEvent::MessageDeleted(_)
                 | ThreadEvent::SummaryChanged
                 | ThreadEvent::SummaryGenerated
+                | ThreadEvent::ProfileChanged
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged
