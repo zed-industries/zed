@@ -7,7 +7,7 @@ use crate::{
     DebugPanel,
     persistence::DebuggerPaneItem,
     session::running::variable_list::{
-        AddWatcher, CollapseSelectedEntry, ExpandSelectedEntry, RemoveWatcher,
+        AddWatch, CollapseSelectedEntry, ExpandSelectedEntry, RemoveWatch,
     },
     tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
@@ -2033,7 +2033,7 @@ async fn test_add_and_remove_watcher(executor: BackgroundExecutor, cx: &mut Test
 
     running_state.update(cx, |running_state, cx| {
         running_state.variable_list().update(cx, |_, cx| {
-            cx.dispatch_action(&AddWatcher);
+            cx.dispatch_action(&AddWatch);
         });
     });
     cx.run_until_parked();
@@ -2071,7 +2071,7 @@ async fn test_add_and_remove_watcher(executor: BackgroundExecutor, cx: &mut Test
 
     running_state.update(cx, |running_state, cx| {
         running_state.variable_list().update(cx, |_, cx| {
-            cx.dispatch_action(&RemoveWatcher);
+            cx.dispatch_action(&RemoveWatch);
         });
     });
     cx.run_until_parked();
@@ -2285,7 +2285,7 @@ async fn test_refresh_watchers(executor: BackgroundExecutor, cx: &mut TestAppCon
 
     running_state.update(cx, |running_state, cx| {
         running_state.variable_list().update(cx, |_, cx| {
-            cx.dispatch_action(&AddWatcher);
+            cx.dispatch_action(&AddWatch);
         });
     });
     cx.run_until_parked();

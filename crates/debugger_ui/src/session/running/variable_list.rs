@@ -23,8 +23,8 @@ actions!(
         CopyVariableName,
         CopyVariableValue,
         EditVariable,
-        AddWatcher,
-        RemoveWatcher,
+        AddWatch,
+        RemoveWatch,
     ]
 );
 
@@ -552,7 +552,7 @@ impl VariableList {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
-                .action("Remove Watcher", RemoveWatcher.boxed_clone())
+                .action("Remove Watch", RemoveWatch.boxed_clone())
                 .context(self.focus_handle.clone())
         });
 
@@ -584,7 +584,7 @@ impl VariableList {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
                 .action("Edit Value", EditVariable.boxed_clone())
-                .action("Add Watcher", AddWatcher.boxed_clone())
+                .action("Watch Variable", AddWatch.boxed_clone())
                 .context(self.focus_handle.clone())
         });
 
@@ -669,7 +669,7 @@ impl VariableList {
         cx.notify();
     }
 
-    fn add_watcher(&mut self, _: &AddWatcher, _: &mut Window, cx: &mut Context<Self>) {
+    fn add_watcher(&mut self, _: &AddWatch, _: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = self.selection.as_ref() else {
             return;
         };
@@ -705,7 +705,7 @@ impl VariableList {
         .detach_and_log_err(cx);
     }
 
-    fn remove_watcher(&mut self, _: &RemoveWatcher, _: &mut Window, cx: &mut Context<Self>) {
+    fn remove_watcher(&mut self, _: &RemoveWatch, _: &mut Window, cx: &mut Context<Self>) {
         let Some(selection) = self.selection.as_ref() else {
             return;
         };
@@ -980,15 +980,15 @@ impl VariableList {
                         move |_, window, cx| {
                             weak.update(cx, |variable_list, cx| {
                                 variable_list.selection = Some(path.clone());
-                                variable_list.remove_watcher(&RemoveWatcher, window, cx);
+                                variable_list.remove_watcher(&RemoveWatch, window, cx);
                             })
                             .ok();
                         }
                     })
                     .tooltip(move |window, cx| {
                         Tooltip::for_action_in(
-                            "Remove Watcher",
-                            &RemoveWatcher,
+                            "Remove Watch",
+                            &RemoveWatch,
                             &focus_handle,
                             window,
                             cx,
