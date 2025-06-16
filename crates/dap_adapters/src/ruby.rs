@@ -49,7 +49,7 @@ impl DebugAdapter for RubyDebugAdapter {
         Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
