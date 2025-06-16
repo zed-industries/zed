@@ -71,6 +71,7 @@ dependencies = [
  "db",
  "editor",
  "extension",
+ "extension_host",
  "feature_flags",
  "file_icons",
  "fs",

@@ -6,6 +6,8 @@ use std::{
 use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
+use extension::ExtensionManifest;
+use extension_host::ExtensionStore;
 use gpui::{
     Animation, AnimationExt as _, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle,
@@ -198,6 +200,18 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     )
 }
 
+fn manifest_for_context_server_extension(
+    id: &ContextServerId,
+    cx: &App,
+) -> Option<Arc<ExtensionManifest>> {
+    ExtensionStore::global(cx)
+        .read(cx)
+        .installed_extensions()
+        .iter()
+        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
+        .map(|(_, entry)| entry.manifest.clone())
+}
+
 fn resolve_context_server_extension(
     id: ContextServerId,
     worktree_store: Entity<WorktreeStore>,
@@ -209,6 +223,8 @@ fn resolve_context_server_extension(
         return Task::ready(None);
     };
 
+    let manifest = manifest_for_context_server_extension(&id, cx);
+
     cx.spawn(async move |cx| {
         let installation = descriptor
             .configuration(worktree_store, cx)
@@ -217,10 +233,10 @@ fn resolve_context_server_extension(
             .log_err()
             .flatten();
 
-        //TODO get repo URL
         Some(ConfigurationTarget::Extension {
             id,
-            repository_url: None,
+            repository_url: manifest
+                .and_then(|manifest| manifest.repository.clone().map(|s| SharedString::from(s))),
             installation,
         })
     })
