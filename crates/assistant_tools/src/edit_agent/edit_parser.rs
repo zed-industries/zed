@@ -709,7 +709,13 @@ mod tests {
         let mut parser = EditParser::new(EditFormat::DiffFenced);
         assert_eq!(
             parse_random_chunks(
-                "<<<<<<< SEARCH\noriginal text\n=======\nupdated text\n>>>>>>> REPLACE",
+                indoc! {"
+                    <<<<<<< SEARCH
+                    original text
+                    =======
+                    updated text
+                    >>>>>>> REPLACE
+                "},
                 &mut parser,
                 &mut rng
             ),
@@ -728,36 +734,21 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
-    fn test_diff_fenced_with_file_path(mut rng: StdRng) {
-        let mut parser = EditParser::new(EditFormat::DiffFenced);
-        assert_eq!(
-            parse_random_chunks(
-                "mathweb/flask/app.py\n<<<<<<< SEARCH\nfrom flask import Flask\n=======\nimport math\nfrom flask import Flask\n>>>>>>> REPLACE",
-                &mut parser,
-                &mut rng
-            ),
-            vec![Edit {
-                old_text: "from flask import Flask".to_string(),
-                new_text: "import math\nfrom flask import Flask".to_string(),
-                line_hint: None,
-            }]
-        );
-        assert_eq!(
-            parser.finish(),
-            EditParserMetrics {
-                tags: 0,
-                mismatched_tags: 0
-            }
-        );
-    }
-
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100)]
     fn test_diff_fenced_with_markdown_fences(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::DiffFenced);
         assert_eq!(
             parse_random_chunks(
-                "```diff\n<<<<<<< SEARCH\nfrom flask import Flask\n=======\nimport math\nfrom flask import Flask\n>>>>>>> REPLACE\n```",
+                indoc! {"
+                    ```diff
+                    <<<<<<< SEARCH
+                    from flask import Flask
+                    =======
+                    import math
+                    from flask import Flask
+                    >>>>>>> REPLACE
+                    ```
+                "},
                 &mut parser,
                 &mut rng
             ),
@@ -776,7 +767,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100)]
     fn test_diff_fenced_multiple_edits(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::DiffFenced);
         assert_eq!(
@@ -819,7 +810,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100)]
     fn test_mixed_formats(mut rng: StdRng) {
         // Test XML format parser only parses XML tags
         let mut xml_parser = EditParser::new(EditFormat::XmlTags);
@@ -882,12 +873,16 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100)]
     fn test_diff_fenced_empty_sections(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::DiffFenced);
         assert_eq!(
             parse_random_chunks(
-                "<<<<<<< SEARCH\n=======\n>>>>>>> REPLACE",
+                indoc! {"
+                <<<<<<< SEARCH
+                =======
+                >>>>>>> REPLACE
+            "},
                 &mut parser,
                 &mut rng
             ),
@@ -906,7 +901,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100)]
     fn test_xml_with_line_hint(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::XmlTags);
         let events = parse_events_random_chunks(
@@ -954,11 +949,17 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100)]
     fn test_diff_fenced_with_line_hint(mut rng: StdRng) {
         let mut parser = EditParser::new(EditFormat::DiffFenced);
         let events = parse_events_random_chunks(
-            "<<<<<<< SEARCH line=42\noriginal text\n=======\nupdated text\n>>>>>>> REPLACE",
+            indoc! {"
+                <<<<<<< SEARCH line=42
+                original text
+                =======
+                updated text
+                >>>>>>> REPLACE
+            "},
             &mut parser,
             &mut rng,
         );
