@@ -6019,7 +6019,6 @@ impl LspStore {
                 return None;
             }
 
-            // TODO kb should I compare buffer Globals anyway, to deduplicate multiple editors querying on buffer edit?
             if ignore_existing_mtime
                 || self.lsp_data.is_none()
                 || self
@@ -6058,6 +6057,8 @@ impl LspStore {
             let task_abs_path = abs_path.clone();
             let new_task = cx
                 .spawn(async move |lsp_store, cx| {
+                    // TODO kb multiple tasks can run, if multiple editors react on buffer open. Use Global version to mitigate that?
+                    cx.background_executor().timer(Duration::from_millis(50)).await;
                     let fetched_colors = match lsp_store
                         .update(cx, |lsp_store, cx| {
                             lsp_store.fetch_document_colors(buffer, cx)
