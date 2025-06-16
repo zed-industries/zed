@@ -351,7 +351,7 @@ impl DebugAdapter for GoDebugAdapter {
         })
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
@@ -494,7 +494,7 @@ impl DebugAdapter for GoDebugAdapter {
             connection,
             request_args: StartDebuggingRequestArguments {
                 configuration,
-                request: self.request_kind(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config).await?,
             },
         })
     }

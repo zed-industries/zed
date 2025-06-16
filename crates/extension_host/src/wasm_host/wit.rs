@@ -950,13 +950,12 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         config: ZedDebugConfig,
-        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<DebugScenario, String>> {
         match self {
             Extension::V0_6_0(ext) => {
                 let config = config.into();
                 let dap_binary = ext
-                    .call_dap_config_to_scenario(store, &config, resource)
+                    .call_dap_config_to_scenario(store, &config)
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 

@@ -337,7 +337,7 @@ pub async fn download_adapter_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario>;
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario>;
 
     async fn get_binary(
         &self,
@@ -355,7 +355,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     /// Extracts the kind (attach/launch) of debug configuration from the given JSON config.
     /// This method should only return error when the kind cannot be determined for a given configuration;
     /// in particular, it *should not* validate whether the request as a whole is valid, because that's best left to the debug adapter itself to decide.
-    fn request_kind(
+    async fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
