@@ -1,6 +1,4 @@
-#[cfg(not(unix))]
-use std::ffi::OsStr;
-use std::time::Duration;
+use std::{ffi::OsStr, time::Duration};
 
 use anyhow::Context as _;
 use futures::channel::{mpsc, oneshot};
