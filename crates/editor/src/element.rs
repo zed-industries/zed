@@ -1085,7 +1085,7 @@ impl EditorElement {
         let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.mouse_cursor_hidden = false;
+        editor.show_mouse_cursor(cx);
 
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.previous_valid;
