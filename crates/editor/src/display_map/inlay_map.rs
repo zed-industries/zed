@@ -57,6 +57,14 @@ impl Inlay {
         }
     }
 
+    pub fn color(id: usize, position: Anchor, text: impl Into<Rope>) -> Self {
+        Self {
+            id: InlayId::Color(id),
+            position,
+            text: text.into(),
+        }
+    }
+
     pub fn inline_completion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::InlineCompletion(id),
@@ -65,7 +73,7 @@ impl Inlay {
         }
     }
 
-    pub fn debugger_hint<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),
             position,
@@ -296,6 +304,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
+                    InlayId::Color(_) => {
+                        // // TODO kb: various modes and styles for inlays
+                        self.highlight_styles.inlay_hint
+                    }
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
