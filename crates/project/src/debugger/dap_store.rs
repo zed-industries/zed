@@ -243,7 +243,8 @@ impl DapStore {
                     let mut ssh_command = ssh_client.read_with(cx, |ssh, _| {
                         anyhow::Ok(SshCommand {
                             // TODO:
-                            arguments: ssh.ssh_args().context("SSH arguments not found")?.0,
+                            // askpass is not used here
+                            arguments: ssh.ssh_args().context("SSH arguments not found")?.arguments,
                         })
                     })??;
 
