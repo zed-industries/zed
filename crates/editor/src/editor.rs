@@ -1805,7 +1805,7 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(Some(*server_id), None, window, cx);
+                            editor.update_lsp_data(false, Some(*server_id), None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -2217,7 +2217,7 @@ impl Editor {
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
-            editor.update_lsp_data(None, None, window, cx);
+            editor.update_lsp_data(false, None, None, window, cx);
         }
 
         editor.report_editor_event("Editor Opened", None, cx);
@@ -16283,6 +16283,7 @@ impl Editor {
 
     fn refresh_colors(
         &mut self,
+        update_on_edit: bool,
         for_server_id: Option<LanguageServerId>,
         buffer_id: Option<BufferId>,
         _: &Window,
@@ -16312,7 +16313,8 @@ impl Editor {
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
-                    let colors_task = lsp_store.document_colors(for_server_id, buffer, cx)?;
+                    let colors_task =
+                        lsp_store.document_colors(update_on_edit, for_server_id, buffer, cx)?;
                     Some(async move { (buffer_id, colors_task.await) })
                 })
                 .collect::<Vec<_>>()
@@ -16434,7 +16436,6 @@ impl Editor {
                                                 ));
                                             } else {
                                                 colors_splice.to_remove.push(*existing_inlay_id);
-                                                existing_colors.next();
 
                                                 let inlay = Inlay::color(
                                                     post_inc(&mut editor.next_color_inlay_id),
@@ -16446,6 +16447,7 @@ impl Editor {
                                                 new_color_inlays
                                                     .push((new_range, new_color, inlay_id));
                                             }
+                                            existing_colors.next();
                                             break;
                                         }
                                         Ordering::Greater => {
@@ -16475,10 +16477,16 @@ impl Editor {
                             }
                         }
                     }
+                    if existing_colors.peek().is_some() {
+                        colors_splice
+                            .to_remove
+                            .extend(existing_colors.map(|(_, _, id)| *id));
+                    }
 
                     editor.colors = new_color_inlays;
                     if !colors_splice.to_insert.is_empty() || !colors_splice.to_remove.is_empty() {
                         editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);
+                        cx.notify();
                     }
                 })
                 .ok();
@@ -19334,14 +19342,15 @@ impl Editor {
                                         .register_buffer_with_language_servers(&edited_buffer, cx)
                                 });
                         });
-                        if edited_buffer.read(cx).file().is_some() {
-                            let buffer_id = edited_buffer.read(cx).remote_id();
-                            self.update_lsp_data(None, Some(buffer_id), window, cx);
-                        }
                     }
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
+
+                if let Some(buffer) = edited_buffer {
+                    self.update_lsp_data(true, None, Some(buffer.read(cx).remote_id()), window, cx);
+                }
+
                 if *singleton_buffer_edited {
                     if let Some(buffer) = edited_buffer {
                         if buffer.read(cx).file().is_none() {
@@ -19404,7 +19413,7 @@ impl Editor {
                         .detach();
                     }
                 }
-                self.update_lsp_data(None, Some(buffer_id), window, cx);
+                self.update_lsp_data(false, None, Some(buffer_id), window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -19417,7 +19426,6 @@ impl Editor {
                 removed_buffer_ids,
             } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
-                self.refresh_colors(None, None, window, cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
@@ -20470,13 +20478,14 @@ impl Editor {
 
     fn update_lsp_data(
         &mut self,
+        update_on_edit: bool,
         for_server_id: Option<LanguageServerId>,
         for_buffer: Option<BufferId>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
-        self.refresh_colors(for_server_id, for_buffer, window, cx);
+        self.refresh_colors(update_on_edit, for_server_id, for_buffer, window, cx);
     }
 }
 

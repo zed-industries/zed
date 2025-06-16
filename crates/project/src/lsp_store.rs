@@ -3913,7 +3913,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) {
         match event {
-            language::BufferEvent::Edited { .. } => {
+            language::BufferEvent::Edited => {
                 self.on_buffer_edited(buffer, cx);
             }
 
@@ -5979,6 +5979,7 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
+        ignore_existing_mtime: bool,
         for_server_id: Option<LanguageServerId>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -5994,6 +5995,9 @@ impl LspStore {
             .as_ref()
             .into_iter()
             .filter(|lsp_data| {
+                if ignore_existing_mtime {
+                    return false;
+                }
                 has_later_versions |= lsp_data.mtime.bad_is_greater_than(buffer_mtime);
                 lsp_data.mtime == buffer_mtime
             })
@@ -6011,11 +6015,13 @@ impl LspStore {
         if buffer_lsp_data.is_empty() || for_server_id.is_some() {
             if received_colors_data && for_server_id.is_none() {
                 return None;
-            } else if has_later_versions {
+            } else if has_later_versions && !ignore_existing_mtime {
                 return None;
             }
 
-            if self.lsp_data.is_none()
+            // TODO kb should I compare buffer Globals anyway, to deduplicate multiple editors querying on buffer edit?
+            if ignore_existing_mtime
+                || self.lsp_data.is_none()
                 || self
                     .lsp_data
                     .as_ref()
