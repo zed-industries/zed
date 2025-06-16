@@ -4,6 +4,7 @@ use collections::HashMap;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
+use remote::ssh_session::SshArgs;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -47,6 +48,12 @@ impl SshCommand {
     }
 }
 
+pub struct SshDetails {
+    pub host: String,
+    pub ssh_command: SshCommand,
+    pub askpass: Option<String>,
+}
+
 impl Project {
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
         let worktree = self
@@ -68,15 +75,15 @@ impl Project {
         }
     }
 
-    pub fn ssh_details(&self, cx: &App) -> Option<(String, SshCommand, Option<String>)> {
+    pub fn ssh_details(&self, cx: &App) -> Option<SshDetails> {
         if let Some(ssh_client) = &self.ssh_client {
             let ssh_client = ssh_client.read(cx);
-            if let Some((args, ssh_askpass)) = ssh_client.ssh_args() {
-                return Some((
-                    ssh_client.connection_options().host.clone(),
-                    SshCommand { arguments: args },
-                    ssh_askpass,
-                ));
+            if let Some(SshArgs { arguments, askpass }) = ssh_client.ssh_args() {
+                return Some(SshDetails {
+                    host: ssh_client.connection_options().host.clone(),
+                    ssh_command: SshCommand { arguments },
+                    askpass,
+                });
             }
         }
 
@@ -159,10 +166,14 @@ impl Project {
             .unwrap_or_default();
         env.extend(settings.env.clone());
 
-        match &self.ssh_details(cx) {
-            Some((_, ssh_command, ssh_askpass)) => {
+        match self.ssh_details(cx) {
+            Some(SshDetails {
+                ssh_command,
+                askpass,
+                ..
+            }) => {
                 let (command, args) = wrap_for_ssh(
-                    ssh_command,
+                    &ssh_command,
                     Some((&command, &args)),
                     path.as_deref(),
                     env,
@@ -170,9 +181,9 @@ impl Project {
                 );
                 let mut command = std::process::Command::new(command);
                 command.args(args);
-                if let Some(ssh_askpass) = ssh_askpass {
+                if let Some(askpass) = askpass {
                     command.env("SSH_ASKPASS_REQUIRE", "force");
-                    command.env("SSH_ASKPASS", ssh_askpass);
+                    command.env("SSH_ASKPASS", askpass);
                 }
                 command
             }
@@ -207,6 +218,7 @@ impl Project {
             }
         };
         let ssh_details = this.ssh_details(cx);
+        let is_ssh_terminal = ssh_details.is_some();
 
         let mut settings_location = None;
         if let Some(path) = path.as_ref() {
@@ -231,11 +243,7 @@ impl Project {
         // precedence.
         env.extend(settings.env.clone());
 
-        let local_path = if ssh_details.is_none() {
-            path.clone()
-        } else {
-            None
-        };
+        let local_path = if is_ssh_terminal { None } else { path.clone() };
 
         let mut python_venv_activate_command = None;
 
@@ -246,8 +254,12 @@ impl Project {
                         this.python_activate_command(python_venv_directory, &settings.detect_venv);
                 }
 
-                match &ssh_details {
-                    Some((host, ssh_command, ssh_askpass)) => {
+                match ssh_details {
+                    Some(SshDetails {
+                        host,
+                        ssh_command,
+                        askpass,
+                    }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
 
                         // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
@@ -260,8 +272,8 @@ impl Project {
                         let (program, args) =
                             wrap_for_ssh(&ssh_command, None, path.as_deref(), env, None);
                         env = HashMap::default();
-                        if let Some(ssh_askpass) = ssh_askpass {
-                            env.insert("SSH_ASKPASS".to_string(), ssh_askpass.clone());
+                        if let Some(askpass) = askpass {
+                            env.insert("SSH_ASKPASS".to_string(), askpass);
                             env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
                         }
                         (
@@ -299,8 +311,12 @@ impl Project {
                     );
                 }
 
-                match &ssh_details {
-                    Some((host, ssh_command, ssh_askpass)) => {
+                match ssh_details {
+                    Some(SshDetails {
+                        host,
+                        ssh_command,
+                        askpass,
+                    }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
@@ -312,8 +328,8 @@ impl Project {
                             python_venv_directory.as_deref(),
                         );
                         env = HashMap::default();
-                        if let Some(ssh_askpass) = ssh_askpass {
-                            env.insert("SSH_ASKPASS".to_string(), ssh_askpass.clone());
+                        if let Some(askpass) = askpass {
+                            env.insert("SSH_ASKPASS".to_string(), askpass);
                             env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
                         }
                         (
@@ -351,7 +367,7 @@ impl Project {
             settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
-            ssh_details.is_some(),
+            is_ssh_terminal,
             window,
             completion_tx,
             cx,
