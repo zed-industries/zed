@@ -11,15 +11,30 @@ use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{Context, Window};
 use util::post_inc;
 
-use crate::{Editor, InlayId, InlaySplice, display_map::Inlay};
+use crate::{
+    Editor, InlayId, InlaySplice, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+};
 
 #[derive(Debug, Default)]
 pub(super) struct LspColorData {
     colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
     inlay_colors: HashMap<InlayId, usize>,
+    render_mode: DocumentColorsRenderMode,
 }
 
 impl LspColorData {
+    pub fn render_mode_updated(&mut self, new_render_mode: DocumentColorsRenderMode) -> bool {
+        if self.render_mode == new_render_mode {
+            return false;
+        }
+        self.render_mode = new_render_mode;
+        if new_render_mode == DocumentColorsRenderMode::None {
+            self.colors.clear();
+            self.inlay_colors.clear();
+        }
+        return true;
+    }
+
     fn set_colors(&mut self, colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>) {
         self.inlay_colors = colors
             .iter()
@@ -45,8 +60,9 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        // TODO kb enabled settings. Where to put, create an "lsp" section?
-        // TODO kb different styles: either inlays, or borders, or background highlights
+        if self.colors.render_mode == DocumentColorsRenderMode::None {
+            return;
+        }
 
         let all_colors_task = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             self.buffer()
@@ -241,6 +257,7 @@ impl Editor {
                             .extend(existing_colors.map(|(_, _, id)| *id));
                     }
 
+                    // TODO kb handle different render modes
                     editor.colors.set_colors(new_color_inlays);
                     if !colors_splice.to_insert.is_empty() || !colors_splice.to_remove.is_empty() {
                         editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);

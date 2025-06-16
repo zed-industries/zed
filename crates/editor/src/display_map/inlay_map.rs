@@ -74,7 +74,7 @@ impl Inlay {
         Self {
             id: InlayId::Color(id),
             position,
-            text: Rope::from(" ◼ "),
+            text: Rope::from("◼"),
             color: Some(Hsla::from(color)),
         }
     }
