@@ -542,6 +542,7 @@ impl ConfigureContextServerModal {
 
     fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
+        let is_connecting = matches!(self.state, State::Waiting);
 
         ModalFooter::new()
             .start_slot::<Button>(
@@ -605,6 +606,7 @@ impl ConfigureContextServerModal {
                                 "Configure Server"
                             },
                         )
+                        .disabled(is_connecting)
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
