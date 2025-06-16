@@ -12,7 +12,7 @@ use gpui::{
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent, Watcher};
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{ContextMenu, ListItem, ScrollableHandle, Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::debug_panic;
 
 actions!(
@@ -543,6 +543,8 @@ impl VariableList {
         }
     }
 
+    // todo!(debugger): Combine watcher context menu and variable context menu
+    // we can filter out the actions by using menu.when and passing in a boolean to the function
     fn deploy_watcher_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -552,6 +554,7 @@ impl VariableList {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
+                // todo!(debugger): This should be an action alt-enter (To be inline with the console)
                 .action("Remove Watch", RemoveWatch.boxed_clone())
                 .context(self.focus_handle.clone())
         });
@@ -584,6 +587,7 @@ impl VariableList {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
                 .action("Edit Value", EditVariable.boxed_clone())
+                // todo!(debugger): This should be an action alt-enter (To be inline with the console)
                 .action("Watch Variable", AddWatch.boxed_clone())
                 .context(self.focus_handle.clone())
         });
@@ -854,6 +858,55 @@ impl VariableList {
         VariableColor { name, value }
     }
 
+    // todo!(debugger): This function should never remove the first character of a string
+    // it should also not iterate through all characters, we should  choose a spot in the middle
+    // check the bounds and split the string there
+    // finially, consider the ellipsis size when splitting (if a string is shorter than the ellipsis don't split!!)
+    fn center_truncate_string(s: &str, max_chars: usize) -> String {
+        let char_count = s.chars().count();
+        if char_count <= max_chars {
+            return s.to_string();
+        }
+
+        // Reserve space for the ellipsis "..."
+        let ellipsis = "...";
+        let ellipsis_len = 3; // "..." is 3 characters
+
+        if max_chars <= ellipsis_len {
+            return ellipsis.to_string();
+        }
+
+        let available_chars = max_chars - ellipsis_len;
+        let start_chars = available_chars / 2;
+        let end_chars = available_chars - start_chars;
+
+        // Find the byte position after start_chars characters
+        let mut start_boundary = 0;
+        for (i, (byte_idx, _)) in s.char_indices().enumerate() {
+            if i == start_chars {
+                start_boundary = byte_idx;
+                break;
+            }
+        }
+
+        // Find the byte position to keep end_chars characters from the end
+        let mut end_boundary = s.len();
+        let skip_chars = char_count - end_chars;
+        for (i, (byte_idx, _)) in s.char_indices().enumerate() {
+            if i == skip_chars {
+                end_boundary = byte_idx;
+                break;
+            }
+        }
+
+        if start_boundary >= end_boundary {
+            // If boundaries overlap, just use ellipsis
+            return ellipsis.to_string();
+        }
+
+        format!("{}{}{}", &s[..start_boundary], ellipsis, &s[end_boundary..])
+    }
+
     fn render_watcher(
         &self,
         entry: &ListEntry,
@@ -889,6 +942,9 @@ impl VariableList {
 
         let weak = cx.weak_entity();
         let focus_handle = self.focus_handle.clone();
+        // todo!(debugger): We should include a variable's indent in this calculation and the x button next to it
+        let watcher_len = (self.list_handle.content_size().width.0 / 12.0).floor() - 3.0;
+        let watcher_len = watcher_len as usize;
 
         div()
             .id(entry.item_id())
@@ -945,10 +1001,13 @@ impl VariableList {
                         .text_ui_sm(cx)
                         .w_full()
                         .child(
-                            Label::new(&watcher.expression)
-                                .when_some(variable_color.name, |this, color| {
-                                    this.color(Color::from(color))
-                                }),
+                            Label::new(Self::center_truncate_string(
+                                &watcher.expression,
+                                watcher_len,
+                            ))
+                            .when_some(variable_color.name, |this, color| {
+                                this.color(Color::from(color))
+                            }),
                         )
                         .when(!watcher.value.is_empty(), |this| {
                             this.child(
@@ -1319,5 +1378,68 @@ fn get_entry_color(cx: &Context<VariableList>) -> EntryColors {
         default: colors.panel_background,
         hover: colors.ghost_element_hover,
         marked_active: colors.ghost_element_selected,
+    }
+}
+
+// todo!(debugger) fix this test
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_center_truncate_string() {
+        // Test string shorter than limit - should not be truncated
+        assert_eq!(VariableList::center_truncate_string("short", 10), "short");
+
+        // Test exact length - should not be truncated
+        assert_eq!(
+            VariableList::center_truncate_string("exactly_10", 10),
+            "exactly_10"
+        );
+
+        // Test simple truncation
+        assert_eq!(
+            VariableList::center_truncate_string("value->value2->value3->value4", 20),
+            "value->va...->value4"
+        );
+
+        // Test with very long expression
+        assert_eq!(
+            VariableList::center_truncate_string(
+                "object->property1->property2->property3->property4->property5",
+                30
+            ),
+            "object->proper...perty4->property5"
+        );
+
+        // Test edge case with limit equal to ellipsis length
+        assert_eq!(VariableList::center_truncate_string("anything", 3), "...");
+
+        // Test edge case with limit less than ellipsis length
+        assert_eq!(VariableList::center_truncate_string("anything", 2), "...");
+
+        // Test with UTF-8 characters
+        assert_eq!(
+            VariableList::center_truncate_string("café->résumé->naïve->voilà", 15),
+            "café->...->voilà"
+        );
+
+        // Test with emoji (multi-byte UTF-8)
+        assert_eq!(
+            VariableList::center_truncate_string("😀->happy->face->😎->cool", 15),
+            "😀->hap...->😎->cool"
+        );
+
+        // Test balanced truncation
+        assert_eq!(
+            VariableList::center_truncate_string("0123456789", 7),
+            "01...89"
+        );
+
+        // Test odd number of available characters
+        assert_eq!(
+            VariableList::center_truncate_string("0123456789", 8),
+            "012...89"
+        );
     }
 }

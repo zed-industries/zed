@@ -317,6 +317,7 @@ impl Render for Console {
             .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
+                        .gap_1()
                         .child(self.render_query_bar(cx))
                         .child(SplitButton::new(
                             ui::ButtonLike::new_rounded_left(ElementId::Name(
@@ -338,9 +339,10 @@ impl Render for Console {
                                     )
                                 }
                             })
-                            .layer(ui::ElevationIndex::ModalSurface)
+                            .layer(ui::ElevationIndex::EditorSurface)
                             .size(ui::ButtonSize::Compact)
                             .child(Label::new("Evaluate")),
+                            // todo!(debugger): Fix the background of this button not being the same color as query bar / transparent
                             self.render_submit_menu(
                                 ElementId::Name("split-button-right-confirm-button".into()),
                                 Some(query_focus_handle.clone()),
