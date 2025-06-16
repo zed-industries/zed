@@ -39,7 +39,9 @@ use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Callout, Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    Callout, Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*,
+};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionIntent;
@@ -79,6 +81,7 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+const MIN_EDITOR_LINES: usize = 4;
 const MAX_EDITOR_LINES: usize = 8;
 
 pub(crate) fn create_editor(
@@ -102,6 +105,7 @@ pub(crate) fn create_editor(
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
+                min_lines: MIN_EDITOR_LINES,
                 max_lines: MAX_EDITOR_LINES,
             },
             buffer,
@@ -253,6 +257,7 @@ impl MessageEditor {
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
+                    min_lines: MIN_EDITOR_LINES,
                     max_lines: MAX_EDITOR_LINES,
                 })
             }
@@ -502,6 +507,46 @@ impl MessageEditor {
         cx.notify();
     }
 
+    fn handle_reject_file_changes(
+        &mut self,
+        buffer: Entity<Buffer>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread.read(cx).has_pending_edit_tool_uses() {
+            return;
+        }
+
+        self.thread.update(cx, |thread, cx| {
+            let buffer_snapshot = buffer.read(cx);
+            let start = buffer_snapshot.anchor_before(Point::new(0, 0));
+            let end = buffer_snapshot.anchor_after(buffer_snapshot.max_point());
+            thread
+                .reject_edits_in_ranges(buffer, vec![start..end], cx)
+                .detach();
+        });
+        cx.notify();
+    }
+
+    fn handle_accept_file_changes(
+        &mut self,
+        buffer: Entity<Buffer>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread.read(cx).has_pending_edit_tool_uses() {
+            return;
+        }
+
+        self.thread.update(cx, |thread, cx| {
+            let buffer_snapshot = buffer.read(cx);
+            let start = buffer_snapshot.anchor_before(Point::new(0, 0));
+            let end = buffer_snapshot.anchor_after(buffer_snapshot.max_point());
+            thread.keep_edits_in_range(buffer, start..end, cx);
+        });
+        cx.notify();
+    }
+
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
@@ -671,44 +716,39 @@ impl MessageEditor {
             .child(
                 v_flex()
                     .size_full()
-                    .gap_4()
+                    .gap_1()
                     .when(is_editor_expanded, |this| {
                         this.h(vh(0.8, window)).justify_between()
                     })
-                    .child(
-                        v_flex()
-                            .min_h_16()
-                            .when(is_editor_expanded, |this| this.h_full())
-                            .child({
-                                let settings = ThemeSettings::get_global(cx);
-                                let font_size = TextSize::Small
-                                    .rems(cx)
-                                    .to_pixels(settings.agent_font_size(cx));
-                                let line_height = settings.buffer_line_height.value() * font_size;
+                    .child({
+                        let settings = ThemeSettings::get_global(cx);
+                        let font_size = TextSize::Small
+                            .rems(cx)
+                            .to_pixels(settings.agent_font_size(cx));
+                        let line_height = settings.buffer_line_height.value() * font_size;
 
-                                let text_style = TextStyle {
-                                    color: cx.theme().colors().text,
-                                    font_family: settings.buffer_font.family.clone(),
-                                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                                    font_features: settings.buffer_font.features.clone(),
-                                    font_size: font_size.into(),
-                                    line_height: line_height.into(),
-                                    ..Default::default()
-                                };
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_features: settings.buffer_font.features.clone(),
+                            font_size: font_size.into(),
+                            line_height: line_height.into(),
+                            ..Default::default()
+                        };
 
-                                EditorElement::new(
-                                    &self.editor,
-                                    EditorStyle {
-                                        background: editor_bg_color,
-                                        local_player: cx.theme().players().local(),
-                                        text: text_style,
-                                        syntax: cx.theme().syntax().clone(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .into_any()
-                            }),
-                    )
+                        EditorElement::new(
+                            &self.editor,
+                            EditorStyle {
+                                background: editor_bg_color,
+                                local_player: cx.theme().players().local(),
+                                text: text_style,
+                                syntax: cx.theme().syntax().clone(),
+                                ..Default::default()
+                            },
+                        )
+                        .into_any()
+                    })
                     .child(
                         h_flex()
                             .flex_none()
@@ -990,7 +1030,7 @@ impl MessageEditor {
                                         this.handle_review_click(window, cx)
                                     })),
                             )
-                            .child(ui::Divider::vertical().color(ui::DividerColor::Border))
+                            .child(Divider::vertical().color(DividerColor::Border))
                             .child(
                                 Button::new("reject-all-changes", "Reject All")
                                     .label_size(LabelSize::Small)
@@ -1040,7 +1080,7 @@ impl MessageEditor {
                             let file = buffer.read(cx).file()?;
                             let path = file.path();
 
-                            let parent_label = path.parent().and_then(|parent| {
+                            let file_path = path.parent().and_then(|parent| {
                                 let parent_str = parent.to_string_lossy();
 
                                 if parent_str.is_empty() {
@@ -1059,7 +1099,7 @@ impl MessageEditor {
                                 }
                             });
 
-                            let name_label = path.file_name().map(|name| {
+                            let file_name = path.file_name().map(|name| {
                                 Label::new(name.to_string_lossy().to_string())
                                     .size(LabelSize::XSmall)
                                     .buffer_font(cx)
@@ -1074,36 +1114,22 @@ impl MessageEditor {
                                         .size(IconSize::Small)
                                 });
 
-                            let hover_color = cx
-                                .theme()
-                                .colors()
-                                .element_background
-                                .blend(cx.theme().colors().editor_foreground.opacity(0.025));
-
                             let overlay_gradient = linear_gradient(
                                 90.,
                                 linear_color_stop(editor_bg_color, 1.),
                                 linear_color_stop(editor_bg_color.opacity(0.2), 0.),
                             );
 
-                            let overlay_gradient_hover = linear_gradient(
-                                90.,
-                                linear_color_stop(hover_color, 1.),
-                                linear_color_stop(hover_color.opacity(0.2), 0.),
-                            );
-
                             let element = h_flex()
                                 .group("edited-code")
                                 .id(("file-container", index))
-                                .cursor_pointer()
                                 .relative()
                                 .py_1()
                                 .pl_2()
                                 .pr_1()
                                 .gap_2()
                                 .justify_between()
-                                .bg(cx.theme().colors().editor_background)
-                                .hover(|style| style.bg(hover_color))
+                                .bg(editor_bg_color)
                                 .when(index < changed_buffers.len() - 1, |parent| {
                                     parent.border_color(border_color).border_b_1()
                                 })
@@ -1118,47 +1144,75 @@ impl MessageEditor {
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .children(name_label)
-                                                .children(parent_label),
+                                                .children(file_name)
+                                                .children(file_path),
                                         ), // TODO: Implement line diff
                                            // .child(Label::new("+").color(Color::Created))
                                            // .child(Label::new("-").color(Color::Deleted)),
                                 )
                                 .child(
-                                    div().visible_on_hover("edited-code").child(
-                                        Button::new("review", "Review")
-                                            .label_size(LabelSize::Small)
-                                            .on_click({
-                                                let buffer = buffer.clone();
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.handle_file_click(
-                                                        buffer.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            }),
-                                    ),
+                                    h_flex()
+                                        .gap_1()
+                                        .visible_on_hover("edited-code")
+                                        .child(
+                                            Button::new("review", "Review")
+                                                .label_size(LabelSize::Small)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.handle_file_click(
+                                                            buffer.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                }),
+                                        )
+                                        .child(
+                                            Divider::vertical().color(DividerColor::BorderVariant),
+                                        )
+                                        .child(
+                                            Button::new("reject-file", "Reject")
+                                                .label_size(LabelSize::Small)
+                                                .disabled(pending_edits)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.handle_reject_file_changes(
+                                                            buffer.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("accept-file", "Accept")
+                                                .label_size(LabelSize::Small)
+                                                .disabled(pending_edits)
+                                                .on_click({
+                                                    let buffer = buffer.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.handle_accept_file_changes(
+                                                            buffer.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                }),
+                                        ),
                                 )
                                 .child(
                                     div()
                                         .id("gradient-overlay")
                                         .absolute()
-                                        .h_5_6()
+                                        .h_full()
                                         .w_12()
+                                        .top_0()
                                         .bottom_0()
-                                        .right(px(52.))
-                                        .bg(overlay_gradient)
-                                        .group_hover("edited-code", |style| {
-                                            style.bg(overlay_gradient_hover)
-                                        }),
-                                )
-                                .on_click({
-                                    let buffer = buffer.clone();
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.handle_file_click(buffer.clone(), window, cx);
-                                    })
-                                });
+                                        .right(px(152.))
+                                        .bg(overlay_gradient),
+                                );
 
                             Some(element)
                         },

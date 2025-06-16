@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use collections::HashMap;
 use dap::{
     StartDebuggingRequestArguments,
     adapters::{
@@ -9,7 +10,7 @@ use dap::{
 
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
-use std::{collections::HashMap, env::consts, ffi::OsStr, path::PathBuf, sync::OnceLock};
+use std::{env::consts, ffi::OsStr, path::PathBuf, sync::OnceLock};
 use task::TcpArgumentsTemplate;
 use util;
 
@@ -95,7 +96,7 @@ impl DebugAdapter for GoDebugAdapter {
         Some(SharedString::new_static("Go").into())
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         // Create common properties shared between launch and attach
         let common_properties = json!({
             "debugAdapter": {

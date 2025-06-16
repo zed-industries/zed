@@ -1389,7 +1389,7 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attached_tracked_files_state(&mut request.messages, cx);
+        self.attach_tracked_files_state(&mut request.messages, cx);
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
@@ -1453,43 +1453,57 @@ impl Thread {
         request
     }
 
-    fn attached_tracked_files_state(
+    fn attach_tracked_files_state(
         &self,
         messages: &mut Vec<LanguageModelRequestMessage>,
         cx: &App,
     ) {
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-
-        let mut stale_message = String::new();
+        let mut stale_files = String::new();
 
         let action_log = self.action_log.read(cx);
 
         for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER.trim()).ok();
+            if let Some(file) = stale_file.read(cx).file() {
+                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
             }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
-        let mut content = Vec::with_capacity(2);
-
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
+        if stale_files.is_empty() {
+            return;
         }
 
-        if !content.is_empty() {
-            let context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content,
-                cache: false,
-            };
+        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
+        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
+        let content = MessageContent::Text(
+            format!("{STALE_FILES_HEADER}{stale_files}").replace("\r\n", "\n"),
+        );
 
-            messages.push(context_message);
+        // Insert our message before the last Assistant message.
+        // Inserting it to the tail distracts the agent too much
+        let insert_position = messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map_or(messages.len(), |(i, _)| i);
+
+        let request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![content],
+            cache: false,
+        };
+
+        messages.insert(insert_position, request_message);
+
+        // It makes no sense to cache messages after this one because
+        // the cache is invalidated when this message is gone.
+        // Move the cache marker before this message.
+        let has_cached_messages_after = messages
+            .iter()
+            .skip(insert_position + 1)
+            .any(|message| message.cache);
+
+        if has_cached_messages_after {
+            messages[insert_position - 1].cache = true;
         }
     }
 
@@ -3295,11 +3309,23 @@ fn main() {{
         assert_eq!(last_message.role, Role::User);
 
         // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
+        let expected_content = "[The following is an auto-generated notification; do not reply]
+
+These files have changed since the last read:
+- code.rs
+";
         assert_eq!(
             last_message.string_contents(),
             expected_content,
             "Last message should be exactly the stale buffer notification"
+        );
+
+        // The message before the notification should be cached
+        let index = new_request.messages.len() - 2;
+        let previous_message = new_request.messages.get(index).unwrap();
+        assert!(
+            previous_message.cache,
+            "Message before the stale buffer notification should be cached"
         );
     }
 

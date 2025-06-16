@@ -2822,6 +2822,7 @@ dependencies = [
  "collections",
  "credentials_provider",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
@@ -2834,6 +2835,7 @@ dependencies = [
  "paths",
  "postage",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "rustls-pki-types",
@@ -4240,6 +4242,7 @@ dependencies = [
  "gpui",
  "serde_json",
  "task",
+ "util",
  "workspace-hack",
 ]
 
@@ -15942,6 +15945,7 @@ dependencies = [
  "theme",
  "thiserror 2.0.12",
  "url",
+ "urlencoding",
  "util",
  "windows 0.61.1",
  "workspace-hack",

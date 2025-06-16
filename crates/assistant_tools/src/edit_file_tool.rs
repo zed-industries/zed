@@ -1,6 +1,6 @@
 use crate::{
     Templates,
-    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
+    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
@@ -69,13 +69,13 @@ pub struct EditFileToolInput {
     /// start each path with one of the project's root directories.
     ///
     /// The following examples assume we have two root directories in the project:
-    /// - backend
-    /// - frontend
+    /// - /a/b/backend
+    /// - /c/d/frontend
     ///
     /// <example>
     /// `backend/src/main.rs`
     ///
-    /// Notice how the file path starts with root-1. Without that, the path
+    /// Notice how the file path starts with `backend`. Without that, the path
     /// would be ambiguous and the call would fail!
     /// </example>
     ///
@@ -201,8 +201,14 @@ impl Tool for EditFileTool {
         let card_clone = card.clone();
         let action_log_clone = action_log.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let edit_agent =
-                EditAgent::new(model, project.clone(), action_log_clone, Templates::new());
+            let edit_format = EditFormat::from_model(model.clone())?;
+            let edit_agent = EditAgent::new(
+                model,
+                project.clone(),
+                action_log_clone,
+                Templates::new(),
+                edit_format,
+            );
 
             let buffer = project
                 .update(cx, |project, cx| {

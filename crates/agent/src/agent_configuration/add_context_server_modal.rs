@@ -1,7 +1,6 @@
 use context_server::ContextServerCommand;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, prelude::*};
-use project::project_settings::{ContextServerConfiguration, ProjectSettings};
-use serde_json::json;
+use project::project_settings::{ContextServerSettings, ProjectSettings};
 use settings::update_settings_file;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
@@ -81,13 +80,12 @@ impl AddContextServerModal {
                 update_settings_file::<ProjectSettings>(fs.clone(), cx, |settings, _| {
                     settings.context_servers.insert(
                         name.into(),
-                        ContextServerConfiguration {
-                            command: Some(ContextServerCommand {
+                        ContextServerSettings::Custom {
+                            command: ContextServerCommand {
                                 path,
                                 args,
                                 env: None,
-                            }),
-                            settings: Some(json!({})),
+                            },
                         },
                     );
                 });

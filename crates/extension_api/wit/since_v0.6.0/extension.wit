@@ -11,7 +11,7 @@ world extension {
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
-    use dap.{debug-adapter-binary, debug-task-definition, debug-request};
+    use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
@@ -159,6 +159,9 @@ world extension {
 
     /// Returns a configured debug adapter binary for a given debug task.
     export get-dap-binary: func(adapter-name: string, config: debug-task-definition, user-installed-path: option<string>, worktree: borrow<worktree>) -> result<debug-adapter-binary, string>;
-    /// Get a debug adapter's configuration schema
-    export dap-schema: func() -> result<string, string>;
+    /// Returns the kind of a debug scenario (launch or attach).
+    export dap-request-kind: func(adapter-name: string, config: string) -> result<start-debugging-request-arguments-request, string>;
+    export dap-config-to-scenario: func(config: debug-config, worktree: borrow<worktree>) -> result<debug-scenario, string>;
+    export dap-locator-create-scenario: func(locator-name: string, build-config-template: build-task-template, resolved-label: string, debug-adapter-name: string) -> option<debug-scenario>;
+    export run-dap-locator: func(locator-name: string, config: resolved-task) -> result<debug-request, string>;
 }
