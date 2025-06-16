@@ -205,7 +205,7 @@ impl From<ZedDebugConfig> for DebugConfig {
             label: value.label.into(),
             adapter: value.adapter.into(),
             request: value.request.into(),
-            stop_on_entry: value.stop_on_entry.into(),
+            stop_on_entry: value.stop_on_entry,
         }
     }
 }

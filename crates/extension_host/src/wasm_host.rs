@@ -431,7 +431,7 @@ impl extension::Extension for WasmExtension {
                     .call_dap_config_to_scenario(store, config, resource)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
-                Ok(kind.into())
+                Ok(kind)
             }
             .boxed()
         })
