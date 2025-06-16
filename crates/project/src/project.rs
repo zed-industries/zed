@@ -2945,7 +2945,7 @@ impl Project {
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, changes) => {
                 self.client()
                     .telemetry()
-                    .report_discovered_project_events(*worktree_id, changes);
+                    .report_discovered_project_type_events(*worktree_id, changes);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
