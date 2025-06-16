@@ -46,29 +46,11 @@ struct TelemetryState {
     first_event_date_time: Option<Instant>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
-    project_marker_patterns: ProjectMarkerPatterns,
+    worktree_ids_reported: HashSet<WorktreeId>,
 
     os_name: String,
     app_version: String,
     os_version: Option<String>,
-}
-
-#[derive(Debug)]
-struct ProjectMarkerPatterns(Vec<(Regex, ProjectCache)>);
-
-#[derive(Debug)]
-struct ProjectCache {
-    name: String,
-    worktree_ids_reported: HashSet<WorktreeId>,
-}
-
-impl ProjectCache {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            worktree_ids_reported: HashSet::default(),
-        }
-    }
 }
 
 #[cfg(debug_assertions)]
@@ -90,6 +72,10 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
                 .ok()
                 .map(|s| s.as_bytes().into())
         })
+});
+
+static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
 
 pub fn os_name() -> String {
@@ -195,27 +181,7 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
-            project_marker_patterns: ProjectMarkerPatterns(vec![
-                (
-                    Regex::new(r"^pnpm-lock\.yaml$").unwrap(),
-                    ProjectCache::new("pnpm".to_string()),
-                ),
-                (
-                    Regex::new(r"^yarn\.lock$").unwrap(),
-                    ProjectCache::new("yarn".to_string()),
-                ),
-                (
-                    Regex::new(r"^package\.json$").unwrap(),
-                    ProjectCache::new("node".to_string()),
-                ),
-                (
-                    Regex::new(
-                        r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$",
-                    )
-                    .unwrap(),
-                    ProjectCache::new("dotnet".to_string()),
-                ),
-            ]),
+            worktree_ids_reported: HashSet::new(),
 
             os_version: None,
             os_name: os_name(),
@@ -397,32 +363,33 @@ impl Telemetry {
         updated_entries_set: &UpdatedEntriesSet,
     ) -> Vec<String> {
         let mut state = self.state.lock();
-        state
-            .project_marker_patterns
-            .0
-            .iter_mut()
-            .filter_map(|(pattern, project_cache)| {
-                if project_cache.worktree_ids_reported.contains(&worktree_id) {
-                    return None;
-                }
+        let mut project_names = Vec::new();
 
-                let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
-                    path.as_ref()
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(|name_str| pattern.is_match(name_str))
-                        .unwrap_or(false)
-                });
+        if state.worktree_ids_reported.contains(&worktree_id) {
+            return project_names;
+        }
 
-                if !project_file_found {
-                    return None;
-                }
+        for (path, _, _) in updated_entries_set.iter() {
+            let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+                continue;
+            };
 
-                project_cache.worktree_ids_reported.insert(worktree_id);
+            if file_name == "pnpm-lock.yaml" {
+                project_names.push("pnpm".to_string());
+            } else if file_name == "yarn.lock" {
+                project_names.push("yarn".to_string());
+            } else if file_name == "package.json" {
+                project_names.push("node".to_string());
+            } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
+                project_names.push("dotnet".to_string());
+            }
+        }
 
-                Some(project_cache.name.clone())
-            })
-            .collect()
+        if !project_names.is_empty() {
+            state.worktree_ids_reported.insert(worktree_id);
+        }
+
+        project_names
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
