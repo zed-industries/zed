@@ -408,8 +408,8 @@ impl AnthropicModel {
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.map_err(|err| match err {
-                AnthropicError::RateLimit(duration) => {
-                    LanguageModelCompletionError::RateLimit(duration)
+                AnthropicError::RateLimit { retry_after } => {
+                    LanguageModelCompletionError::RateLimit { retry_after }
                 }
                 err @ (AnthropicError::ApiError(..) | AnthropicError::Other(..)) => {
                     LanguageModelCompletionError::Other(anthropic_err_to_anyhow(err))

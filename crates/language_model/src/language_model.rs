@@ -75,8 +75,8 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
-    #[error("rate limit exceeded, retry after {0:?}")]
-    RateLimit(Duration),
+    #[error("rate limit exceeded, retry after {retry_after:?}")]
+    RateLimit { retry_after: Duration },
     #[error("received bad input JSON")]
     BadInputJson {
         id: LanguageModelToolUseId,
