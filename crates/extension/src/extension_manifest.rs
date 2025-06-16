@@ -308,6 +308,7 @@ mod tests {
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),
+            debug_locators: Default::default(),
         }
     }
 
