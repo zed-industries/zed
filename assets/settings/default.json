@@ -1044,15 +1044,13 @@
   //
   // 1. Do not query and render document colors.
   //      "lsp_document_colors": "none",
-  // 2. Render document colors as inlay hints near the color text.
+  // 2. Render document colors as inlay hints near the color text (default).
   //      "lsp_document_colors": "inlay",
-  // 3. Underline the color text (default).
-  //      "lsp_document_colors": "underline",
-  // 4. Draw a border around the color text.
+  // 3. Draw a border around the color text.
   //      "lsp_document_colors": "border",
-  // 5. Draw a background behind the color text..
+  // 4. Draw a background behind the color text..
   //      "lsp_document_colors": "background",
-  "lsp_document_colors": "underline",
+  "lsp_document_colors": "inlay",
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.

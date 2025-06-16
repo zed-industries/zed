@@ -59,12 +59,12 @@ impl LspColorData {
                     to_insert: Vec::new(),
                 })
             }
-            DocumentColorsRenderMode::Underline
-            | DocumentColorsRenderMode::Border
-            | DocumentColorsRenderMode::Background => Some(InlaySplice {
-                to_remove: self.inlay_colors.drain().map(|(id, _)| id).collect(),
-                to_insert: Vec::new(),
-            }),
+            DocumentColorsRenderMode::Border | DocumentColorsRenderMode::Background => {
+                Some(InlaySplice {
+                    to_remove: self.inlay_colors.drain().map(|(id, _)| id).collect(),
+                    to_insert: Vec::new(),
+                })
+            }
         }
     }
 

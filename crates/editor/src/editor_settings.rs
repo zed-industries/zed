@@ -60,10 +60,8 @@ pub enum DocumentColorsRenderMode {
     /// Do not query and render document colors.
     None,
     /// Render document colors as inlay hints near the color text.
-    Inlay,
-    /// Underline the color text.
     #[default]
-    Underline,
+    Inlay,
     /// Draw a border around the color text.
     Border,
     /// Draw a background behind the color text.
