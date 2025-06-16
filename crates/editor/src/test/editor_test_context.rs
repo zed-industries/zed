@@ -525,7 +525,12 @@ impl EditorTestContext {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
             .text_highlight_ranges::<Tag>()
-            .map(|ranges| ranges.as_ref().clone().1)
+            .map(|ranges| {
+                ranges
+                    .iter()
+                    .map(|(range, _)| range.clone())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default()
             .into_iter()
             .map(|range| range.to_offset(&snapshot.buffer_snapshot))

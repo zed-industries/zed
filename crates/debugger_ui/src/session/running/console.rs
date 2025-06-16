@@ -2,13 +2,15 @@ use super::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
+use alacritty_terminal::vte::ansi;
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
+    Context, Entity, FocusHandle, Focusable, HighlightStyle, Render, Subscription, Task, TextStyle,
+    WeakEntity,
 };
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
@@ -17,7 +19,7 @@ use project::{
     debugger::session::{CompletionsQuery, OutputToken, Session, SessionEvent},
 };
 use settings::Settings;
-use std::{cell::RefCell, rc::Rc, usize};
+use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::ThemeSettings;
 use ui::{Divider, prelude::*};
 
@@ -143,9 +145,46 @@ impl Console {
                 _ = write!(to_insert, "{}\n", event.output.trim_end());
             }
 
+            struct ConsoleAnsiHighlight;
+
+            let mut parser = ansi::Processor::<ansi::StdSyncHandler>::default();
+            let mut handler = ConsoleHandler::default();
+
+            parser.advance(&mut handler, to_insert.as_bytes());
+            let output = std::mem::take(&mut handler.output);
+            let mut spans = std::mem::take(&mut handler.spans);
+            if handler.current_range_start < output.len() {
+                spans.push((
+                    handler.current_range_start..output.len(),
+                    handler.current_color,
+                ));
+            }
+
             console.set_read_only(false);
             console.move_to_end(&editor::actions::MoveToEnd, window, cx);
-            console.insert(&to_insert, window, cx);
+            let len = console.buffer().read(cx).len(cx);
+            console.insert(&output, window, cx);
+
+            let buffer = console.buffer().read(cx).snapshot(cx);
+            let mut highlights = console
+                .remove_text_highlights::<ConsoleAnsiHighlight>(cx)
+                .unwrap_or_default();
+            for (range, color) in spans {
+                let Some(color) = color else { continue };
+                let start = range.start + len;
+                let range = start..range.end + len;
+                let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+                let style = HighlightStyle {
+                    color: Some(terminal_view::terminal_element::convert_color(
+                        &color,
+                        cx.theme(),
+                    )),
+                    ..Default::default()
+                };
+                highlights.push((range, style));
+            }
+            console.highlight_text::<ConsoleAnsiHighlight>(highlights, cx);
+
             console.set_read_only(true);
 
             cx.notify();
@@ -458,4 +497,40 @@ impl ConsoleQueryBarCompletionProvider {
             }])
         })
     }
+}
+
+#[derive(Default)]
+struct ConsoleHandler {
+    output: String,
+    spans: Vec<(Range<usize>, Option<ansi::Color>)>,
+    current_range_start: usize,
+    current_color: Option<ansi::Color>,
+}
+
+impl ansi::Handler for ConsoleHandler {
+    fn input(&mut self, c: char) {
+        self.output.push(c);
+    }
+
+    fn linefeed(&mut self) {
+        self.output.push('\n');
+    }
+
+    fn terminal_attribute(&mut self, attr: ansi::Attr) {
+        match attr {
+            ansi::Attr::Foreground(color) => {
+                self.spans.push((
+                    self.current_range_start..self.output.len(),
+                    self.current_color,
+                ));
+                self.current_color = Some(color);
+                self.current_range_start = self.output.len();
+            }
+            // FIXME
+            ansi::Attr::Background(_color) => {}
+            _ => {}
+        }
+    }
+
+    // FIXME other methods may be important
 }

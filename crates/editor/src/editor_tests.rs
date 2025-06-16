@@ -19392,8 +19392,10 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
         editor.highlight_text::<TestHighlight>(
-            vec![highlight_range.clone()],
-            HighlightStyle::color(Hsla::green()),
+            vec![(
+                highlight_range.clone(),
+                HighlightStyle::color(Hsla::green()),
+            )],
             cx,
         );
         editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));

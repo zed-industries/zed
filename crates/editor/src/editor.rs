@@ -7414,12 +7414,15 @@ impl Editor {
                     self.splice_inlays(&[], inlays, cx);
                 } else {
                     let background_color = cx.theme().status().deleted_background;
+                    let style = HighlightStyle {
+                        background_color: Some(background_color),
+                        ..Default::default()
+                    };
                     self.highlight_text::<InlineCompletionHighlight>(
-                        edits.iter().map(|(range, _)| range.clone()).collect(),
-                        HighlightStyle {
-                            background_color: Some(background_color),
-                            ..Default::default()
-                        },
+                        edits
+                            .iter()
+                            .map(|(range, _)| (range.clone(), style))
+                            .collect(),
                         cx,
                     );
                 }
@@ -15450,16 +15453,18 @@ impl Editor {
                         .flat_map(|(_, ranges)| ranges.iter())
                         .chain(read_highlights.iter().flat_map(|(_, ranges)| ranges.iter()))
                         .cloned()
+                        .map(|range| {
+                            (
+                                range,
+                                HighlightStyle {
+                                    fade_out: Some(0.6),
+                                    ..Default::default()
+                                },
+                            )
+                        })
                         .collect();
 
-                    this.highlight_text::<Rename>(
-                        ranges,
-                        HighlightStyle {
-                            fade_out: Some(0.6),
-                            ..Default::default()
-                        },
-                        cx,
-                    );
+                    this.highlight_text::<Rename>(ranges, cx);
                     let rename_focus_handle = rename_editor.focus_handle(cx);
                     window.focus(&rename_focus_handle);
                     let block_id = this.insert_blocks(
@@ -18808,13 +18813,11 @@ impl Editor {
 
     pub fn highlight_text<T: 'static>(
         &mut self,
-        ranges: Vec<Range<Anchor>>,
-        style: HighlightStyle,
+        ranges: Vec<(Range<Anchor>, HighlightStyle)>,
         cx: &mut Context<Self>,
     ) {
-        self.display_map.update(cx, |map, _| {
-            map.highlight_text(TypeId::of::<T>(), ranges, style)
-        });
+        self.display_map
+            .update(cx, |map, _| map.highlight_text(TypeId::of::<T>(), ranges));
         cx.notify();
     }
 
@@ -18833,7 +18836,7 @@ impl Editor {
     pub fn text_highlights<'a, T: 'static>(
         &'a self,
         cx: &'a App,
-    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
+    ) -> Option<&'a [(Range<Anchor>, HighlightStyle)]> {
         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
     }
 
@@ -18844,6 +18847,14 @@ impl Editor {
         if cleared {
             cx.notify();
         }
+    }
+
+    pub fn remove_text_highlights<T: 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<Vec<(Range<Anchor>, HighlightStyle)>> {
+        self.display_map
+            .update(cx, |map, _| map.remove_text_highlights(TypeId::of::<T>()))
     }
 
     pub fn show_local_cursors(&self, window: &mut Window, cx: &mut App) -> bool {
@@ -19508,11 +19519,11 @@ impl Editor {
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<OffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
-        let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
+        let ranges = self.text_highlights::<InputComposition>(cx)?;
         Some(
             ranges
                 .iter()
-                .map(move |range| {
+                .map(move |(range, _)| {
                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
                 })
                 .collect(),
@@ -19823,9 +19834,12 @@ impl Editor {
             pending = "".to_string();
         }
 
-        let existing_pending = self
-            .text_highlights::<PendingInput>(cx)
-            .map(|(_, ranges)| ranges.iter().cloned().collect::<Vec<_>>());
+        let existing_pending = self.text_highlights::<PendingInput>(cx).map(|ranges| {
+            ranges
+                .iter()
+                .map(|(range, _)| range.clone())
+                .collect::<Vec<_>>()
+        });
         if existing_pending.is_none() && pending.is_empty() {
             return;
         }
@@ -19853,28 +19867,27 @@ impl Editor {
             .all::<usize>(cx)
             .into_iter()
             .map(|selection| {
-                snapshot.buffer_snapshot.anchor_after(selection.end)
-                    ..snapshot
-                        .buffer_snapshot
-                        .anchor_before(selection.end + pending.len())
+                (
+                    snapshot.buffer_snapshot.anchor_after(selection.end)
+                        ..snapshot
+                            .buffer_snapshot
+                            .anchor_before(selection.end + pending.len()),
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                )
             })
             .collect();
 
         if pending.is_empty() {
             self.clear_highlights::<PendingInput>(cx);
         } else {
-            self.highlight_text::<PendingInput>(
-                ranges,
-                HighlightStyle {
-                    underline: Some(UnderlineStyle {
-                        thickness: px(1.),
-                        color: None,
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                cx,
-            );
+            self.highlight_text::<PendingInput>(ranges, cx);
         }
 
         self.ime_transaction = self.ime_transaction.or(transaction);
@@ -21947,7 +21960,7 @@ impl EntityInputHandler for Editor {
 
     fn marked_text_range(&self, _: &mut Window, cx: &mut Context<Self>) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
-        let range = self.text_highlights::<InputComposition>(cx)?.1.first()?;
+        let (range, _) = self.text_highlights::<InputComposition>(cx)?.first()?;
         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }
 
@@ -22084,7 +22097,18 @@ impl EntityInputHandler for Editor {
                     .disjoint_anchors()
                     .iter()
                     .map(|selection| {
-                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
+                        (
+                            selection.start.bias_left(&snapshot)
+                                ..selection.end.bias_right(&snapshot),
+                            HighlightStyle {
+                                underline: Some(UnderlineStyle {
+                                    thickness: px(1.),
+                                    color: None,
+                                    wavy: false,
+                                }),
+                                ..Default::default()
+                            },
+                        )
                     })
                     .collect::<Vec<_>>()
             };
@@ -22092,18 +22116,7 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 this.unmark_text(window, cx);
             } else {
-                this.highlight_text::<InputComposition>(
-                    marked_ranges.clone(),
-                    HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
-                            color: None,
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    cx,
-                );
+                this.highlight_text::<InputComposition>(marked_ranges.clone(), cx);
             }
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
@@ -22119,7 +22132,7 @@ impl EntityInputHandler for Editor {
                 let snapshot = this.buffer.read(cx).read(cx);
                 let new_selected_ranges = marked_ranges
                     .into_iter()
-                    .map(|marked_range| {
+                    .map(|(marked_range, _)| {
                         let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
                         let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
                         let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
