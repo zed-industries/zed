@@ -157,6 +157,7 @@ pub struct ScrollManager {
     hide_scrollbar_task: Option<Task<()>>,
     active_scrollbar: Option<ActiveScrollbarState>,
     visible_line_count: Option<f32>,
+    visible_column_count: Option<f32>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
 }
@@ -173,6 +174,7 @@ impl ScrollManager {
             active_scrollbar: None,
             last_autoscroll: None,
             visible_line_count: None,
+            visible_column_count: None,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
         }
@@ -476,6 +478,10 @@ impl Editor {
             .map(|line_count| line_count as u32 - 1)
     }
 
+    pub fn visible_column_count(&self) -> Option<f32> {
+        self.scroll_manager.visible_column_count
+    }
+
     pub(crate) fn set_visible_line_count(
         &mut self,
         lines: f32,
@@ -495,6 +501,10 @@ impl Editor {
             })
             .detach()
         }
+    }
+
+    pub(crate) fn set_visible_column_count(&mut self, columns: f32) {
+        self.scroll_manager.visible_column_count = Some(columns);
     }
 
     pub fn apply_scroll_delta(
