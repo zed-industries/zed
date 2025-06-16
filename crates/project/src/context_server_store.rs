@@ -470,13 +470,23 @@ impl ContextServerStore {
     }
 
     async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let (configured_servers, registry, worktree_store) = this.update(cx, |this, cx| {
+        let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, cx| {
             (
                 this.context_server_settings(cx).clone(),
                 this.registry.clone(),
                 this.worktree_store.clone(),
             )
         })?;
+
+        for (id, _) in
+            registry.read_with(cx, |registry, _| registry.context_server_descriptors())?
+        {
+            configured_servers
+                .entry(id)
+                .or_insert(ContextServerSettings::Extension {
+                    settings: serde_json::json!({}),
+                });
+        }
 
         let configured_servers = join_all(configured_servers.into_iter().map(|(id, settings)| {
             let id = ContextServerId(id);
