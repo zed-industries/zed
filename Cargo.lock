@@ -18979,6 +18979,7 @@ dependencies = [
  "smol",
  "tempfile",
  "windows 0.61.1",
+ "workspace-hack",
 ]
 
 [[package]]

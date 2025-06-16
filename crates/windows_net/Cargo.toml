@@ -12,6 +12,9 @@ workspace = true
 path = "src/windows_net.rs"
 doctest = false
 
+[dependencies]
+workspace-hack.workspace = true
+
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
 async-io = "2.4"
