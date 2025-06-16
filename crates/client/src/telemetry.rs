@@ -350,7 +350,10 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_type_names = self.detect_project_types(worktree_id, updated_entries_set);
+        let Some(project_type_names) = self.detect_project_types(worktree_id, updated_entries_set)
+        else {
+            return;
+        };
 
         for project_type_name in project_type_names {
             telemetry::event!("Project Opened", project_type = project_type_name);
@@ -361,16 +364,17 @@ impl Telemetry {
         self: &Arc<Self>,
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
-    ) -> Vec<String> {
+    ) -> Option<Vec<String>> {
         let mut state = self.state.lock();
-        let mut project_names: HashSet<String> = HashSet::new();
 
         if state
             .worktrees_with_project_type_events_sent
             .contains(&worktree_id)
         {
-            return project_names.into_iter().collect();
+            return None;
         }
+
+        let mut project_types: HashSet<String> = HashSet::new();
 
         for (path, _, _) in updated_entries_set.iter() {
             let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
@@ -378,25 +382,25 @@ impl Telemetry {
             };
 
             if file_name == "pnpm-lock.yaml" {
-                project_names.insert("pnpm".to_string());
+                project_types.insert("pnpm".to_string());
             } else if file_name == "yarn.lock" {
-                project_names.insert("yarn".to_string());
+                project_types.insert("yarn".to_string());
             } else if file_name == "package.json" {
-                project_names.insert("node".to_string());
+                project_types.insert("node".to_string());
             } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
-                project_names.insert("dotnet".to_string());
+                project_types.insert("dotnet".to_string());
             }
         }
 
-        if !project_names.is_empty() {
+        if !project_types.is_empty() {
             state
                 .worktrees_with_project_type_events_sent
                 .insert(worktree_id);
         }
 
-        let mut project_names_vec: Vec<String> = project_names.into_iter().collect();
+        let mut project_names_vec: Vec<String> = project_types.into_iter().collect();
         project_names_vec.sort();
-        project_names_vec
+        Some(project_names_vec)
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
@@ -690,16 +694,19 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
         let worktree_id = 1;
 
-        // First scan of worktree 1 returns project types
+        // Scan of empty worktree finds nothing
+        test_project_discovery_helper(telemetry.clone(), vec![], Some(vec![]), worktree_id);
+
+        // Files added, second scan of worktree 1 finds project type
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["package.json"],
-            vec!["node"],
+            Some(vec!["node"]),
             worktree_id,
         );
 
-        // Rescan of worktree 1 returns nothing as it has already been reported
-        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], vec![], worktree_id);
+        // Third scan of worktree does not double report, as we already reported
+        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], None, worktree_id);
     }
 
     #[gpui::test]
@@ -713,7 +720,7 @@ mod tests {
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["package.json", "pnpm-lock.yaml"],
-            vec!["node", "pnpm"],
+            Some(vec!["node", "pnpm"]),
             1,
         );
     }
@@ -729,7 +736,7 @@ mod tests {
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["package.json", "yarn.lock"],
-            vec!["node", "yarn"],
+            Some(vec!["node", "yarn"]),
             1,
         );
     }
@@ -748,26 +755,41 @@ mod tests {
         test_project_discovery_helper(
             telemetry.clone().clone(),
             vec!["global.json"],
-            vec!["dotnet"],
+            Some(vec!["dotnet"]),
             1,
         );
         test_project_discovery_helper(
             telemetry.clone(),
             vec!["Directory.Build.props"],
-            vec!["dotnet"],
+            Some(vec!["dotnet"]),
             2,
         );
-        test_project_discovery_helper(telemetry.clone(), vec!["file.csproj"], vec!["dotnet"], 3);
-        test_project_discovery_helper(telemetry.clone(), vec!["file.fsproj"], vec!["dotnet"], 4);
-        test_project_discovery_helper(telemetry.clone(), vec!["file.vbproj"], vec!["dotnet"], 5);
-        test_project_discovery_helper(telemetry.clone(), vec!["file.sln"], vec!["dotnet"], 6);
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.csproj"],
+            Some(vec!["dotnet"]),
+            3,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.fsproj"],
+            Some(vec!["dotnet"]),
+            4,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.vbproj"],
+            Some(vec!["dotnet"]),
+            5,
+        );
+        test_project_discovery_helper(telemetry.clone(), vec!["file.sln"], Some(vec!["dotnet"]), 6);
 
         // Each worktree should only send a single project type event, even when
         // encountering multiple files associated with that project type
         test_project_discovery_helper(
             telemetry,
             vec!["global.json", "Directory.Build.props"],
-            vec!["dotnet"],
+            Some(vec!["dotnet"]),
             7,
         );
     }
@@ -792,7 +814,7 @@ mod tests {
     fn test_project_discovery_helper(
         telemetry: Arc<Telemetry>,
         file_paths: Vec<&str>,
-        expected_project_types: Vec<&str>,
+        expected_project_types: Option<Vec<&str>>,
         worktree_id_num: usize,
     ) {
         let worktree_id = WorktreeId::from_usize(worktree_id_num);
@@ -809,15 +831,11 @@ mod tests {
             .collect();
         let updated_entries: UpdatedEntriesSet = Arc::from(entries.as_slice());
 
-        let mut detected_types = telemetry.detect_project_types(worktree_id, &updated_entries);
-        detected_types.sort();
+        let detected_project_types = telemetry.detect_project_types(worktree_id, &updated_entries);
 
-        let mut expected_sorted = expected_project_types
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<_>>();
-        expected_sorted.sort();
+        let expected_project_types =
+            expected_project_types.map(|types| types.iter().map(|&t| t.to_string()).collect());
 
-        assert_eq!(detected_types, expected_sorted);
+        assert_eq!(detected_project_types, expected_project_types);
     }
 }
