@@ -5716,7 +5716,7 @@ impl Editor {
         self.discard_inline_completion(false, cx);
 
         let multibuffer_point = match &action.deployed_from {
-            Some(CodeActionSource::Indicator(row)) => {
+            Some(CodeActionSource::Indicator(row)) | Some(CodeActionSource::RunMenu(row)) => {
                 DisplayPoint::new(*row, 0).to_point(&snapshot)
             }
             _ => self.selections.newest::<Point>(cx).head(),
