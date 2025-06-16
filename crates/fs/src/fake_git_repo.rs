@@ -370,6 +370,24 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn stash_paths(
+        &self,
+        _paths: Vec<RepoPath>,
+        _message: Option<gpui::SharedString>,
+        _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
+
+    fn pop_stash(
+        &self,
+        _index: Option<u64>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
+
     fn commit(
         &self,
         _message: gpui::SharedString,
