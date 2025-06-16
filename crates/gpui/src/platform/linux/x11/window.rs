@@ -922,7 +922,7 @@ impl X11WindowStatePtr {
         state.fullscreen = false;
         state.maximized_vertical = false;
         state.maximized_horizontal = false;
-        state.hidden = true;
+        state.hidden = false;
 
         for atom in atoms {
             if atom == state.atoms._NET_WM_STATE_FOCUSED {
