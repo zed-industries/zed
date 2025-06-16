@@ -411,7 +411,7 @@ jobs:
         run: cargo build
 
       - name: Limit target directory size
-        run: ./script/clear-target-dir-if-larger-than.ps1 100
+        run: ./script/clear-target-dir-if-larger-than.ps1 250
 
       # - name: Check dev drive space
       #   working-directory: ${{ env.ZED_WORKSPACE }}
