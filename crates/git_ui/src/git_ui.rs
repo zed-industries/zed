@@ -110,6 +110,22 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
+        workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_all(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::PopStash, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.pop_stash(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
