@@ -272,7 +272,7 @@ impl ConfigureContextServerModal {
         });
     }
 
-    pub fn for_existing_server(
+    pub fn show_modal_for_existing_server(
         server_id: ContextServerId,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
@@ -283,6 +283,12 @@ impl ConfigureContextServerModal {
             .context_servers
             .get(&server_id.0)
             .cloned()
+            .or_else(|| {
+                ContextServerDescriptorRegistry::default_global(cx)
+                    .read(cx)
+                    .context_server_descriptor(&server_id.0)
+                    .map(|_| ContextServerConfiguration::default())
+            })
         else {
             return;
         };

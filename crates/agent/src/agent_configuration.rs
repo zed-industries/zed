@@ -1,4 +1,3 @@
-mod configure_context_server_extension_modal;
 mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -29,7 +28,6 @@ use util::ResultExt as _;
 use workspace::Workspace;
 use zed_actions::ExtensionCategoryFilter;
 
-pub(crate) use configure_context_server_extension_modal::ConfigureContextServerExtensionModal;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
@@ -545,7 +543,7 @@ impl AgentConfiguration {
                             let workspace = workspace.clone();
                             let language_registry = language_registry.clone();
                             move |window, cx| {
-                                ConfigureContextServerModal::for_existing_server(
+                                ConfigureContextServerModal::show_modal_for_existing_server(
                                     context_server_id.clone(),
                                     language_registry.clone(),
                                     workspace.clone(),
