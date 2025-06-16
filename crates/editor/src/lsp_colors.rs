@@ -2,6 +2,7 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
+use gpui::Rgba;
 use language::point_from_lsp;
 use lsp::LanguageServerId;
 use multi_buffer::Anchor;
@@ -45,6 +46,7 @@ impl Editor {
             return;
         };
         // TODO kb enabled settings. Where to put, create an "lsp" section?
+        // TODO kb different styles: either inlays, or borders, or background highlights
 
         let all_colors_task = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             self.buffer()
@@ -160,6 +162,13 @@ impl Editor {
                     let mut new_color_inlays = Vec::with_capacity(new_editor_colors.len());
                     let mut existing_colors = editor.colors.colors.iter().peekable();
                     for (new_range, new_color) in new_editor_colors {
+                        let rgba_color = Rgba {
+                            r: new_color.color.red,
+                            g: new_color.color.green,
+                            b: new_color.color.blue,
+                            a: new_color.color.alpha,
+                        };
+
                         loop {
                             match existing_colors.peek() {
                                 Some((existing_range, existing_color, existing_inlay_id)) => {
@@ -189,7 +198,7 @@ impl Editor {
                                                 let inlay = Inlay::color(
                                                     post_inc(&mut editor.next_color_inlay_id),
                                                     new_range.start,
-                                                    format!("TODO kb: {new_color:?}"),
+                                                    rgba_color,
                                                 );
                                                 let inlay_id = inlay.id;
                                                 colors_splice.to_insert.push(inlay);
@@ -203,7 +212,7 @@ impl Editor {
                                             let inlay = Inlay::color(
                                                 post_inc(&mut editor.next_color_inlay_id),
                                                 new_range.start,
-                                                format!("TODO kb: {new_color:?}"),
+                                                rgba_color,
                                             );
                                             let inlay_id = inlay.id;
                                             colors_splice.to_insert.push(inlay);
@@ -216,7 +225,7 @@ impl Editor {
                                     let inlay = Inlay::color(
                                         post_inc(&mut editor.next_color_inlay_id),
                                         new_range.start,
-                                        format!("TODO kb: {new_color:?}"),
+                                        rgba_color,
                                     );
                                     let inlay_id = inlay.id;
                                     colors_splice.to_insert.push(inlay);
