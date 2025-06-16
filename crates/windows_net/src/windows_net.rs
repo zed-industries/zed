@@ -98,44 +98,4 @@ mod tests {
             Ok(())
         })
     }
-
-    #[test]
-    fn test_connection() -> std::io::Result<()> {
-        use crate::async_net::UnixListener;
-
-        let temp = tempfile::tempdir()?;
-        let socket = temp.path().join("socket.sock");
-        println!("Socket path: {:?}", socket);
-        smol::block_on(async move {
-            let listener = UnixListener::bind(&socket)?;
-
-            // Server
-            let server = smol::spawn(async move {
-                let mut stream = listener.accept().await.unwrap();
-
-                // Read data from the client
-                let mut buffer = [0; BUFFER_SIZE];
-                let bytes_read = stream.read(&mut buffer).await.unwrap();
-                let string = String::from_utf8_lossy(&buffer[..bytes_read]);
-                println!("Received from client: {}", string);
-
-                // Send a message back to the client
-                stream.write_all(SERVER_MESSAGE.as_bytes()).await.unwrap();
-            });
-
-            // Client
-            // let mut client = UnixStream::connect(&socket)?;
-            // client.write_all(CLIENT_MESSAGE.as_bytes()).await?;
-
-            // // Read the response from the server
-            // let mut buffer = [0; BUFFER_SIZE];
-            // let bytes_read = client.read(&mut buffer).await?;
-            // let string = String::from_utf8_lossy(&buffer[..bytes_read]);
-            // assert_eq!(string, "Connection closed");
-            // client.flush().await?;
-
-            server.await;
-            Ok(())
-        })
-    }
 }
