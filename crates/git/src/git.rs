@@ -57,6 +57,7 @@ actions!(
         ExpandCommitEditor,
         GenerateCommitMessage,
         Init,
+        OpenModifiedFiles,
     ]
 );
 

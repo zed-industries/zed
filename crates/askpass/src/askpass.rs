@@ -16,6 +16,8 @@ use smol::fs;
 use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
 #[cfg(unix)]
 use util::ResultExt as _;
+#[cfg(unix)]
+use util::get_shell_safe_zed_path;
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -158,38 +160,6 @@ impl AskPassSession {
             }
         }
     }
-}
-
-#[cfg(unix)]
-fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    let zed_path = std::env::current_exe()
-        .context("Failed to determine current executable path for use in askpass")?
-        .to_string_lossy()
-        // see https://github.com/rust-lang/rust/issues/69343
-        .trim_end_matches(" (deleted)")
-        .to_string();
-
-    // NOTE: this was previously enabled, however, it caused errors when it shouldn't have
-    //       (see https://github.com/zed-industries/zed/issues/29819)
-    //       The zed path failing to execute within the askpass script results in very vague ssh
-    //       authentication failed errors, so this was done to try and surface a better error
-    //
-    // use std::os::unix::fs::MetadataExt;
-    // let metadata = std::fs::metadata(&zed_path)
-    //     .context("Failed to check metadata of Zed executable path for use in askpass")?;
-    // let is_executable = metadata.is_file() && metadata.mode() & 0o111 != 0;
-    // anyhow::ensure!(
-    //     is_executable,
-    //     "Failed to verify Zed executable path for use in askpass"
-    // );
-
-    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-    // errors are introduced in the future :(
-    let zed_path_escaped = shlex::try_quote(&zed_path)
-        .context("Failed to shell-escape Zed executable path for use in askpass")?;
-
-    return Ok(zed_path_escaped.to_string());
 }
 
 /// The main function for when Zed is running in netcat mode for use in askpass.

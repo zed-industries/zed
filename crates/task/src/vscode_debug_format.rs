@@ -33,6 +33,9 @@ impl VsCodeDebugTaskDefinition {
         if let Some(config) = config.as_object_mut() {
             if adapter == "JavaScript" {
                 config.insert("type".to_owned(), self.r#type.clone().into());
+                if let Some(port) = self.port {
+                    config.insert("port".to_owned(), port.into());
+                }
             }
         }
         let definition = DebugScenario {
@@ -84,8 +87,8 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
 
 fn task_type_to_adapter_name(task_type: &str) -> String {
     match task_type {
-        "pwa-node" | "node" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge" | "msedge"
-        | "pwa-msedge" => "JavaScript",
+        "pwa-node" | "node" | "node-terminal" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge"
+        | "msedge" | "pwa-msedge" => "JavaScript",
         "go" => "Delve",
         "php" => "PHP",
         "cppdbg" | "lldb" => "CodeLLDB",
@@ -149,6 +152,7 @@ mod tests {
                         "X": "Y",
                     },
                     "type": "node",
+                    "port": 17,
                 }),
                 tcp_connection: Some(TcpArgumentsTemplate {
                     port: Some(17),
