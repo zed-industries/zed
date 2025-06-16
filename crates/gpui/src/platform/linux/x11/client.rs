@@ -369,13 +369,21 @@ impl X11Client {
         let events = xkb::EventType::STATE_NOTIFY
             | xkb::EventType::MAP_NOTIFY
             | xkb::EventType::NEW_KEYBOARD_NOTIFY;
+        let map_notify_parts = xkb::MapPart::KEY_TYPES
+            | xkb::MapPart::KEY_SYMS
+            | xkb::MapPart::MODIFIER_MAP
+            | xkb::MapPart::EXPLICIT_COMPONENTS
+            | xkb::MapPart::KEY_ACTIONS
+            | xkb::MapPart::KEY_BEHAVIORS
+            | xkb::MapPart::VIRTUAL_MODS
+            | xkb::MapPart::VIRTUAL_MOD_MAP;
         xcb_connection
             .xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
                 0u8.into(),
                 events,
-                0u8.into(),
-                0u8.into(),
+                map_notify_parts,
+                map_notify_parts,
                 &xkb::SelectEventsAux::new(),
             )
             .unwrap();
@@ -512,6 +520,10 @@ impl X11Client {
             let mut last_key_release = None;
             let mut last_key_press: Option<KeyPressEvent> = None;
 
+            // event handlers for new keyboard / remapping refresh the state without using event
+            // details, this deduplicates them.
+            let mut last_keymap_change_event: Option<Event> = None;
+
             loop {
                 match xcb_connection.poll_for_event() {
                     Ok(Some(event)) => {
@@ -520,9 +532,29 @@ impl X11Client {
                                 windows_to_refresh.insert(expose_event.window);
                             }
                             Event::KeyRelease(_) => {
+                                if let Some(last_keymap_change_event) =
+                                    last_keymap_change_event.take()
+                                {
+                                    if let Some(last_key_release) = last_key_release.take() {
+                                        events.push(last_key_release);
+                                    }
+                                    last_key_press = None;
+                                    events.push(last_keymap_change_event);
+                                }
+
                                 last_key_release = Some(event);
                             }
                             Event::KeyPress(key_press) => {
+                                if let Some(last_keymap_change_event) =
+                                    last_keymap_change_event.take()
+                                {
+                                    if let Some(last_key_release) = last_key_release.take() {
+                                        events.push(last_key_release);
+                                    }
+                                    last_key_press = None;
+                                    events.push(last_keymap_change_event);
+                                }
+
                                 if let Some(last_press) = last_key_press.as_ref() {
                                     if last_press.detail == key_press.detail {
                                         continue;
@@ -543,6 +575,12 @@ impl X11Client {
                                 events.push(Event::KeyPress(key_press));
                                 last_key_press = Some(key_press);
                             }
+                            Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
+                                if let Some(release_event) = last_key_release.take() {
+                                    events.push(release_event);
+                                }
+                                last_keymap_change_event = Some(event);
+                            }
                             _ => {
                                 if let Some(release_event) = last_key_release.take() {
                                     events.push(release_event);
@@ -552,10 +590,6 @@ impl X11Client {
                         }
                     }
                     Ok(None) => {
-                        // Add any remaining stored KeyRelease event
-                        if let Some(release_event) = last_key_release.take() {
-                            events.push(release_event);
-                        }
                         break;
                     }
                     Err(e) => {
@@ -563,6 +597,13 @@ impl X11Client {
                         break;
                     }
                 }
+            }
+
+            if let Some(release_event) = last_key_release.take() {
+                events.push(release_event);
+            }
+            if let Some(keymap_change_event) = last_keymap_change_event.take() {
+                events.push(keymap_change_event);
             }
 
             if events.is_empty() && windows_to_refresh.is_empty() {
@@ -890,6 +931,12 @@ impl X11Client {
                     locked_layout,
                 };
                 state.xkb = xkb_state;
+                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                    drop(state);
+                    callback();
+                    state = self.0.borrow_mut();
+                    state.common.callbacks.keyboard_layout_change = Some(callback);
+                }
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
