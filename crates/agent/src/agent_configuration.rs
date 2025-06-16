@@ -552,7 +552,6 @@ impl AgentConfiguration {
                                 )
                             }
                         })
-                        .entry("Open Logs", None, |_, _| {})
                         .separator()
                         .entry("Delete", None, {
                             let fs = fs.clone();
