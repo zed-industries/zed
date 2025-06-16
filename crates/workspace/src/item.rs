@@ -32,6 +32,21 @@ use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
+#[derive(Clone, Copy, Debug)]
+pub struct SaveOptions {
+    pub format: bool,
+    pub autosave: bool,
+}
+
+impl Default for SaveOptions {
+    fn default() -> Self {
+        Self {
+            format: true,
+            autosave: false,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ItemSettings {
     pub git_status: bool,
@@ -326,7 +341,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     }
     fn save(
         &mut self,
-        _format: bool,
+        _options: SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
@@ -528,7 +543,7 @@ pub trait ItemHandle: 'static + Send {
     fn can_save_as(&self, cx: &App) -> bool;
     fn save(
         &self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
@@ -991,12 +1006,12 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn save(
         &self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(format, project, window, cx))
+        self.update(cx, |item, cx| item.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -1305,7 +1320,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId, item::SaveOptions};
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
@@ -1615,7 +1630,7 @@ pub mod test {
 
         fn save(
             &mut self,
-            _: bool,
+            _: SaveOptions,
             _: Entity<Project>,
             _window: &mut Window,
             cx: &mut Context<Self>,

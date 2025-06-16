@@ -33,7 +33,7 @@ use std::{
 };
 #[cfg(not(windows))]
 use unindent::Unindent as _;
-use util::{path, separator};
+use util::path;
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -218,7 +218,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         buffer.update(&mut cx, |buffer, cx| {
             assert_eq!(
                 buffer.file().unwrap().full_path(cx).to_string_lossy(),
-                separator!("project1/README.md")
+                path!("project1/README.md")
             )
         });
 

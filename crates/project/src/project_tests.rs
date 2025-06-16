@@ -42,7 +42,6 @@ use unindent::Unindent as _;
 use util::{
     TryFutureExt as _, assert_set_eq, maybe, path,
     paths::PathMatcher,
-    separator,
     test::{TempTree, marked_text_offsets},
     uri,
 };
@@ -375,7 +374,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from(separator!("b/.zed")),
+                    directory_in_worktree: PathBuf::from(path!("b/.zed")),
                     id_base: if cfg!(windows) {
                         "local worktree tasks from directory \"b\\\\.zed\"".into()
                     } else {
@@ -460,7 +459,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from(separator!("b/.zed")),
+                    directory_in_worktree: PathBuf::from(path!("b/.zed")),
                     id_base: if cfg!(windows) {
                         "local worktree tasks from directory \"b\\\\.zed\"".into()
                     } else {
@@ -575,7 +574,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         vec![(
             TaskSourceKind::Worktree {
                 id: worktree_id,
-                directory_in_worktree: PathBuf::from(separator!(".zed")),
+                directory_in_worktree: PathBuf::from(path!(".zed")),
                 id_base: if cfg!(windows) {
                     "local worktree tasks from directory \".zed\"".into()
                 } else {
@@ -3987,12 +3986,12 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
                 .collect::<Vec<_>>(),
             vec![
                 "a",
-                separator!("a/file1"),
-                separator!("a/file2.new"),
+                path!("a/file1"),
+                path!("a/file2.new"),
                 "b",
                 "d",
-                separator!("d/file3"),
-                separator!("d/file4"),
+                path!("d/file3"),
+                path!("d/file4"),
             ]
         );
     });
@@ -4055,12 +4054,12 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
                 .collect::<Vec<_>>(),
             vec![
                 "a",
-                separator!("a/file1"),
-                separator!("a/file2.new"),
+                path!("a/file1"),
+                path!("a/file2.new"),
                 "b",
                 "d",
-                separator!("d/file3"),
-                separator!("d/file4"),
+                path!("d/file3"),
+                path!("d/file4"),
             ]
         );
     });
@@ -5055,8 +5054,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/two.rs").to_string(), vec![6..9]),
-            (separator!("dir/three.rs").to_string(), vec![37..40])
+            (path!("dir/two.rs").to_string(), vec![6..9]),
+            (path!("dir/three.rs").to_string(), vec![37..40])
         ])
     );
 
@@ -5090,9 +5089,9 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/two.rs").to_string(), vec![6..9]),
-            (separator!("dir/three.rs").to_string(), vec![37..40]),
-            (separator!("dir/four.rs").to_string(), vec![25..28, 36..39])
+            (path!("dir/two.rs").to_string(), vec![6..9]),
+            (path!("dir/three.rs").to_string(), vec![37..40]),
+            (path!("dir/four.rs").to_string(), vec![25..28, 36..39])
         ])
     );
 }
@@ -5157,8 +5156,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.rs").to_string(), vec![8..12]),
-            (separator!("dir/two.rs").to_string(), vec![8..12]),
+            (path!("dir/one.rs").to_string(), vec![8..12]),
+            (path!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "Rust only search should give only Rust files"
     );
@@ -5182,8 +5181,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.ts").to_string(), vec![14..18]),
-            (separator!("dir/two.ts").to_string(), vec![14..18]),
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "TypeScript only search should give only TypeScript files, even if other inclusions don't match anything"
     );
@@ -5208,10 +5207,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/two.ts").to_string(), vec![14..18]),
-            (separator!("dir/one.rs").to_string(), vec![8..12]),
-            (separator!("dir/one.ts").to_string(), vec![14..18]),
-            (separator!("dir/two.rs").to_string(), vec![8..12]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
+            (path!("dir/one.rs").to_string(), vec![8..12]),
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
     );
@@ -5255,10 +5254,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.rs").to_string(), vec![8..12]),
-            (separator!("dir/one.ts").to_string(), vec![14..18]),
-            (separator!("dir/two.rs").to_string(), vec![8..12]),
-            (separator!("dir/two.ts").to_string(), vec![14..18]),
+            (path!("dir/one.rs").to_string(), vec![8..12]),
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.rs").to_string(), vec![8..12]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "If no exclusions match, all files should be returned"
     );
@@ -5282,8 +5281,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.ts").to_string(), vec![14..18]),
-            (separator!("dir/two.ts").to_string(), vec![14..18]),
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "Rust exclusion search should give only TypeScript files"
     );
@@ -5307,8 +5306,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.rs").to_string(), vec![8..12]),
-            (separator!("dir/two.rs").to_string(), vec![8..12]),
+            (path!("dir/one.rs").to_string(), vec![8..12]),
+            (path!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
     );
@@ -5441,8 +5440,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.ts").to_string(), vec![14..18]),
-            (separator!("dir/two.ts").to_string(), vec![14..18]),
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
     );
@@ -5495,7 +5494,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
         )
         .await
         .unwrap(),
-        HashMap::from_iter([(separator!("worktree-a/haystack.rs").to_string(), vec![3..9])]),
+        HashMap::from_iter([(path!("worktree-a/haystack.rs").to_string(), vec![3..9])]),
         "should only return results from included worktree"
     );
     assert_eq!(
@@ -5516,7 +5515,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
         )
         .await
         .unwrap(),
-        HashMap::from_iter([(separator!("worktree-b/haystack.rs").to_string(), vec![3..9])]),
+        HashMap::from_iter([(path!("worktree-b/haystack.rs").to_string(), vec![3..9])]),
         "should only return results from included worktree"
     );
 
@@ -5539,8 +5538,8 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("worktree-a/haystack.ts").to_string(), vec![3..9]),
-            (separator!("worktree-b/haystack.ts").to_string(), vec![3..9])
+            (path!("worktree-a/haystack.ts").to_string(), vec![3..9]),
+            (path!("worktree-b/haystack.ts").to_string(), vec![3..9])
         ]),
         "should return results from both worktrees"
     );
@@ -5594,7 +5593,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         )
         .await
         .unwrap(),
-        HashMap::from_iter([(separator!("dir/package.json").to_string(), vec![8..11])]),
+        HashMap::from_iter([(path!("dir/package.json").to_string(), vec![8..11])]),
         "Only one non-ignored file should have the query"
     );
 
@@ -5618,22 +5617,22 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/package.json").to_string(), vec![8..11]),
-            (separator!("dir/target/index.txt").to_string(), vec![6..9]),
+            (path!("dir/package.json").to_string(), vec![8..11]),
+            (path!("dir/target/index.txt").to_string(), vec![6..9]),
             (
-                separator!("dir/node_modules/prettier/package.json").to_string(),
+                path!("dir/node_modules/prettier/package.json").to_string(),
                 vec![9..12]
             ),
             (
-                separator!("dir/node_modules/prettier/index.ts").to_string(),
+                path!("dir/node_modules/prettier/index.ts").to_string(),
                 vec![15..18]
             ),
             (
-                separator!("dir/node_modules/eslint/index.ts").to_string(),
+                path!("dir/node_modules/eslint/index.ts").to_string(),
                 vec![13..16]
             ),
             (
-                separator!("dir/node_modules/eslint/package.json").to_string(),
+                path!("dir/node_modules/eslint/package.json").to_string(),
                 vec![8..11]
             ),
         ]),
@@ -5662,7 +5661,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([(
-            separator!("dir/node_modules/prettier/package.json").to_string(),
+            path!("dir/node_modules/prettier/package.json").to_string(),
             vec![9..12]
         )]),
         "With search including ignored prettier directory and excluding TS files, only one file should be found"
@@ -5701,8 +5700,8 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.rs").to_string(), vec![17..29]),
-            (separator!("dir/three.rs").to_string(), vec![3..15]),
+            (path!("dir/one.rs").to_string(), vec![17..29]),
+            (path!("dir/three.rs").to_string(), vec![3..15]),
         ])
     );
 
@@ -5725,9 +5724,9 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
             .await
             .unwrap(),
         HashMap::from_iter([
-            (separator!("dir/one.rs").to_string(), vec![3..15, 17..29]),
-            (separator!("dir/two.rs").to_string(), vec![3..15]),
-            (separator!("dir/three.rs").to_string(), vec![3..15]),
+            (path!("dir/one.rs").to_string(), vec![3..15, 17..29]),
+            (path!("dir/two.rs").to_string(), vec![3..15]),
+            (path!("dir/three.rs").to_string(), vec![3..15]),
         ])
     );
 
@@ -5749,7 +5748,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         )
         .await
         .unwrap(),
-        HashMap::from_iter([(separator!("dir/two.rs").to_string(), vec![3..16]),])
+        HashMap::from_iter([(path!("dir/two.rs").to_string(), vec![3..16]),])
     );
 }
 

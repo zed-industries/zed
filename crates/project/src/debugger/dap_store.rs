@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -287,11 +287,17 @@ impl DapStore {
         adapter: DebugAdapterName,
         label: SharedString,
         cx: &mut App,
-    ) -> Option<DebugScenario> {
-        DapRegistry::global(cx)
-            .locators()
-            .values()
-            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
+    ) -> Task<Option<DebugScenario>> {
+        let locators = DapRegistry::global(cx).locators();
+
+        cx.background_spawn(async move {
+            for locator in locators.values() {
+                if let Some(scenario) = locator.create_scenario(&build, &label, &adapter).await {
+                    return Some(scenario);
+                }
+            }
+            None
+        })
     }
 
     pub fn run_debug_locator(
@@ -356,6 +362,7 @@ impl DapStore {
         &mut self,
         label: SharedString,
         adapter: DebugAdapterName,
+        task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
@@ -373,6 +380,7 @@ impl DapStore {
             parent_session,
             label,
             adapter,
+            task_context,
             cx,
         );
 
@@ -700,6 +708,8 @@ impl DapStore {
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
+        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+
         cx.background_spawn(async move {
             if shutdown_children.len() > 0 {
                 let _ = join_all(shutdown_children).await;
@@ -881,7 +891,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        which::which(command).ok()
+        let worktree_abs_path = self.worktree.abs_path();
+        let shell_path = self.shell_env().await.get("PATH").cloned();
+        which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

@@ -653,7 +653,7 @@ impl AgentConfiguration {
                                                     if let Some(server) =
                                                         this.get_server(&context_server_id)
                                                     {
-                                                        this.start_server(server, cx).log_err();
+                                                        this.start_server(server, cx);
                                                     }
                                                 })
                                             }

@@ -18,7 +18,7 @@ use project::{
     context_server_store::{
         ContextServerStatus, ContextServerStore, registry::ContextServerDescriptorRegistry,
     },
-    project_settings::{ContextServerConfiguration, ProjectSettings},
+    project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 use settings::{Settings as _, update_settings_file};
@@ -81,7 +81,7 @@ impl ConfigurationSource {
             cx: &mut App,
         ) -> Entity<Editor> {
             cx.new(|cx| {
-                let mut editor = Editor::auto_height(16, window, cx);
+                let mut editor = Editor::auto_height(4, 16, window, cx);
                 editor.set_text(json, window, cx);
                 editor.set_show_gutter(false, cx);
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
@@ -137,17 +137,11 @@ impl ConfigurationSource {
         }
     }
 
-    fn output(
-        &self,
-        cx: &mut App,
-    ) -> Result<(
-        ContextServerId,
-        Option<ContextServerCommand>,
-        Option<serde_json::Value>,
-    )> {
+    fn output(&self, cx: &mut App) -> Result<(ContextServerId, ContextServerSettings)> {
         match self {
             ConfigurationSource::New { editor } | ConfigurationSource::Existing { editor } => {
-                parse_input(&editor.read(cx).text(cx)).map(|(id, command)| (id, command, None))
+                parse_input(&editor.read(cx).text(cx))
+                    .map(|(id, command)| (id, ContextServerSettings::Custom { command }))
             }
             ConfigurationSource::Extension {
                 id,
@@ -160,13 +154,13 @@ impl ConfigurationSource {
                     .context("No output available")?
                     .read(cx)
                     .text(cx);
-                let json = serde_json_lenient::from_str::<serde_json::Value>(&text)?;
+                let settings = serde_json_lenient::from_str::<serde_json::Value>(&text)?;
                 if let Some(settings_validator) = settings_validator {
-                    if let Err(error) = settings_validator.validate(&json) {
+                    if let Err(error) = settings_validator.validate(&settings) {
                         return Err(anyhow::anyhow!(error.to_string()));
                     }
                 }
-                Ok((id.clone(), None, Some(json)))
+                Ok((id.clone(), ContextServerSettings::Extension { settings }))
             }
         }
     }
@@ -279,7 +273,7 @@ impl ConfigureContextServerModal {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let Some(config) = ProjectSettings::get_global(cx)
+        let Some(settings) = ProjectSettings::get_global(cx)
             .context_servers
             .get(&server_id.0)
             .cloned()
@@ -287,19 +281,21 @@ impl ConfigureContextServerModal {
                 ContextServerDescriptorRegistry::default_global(cx)
                     .read(cx)
                     .context_server_descriptor(&server_id.0)
-                    .map(|_| ContextServerConfiguration::default())
+                    .map(|_| ContextServerSettings::Extension {
+                        settings: serde_json::json!({}),
+                    })
             })
         else {
             return Task::ready(Err(anyhow::anyhow!("Context server not found")));
         };
 
         window.spawn(cx, async move |cx| {
-            let target = match config.command {
-                Some(command) => Some(ConfigurationTarget::Existing {
+            let target = match settings {
+                ContextServerSettings::Custom { command } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
                 }),
-                None => {
+                ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
                             resolve_context_server_extension(
@@ -361,7 +357,7 @@ impl ConfigureContextServerModal {
             return;
         };
 
-        let (id, command, settings) = match self.source.output(cx) {
+        let (id, settings) = match self.source.output(cx) {
             Ok(val) => val,
             Err(error) => {
                 self.set_error(error.to_string(), cx);
@@ -394,9 +390,7 @@ impl ConfigureContextServerModal {
         workspace.update(cx, |workspace, cx| {
             let fs = workspace.app_state().fs.clone();
             update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
-                project_settings
-                    .context_servers
-                    .insert(id.0, ContextServerConfiguration { command, settings });
+                project_settings.context_servers.insert(id.0, settings);
             });
         });
     }
@@ -425,16 +419,14 @@ impl ConfigureContextServerModal {
     }
 }
 
-fn parse_input(text: &str) -> Result<(ContextServerId, Option<ContextServerCommand>)> {
+fn parse_input(text: &str) -> Result<(ContextServerId, ContextServerCommand)> {
     let value: serde_json::Value = serde_json_lenient::from_str(text)?;
     let object = value.as_object().context("Expected object")?;
     anyhow::ensure!(object.len() == 1, "Expected exactly one key-value pair");
     let (context_server_name, value) = object.into_iter().next().unwrap();
-    let config: ContextServerConfiguration = serde_json::from_value(value.clone())?;
-    Ok((
-        ContextServerId(context_server_name.clone().into()),
-        config.command,
-    ))
+    let command = value.get("command").context("Expected command")?;
+    let command: ContextServerCommand = serde_json::from_value(command.clone())?;
+    Ok((ContextServerId(context_server_name.clone().into()), command))
 }
 
 impl ModalView for ConfigureContextServerModal {}
