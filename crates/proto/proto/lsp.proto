@@ -692,9 +692,14 @@ message GetColorPresentation {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     ColorInformation color = 3;
+    uint64 server_id = 4;
 }
 
 message GetColorPresentationResponse {
+    repeated ColorPresentation presentations = 1;
+}
+
+message ColorPresentation {
     string label = 1;
     optional TextEdit text_edit = 2;
     repeated TextEdit additional_text_edits = 3;
@@ -702,7 +707,8 @@ message GetColorPresentationResponse {
 
 message TextEdit {
     string new_text = 1;
-    AnchorRange range = 2;
+    PointUtf16 lsp_range_start = 2;
+    PointUtf16 lsp_range_end = 3;
 }
 
 message MultiLspQuery {

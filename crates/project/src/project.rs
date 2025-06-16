@@ -772,6 +772,15 @@ pub struct DirectoryItem {
 pub struct DocumentColor {
     pub lsp_range: lsp::Range,
     pub color: lsp::Color,
+    pub resolved: bool,
+    pub color_presentations: Vec<ColorPresentation>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorPresentation {
+    pub label: String,
+    pub text_edit: Option<lsp::TextEdit>,
+    pub additional_text_edits: Vec<lsp::TextEdit>,
 }
 
 #[derive(Clone)]

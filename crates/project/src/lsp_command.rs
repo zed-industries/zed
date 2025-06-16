@@ -4190,6 +4190,8 @@ impl LspCommand for GetDocumentColor {
             .map(|color| DocumentColor {
                 lsp_range: color.range,
                 color: color.color,
+                resolved: false,
+                color_presentations: Vec::new(),
             })
             .collect())
     }
@@ -4260,6 +4262,8 @@ impl LspCommand for GetDocumentColor {
                 let end = color.lsp_range_end?;
                 let end = PointUtf16::new(end.row, end.column);
                 Some(DocumentColor {
+                    resolved: false,
+                    color_presentations: Vec::new(),
                     lsp_range: lsp::Range {
                         start: point_to_lsp(start),
                         end: point_to_lsp(end),

@@ -3,9 +3,9 @@ pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
-    CodeAction, Completion, CompletionResponse, CompletionSource, CoreCompletion, DocumentColor,
-    Hover, InlayHint, LspAction, LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction,
-    PulledDiagnostics, ResolveState, Symbol, ToolchainStore,
+    CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
+    CoreCompletion, DocumentColor, Hover, InlayHint, LspAction, LspPullDiagnostics, ProjectItem,
+    ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState, Symbol, ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -49,7 +49,10 @@ use language::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
     point_to_lsp,
-    proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
+    proto::{
+        deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
+        serialize_lsp_edit, serialize_version,
+    },
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
@@ -4860,6 +4863,105 @@ impl LspStore {
         }
     }
 
+    pub fn resolve_color_presentation(
+        &mut self,
+        mut color: DocumentColor,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<DocumentColor>> {
+        if color.resolved {
+            return Task::ready(Ok(color));
+        }
+
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let start = color.lsp_range.start;
+            let end = color.lsp_range.end;
+            let request = proto::GetColorPresentation {
+                project_id,
+                server_id: server_id.to_proto(),
+                buffer_id: buffer.read(cx).remote_id().into(),
+                color: Some(proto::ColorInformation {
+                    red: color.color.red,
+                    green: color.color.green,
+                    blue: color.color.blue,
+                    alpha: color.color.alpha,
+                    lsp_range_start: Some(proto::PointUtf16 {
+                        row: start.line,
+                        column: start.character,
+                    }),
+                    lsp_range_end: Some(proto::PointUtf16 {
+                        row: end.line,
+                        column: end.character,
+                    }),
+                }),
+            };
+            cx.background_spawn(async move {
+                let response = upstream_client
+                    .request(request)
+                    .await
+                    .context("color presentation proto request")?;
+                color.resolved = true;
+                color.color_presentations = response
+                    .presentations
+                    .into_iter()
+                    .map(|presentation| ColorPresentation {
+                        label: presentation.label,
+                        text_edit: presentation.text_edit.and_then(deserialize_lsp_edit),
+                        additional_text_edits: presentation
+                            .additional_text_edits
+                            .into_iter()
+                            .filter_map(deserialize_lsp_edit)
+                            .collect(),
+                    })
+                    .collect();
+                Ok(color)
+            })
+        } else {
+            let path = match buffer
+                .update(cx, |buffer, cx| {
+                    Some(crate::File::from_dyn(buffer.file())?.abs_path(cx))
+                })
+                .context("buffer with the missing path")
+            {
+                Ok(path) => path,
+                Err(e) => return Task::ready(Err(e)),
+            };
+            let Some(lang_server) = buffer.update(cx, |buffer, cx| {
+                self.language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(_, server)| server.clone())
+            }) else {
+                return Task::ready(Ok(color));
+            };
+            cx.background_spawn(async move {
+                let resolve_task = lang_server.request::<lsp::request::ColorPresentationRequest>(
+                    lsp::ColorPresentationParams {
+                        text_document: make_text_document_identifier(&path)?,
+                        color: color.color.clone(),
+                        range: color.lsp_range.clone(),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    },
+                );
+                color.color_presentations = resolve_task
+                    .await
+                    .into_response()
+                    .context("color presentation resolve LSP request")?
+                    .into_iter()
+                    .map(|presentation| ColorPresentation {
+                        label: presentation.label,
+                        text_edit: presentation.text_edit,
+                        additional_text_edits: presentation
+                            .additional_text_edits
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+                color.resolved = true;
+                Ok(color)
+            })
+        }
+    }
+
     pub(crate) fn linked_edit(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -8657,11 +8759,67 @@ impl LspStore {
     }
 
     async fn handle_color_presentation(
-        _: Entity<Self>,
-        _: TypedEnvelope<proto::GetColorPresentation>,
-        _: AsyncApp,
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetColorPresentation>,
+        mut cx: AsyncApp,
     ) -> Result<proto::GetColorPresentationResponse> {
-        todo!("TODO kb resolve (textDocument/colorPresentation)")
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let buffer = lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+
+        let color = envelope
+            .payload
+            .color
+            .context("invalid color resolve request")?;
+        let start = color
+            .lsp_range_start
+            .context("invalid color resolve request")?;
+        let end = color
+            .lsp_range_end
+            .context("invalid color resolve request")?;
+
+        let color = DocumentColor {
+            lsp_range: lsp::Range {
+                start: point_to_lsp(PointUtf16::new(start.row, start.column)),
+                end: point_to_lsp(PointUtf16::new(end.row, end.column)),
+            },
+            color: lsp::Color {
+                red: color.red,
+                green: color.green,
+                blue: color.blue,
+                alpha: color.alpha,
+            },
+            resolved: false,
+            color_presentations: Vec::new(),
+        };
+        let resolved_color = lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.resolve_color_presentation(
+                    color,
+                    buffer.clone(),
+                    LanguageServerId(envelope.payload.server_id as usize),
+                    cx,
+                )
+            })?
+            .await
+            .context("resolving color presentation")?;
+
+        Ok(proto::GetColorPresentationResponse {
+            presentations: resolved_color
+                .color_presentations
+                .into_iter()
+                .map(|presentation| proto::ColorPresentation {
+                    label: presentation.label,
+                    text_edit: presentation.text_edit.map(serialize_lsp_edit),
+                    additional_text_edits: presentation
+                        .additional_text_edits
+                        .into_iter()
+                        .map(serialize_lsp_edit)
+                        .collect(),
+                })
+                .collect(),
+        })
     }
 
     async fn handle_resolve_inlay_hint(
