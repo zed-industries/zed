@@ -253,13 +253,12 @@ impl LmStudioLanguageModel {
         for message in request.messages {
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                        add_message_content_part(
-                            lmstudio::MessagePart::Text { text },
-                            message.role,
-                            &mut messages,
-                        )
-                    }
+                    MessageContent::Text(text) => add_message_content_part(
+                        lmstudio::MessagePart::Text { text },
+                        message.role,
+                        &mut messages,
+                    ),
+                    MessageContent::Thinking { .. } => {}
                     MessageContent::RedactedThinking(_) => {}
                     MessageContent::Image(image) => {
                         add_message_content_part(
