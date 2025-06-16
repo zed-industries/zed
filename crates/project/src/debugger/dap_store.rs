@@ -35,7 +35,7 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::SshRemoteClient;
+use remote::{SshRemoteClient, ssh_session::SshArgs};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -240,12 +240,10 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let mut ssh_command = ssh_client.read_with(cx, |ssh, _| {
-                        anyhow::Ok(SshCommand {
-                            // TODO:
-                            // askpass is not used here
-                            arguments: ssh.ssh_args().context("SSH arguments not found")?.arguments,
-                        })
+                    let (mut ssh_command, askpass) = ssh_client.read_with(cx, |ssh, _| {
+                        let SshArgs { arguments, askpass } =
+                            ssh.ssh_args().context("SSH arguments not found")?;
+                        anyhow::Ok((SshCommand { arguments }, askpass))
                     })??;
 
                     let mut connection = None;
@@ -272,11 +270,19 @@ impl DapStore {
                         binary.envs,
                         None,
                     );
+                    let envs = askpass
+                        .map(|askpass| {
+                            let mut envs = HashMap::default();
+                            envs.insert("SSH_ASKPASS".to_string(), askpass);
+                            envs.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
+                            envs
+                        })
+                        .unwrap_or_default();
 
                     Ok(DebugAdapterBinary {
                         command: Some(program),
                         arguments: args,
-                        envs: HashMap::default(),
+                        envs,
                         cwd: None,
                         connection,
                         request_args: binary.request_args,
