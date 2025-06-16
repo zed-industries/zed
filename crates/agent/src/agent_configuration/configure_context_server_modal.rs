@@ -23,7 +23,7 @@ use project::{
 };
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
-use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
+use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
@@ -534,44 +534,79 @@ impl ConfigureContextServerModal {
     fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
 
-        ModalFooter::new().end_slot(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new(
-                        "cancel",
-                        if self.source.has_configuration_options() {
-                            "Cancel"
-                        } else {
-                            "Dismiss"
-                        },
+        ModalFooter::new()
+            .start_slot::<Button>(
+                if let ConfigurationSource::Extension {
+                    repository_url: Some(repository_url),
+                    ..
+                } = &self.source
+                {
+                    Some(
+                        Button::new("open-repository", "Open Repository")
+                            .icon(IconName::ArrowUpRight)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip({
+                                let repository_url = repository_url.clone();
+                                move |window, cx| {
+                                    Tooltip::with_meta(
+                                        "Open Repository",
+                                        None,
+                                        repository_url.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click({
+                                let repository_url = repository_url.clone();
+                                move |_, _, cx| cx.open_url(&repository_url)
+                            }),
                     )
-                    .key_binding(
-                        KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                } else {
+                    None
+                },
+            )
+            .end_slot(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(
+                            "cancel",
+                            if self.source.has_configuration_options() {
+                                "Cancel"
+                            } else {
+                                "Dismiss"
+                            },
+                        )
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(
+                            cx.listener(|this, _event, _window, cx| this.cancel(&menu::Cancel, cx)),
+                        ),
                     )
-                    .on_click(
-                        cx.listener(|this, _event, _window, cx| this.cancel(&menu::Cancel, cx)),
-                    ),
-                )
-                .children(self.source.has_configuration_options().then(|| {
-                    Button::new(
-                        "add-server",
-                        if self.source.is_new() {
-                            "Add Server"
-                        } else {
-                            "Configure Server"
-                        },
-                    )
-                    .key_binding(
-                        KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
-                    )
-                    .on_click(
-                        cx.listener(|this, _event, _window, cx| this.confirm(&menu::Confirm, cx)),
-                    )
-                })),
-        )
+                    .children(self.source.has_configuration_options().then(|| {
+                        Button::new(
+                            "add-server",
+                            if self.source.is_new() {
+                                "Add Server"
+                            } else {
+                                "Configure Server"
+                            },
+                        )
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(
+                            cx.listener(|this, _event, _window, cx| {
+                                this.confirm(&menu::Confirm, cx)
+                            }),
+                        )
+                    })),
+            )
     }
 
     fn render_waiting_for_context_server() -> Div {
