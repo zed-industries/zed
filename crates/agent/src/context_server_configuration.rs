@@ -87,12 +87,7 @@ fn show_configure_mcp_modal(
         return;
     }
 
-    let ids = manifest
-        .context_servers
-        .keys()
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let ids = manifest.context_servers.keys().cloned().collect::<Vec<_>>();
     if ids.is_empty() {
         return;
     }
