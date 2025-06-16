@@ -195,20 +195,20 @@ impl MessageSegment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
     pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorktreeSnapshot {
     pub worktree_path: String,
     pub git_state: Option<GitState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GitState {
     pub remote_url: Option<String>,
     pub head_sha: Option<String>,
@@ -247,7 +247,7 @@ impl LastRestoreCheckpoint {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum DetailedSummaryState {
     #[default]
     NotGenerated,
@@ -391,7 +391,7 @@ impl ThreadSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
@@ -1562,6 +1562,9 @@ impl Thread {
                             }
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
+                            }
+                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                                return Err(err.into());
                             }
                         };
 

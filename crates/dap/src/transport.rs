@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
@@ -12,7 +12,6 @@ use smol::{
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     lock::Mutex,
     net::{TcpListener, TcpStream},
-    process::Child,
 };
 use std::{
     collections::HashMap,
@@ -22,11 +21,13 @@ use std::{
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
-use util::{ConnectionResult, ResultExt as _};
+use util::ConnectionResult;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
-pub type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
+pub(crate) type IoMessage = str;
+pub(crate) type Command = str;
+pub type IoHandler = Box<dyn Send + FnMut(IoKind, Option<&Command>, &IoMessage)>;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum LogKind {
@@ -86,10 +87,12 @@ impl Transport {
             TcpTransport::start(binary, cx)
                 .await
                 .map(|(transports, tcp)| (transports, Self::Tcp(tcp)))
+                .context("Tried to connect to a debug adapter via TCP transport layer")
         } else {
             StdioTransport::start(binary, cx)
                 .await
                 .map(|(transports, stdio)| (transports, Self::Stdio(stdio)))
+                .context("Tried to connect to a debug adapter via stdin/stdout transport layer")
         }
     }
 
@@ -102,7 +105,7 @@ impl Transport {
         }
     }
 
-    async fn kill(&self) -> Result<()> {
+    async fn kill(&self) {
         match self {
             Transport::Stdio(stdio_transport) => stdio_transport.kill().await,
             Transport::Tcp(tcp_transport) => tcp_transport.kill().await,
@@ -191,7 +194,7 @@ impl TransportDelegate {
                 match Self::handle_output(
                     params.output,
                     client_tx,
-                    pending_requests,
+                    pending_requests.clone(),
                     output_log_handler,
                 )
                 .await
@@ -199,6 +202,12 @@ impl TransportDelegate {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger output: {e}"),
                 }
+                let mut pending_requests = pending_requests.lock().await;
+                pending_requests.drain().for_each(|(_, request)| {
+                    request
+                        .send(Err(anyhow!("debugger shutdown unexpectedly")))
+                        .ok();
+                });
             }));
 
             if let Some(stderr) = params.stderr.take() {
@@ -289,7 +298,7 @@ impl TransportDelegate {
             if let Some(log_handlers) = log_handlers.as_ref() {
                 for (kind, handler) in log_handlers.lock().iter_mut() {
                     if matches!(kind, LogKind::Adapter) {
-                        handler(IoKind::StdOut, line.as_str());
+                        handler(IoKind::StdOut, None, line.as_str());
                     }
                 }
             }
@@ -323,6 +332,12 @@ impl TransportDelegate {
                         }
                     }
 
+                    let command = match &message {
+                        Message::Request(request) => Some(request.command.as_str()),
+                        Message::Response(response) => Some(response.command.as_str()),
+                        _ => None,
+                    };
+
                     let message = match serde_json::to_string(&message) {
                         Ok(message) => message,
                         Err(e) => break Err(e.into()),
@@ -331,7 +346,7 @@ impl TransportDelegate {
                     if let Some(log_handlers) = log_handlers.as_ref() {
                         for (kind, log_handler) in log_handlers.lock().iter_mut() {
                             if matches!(kind, LogKind::Rpc) {
-                                log_handler(IoKind::StdIn, &message);
+                                log_handler(IoKind::StdIn, command, &message);
                             }
                         }
                     }
@@ -416,7 +431,7 @@ impl TransportDelegate {
                 Ok(_) => {
                     for (kind, log_handler) in log_handlers.lock().iter_mut() {
                         if matches!(kind, LogKind::Adapter) {
-                            log_handler(IoKind::StdErr, buffer.as_str());
+                            log_handler(IoKind::StdErr, None, buffer.as_str());
                         }
                     }
 
@@ -505,17 +520,24 @@ impl TransportDelegate {
             Err(e) => return ConnectionResult::Result(Err(e)),
         };
 
+        let message =
+            serde_json::from_str::<Message>(message_str).context("deserializing server message");
+
         if let Some(log_handlers) = log_handlers {
+            let command = match &message {
+                Ok(Message::Request(request)) => Some(request.command.as_str()),
+                Ok(Message::Response(response)) => Some(response.command.as_str()),
+                _ => None,
+            };
+
             for (kind, log_handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Rpc) {
-                    log_handler(IoKind::StdOut, message_str);
+                    log_handler(IoKind::StdOut, command, message_str);
                 }
             }
         }
 
-        ConnectionResult::Result(
-            serde_json::from_str::<Message>(message_str).context("deserializing server message"),
-        )
+        ConnectionResult::Result(message)
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -531,7 +553,7 @@ impl TransportDelegate {
         current_requests.clear();
         pending_requests.clear();
 
-        let _ = self.transport.kill().await.log_err();
+        self.transport.kill().await;
 
         drop(current_requests);
         drop(pending_requests);
@@ -551,7 +573,7 @@ impl TransportDelegate {
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
     where
-        F: 'static + Send + FnMut(IoKind, &str),
+        F: 'static + Send + FnMut(IoKind, Option<&Command>, &IoMessage),
     {
         let mut log_handlers = self.log_handlers.lock();
         log_handlers.push((kind, Box::new(f)));
@@ -562,7 +584,7 @@ pub struct TcpTransport {
     pub port: u16,
     pub host: Ipv4Addr,
     pub timeout: u64,
-    process: Mutex<Child>,
+    process: Option<Mutex<Child>>,
 }
 
 impl TcpTransport {
@@ -591,26 +613,23 @@ impl TcpTransport {
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_std_command(&binary.command);
-        util::set_pre_exec_to_start_new_session(&mut command);
-        let mut command = smol::process::Command::from(command);
+        let mut process = if let Some(command) = &binary.command {
+            let mut command = util::command::new_std_command(&command);
 
-        if let Some(cwd) = &binary.cwd {
-            command.current_dir(cwd);
-        }
+            if let Some(cwd) = &binary.cwd {
+                command.current_dir(cwd);
+            }
 
-        command.args(&binary.arguments);
-        command.envs(&binary.envs);
+            command.args(&binary.arguments);
+            command.envs(&binary.envs);
 
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut process = command
-            .spawn()
-            .with_context(|| "failed to start debug adapter.")?;
+            Some(
+                Child::spawn(command, Stdio::null())
+                    .with_context(|| "failed to start debug adapter.")?,
+            )
+        } else {
+            None
+        };
 
         let address = SocketAddrV4::new(host, port);
 
@@ -628,15 +647,18 @@ impl TcpTransport {
                     match TcpStream::connect(address).await {
                         Ok(stream) => return Ok((process, stream.split())),
                         Err(_) => {
-                            if let Ok(Some(_)) = process.try_status() {
-                                let output = process.output().await?;
-                                let output = if output.stderr.is_empty() {
-                                    String::from_utf8_lossy(&output.stdout).to_string()
-                                } else {
-                                    String::from_utf8_lossy(&output.stderr).to_string()
-                                };
-                                anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                            if let Some(p) = &mut process {
+                                if let Ok(Some(_)) = p.try_status() {
+                                    let output = process.take().unwrap().into_inner().output().await?;
+                                    let output = if output.stderr.is_empty() {
+                                        String::from_utf8_lossy(&output.stdout).to_string()
+                                    } else {
+                                        String::from_utf8_lossy(&output.stderr).to_string()
+                                    };
+                                    anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                                }
                             }
+
                             cx.background_executor().timer(Duration::from_millis(100)).await;
                         }
                     }
@@ -649,13 +671,13 @@ impl TcpTransport {
             host,
             port
         );
-        let stdout = process.stdout.take();
-        let stderr = process.stderr.take();
+        let stdout = process.as_mut().and_then(|p| p.stdout.take());
+        let stderr = process.as_mut().and_then(|p| p.stderr.take());
 
         let this = Self {
             port,
             host,
-            process: Mutex::new(process),
+            process: process.map(Mutex::new),
             timeout,
         };
 
@@ -673,10 +695,19 @@ impl TcpTransport {
         true
     }
 
-    async fn kill(&self) -> Result<()> {
-        self.process.lock().await.kill()?;
+    async fn kill(&self) {
+        if let Some(process) = &self.process {
+            let mut process = process.lock().await;
+            Child::kill(&mut process);
+        }
+    }
+}
 
-        Ok(())
+impl Drop for TcpTransport {
+    fn drop(&mut self) {
+        if let Some(mut p) = self.process.take() {
+            p.get_mut().kill();
+        }
     }
 }
 
@@ -687,9 +718,12 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_std_command(&binary.command);
-        util::set_pre_exec_to_start_new_session(&mut command);
-        let mut command = smol::process::Command::from(command);
+        let Some(binary_command) = &binary.command else {
+            bail!(
+                "When using the `stdio` transport, the path to a debug adapter binary must be set by Zed."
+            );
+        };
+        let mut command = util::command::new_std_command(&binary_command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
@@ -698,16 +732,10 @@ impl StdioTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut process = command.spawn().with_context(|| {
+        let mut process = Child::spawn(command, Stdio::piped()).with_context(|| {
             format!(
                 "failed to spawn command `{} {}`.",
-                binary.command,
+                binary_command,
                 binary.arguments.join(" ")
             )
         })?;
@@ -722,7 +750,7 @@ impl StdioTransport {
         if stderr.is_none() {
             bail!(
                 "Failed to connect to stderr for debug adapter command {}",
-                &binary.command
+                &binary_command
             );
         }
 
@@ -745,9 +773,15 @@ impl StdioTransport {
         false
     }
 
-    async fn kill(&self) -> Result<()> {
-        self.process.lock().await.kill()?;
-        Ok(())
+    async fn kill(&self) {
+        let mut process = self.process.lock().await;
+        Child::kill(&mut process);
+    }
+}
+
+impl Drop for StdioTransport {
+    fn drop(&mut self) {
+        self.process.get_mut().kill();
     }
 }
 
@@ -921,7 +955,66 @@ impl FakeTransport {
         false
     }
 
-    async fn kill(&self) -> Result<()> {
-        Ok(())
+    async fn kill(&self) {}
+}
+
+struct Child {
+    process: smol::process::Child,
+}
+
+impl std::ops::Deref for Child {
+    type Target = smol::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.process
+    }
+}
+
+impl std::ops::DerefMut for Child {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.process
+    }
+}
+
+impl Child {
+    fn into_inner(self) -> smol::process::Child {
+        self.process
+    }
+
+    #[cfg(not(windows))]
+    fn spawn(mut command: std::process::Command, stdin: Stdio) -> Result<Self> {
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let process = smol::process::Command::from(command)
+            .stdin(stdin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        Ok(Self { process })
+    }
+
+    #[cfg(windows)]
+    fn spawn(command: std::process::Command, stdin: Stdio) -> Result<Self> {
+        // TODO(windows): create a job object and add the child process handle to it,
+        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        let process = smol::process::Command::from(command)
+            .stdin(stdin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        Ok(Self { process })
+    }
+
+    #[cfg(not(windows))]
+    fn kill(&mut self) {
+        let pid = self.process.id();
+        unsafe {
+            libc::killpg(pid as i32, libc::SIGKILL);
+        }
+    }
+
+    #[cfg(windows)]
+    fn kill(&mut self) {
+        // TODO(windows): terminate the job object in kill
+        let _ = self.process.kill();
     }
 }

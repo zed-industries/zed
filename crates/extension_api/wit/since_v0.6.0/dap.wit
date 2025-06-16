@@ -50,7 +50,7 @@ interface dap {
     }
 
     record debug-adapter-binary {
-        command: string,
+        command: option<string>,
         arguments: list<string>,
         envs: env-vars,
         cwd: option<string>,

@@ -99,6 +99,7 @@ dependencies = [
  "paths",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
@@ -490,7 +491,6 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
- "shlex",
  "smol",
  "tempfile",
  "util",
@@ -704,6 +704,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "streaming_diff",
  "strsim",
  "task",
@@ -2821,9 +2822,11 @@ dependencies = [
  "collections",
  "credentials_provider",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "hickory-resolver",
  "http_client",
  "http_client_tls",
  "httparse",
@@ -2832,6 +2835,7 @@ dependencies = [
  "paths",
  "postage",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "rustls-pki-types",
@@ -3157,6 +3161,16 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes 1.10.1",
  "memchr",
+]
+
+[[package]]
+name = "command-fds"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ec1052629a80c28594777d1252efc8a6b005d13f9edfd8c3fc0f44d5b32489a"
+dependencies = [
+ "nix 0.30.1",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -3529,6 +3543,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "coreaudio-rs"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aae284fbaf7d27aa0e292f7677dfbe26503b0d555026f702940805a630eac17"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+ "objc2-audio-toolbox",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "coreaudio-sys"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3563,7 +3591,8 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.15.3"
-source = "git+https://github.com/zed-industries/cpal?rev=fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50#fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "873dab07c8f743075e57f524c583985fbaf745602acbe916a01539364369a779"
 dependencies = [
  "alsa",
  "core-foundation-sys",
@@ -3573,9 +3602,35 @@ dependencies = [
  "js-sys",
  "libc",
  "mach2",
- "ndk",
+ "ndk 0.8.0",
  "ndk-context",
  "oboe",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows 0.54.0",
+]
+
+[[package]]
+name = "cpal"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbd307f43cc2a697e2d1f8bc7a1d824b5269e052209e28883e5bc04d095aaa3f"
+dependencies = [
+ "alsa",
+ "coreaudio-rs 0.13.0",
+ "dasp_sample",
+ "jni",
+ "js-sys",
+ "libc",
+ "mach2",
+ "ndk 0.9.0",
+ "ndk-context",
+ "num-derive",
+ "num-traits",
+ "objc2-audio-toolbox",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -4015,6 +4070,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "libc",
  "log",
  "node_runtime",
  "parking_lot",
@@ -4038,7 +4094,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=68516de327fa1be15214133a0a2e52a12982ce75#68516de327fa1be15214133a0a2e52a12982ce75"
+source = "git+https://github.com/zed-industries/dap-types?rev=b40956a7f4d1939da67429d941389ee306a3a308#b40956a7f4d1939da67429d941389ee306a3a308"
 dependencies = [
  "schemars",
  "serde",
@@ -4051,6 +4107,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "collections",
  "dap",
  "futures 0.3.31",
  "gpui",
@@ -4682,7 +4739,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
  "dap",
@@ -4850,6 +4906,18 @@ name = "endi"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3d8a32ae18130a3c84dd492d4215c3d913c3b07c6b63c2eb3eb7ff1101ab7bf"
+
+[[package]]
+name = "enum-as-inner"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
 
 [[package]]
 name = "enumflags2"
@@ -6108,6 +6176,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "buffer_diff",
+ "call",
  "chrono",
  "collections",
  "command_palette_hooks",
@@ -7429,6 +7498,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "hickory-proto"
+version = "0.24.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92652067c9ce6f66ce53cc38d1169daa36e6e7eb7dd3b63b5103bd9d97117248"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "data-encoding",
+ "enum-as-inner",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "idna",
+ "ipnet",
+ "once_cell",
+ "rand 0.8.5",
+ "thiserror 1.0.69",
+ "tinyvec",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "hickory-resolver"
+version = "0.24.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbb117a1ca520e111743ab2f6688eddee69db4e0ea242545a604dce8a66fd22e"
+dependencies = [
+ "cfg-if",
+ "futures-util",
+ "hickory-proto",
+ "ipconfig",
+ "lru-cache",
+ "once_cell",
+ "parking_lot",
+ "rand 0.8.5",
+ "resolv-conf",
+ "smallvec",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hidden-trait"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8298,6 +8412,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipconfig"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b58db92f96b720de98181bbbe63c831e87005ab460c1bf306eb2622b4707997f"
+dependencies = [
+ "socket2",
+ "widestring",
+ "windows-sys 0.48.0",
+ "winreg 0.50.0",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8990,7 +9116,6 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "util",
- "which 6.0.3",
  "workspace",
  "workspace-hack",
 ]
@@ -9183,6 +9308,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
 name = "linkify"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9308,7 +9439,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-video",
  "coreaudio-rs 0.12.1",
- "cpal",
+ "cpal 0.16.0",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
@@ -9440,6 +9571,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.3",
+]
+
+[[package]]
+name = "lru-cache"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31e24f1ad8321ca0e8a1e0ac13f23cb668e6f5466c2c57319f6a5cf1cc8e3b1c"
+dependencies = [
+ "linked-hash-map",
 ]
 
 [[package]]
@@ -10078,7 +10218,21 @@ dependencies = [
  "bitflags 2.9.0",
  "jni-sys",
  "log",
- "ndk-sys",
+ "ndk-sys 0.5.0+25.2.9519653",
+ "num_enum",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "ndk"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f42e7bbe13d351b6bead8286a43aac9534b82bd3cc43e47037f012ebfd62d4"
+dependencies = [
+ "bitflags 2.9.0",
+ "jni-sys",
+ "log",
+ "ndk-sys 0.6.0+11769913",
  "num_enum",
  "thiserror 1.0.69",
 ]
@@ -10094,6 +10248,15 @@ name = "ndk-sys"
 version = "0.5.0+25.2.9519653"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c196769dd60fd4f363e11d948139556a344e79d451aeb2fa2fd040738ef7691"
+dependencies = [
+ "jni-sys",
+]
+
+[[package]]
+name = "ndk-sys"
+version = "0.6.0+11769913"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
 ]
@@ -10127,6 +10290,18 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.9.0",
+ "cfg-if",
+ "cfg_aliases 0.2.1",
+ "libc",
 ]
 
 [[package]]
@@ -10500,6 +10675,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cbe18d879e20a4aea544f8befe38bcf52255eb63d3f23eca2842f3319e4c07"
+dependencies = [
+ "bitflags 2.9.0",
+ "libc",
+ "objc2",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-core-audio"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca44961e888e19313b808f23497073e3f6b3c22bb485056674c8b49f3b025c82"
+dependencies = [
+ "dispatch2",
+ "objc2",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-core-audio-types"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f1cc99bb07ad2ddb6527ddf83db6a15271bb036b3eb94b801cd44fdc666ee1"
+dependencies = [
+ "bitflags 2.9.0",
+ "objc2",
+]
+
+[[package]]
 name = "objc2-core-foundation"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10604,7 +10816,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8b61bebd49e5d43f5f8cc7ee2891c16e0f41ec7954d36bcb6c14c5e0de867fb"
 dependencies = [
  "jni",
- "ndk",
+ "ndk 0.8.0",
  "ndk-context",
  "num-derive",
  "num-traits",
@@ -12109,7 +12321,6 @@ dependencies = [
  "unindent",
  "url",
  "util",
- "uuid",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -13202,6 +13413,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "h2 0.4.9",
+ "hickory-resolver",
  "http 1.3.1",
  "http-body 1.0.1",
  "http-body-util",
@@ -13257,6 +13469,12 @@ dependencies = [
  "tokio",
  "workspace-hack",
 ]
+
+[[package]]
+name = "resolv-conf"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95325155c684b1c89f7765e30bc1c42e4a6da51ca513615660cb8a62ef9a88e3"
 
 [[package]]
 name = "resvg"
@@ -13377,7 +13595,7 @@ version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7ceb6607dd738c99bc8cb28eff249b7cd5c8ec88b9db96c0608c1480d140fb1"
 dependencies = [
- "cpal",
+ "cpal 0.15.3",
  "hound",
 ]
 
@@ -14389,12 +14607,12 @@ dependencies = [
  "fs",
  "gpui",
  "log",
- "paths",
  "schemars",
  "serde",
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -15725,6 +15943,7 @@ dependencies = [
  "theme",
  "thiserror 2.0.12",
  "url",
+ "urlencoding",
  "util",
  "windows 0.61.1",
  "workspace-hack",
@@ -17121,6 +17340,7 @@ dependencies = [
  "async-fs",
  "async_zip",
  "collections",
+ "command-fds",
  "dirs 4.0.0",
  "dunce",
  "futures 0.3.31",
@@ -17131,12 +17351,14 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "nix 0.29.0",
  "rand 0.8.5",
  "regex",
  "rust-embed",
  "serde",
  "serde_json",
  "serde_json_lenient",
+ "shlex",
  "smol",
  "take-until",
  "tempfile",
@@ -18177,6 +18399,12 @@ dependencies = [
  "redox_syscall 0.5.11",
  "wasite",
 ]
+
+[[package]]
+name = "widestring"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd7cf3379ca1aac9eea11fba24fd7e315d621f8dfe35c8d7d2be8b793726e07d"
 
 [[package]]
 name = "wiggle"
@@ -19298,6 +19526,7 @@ dependencies = [
  "num-rational",
  "num-traits",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
  "objc2-metal",
  "object",
@@ -19718,7 +19947,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.191.0"
+version = "0.192.0"
 dependencies = [
  "activity_indicator",
  "agent",

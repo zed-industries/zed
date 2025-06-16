@@ -261,7 +261,7 @@ impl<T: 'static> PromptEditor<T> {
 
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
-            let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
+            let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
@@ -872,6 +872,7 @@ impl PromptEditor<BufferCodegen> {
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
+                    min_lines: 1,
                     max_lines: Self::MAX_LINES as usize,
                 },
                 prompt_buffer,
@@ -1050,6 +1051,7 @@ impl PromptEditor<TerminalCodegen> {
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
+                    min_lines: 1,
                     max_lines: Self::MAX_LINES as usize,
                 },
                 prompt_buffer,

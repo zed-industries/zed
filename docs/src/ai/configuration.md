@@ -25,7 +25,7 @@ Here's an overview of the supported providers and tool call support:
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
+While Zed offers hosted versions of models through [our various plans](./plans-and-usage.md), we're always happy to support users wanting to supply their own API keys.
 Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
@@ -220,7 +220,7 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > ✅ Supports tool use
 
-You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use Gemini models with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section

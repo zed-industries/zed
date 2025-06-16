@@ -498,6 +498,7 @@ jobs:
     needs:
       - job_spec
       - style
+      - check_docs
       - migration_checks
       # run_tests: If adding required tests, add them here and to script below.
       - workspace_hack
@@ -515,7 +516,8 @@ jobs:
           # Check dependent jobs...
           RET_CODE=0
           # Always check style
-          [[ "${{ needs.style.result }}" != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
+          [[ "${{ needs.style.result }}"      != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
+          [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
 
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
@@ -801,6 +803,7 @@ jobs:
     name: Build with Nix
     uses: ./.github/workflows/nix.yml
     if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    secrets: inherit
     with:
       flake-output: debug
       # excludes the final package to only cache dependencies

@@ -25,7 +25,7 @@ pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
-pub fn key_to_native(key: &str) -> Cow<str> {
+pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
     let code = match key {
         "space" => SPACE_KEY,
