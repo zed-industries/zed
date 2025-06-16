@@ -20,7 +20,7 @@ pub use wit::{
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
-        DebugAdapterBinary, DebugRequest, DebugScenario, DebugTaskDefinition,
+        DebugAdapterBinary, DebugConfig, DebugRequest, DebugScenario, DebugTaskDefinition,
         StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TaskTemplate,
         TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
     },
