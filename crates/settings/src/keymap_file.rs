@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, NoAction,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, NoAction, SharedString,
 };
 use schemars::{
     JsonSchema,
@@ -399,7 +399,13 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(keystrokes, action, context, key_equivalents) {
+        let key_binding = match KeyBinding::load(
+            keystrokes,
+            action,
+            context,
+            key_equivalents,
+            action_input_string.map(SharedString::from),
+        ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
                 return Err(format!(
