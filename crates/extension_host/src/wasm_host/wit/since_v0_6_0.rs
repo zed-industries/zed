@@ -938,24 +938,33 @@ impl ExtensionImports for WasmState {
                         })?)
                     }
                     "context_servers" => {
-                        let configuration = key
+                        let settings = key
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .context_servers
                                     .get(key.as_str())
                             })
                             .cloned()
-                            .unwrap_or_default();
-                        Ok(serde_json::to_string(&settings::ContextServerSettings {
-                            command: configuration.command.map(|command| {
-                                settings::CommandSettings {
+                            .context("Failed to get context server configuration")?;
+
+                        match settings {
+                            project::project_settings::ContextServerSettings::Custom {
+                                command,
+                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                                command: Some(settings::CommandSettings {
                                     path: Some(command.path),
                                     arguments: Some(command.args),
                                     env: command.env.map(|env| env.into_iter().collect()),
-                                }
-                            }),
-                            settings: configuration.settings,
-                        })?)
+                                }),
+                                settings: None,
+                            })?),
+                            project::project_settings::ContextServerSettings::Extension {
+                                settings,
+                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                                command: None,
+                                settings: Some(settings),
+                            })?),
+                        }
                     }
                     _ => {
                         bail!("Unknown settings category: {}", category);
