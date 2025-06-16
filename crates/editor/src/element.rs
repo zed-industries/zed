@@ -6034,7 +6034,7 @@ impl EditorElement {
                                 );
                             }
 
-                            for (background_highlight_id, (_, background_ranges)) in
+                            for (background_highlight_id, background_highlights) in
                                 background_highlights.iter()
                             {
                                 let is_search_highlights = *background_highlight_id
@@ -6053,18 +6053,22 @@ impl EditorElement {
                                     if is_symbol_occurrences {
                                         color.fade_out(0.5);
                                     }
-                                    let marker_row_ranges = background_ranges.iter().map(|range| {
-                                        let display_start = range
-                                            .start
-                                            .to_display_point(&snapshot.display_snapshot);
-                                        let display_end =
-                                            range.end.to_display_point(&snapshot.display_snapshot);
-                                        ColoredRange {
-                                            start: display_start.row(),
-                                            end: display_end.row(),
-                                            color,
-                                        }
-                                    });
+                                    let marker_row_ranges =
+                                        background_highlights.iter().map(|highlight| {
+                                            let display_start = highlight
+                                                .range
+                                                .start
+                                                .to_display_point(&snapshot.display_snapshot);
+                                            let display_end = highlight
+                                                .range
+                                                .end
+                                                .to_display_point(&snapshot.display_snapshot);
+                                            ColoredRange {
+                                                start: display_start.row(),
+                                                end: display_end.row(),
+                                                color,
+                                            }
+                                        });
                                     marker_quads.extend(
                                         scrollbar_layout
                                             .marker_quads_for_ranges(marker_row_ranges, Some(1)),
@@ -7959,7 +7963,7 @@ impl Element for EditorElement {
                             editor.read(cx).background_highlights_in_range(
                                 start_anchor..end_anchor,
                                 &snapshot.display_snapshot,
-                                cx.theme().colors(),
+                                cx.theme(),
                             )
                         })
                         .unwrap_or_default();
