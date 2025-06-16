@@ -648,6 +648,26 @@ struct ConsoleHandler {
     pos: usize,
 }
 
+impl ConsoleHandler {
+    fn break_span(&mut self, color: Option<ansi::Color>) {
+        self.spans.push((
+            self.current_range_start..self.output.len(),
+            self.current_color,
+        ));
+        self.current_color = color;
+        self.current_range_start = self.pos;
+    }
+
+    fn break_background_span(&mut self, color: Option<ansi::Color>) {
+        self.background_spans.push((
+            self.current_background_range_start..self.output.len(),
+            self.current_background_color,
+        ));
+        self.current_background_color = color;
+        self.current_background_range_start = self.pos;
+    }
+}
+
 impl ansi::Handler for ConsoleHandler {
     fn input(&mut self, c: char) {
         self.output.push(c);
@@ -668,20 +688,14 @@ impl ansi::Handler for ConsoleHandler {
     fn terminal_attribute(&mut self, attr: ansi::Attr) {
         match attr {
             ansi::Attr::Foreground(color) => {
-                self.spans.push((
-                    self.current_range_start..self.output.len(),
-                    self.current_color,
-                ));
-                self.current_color = Some(color);
-                self.current_range_start = self.pos;
+                self.break_span(Some(color));
             }
             ansi::Attr::Background(color) => {
-                self.background_spans.push((
-                    self.current_background_range_start..self.output.len(),
-                    self.current_background_color,
-                ));
-                self.current_background_color = Some(color);
-                self.current_background_range_start = self.pos;
+                self.break_background_span(Some(color));
+            }
+            ansi::Attr::Reset => {
+                self.break_span(None);
+                self.break_background_span(None);
             }
             _ => {}
         }
