@@ -247,7 +247,6 @@ impl Project {
                 }
 
                 match &ssh_details {
-                    // TODO:
                     Some((host, ssh_command, ssh_askpass)) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
 
@@ -261,6 +260,10 @@ impl Project {
                         let (program, args) =
                             wrap_for_ssh(&ssh_command, None, path.as_deref(), env, None);
                         env = HashMap::default();
+                        if let Some(ssh_askpass) = ssh_askpass {
+                            env.insert("SSH_ASKPASS".to_string(), ssh_askpass.clone());
+                            env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
+                        }
                         (
                             Option::<TaskState>::None,
                             Shell::WithArguments {
@@ -297,7 +300,6 @@ impl Project {
                 }
 
                 match &ssh_details {
-                    // TODO:
                     Some((host, ssh_command, ssh_askpass)) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
@@ -310,6 +312,10 @@ impl Project {
                             python_venv_directory.as_deref(),
                         );
                         env = HashMap::default();
+                        if let Some(ssh_askpass) = ssh_askpass {
+                            env.insert("SSH_ASKPASS".to_string(), ssh_askpass.clone());
+                            env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
+                        }
                         (
                             task_state,
                             Shell::WithArguments {
@@ -562,19 +568,19 @@ pub fn wrap_for_ssh(
     }
 
     let commands = if let Some(path) = path {
-        let path_string = path.to_string_lossy().to_string();
+        let path = path.to_string_lossy().replace('\\', "/");
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace ith with something that works
         let tilde_prefix = "~/";
         if path.starts_with(tilde_prefix) {
-            let trimmed_path = path_string
+            let trimmed_path = path
                 .trim_start_matches("/")
                 .trim_start_matches("~")
                 .trim_start_matches("/");
 
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
-            format!("cd {path:?}; {env_changes} {to_run}")
+            format!("cd {path}; {env_changes} {to_run}")
         }
     } else {
         format!("cd; {env_changes} {to_run}")
