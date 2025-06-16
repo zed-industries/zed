@@ -1432,8 +1432,11 @@ impl SearchableItem for Editor {
     fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
         self.background_highlights
             .get(&TypeId::of::<BufferSearchHighlights>())
-            .map_or(Vec::new(), |(_color, ranges)| {
-                ranges.iter().cloned().collect()
+            .map_or(Vec::new(), |highlights| {
+                highlights
+                    .iter()
+                    .map(|highlight| highlight.range.clone())
+                    .collect()
             })
     }
 
@@ -1452,14 +1455,14 @@ impl SearchableItem for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let existing_range = self
+        let existing_ranges = self
             .background_highlights
             .get(&TypeId::of::<BufferSearchHighlights>())
-            .map(|(_, range)| range.as_ref());
-        let updated = existing_range != Some(matches);
+            .map(|highlights| highlights.iter().map(|highlight| &highlight.range));
+        let updated = !existing_ranges.is_some_and(|existing_ranges| existing_ranges.eq(matches));
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.search_match_background,
+            |theme| theme.colors().search_match_background,
             cx,
         );
         if updated {
@@ -1480,7 +1483,12 @@ impl SearchableItem for Editor {
         if self.has_filtered_search_ranges() {
             self.previous_search_ranges = self
                 .clear_background_highlights::<SearchWithinRange>(cx)
-                .map(|(_, ranges)| ranges)
+                .map(|highlights| {
+                    highlights
+                        .iter()
+                        .map(|highlight| highlight.range.clone())
+                        .collect()
+                })
         }
 
         if !enabled {
@@ -1702,8 +1710,11 @@ impl SearchableItem for Editor {
         let search_within_ranges = self
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
-            .map_or(vec![], |(_color, ranges)| {
-                ranges.iter().cloned().collect::<Vec<_>>()
+            .map_or(vec![], |highlights| {
+                highlights
+                    .iter()
+                    .map(|highlight| highlight.range.clone())
+                    .collect::<Vec<_>>()
             });
 
         cx.background_spawn(async move {

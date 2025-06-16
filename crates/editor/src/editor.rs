@@ -196,7 +196,7 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope};
 use theme::{
-    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings,
+    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
 };
 use ui::{
@@ -696,7 +696,12 @@ impl EditorActionId {
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
+#[derive(Clone)]
+pub struct BackgroundHighlight {
+    pub range: Range<Anchor>,
+    pub color_fetcher: fn(&Theme) -> Hsla,
+}
+
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
 #[derive(Default)]
@@ -996,7 +1001,7 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
-    background_highlights: TreeMap<TypeId, BackgroundHighlight>,
+    background_highlights: TreeMap<TypeId, Vec<BackgroundHighlight>>,
     gutter_highlights: TreeMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
@@ -6086,7 +6091,7 @@ impl Editor {
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
-                    |theme| theme.editor_highlighted_line_background,
+                    |theme| theme.colors().editor_highlighted_line_background,
                     cx,
                 );
             });
@@ -6441,12 +6446,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         &read_ranges,
-                        |theme| theme.editor_document_highlight_read_background,
+                        |theme| theme.colors().editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         &write_ranges,
-                        |theme| theme.editor_document_highlight_write_background,
+                        |theme| theme.colors().editor_document_highlight_write_background,
                         cx,
                     );
                     cx.notify();
@@ -6548,7 +6553,7 @@ impl Editor {
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &match_ranges,
-                            |theme| theme.editor_document_highlight_bracket_background,
+                            |theme| theme.colors().editor_document_highlight_bracket_background,
                             cx,
                         )
                     }
@@ -15289,7 +15294,7 @@ impl Editor {
                     }
                     editor.highlight_background::<Self>(
                         &ranges,
-                        |theme| theme.editor_highlighted_line_background,
+                        |theme| theme.colors().editor_highlighted_line_background,
                         cx,
                     );
                 }
@@ -15444,18 +15449,19 @@ impl Editor {
                     })
                     .detach();
 
-                    let write_highlights =
-                        this.clear_background_highlights::<DocumentHighlightWrite>(cx);
-                    let read_highlights =
-                        this.clear_background_highlights::<DocumentHighlightRead>(cx);
+                    let write_highlights = this
+                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
+                        .unwrap_or_default();
+                    let read_highlights = this
+                        .clear_background_highlights::<DocumentHighlightRead>(cx)
+                        .unwrap_or_default();
                     let ranges = write_highlights
                         .iter()
-                        .flat_map(|(_, ranges)| ranges.iter())
-                        .chain(read_highlights.iter().flat_map(|(_, ranges)| ranges.iter()))
+                        .chain(read_highlights.iter())
                         .cloned()
-                        .map(|range| {
+                        .map(|highlight| {
                             (
-                                range,
+                                highlight.range,
                                 HighlightStyle {
                                     fade_out: Some(0.6),
                                     ..Default::default()
@@ -18440,7 +18446,7 @@ impl Editor {
     pub fn set_search_within_ranges(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         self.highlight_background::<SearchWithinRange>(
             ranges,
-            |colors| colors.editor_document_highlight_read_background,
+            |theme| theme.colors().editor_document_highlight_read_background,
             cx,
         )
     }
@@ -18456,11 +18462,29 @@ impl Editor {
     pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: &[Range<Anchor>],
-        color_fetcher: fn(&ThemeColors) -> Hsla,
+        color_fetcher: fn(&Theme) -> Hsla,
         cx: &mut Context<Self>,
     ) {
+        let highlights = ranges
+            .iter()
+            .map(|range| BackgroundHighlight {
+                range: range.clone(),
+                color_fetcher,
+            })
+            .collect();
         self.background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
+            .insert(TypeId::of::<T>(), highlights);
+        self.scrollbar_marker_state.dirty = true;
+        cx.notify();
+    }
+
+    pub fn highlight_background_ranges<T: 'static>(
+        &mut self,
+        background_highlights: Vec<BackgroundHighlight>,
+        cx: &mut Context<'_, Editor>,
+    ) {
+        self.background_highlights
+            .insert(TypeId::of::<T>(), background_highlights);
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
@@ -18468,9 +18492,9 @@ impl Editor {
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> Option<BackgroundHighlight> {
+    ) -> Option<Vec<BackgroundHighlight>> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
-        if !text_highlights.1.is_empty() {
+        if !text_highlights.is_empty() {
             self.scrollbar_marker_state.dirty = true;
             cx.notify();
         }
@@ -18565,7 +18589,7 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        let theme = cx.theme().colors();
+        let theme = cx.theme();
         self.background_highlights_in_range(start..end, &snapshot, theme)
     }
 
@@ -18577,10 +18601,13 @@ impl Editor {
             .background_highlights
             .get(&TypeId::of::<items::BufferSearchHighlights>());
 
-        if let Some((_color, ranges)) = highlights {
-            ranges
+        if let Some(highlights) = highlights {
+            highlights
                 .iter()
-                .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
+                .map(|highlight| {
+                    highlight.range.start.to_point(&snapshot)
+                        ..highlight.range.end.to_point(&snapshot)
+                })
                 .collect_vec()
         } else {
             vec![]
@@ -18594,20 +18621,18 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = &'a Range<Anchor>> {
         let read_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightRead>())
-            .map(|h| &h.1);
+            .get(&TypeId::of::<DocumentHighlightRead>());
         let write_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightWrite>())
-            .map(|h| &h.1);
+            .get(&TypeId::of::<DocumentHighlightWrite>());
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
         read_highlights
             .into_iter()
             .chain(write_highlights)
-            .flat_map(move |ranges| {
-                let start_ix = match ranges.binary_search_by(|probe| {
-                    let cmp = probe.end.cmp(&left_position, buffer);
+            .flat_map(move |highlights| {
+                let start_ix = match highlights.binary_search_by(|probe| {
+                    let cmp = probe.range.end.cmp(&left_position, buffer);
                     if cmp.is_ge() {
                         Ordering::Greater
                     } else {
@@ -18617,29 +18642,32 @@ impl Editor {
                     Ok(i) | Err(i) => i,
                 };
 
-                ranges[start_ix..]
+                highlights[start_ix..]
                     .iter()
-                    .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())
+                    .take_while(move |highlight| {
+                        highlight.range.start.cmp(&right_position, buffer).is_le()
+                    })
+                    .map(|highlight| &highlight.range)
             })
     }
 
     pub fn has_background_highlights<T: 'static>(&self) -> bool {
         self.background_highlights
             .get(&TypeId::of::<T>())
-            .map_or(false, |(_, highlights)| !highlights.is_empty())
+            .map_or(false, |highlights| !highlights.is_empty())
     }
 
     pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        theme: &ThemeColors,
+        theme: &Theme,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
-        for (color_fetcher, ranges) in self.background_highlights.values() {
-            let color = color_fetcher(theme);
-            let start_ix = match ranges.binary_search_by(|probe| {
+        for highlights in self.background_highlights.values() {
+            let start_ix = match highlights.binary_search_by(|probe| {
                 let cmp = probe
+                    .range
                     .end
                     .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
                 if cmp.is_gt() {
@@ -18650,8 +18678,9 @@ impl Editor {
             }) {
                 Ok(i) | Err(i) => i,
             };
-            for range in &ranges[start_ix..] {
-                if range
+            for highlight in &highlights[start_ix..] {
+                if highlight
+                    .range
                     .start
                     .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
                     .is_ge()
@@ -18659,8 +18688,9 @@ impl Editor {
                     break;
                 }
 
-                let start = range.start.to_display_point(display_snapshot);
-                let end = range.end.to_display_point(display_snapshot);
+                let start = highlight.range.start.to_display_point(display_snapshot);
+                let end = highlight.range.end.to_display_point(display_snapshot);
+                let color = (highlight.color_fetcher)(theme);
                 results.push((start..end, color))
             }
         }
@@ -18674,12 +18704,13 @@ impl Editor {
         count: usize,
     ) -> Vec<RangeInclusive<DisplayPoint>> {
         let mut results = Vec::new();
-        let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
+        let Some(highlights) = self.background_highlights.get(&TypeId::of::<T>()) else {
             return vec![];
         };
 
-        let start_ix = match ranges.binary_search_by(|probe| {
+        let start_ix = match highlights.binary_search_by(|probe| {
             let cmp = probe
+                .range
                 .end
                 .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
             if cmp.is_gt() {
@@ -18700,24 +18731,31 @@ impl Editor {
         };
         let mut start_row: Option<Point> = None;
         let mut end_row: Option<Point> = None;
-        if ranges.len() > count {
+        if highlights.len() > count {
             return Vec::new();
         }
-        for range in &ranges[start_ix..] {
-            if range
+        for highlight in &highlights[start_ix..] {
+            if highlight
+                .range
                 .start
                 .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
                 .is_ge()
             {
                 break;
             }
-            let end = range.end.to_point(&display_snapshot.buffer_snapshot);
+            let end = highlight
+                .range
+                .end
+                .to_point(&display_snapshot.buffer_snapshot);
             if let Some(current_row) = &end_row {
                 if end.row == current_row.row {
                     continue;
                 }
             }
-            let start = range.start.to_point(&display_snapshot.buffer_snapshot);
+            let start = highlight
+                .range
+                .start
+                .to_point(&display_snapshot.buffer_snapshot);
             if start_row.is_none() {
                 assert_eq!(end_row, None);
                 start_row = Some(start);

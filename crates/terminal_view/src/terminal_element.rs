@@ -1346,7 +1346,6 @@ fn to_highlighted_range_lines(
     Some((start_y, highlighted_range_lines))
 }
 
-// FIXME
 /// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
 pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme: &Theme) -> Hsla {
     let colors = theme.colors();

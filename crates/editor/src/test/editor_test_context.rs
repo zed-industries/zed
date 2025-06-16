@@ -510,10 +510,9 @@ impl EditorTestContext {
             editor
                 .background_highlights
                 .get(&TypeId::of::<Tag>())
-                .map(|h| h.1.clone())
-                .unwrap_or_default()
-                .iter()
-                .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+                .into_iter()
+                .flat_map(|highlights| highlights.as_slice())
+                .map(|highlight| highlight.range.to_offset(&snapshot.buffer_snapshot))
                 .collect()
         });
         assert_set_eq!(actual_ranges, expected_ranges);
