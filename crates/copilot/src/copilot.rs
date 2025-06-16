@@ -26,6 +26,7 @@ use parking_lot::Mutex;
 use request::StatusNotification;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
+use std::collections::hash_map::Entry;
 use std::{
     any::TypeId,
     env,
@@ -731,42 +732,43 @@ impl Copilot {
                 return;
             }
 
-            registered_buffers
-                .entry(buffer.entity_id())
-                .or_insert_with(|| {
-                    let uri: lsp::Url = uri_for_buffer(buffer, cx);
-                    let language_id = id_for_language(buffer.read(cx).language());
-                    let snapshot = buffer.read(cx).snapshot();
-                    server
-                        .notify::<lsp::notification::DidOpenTextDocument>(
-                            &lsp::DidOpenTextDocumentParams {
-                                text_document: lsp::TextDocumentItem {
-                                    uri: uri.clone(),
-                                    language_id: language_id.clone(),
-                                    version: 0,
-                                    text: snapshot.text(),
-                                },
+            let entry = registered_buffers.entry(buffer.entity_id());
+            if let Entry::Vacant(e) = entry {
+                let Ok(uri) = uri_for_buffer(buffer, cx) else {
+                    return;
+                };
+                let language_id = id_for_language(buffer.read(cx).language());
+                let snapshot = buffer.read(cx).snapshot();
+                server
+                    .notify::<lsp::notification::DidOpenTextDocument>(
+                        &lsp::DidOpenTextDocumentParams {
+                            text_document: lsp::TextDocumentItem {
+                                uri: uri.clone(),
+                                language_id: language_id.clone(),
+                                version: 0,
+                                text: snapshot.text(),
                             },
-                        )
-                        .ok();
+                        },
+                    )
+                    .ok();
 
-                    RegisteredBuffer {
-                        uri,
-                        language_id,
-                        snapshot,
-                        snapshot_version: 0,
-                        pending_buffer_change: Task::ready(Some(())),
-                        _subscriptions: [
-                            cx.subscribe(buffer, |this, buffer, event, cx| {
-                                this.handle_buffer_event(buffer, event, cx).log_err();
-                            }),
-                            cx.observe_release(buffer, move |this, _buffer, _cx| {
-                                this.buffers.remove(&weak_buffer);
-                                this.unregister_buffer(&weak_buffer);
-                            }),
-                        ],
-                    }
+                e.insert(RegisteredBuffer {
+                    uri,
+                    language_id,
+                    snapshot,
+                    snapshot_version: 0,
+                    pending_buffer_change: Task::ready(Some(())),
+                    _subscriptions: [
+                        cx.subscribe(buffer, |this, buffer, event, cx| {
+                            this.handle_buffer_event(buffer, event, cx).log_err();
+                        }),
+                        cx.observe_release(buffer, move |this, _buffer, _cx| {
+                            this.buffers.remove(&weak_buffer);
+                            this.unregister_buffer(&weak_buffer);
+                        }),
+                    ],
                 });
+            }
         }
     }
 
@@ -798,7 +800,9 @@ impl Copilot {
                     language::BufferEvent::FileHandleChanged
                     | language::BufferEvent::LanguageChanged => {
                         let new_language_id = id_for_language(buffer.read(cx).language());
-                        let new_uri = uri_for_buffer(&buffer, cx);
+                        let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
+                            return Ok(());
+                        };
                         if new_uri != registered_buffer.uri
                             || new_language_id != registered_buffer.language_id
                         {
@@ -1068,11 +1072,13 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
+fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
+        lsp::Url::from_file_path(file.abs_path(cx))
     } else {
-        format!("buffer://{}", buffer.entity_id()).parse().unwrap()
+        format!("buffer://{}", buffer.entity_id())
+            .parse()
+            .map_err(|_| ())
     }
 }
 

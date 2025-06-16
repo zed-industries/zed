@@ -93,7 +93,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TcpArguments {
     pub host: Ipv4Addr,
     pub port: u16,
@@ -179,7 +179,7 @@ impl DebugTaskDefinition {
 }
 
 /// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DebugAdapterBinary {
     pub command: Option<String>,
     pub arguments: Vec<String>,

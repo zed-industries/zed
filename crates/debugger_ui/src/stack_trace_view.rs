@@ -16,7 +16,7 @@ use ui::{ActiveTheme as _, Context, ParentElement as _, Styled as _, div};
 use util::ResultExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent},
+    item::{BreadcrumbText, ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -148,7 +148,7 @@ impl StackTraceView {
 
         let stack_frames = self
             .stack_frame_list
-            .read_with(cx, |list, _| list.flatten_entries(false));
+            .read_with(cx, |list, _| list.flatten_entries(false, false));
 
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
@@ -237,7 +237,7 @@ impl StackTraceView {
 
         let stack_frames = self
             .stack_frame_list
-            .read_with(cx, |session, _| session.flatten_entries(false));
+            .read_with(cx, |session, _| session.flatten_entries(false, false));
 
         let active_idx = self
             .selected_stack_frame_id
@@ -386,12 +386,12 @@ impl Item for StackTraceView {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, window, cx)
+        self.editor.save(options, project, window, cx)
     }
 
     fn save_as(

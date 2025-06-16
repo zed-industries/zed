@@ -379,6 +379,7 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
     async fn get_dap_binary(
         &self,
         dap_name: Arc<str>,
