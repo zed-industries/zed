@@ -6,8 +6,11 @@ use std::{
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use dap::adapters::{
-    DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
+use dap::{
+    StartDebuggingRequestArgumentsRequest,
+    adapters::{
+        DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
+    },
 };
 use extension::{Extension, WorktreeDelegate};
 use gpui::AsyncApp;
@@ -95,7 +98,16 @@ impl DebugAdapter for ExtensionDapAdapter {
             .await
     }
 
-    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        Err(anyhow::anyhow!("DAP extensions are not implemented yet"))
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        self.extension.dap_config_to_scenario(zed_scenario).await
+    }
+
+    async fn request_kind(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        self.extension
+            .dap_request_kind(self.debug_adapter_name.clone(), config.clone())
+            .await
     }
 }

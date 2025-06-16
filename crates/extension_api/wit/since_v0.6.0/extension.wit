@@ -161,7 +161,7 @@ world extension {
     export get-dap-binary: func(adapter-name: string, config: debug-task-definition, user-installed-path: option<string>, worktree: borrow<worktree>) -> result<debug-adapter-binary, string>;
     /// Returns the kind of a debug scenario (launch or attach).
     export dap-request-kind: func(adapter-name: string, config: string) -> result<start-debugging-request-arguments-request, string>;
-    export dap-config-to-scenario: func(config: debug-config, worktree: borrow<worktree>) -> result<debug-scenario, string>;
+    export dap-config-to-scenario: func(config: debug-config) -> result<debug-scenario, string>;
     export dap-locator-create-scenario: func(locator-name: string, build-config-template: build-task-template, resolved-label: string, debug-adapter-name: string) -> option<debug-scenario>;
     export run-dap-locator: func(locator-name: string, config: resolved-task) -> result<debug-request, string>;
 }
