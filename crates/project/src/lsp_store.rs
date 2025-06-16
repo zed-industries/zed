@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::{TypedEnvelope, proto};
+use clock::Global;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
@@ -3491,6 +3492,7 @@ struct LspData {
     mtime: MTime,
     buffer_lsp_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspData>>,
     colors_update: HashMap<PathBuf, DocumentColorTask>,
+    last_version_queried: HashMap<PathBuf, Global>,
 }
 
 #[derive(Debug)]
@@ -5979,13 +5981,18 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        ignore_existing_mtime: bool,
+        update_on_edit: bool,
         for_server_id: Option<LanguageServerId>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let buffer_mtime = buffer.read(cx).saved_mtime()?;
         let abs_path = crate::File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
+        let buffer_version = buffer.read(cx).version();
+        let ignore_existing_mtime = update_on_edit
+            && self.lsp_data.as_ref().is_none_or(|lsp_data| {
+                lsp_data.last_version_queried.get(&abs_path) != Some(&buffer_version)
+            });
 
         let mut has_later_versions = false;
         let mut received_colors_data = false;
@@ -6030,6 +6037,7 @@ impl LspStore {
                     mtime: buffer_mtime,
                     buffer_lsp_data: HashMap::default(),
                     colors_update: HashMap::default(),
+                    last_version_queried: HashMap::default(),
                 });
                 outdated_lsp_data = true;
             }
@@ -6057,7 +6065,6 @@ impl LspStore {
             let task_abs_path = abs_path.clone();
             let new_task = cx
                 .spawn(async move |lsp_store, cx| {
-                    // TODO kb multiple tasks can run, if multiple editors react on buffer open. Use Global version to mitigate that?
                     cx.background_executor().timer(Duration::from_millis(50)).await;
                     let fetched_colors = match lsp_store
                         .update(cx, |lsp_store, cx| {
@@ -6098,7 +6105,12 @@ impl LspStore {
                 })
                 .shared();
             let lsp_data = self.lsp_data.as_mut()?;
-            lsp_data.colors_update.insert(abs_path, new_task.clone());
+            lsp_data
+                .colors_update
+                .insert(abs_path.clone(), new_task.clone());
+            lsp_data
+                .last_version_queried
+                .insert(abs_path, buffer_version);
             Some(new_task)
         } else {
             Some(Task::ready(Ok(buffer_lsp_data)).shared())
