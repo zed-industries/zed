@@ -897,20 +897,14 @@ mod tests {
         },
         "empty_server2": {},
         "extension_server2": {
+            "foo": "bar",
             "settings": {
                 "foo": "bar"
-            }
+            },
+            "bar": "foo"
         },
         "custom_server2": {
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server2": {
+            "foo": "bar",
             "command": {
                 "path": "foo",
                 "args": ["bar"],
@@ -918,6 +912,18 @@ mod tests {
                     "FOO": "BAR"
                 }
             },
+            "bar": "foo"
+        },
+        "invalid_server2": {
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo",
             "settings": {
                 "foo": "bar"
             }
@@ -966,22 +972,15 @@ mod tests {
         },
         "extension_server2": {
             "source": "extension",
+            "foo": "bar",
             "settings": {
                 "foo": "bar"
-            }
+            },
+            "bar": "foo"
         },
         "custom_server2": {
             "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
-            }
-        },
-        "invalid_server2": {
-            "source": "custom",
+            "foo": "bar",
             "command": {
                 "path": "foo",
                 "args": ["bar"],
@@ -989,6 +988,19 @@ mod tests {
                     "FOO": "BAR"
                 }
             },
+            "bar": "foo"
+        },
+        "invalid_server2": {
+            "source": "custom",
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo",
             "settings": {
                 "foo": "bar"
             }
