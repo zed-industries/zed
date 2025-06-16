@@ -8944,6 +8944,7 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "log",
  "parking_lot",
  "proto",
  "schemars",
