@@ -20,8 +20,8 @@ pub use wit::{
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
-        DebugAdapterBinary, DebugTaskDefinition, StartDebuggingRequestArguments,
-        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        DebugAdapterBinary, DebugRequest, DebugTaskDefinition, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TaskTemplate, TcpArguments, TcpArgumentsTemplate,
         resolve_tcp_template,
     },
     zed::extension::github::{
@@ -204,8 +204,35 @@ pub trait Extension: Send + Sync {
         Err("`get_dap_binary` not implemented".to_string())
     }
 
-    fn dap_schema(&mut self) -> Result<serde_json::Value, String> {
-        Err("`dap_schema` not implemented".to_string())
+    fn dap_request_kind(
+        &mut self,
+        _adapter_name: String,
+        _config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest, String> {
+        Err("`dap_request_kind` not implemented".to_string())
+    }
+    fn dap_config_to_scenario(
+        &mut self,
+        _adapter_name: DebugConfig,
+        _config: &Worktree,
+    ) -> Result<DebugScenario, String> {
+        Err("`dap_config_to_scenario` not implemented".to_string())
+    }
+    fn dap_locator_create_scenario(
+        &mut self,
+        _locator_name: String,
+        _build_task: TaskTemplate,
+        _resolved_label: String,
+        _debug_adapter_name: String,
+    ) -> Option<DebugScenario> {
+        None
+    }
+    fn run_dap_locator(
+        &mut self,
+        _locator_name: String,
+        _build_task: TaskTemplate,
+    ) -> Result<DebugRequest, String> {
+        Err("`run_dap_locator` not implemented".to_string())
     }
 }
 
@@ -401,8 +428,39 @@ impl wit::Guest for Component {
         extension().get_dap_binary(adapter_name, config, user_installed_path, worktree)
     }
 
-    fn dap_schema() -> Result<String, String> {
-        extension().dap_schema().map(|schema| schema.to_string())
+    fn dap_request_kind(
+        adapter_name: String,
+        config: String,
+    ) -> Result<StartDebuggingRequestArgumentsRequest, String> {
+        extension().dap_request_kind(
+            adapter_name,
+            serde_json::from_str(&config).map_err(|e| format!("Failed to parse config: {e}"))?,
+        )
+    }
+    fn dap_config_to_scenario(
+        config: DebugConfig,
+        worktree: &Worktree,
+    ) -> Result<DebugScenario, String> {
+        extension().dap_config_to_scenario(config, worktree)
+    }
+    fn dap_locator_create_scenario(
+        locator_name: String,
+        build_task: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Option<DebugScenario> {
+        extension().dap_locator_create_scenario(
+            locator_name,
+            build_task,
+            resolved_label,
+            debug_adapter_name,
+        )
+    }
+    fn run_dap_locator(
+        locator_name: String,
+        build_task: TaskTemplate,
+    ) -> Result<DebugRequest, String> {
+        extension().run_dap_locator(locator_name, build_task)
     }
 }
 

@@ -1334,6 +1334,11 @@ impl ExtensionStore {
                         this.proxy
                             .register_debug_adapter(extension.clone(), debug_adapter.clone());
                     }
+
+                    for debug_adapter in &manifest.debug_adapters {
+                        this.proxy
+                            .register_debug_locator(extension.clone(), debug_adapter.clone());
+                    }
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);

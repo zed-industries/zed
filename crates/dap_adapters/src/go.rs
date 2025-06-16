@@ -96,7 +96,7 @@ impl DebugAdapter for GoDebugAdapter {
         Some(SharedString::new_static("Go").into())
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         // Create common properties shared between launch and attach
         let common_properties = json!({
             "debugAdapter": {
