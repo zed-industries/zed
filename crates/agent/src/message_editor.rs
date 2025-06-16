@@ -301,6 +301,7 @@ impl MessageEditor {
         self.set_editor_is_expanded(false, cx);
         self.send_to_model(window, cx);
 
+        cx.emit(MessageEditorEvent::ScrollThreadToBottom);
         cx.notify();
     }
 
@@ -906,7 +907,7 @@ impl MessageEditor {
             )
     }
 
-    fn render_changed_buffers(
+    fn render_edits_bar(
         &self,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         window: &mut Window,
@@ -1510,6 +1511,7 @@ impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 pub enum MessageEditorEvent {
     EstimatedTokenCount,
     Changed,
+    ScrollThreadToBottom,
 }
 
 impl Focusable for MessageEditor {
@@ -1537,7 +1539,7 @@ impl Render for MessageEditor {
         v_flex()
             .size_full()
             .when(changed_buffers.len() > 0, |parent| {
-                parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
+                parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))
             .children({
