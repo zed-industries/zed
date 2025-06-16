@@ -500,6 +500,10 @@ impl X11Client {
             let mut last_key_release = None;
             let mut last_key_press: Option<KeyPressEvent> = None;
 
+            // event handlers for new keyboard / remapping refresh the state without using event
+            // details, this deduplicates them.
+            let mut last_keymap_change_event: Option<Event> = None;
+
             loop {
                 match xcb_connection.poll_for_event() {
                     Ok(Some(event)) => {
@@ -508,9 +512,29 @@ impl X11Client {
                                 windows_to_refresh.insert(expose_event.window);
                             }
                             Event::KeyRelease(_) => {
+                                if let Some(last_keymap_change_event) =
+                                    last_keymap_change_event.take()
+                                {
+                                    if let Some(last_key_release) = last_key_release.take() {
+                                        events.push(last_key_release);
+                                    }
+                                    last_key_press = None;
+                                    events.push(last_keymap_change_event);
+                                }
+
                                 last_key_release = Some(event);
                             }
                             Event::KeyPress(key_press) => {
+                                if let Some(last_keymap_change_event) =
+                                    last_keymap_change_event.take()
+                                {
+                                    if let Some(last_key_release) = last_key_release.take() {
+                                        events.push(last_key_release);
+                                    }
+                                    last_key_press = None;
+                                    events.push(last_keymap_change_event);
+                                }
+
                                 if let Some(last_press) = last_key_press.as_ref() {
                                     if last_press.detail == key_press.detail {
                                         continue;
@@ -531,6 +555,12 @@ impl X11Client {
                                 events.push(Event::KeyPress(key_press));
                                 last_key_press = Some(key_press);
                             }
+                            Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
+                                if let Some(release_event) = last_key_release.take() {
+                                    events.push(release_event);
+                                }
+                                last_keymap_change_event = Some(event);
+                            }
                             _ => {
                                 if let Some(release_event) = last_key_release.take() {
                                     events.push(release_event);
@@ -540,10 +570,6 @@ impl X11Client {
                         }
                     }
                     Ok(None) => {
-                        // Add any remaining stored KeyRelease event
-                        if let Some(release_event) = last_key_release.take() {
-                            events.push(release_event);
-                        }
                         break;
                     }
                     Err(e) => {
@@ -551,6 +577,13 @@ impl X11Client {
                         break;
                     }
                 }
+            }
+
+            if let Some(release_event) = last_key_release.take() {
+                events.push(release_event);
+            }
+            if let Some(keymap_change_event) = last_keymap_change_event.take() {
+                events.push(keymap_change_event);
             }
 
             if events.is_empty() && windows_to_refresh.is_empty() {
