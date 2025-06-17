@@ -526,16 +526,16 @@ impl OpenAiEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        if let Some(usage) = event.usage {
-            return vec![Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            }))];
-        }
-
         let Some(choice) = event.choices.first() else {
+            if let Some(usage) = event.usage {
+                return vec![Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: usage.prompt_tokens,
+                    output_tokens: usage.completion_tokens,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                }))];
+            }
+
             return vec![Err(LanguageModelCompletionError::Other(anyhow!(
                 "Response contained no choices"
             )))];
