@@ -1229,7 +1229,8 @@ where
     let mut modifiers = current_modifiers();
 
     match virtual_key {
-        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+        VK_SHIFT | VK_LSHIFT | VK_RSHIFT | VK_CONTROL | VK_LCONTROL | VK_RCONTROL | VK_MENU
+        | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
             if state
                 .last_reported_modifiers
                 .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
