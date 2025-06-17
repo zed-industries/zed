@@ -40,6 +40,7 @@ use workspace::{ModalView, Workspace, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
+#[allow(unused)]
 enum SaveScenarioState {
     Saving,
     Saved((ProjectPath, SharedString)),

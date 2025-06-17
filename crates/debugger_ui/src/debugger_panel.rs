@@ -22,7 +22,7 @@ use gpui::{
 };
 
 use itertools::Itertools as _;
-use language::{Buffer, Rope};
+use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
 use project::{Fs, ProjectPath, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
