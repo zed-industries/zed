@@ -730,7 +730,7 @@ impl LinuxClient for WaylandClient {
                 let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
+                    .set_icon(&wl_pointer, serial, style.to_icon_names(), scale);
             }
         }
     }
@@ -1530,9 +1530,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
                             let scale = window.primary_output_scale();
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
+                            state.cursor.set_icon(
+                                &wl_pointer,
+                                serial,
+                                style.to_icon_names(),
+                                scale,
+                            );
                         }
                     }
                     drop(state);

@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
@@ -51,7 +51,8 @@ use crate::platform::{
     LinuxCommon, PlatformWindow,
     blade::BladeContext,
     linux::{
-        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+        DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
+        log_cursor_icon_warning, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -211,7 +212,7 @@ pub struct X11ClientState {
     pub(crate) pre_key_char_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
-    pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
+    pub(crate) cursor_cache: HashMap<CursorStyle, Option<xproto::Cursor>>,
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
@@ -1501,22 +1502,8 @@ impl LinuxClient for X11Client {
             return;
         }
 
-        let cursor = match state.cursor_cache.get(&style) {
-            Some(cursor) => *cursor,
-            None => {
-                let Some(cursor) = (match style {
-                    CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
-                    _ => state
-                        .cursor_handle
-                        .load_cursor(&state.xcb_connection, style.to_icon_name())
-                        .log_err(),
-                }) else {
-                    return;
-                };
-
-                state.cursor_cache.insert(style, cursor);
-                cursor
-            }
+        let Some(cursor) = state.get_cursor_icon(style) else {
+            return;
         };
 
         state.cursor_styles.insert(focused_window, style);
@@ -1772,6 +1759,78 @@ impl X11ClientState {
                 }
             })
             .expect("Failed to initialize refresh timer")
+    }
+
+    fn get_cursor_icon(&mut self, style: CursorStyle) -> Option<xproto::Cursor> {
+        if let Some(cursor) = self.cursor_cache.get(&style) {
+            return *cursor;
+        }
+
+        let mut result;
+        match style {
+            CursorStyle::None => match create_invisible_cursor(&self.xcb_connection) {
+                Ok(loaded_cursor) => result = Ok(loaded_cursor),
+                Err(err) => result = Err(err.context("error while creating invisible cursor")),
+            },
+            _ => 'outer: {
+                let mut errors = String::new();
+                let cursor_icon_names = style.to_icon_names();
+                for cursor_icon_name in cursor_icon_names {
+                    match self
+                        .cursor_handle
+                        .load_cursor(&self.xcb_connection, cursor_icon_name)
+                    {
+                        Ok(loaded_cursor) => {
+                            if loaded_cursor != x11rb::NONE {
+                                result = Ok(loaded_cursor);
+                                break 'outer;
+                            }
+                        }
+                        Err(err) => {
+                            errors.push_str(&err.to_string());
+                            errors.push('\n');
+                        }
+                    }
+                }
+                if errors.is_empty() {
+                    result = Err(anyhow!(
+                        "errors while loading cursor icons {:?}:\n{}",
+                        cursor_icon_names,
+                        errors
+                    ));
+                } else {
+                    result = Err(anyhow!("did not find cursor icons {:?}", cursor_icon_names));
+                }
+            }
+        };
+
+        let cursor = match result {
+            Ok(cursor) => Some(cursor),
+            Err(err) => {
+                match self
+                    .cursor_handle
+                    .load_cursor(&self.xcb_connection, DEFAULT_CURSOR_ICON_NAME)
+                {
+                    Ok(default) => {
+                        log_cursor_icon_warning(err.context(format!(
+                            "x11: error loading cursor icon, falling back on default icon '{}'",
+                            DEFAULT_CURSOR_ICON_NAME
+                        )));
+                        Some(default)
+                    }
+                    Err(default_err) => {
+                        log_cursor_icon_warning(err.context(default_err).context(format!(
+                            "x11: error loading default cursor fallback '{}'",
+                            DEFAULT_CURSOR_ICON_NAME
+                        )));
+                        None
+                    }
+                }
+            }
+        };
+
+        self.cursor_cache.insert(style, cursor);
+        cursor
     }
 }
 
