@@ -130,8 +130,7 @@ pub trait ToProto {
 impl FromProto for PathBuf {
     #[cfg(target_os = "windows")]
     fn from_proto(proto: String) -> Self {
-        // proto.split("/").collect()
-        proto.replace('/', "\\").into()
+        proto.split("/").collect()
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -149,11 +148,10 @@ impl FromProto for Arc<Path> {
 impl ToProto for PathBuf {
     #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
-        // self.components()
-        //     .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-        //     .collect::<Vec<_>>()
-        //     .join("/")
-        self.to_string_lossy().replace('\\', "/")
+        self.components()
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("/")
     }
 
     #[cfg(not(target_os = "windows"))]

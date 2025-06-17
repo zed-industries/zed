@@ -654,6 +654,7 @@ pub struct SshRemoteClient {
     client: Arc<ChannelClient>,
     unique_identifier: String,
     connection_options: SshConnectionOptions,
+    path_style: PathStyle,
     state: Arc<Mutex<Option<State>>>,
 }
 
@@ -714,21 +715,24 @@ impl SshRemoteClient {
 
                 let client =
                     cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
-                let this = cx.new(|_| Self {
-                    client: client.clone(),
-                    unique_identifier: unique_identifier.clone(),
-                    connection_options: connection_options.clone(),
-                    state: Arc::new(Mutex::new(Some(State::Connecting))),
-                })?;
 
                 let ssh_connection = cx
                     .update(|cx| {
                         cx.update_default_global(|pool: &mut ConnectionPool, cx| {
-                            pool.connect(connection_options, &delegate, cx)
+                            pool.connect(connection_options.clone(), &delegate, cx)
                         })
                     })?
                     .await
                     .map_err(|e| e.cloned())?;
+
+                let path_style = ssh_connection.path_style();
+                let this = cx.new(|_| Self {
+                    client: client.clone(),
+                    unique_identifier: unique_identifier.clone(),
+                    connection_options,
+                    path_style,
+                    state: Arc::new(Mutex::new(Some(State::Connecting))),
+                })?;
 
                 let io_task = ssh_connection.start_proxy(
                     unique_identifier,
@@ -1170,7 +1174,7 @@ impl SshRemoteClient {
     pub fn upload_directory(
         &self,
         src_path: PathBuf,
-        dest_path: PathBuf,
+        dest_path: TargetPathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
         let state = self.state.lock();
@@ -1202,6 +1206,10 @@ impl SshRemoteClient {
 
     pub fn is_disconnected(&self) -> bool {
         self.connection_state() == ConnectionState::Disconnected
+    }
+
+    pub fn path_style(&self) -> PathStyle {
+        self.path_style
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1382,14 +1390,19 @@ trait RemoteConnection: Send + Sync {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>>;
-    fn upload_directory(&self, src_path: PathBuf, dest_path: PathBuf, cx: &App)
-    -> Task<Result<()>>;
+    fn upload_directory(
+        &self,
+        src_path: PathBuf,
+        dest_path: TargetPathBuf,
+        cx: &App,
+    ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     /// On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
     /// On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     fn ssh_args(&self) -> SshArgs;
     fn connection_options(&self) -> SshConnectionOptions;
+    fn path_style(&self) -> PathStyle;
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
@@ -1430,9 +1443,10 @@ impl RemoteConnection for SshRemoteConnection {
     fn upload_directory(
         &self,
         src_path: PathBuf,
-        dest_path: PathBuf,
+        dest_path: TargetPathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
+        println!("Uploading directory {src_path:?} to {dest_path:?}");
         let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
@@ -1450,7 +1464,7 @@ impl RemoteConnection for SshRemoteConnection {
             .arg(format!(
                 "{}:{}",
                 self.socket.connection_options.scp_url(),
-                dest_path.display()
+                dest_path.to_string()
             ))
             .output();
 
@@ -1461,7 +1475,7 @@ impl RemoteConnection for SshRemoteConnection {
                 output.status.success(),
                 "failed to upload directory {} -> {}: {}",
                 src_path.display(),
-                dest_path.display(),
+                dest_path.to_string(),
                 String::from_utf8_lossy(&output.stderr)
             );
 
@@ -1529,6 +1543,10 @@ impl RemoteConnection for SshRemoteConnection {
             connection_activity_tx,
             &cx,
         )
+    }
+
+    fn path_style(&self) -> PathStyle {
+        self.ssh_path_style
     }
 }
 
@@ -2557,6 +2575,8 @@ mod fake {
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
+    use crate::path_buf::{PathStyle, TargetPathBuf};
+
     use super::{
         ChannelClient, RemoteConnection, SshArgs, SshClientDelegate, SshConnectionOptions,
         SshPlatform,
@@ -2605,7 +2625,7 @@ mod fake {
         fn upload_directory(
             &self,
             _src_path: PathBuf,
-            _dest_path: PathBuf,
+            _dest_path: TargetPathBuf,
             _cx: &App,
         ) -> Task<Result<()>> {
             unreachable!()
@@ -2661,6 +2681,10 @@ mod fake {
                     }
                 }
             })
+        }
+
+        fn path_style(&self) -> PathStyle {
+            PathStyle::Posix
         }
     }
 

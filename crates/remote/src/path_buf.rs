@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use rpc::proto::ToProto;
+
 #[derive(Debug, Clone, Copy)]
 pub enum PathStyle {
     Posix,
@@ -35,5 +37,14 @@ impl TargetPathBuf {
         self.inner
             .parent()
             .map(|p| TargetPathBuf::new(p.to_path_buf(), self.style))
+    }
+}
+
+impl ToProto for TargetPathBuf {
+    fn to_proto(self) -> String {
+        match self.style {
+            PathStyle::Posix => self.to_string(),
+            PathStyle::Windows => self.inner.to_proto(),
+        }
     }
 }

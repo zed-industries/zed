@@ -9,7 +9,11 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
-use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
+use client::{
+    Client, ExtensionMetadata, GetExtensionsResponse,
+    proto::{self, ToProto},
+    telemetry::Telemetry,
+};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
@@ -41,7 +45,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::SshRemoteClient;
+use remote::{SshRemoteClient, path_buf::TargetPathBuf};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -1666,6 +1670,7 @@ impl ExtensionStore {
                     .request(proto::SyncExtensions { extensions })
             })?
             .await?;
+        let path_style = client.update(cx, |client, _| client.path_style())?;
 
         for missing_extension in response.missing_extensions.into_iter() {
             let tmp_dir = tempfile::tempdir()?;
@@ -1678,7 +1683,10 @@ impl ExtensionStore {
                 )
             })?
             .await?;
-            let dest_dir = PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id);
+            let dest_dir = TargetPathBuf::new(
+                PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id),
+                path_style,
+            );
             log::info!("Uploading extension {}", missing_extension.clone().id);
 
             client
@@ -1695,7 +1703,7 @@ impl ExtensionStore {
             client
                 .update(cx, |client, _cx| {
                     client.proto_client().request(proto::InstallExtension {
-                        tmp_dir: dest_dir.to_string_lossy().to_string(),
+                        tmp_dir: dest_dir.to_proto(),
                         extension: Some(missing_extension),
                     })
                 })?

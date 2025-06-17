@@ -1,7 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use client::{TypedEnvelope, proto};
+use client::{
+    TypedEnvelope,
+    proto::{self, FromProto},
+};
 use collections::{HashMap, HashSet};
 use extension::{
     Extension, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
@@ -236,6 +239,7 @@ impl HeadlessExtensionStore {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
 
+        log::error!("==> install extension: {tmp_path:?}<->{path:?}");
         cx.spawn(async move |this, cx| {
             if fs.is_dir(&path).await {
                 this.update(cx, |this, cx| {
@@ -305,7 +309,7 @@ impl HeadlessExtensionStore {
                         version: extension.version,
                         dev: extension.dev,
                     },
-                    PathBuf::from(envelope.payload.tmp_dir),
+                    PathBuf::from_proto(envelope.payload.tmp_dir),
                     cx,
                 )
             })?
