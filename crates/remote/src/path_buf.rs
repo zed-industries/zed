@@ -28,7 +28,7 @@ impl TargetPathBuf {
 
     pub fn to_string(&self) -> String {
         match self.style {
-            PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/").into(),
+            PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/"),
             PathStyle::Windows => self.inner.to_string_lossy().into(),
         }
     }
