@@ -98,11 +98,11 @@ zed::register_extension!(MyExtension);
 2. Clone the repo to your local machine
 
 ```sh
-git clone https://github.com/zed-industries/extensions
+# Substitute the url of your fork here:
+# git clone https://github.com/zed-industries/extensions
 cd extensions
 git submodule init
 git submodule update
-git submodule foreach --recursive git reset --hard
 ```
 
 ## Publishing your extension
