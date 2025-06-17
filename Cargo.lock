@@ -15479,6 +15479,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "util",
  "workspace-hack",
 ]
 
