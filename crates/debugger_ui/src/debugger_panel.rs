@@ -858,16 +858,21 @@ impl DebugPanel {
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
-                                                session
-                                                    .update(cx, |session, cx| session.threads(cx))
+                                                session.read(cx).is_running().then(|| {
+                                                    session.update(cx, |session, cx| {
+                                                        session.threads(cx)
+                                                    })
+                                                })
                                             });
 
-                                        self.render_thread_dropdown(
-                                            &running_state,
-                                            threads,
-                                            window,
-                                            cx,
-                                        )
+                                        threads.and_then(|threads| {
+                                            self.render_thread_dropdown(
+                                                &running_state,
+                                                threads,
+                                                window,
+                                                cx,
+                                            )
+                                        })
                                     })
                                     .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
                                 },
