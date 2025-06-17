@@ -358,7 +358,7 @@ impl Render for SyntaxTreeView {
                                                 editor.clear_background_highlights::<Self>( cx);
                                                 editor.highlight_background::<Self>(
                                                     &[range],
-                                                    |theme| theme.colors().editor_document_highlight_write_background,
+                                                    |theme| theme.editor_document_highlight_write_background,
                                                      cx,
                                                 );
                                             });

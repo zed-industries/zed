@@ -13697,7 +13697,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         let mut highlighted_ranges = editor.background_highlights_in_range(
             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
             &snapshot,
-            cx.theme(),
+            cx.theme().colors(),
         );
         // Enforce a consistent ordering based on color without relying on the ordering of the
         // highlight's `TypeId` which is non-executor.
@@ -13727,7 +13727,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             editor.background_highlights_in_range(
                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                 &snapshot,
-                cx.theme(),
+                cx.theme().colors(),
             ),
             &[(
                 DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
@@ -19392,10 +19392,8 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
         editor.highlight_text::<TestHighlight>(
-            vec![(
-                highlight_range.clone(),
-                HighlightStyle::color(Hsla::green()),
-            )],
+            vec![highlight_range.clone()],
+            HighlightStyle::color(Hsla::green()),
             cx,
         );
         editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));
@@ -20336,7 +20334,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |c| c.colors().editor_document_highlight_read_background,
+            |c| c.editor_document_highlight_read_background,
             cx,
         );
     });
@@ -20414,7 +20412,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |c| c.colors().editor_document_highlight_read_background,
+            |c| c.editor_document_highlight_read_background,
             cx,
         );
     });

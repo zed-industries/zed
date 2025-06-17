@@ -1122,7 +1122,7 @@ mod tests {
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{any::TypeId, cmp::Reverse, env};
+    use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
@@ -1630,16 +1630,16 @@ mod tests {
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
                 TypeId::of::<()>(),
-                text_highlight_ranges
-                    .into_iter()
-                    .map(|range| {
-                        (
+                Arc::new((
+                    HighlightStyle::default(),
+                    text_highlight_ranges
+                        .into_iter()
+                        .map(|range| {
                             buffer_snapshot.anchor_before(range.start)
-                                ..buffer_snapshot.anchor_after(range.end),
-                            HighlightStyle::default(),
-                        )
-                    })
-                    .collect(),
+                                ..buffer_snapshot.anchor_after(range.end)
+                        })
+                        .collect(),
+                )),
             );
 
             let mut inlay_highlights = InlayHighlights::default();
