@@ -2548,7 +2548,7 @@ impl From<PathBuf> for UnixStylePathBuf {
 
 impl From<UnixStylePathBuf> for PathBuf {
     fn from(path: UnixStylePathBuf) -> Self {
-        PathBuf::from_proto(path.0.to_string_lossy().into())
+        path.0.to_string_lossy().replace('\\', "/").into()
     }
 }
 
