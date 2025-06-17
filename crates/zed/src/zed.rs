@@ -86,7 +86,6 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
-        OpenProjectDebugTasks,
         OpenTasks,
         OpenDebugTasks,
         ResetDatabase,
@@ -1512,7 +1511,7 @@ fn open_project_tasks_file(
 
 fn open_project_debug_tasks_file(
     workspace: &mut Workspace,
-    _: &OpenProjectDebugTasks,
+    _: &zed_actions::OpenProjectDebugTasks,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
