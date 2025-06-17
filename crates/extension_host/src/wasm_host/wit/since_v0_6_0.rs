@@ -18,7 +18,7 @@ use extension::{
 };
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
-use gpui::SharedString;
+use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
@@ -59,9 +59,9 @@ pub type ExtensionProject = Arc<dyn ProjectDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
-pub fn linker() -> &'static Linker<WasmState> {
+pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
 }
 
 impl From<Range> for std::ops::Range<usize> {
