@@ -52,7 +52,7 @@ use crate::platform::{
     blade::BladeContext,
     linux::{
         DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
-        open_uri_internal,
+        log_cursor_icon_warning, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -1812,23 +1812,17 @@ impl X11ClientState {
                     .load_cursor(&self.xcb_connection, DEFAULT_CURSOR_ICON_NAME)
                 {
                     Ok(default) => {
-                        log::warn!(
-                            "{}",
-                            err.context(format!(
-                                "x11: error loading cursor icon, falling back on default icon '{}'",
-                                DEFAULT_CURSOR_ICON_NAME
-                            ))
-                        );
+                        log_cursor_icon_warning(err.context(format!(
+                            "x11: error loading cursor icon, falling back on default icon '{}'",
+                            DEFAULT_CURSOR_ICON_NAME
+                        )));
                         Some(default)
                     }
                     Err(default_err) => {
-                        log::warn!(
-                            "{}",
-                            err.context(default_err).context(format!(
-                                "x11: error loading default cursor fallback '{}'",
-                                DEFAULT_CURSOR_ICON_NAME
-                            ))
-                        );
+                        log_cursor_icon_warning(err.context(default_err).context(format!(
+                            "x11: error loading default cursor fallback '{}'",
+                            DEFAULT_CURSOR_ICON_NAME
+                        )));
                         None
                     }
                 }
