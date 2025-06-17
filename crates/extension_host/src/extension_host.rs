@@ -132,6 +132,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionUninstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
 }
 
@@ -842,6 +843,8 @@ impl ExtensionStore {
         let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
+        let extension_manifest = self.extension_manifest_for_id(&extension_id).cloned();
+
         match self.outstanding_operations.entry(extension_id.clone()) {
             btree_map::Entry::Occupied(_) => return,
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
@@ -877,6 +880,17 @@ impl ExtensionStore {
                 },
             )
             .await?;
+
+            this.update(cx, |_, cx| {
+                cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = extension_manifest {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
 
             anyhow::Ok(())
         })
@@ -1135,6 +1149,12 @@ impl ExtensionStore {
             for (server_id, _) in extension.manifest.context_servers.iter() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
+            for (adapter, _) in extension.manifest.debug_adapters.iter() {
+                self.proxy.unregister_debug_adapter(adapter.clone());
+            }
+            for (locator, _) in extension.manifest.debug_locators.iter() {
+                self.proxy.unregister_debug_locator(locator.clone());
+            }
         }
 
         self.wasm_extensions
@@ -1330,9 +1350,26 @@ impl ExtensionStore {
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
 
-                    for debug_adapter in &manifest.debug_adapters {
+                    for (debug_adapter, meta) in &manifest.debug_adapters {
+                        let mut path = root_dir.clone();
+                        path.push(Path::new(manifest.id.as_ref()));
+                        if let Some(schema_path) = &meta.schema_path {
+                            path.push(schema_path);
+                        } else {
+                            path.push("debug_adapter_schemas");
+                            path.push(Path::new(debug_adapter.as_ref()).with_extension("json"));
+                        }
+
+                        this.proxy.register_debug_adapter(
+                            extension.clone(),
+                            debug_adapter.clone(),
+                            &path,
+                        );
+                    }
+
+                    for debug_adapter in manifest.debug_locators.keys() {
                         this.proxy
-                            .register_debug_adapter(extension.clone(), debug_adapter.clone());
+                            .register_debug_locator(extension.clone(), debug_adapter.clone());
                     }
                 }
 

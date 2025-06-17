@@ -20,8 +20,9 @@ use editor::{
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
-    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
+    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::status::StageStatus;
 use git::{Amend, ToggleStaged, repository::RepoPath, status::FileStatus};
@@ -358,6 +359,8 @@ pub struct GitPanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
     show_placeholders: bool,
+    local_committer: Option<GitCommitter>,
+    local_committer_task: Option<Task<()>>,
     _settings_subscription: Subscription,
 }
 
@@ -374,7 +377,10 @@ pub(crate) fn commit_message_editor(
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
-        EditorMode::AutoHeight { max_lines },
+        EditorMode::AutoHeight {
+            min_lines: 1,
+            max_lines,
+        },
         buffer,
         None,
         window,
@@ -520,6 +526,8 @@ impl GitPanel {
                 update_visible_entries_task: Task::ready(()),
                 width: None,
                 show_placeholders: false,
+                local_committer: None,
+                local_committer_task: None,
                 context_menu: None,
                 workspace: workspace.weak_handle(),
                 modal_open: false,
@@ -2250,6 +2258,19 @@ impl GitPanel {
         }
     }
 
+    pub fn load_local_committer(&mut self, cx: &Context<Self>) {
+        if self.local_committer_task.is_none() {
+            self.local_committer_task = Some(cx.spawn(async move |this, cx| {
+                let committer = get_git_committer(cx).await;
+                this.update(cx, |this, cx| {
+                    this.local_committer = Some(committer);
+                    cx.notify()
+                })
+                .ok();
+            }));
+        }
+    }
+
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
@@ -2272,32 +2293,36 @@ impl GitPanel {
             let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
                 continue;
             };
-            if participant.can_write() && participant.user.email.is_some() {
-                let email = participant.user.email.clone().unwrap();
-
-                new_co_authors.push((
-                    participant
-                        .user
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| participant.user.github_login.clone()),
-                    email,
-                ))
+            if !participant.can_write() {
+                continue;
+            }
+            if let Some(email) = &collaborator.committer_email {
+                let name = collaborator
+                    .committer_name
+                    .clone()
+                    .or_else(|| participant.user.name.clone())
+                    .unwrap_or_else(|| participant.user.github_login.clone());
+                new_co_authors.push((name.clone(), email.clone()))
             }
         }
         if !project.is_local() && !project.is_read_only(cx) {
-            if let Some(user) = room.local_participant_user(cx) {
-                if let Some(email) = user.email.clone() {
-                    new_co_authors.push((
-                        user.name
-                            .clone()
-                            .unwrap_or_else(|| user.github_login.clone()),
-                        email.clone(),
-                    ))
-                }
+            if let Some(local_committer) = self.local_committer(room, cx) {
+                new_co_authors.push(local_committer);
             }
         }
         new_co_authors
+    }
+
+    fn local_committer(&self, room: &call::Room, cx: &App) -> Option<(String, String)> {
+        let user = room.local_participant_user(cx)?;
+        let committer = self.local_committer.as_ref()?;
+        let email = committer.email.clone()?;
+        let name = committer
+            .name
+            .clone()
+            .or_else(|| user.name.clone())
+            .unwrap_or_else(|| user.github_login.clone());
+        Some((name, email))
     }
 
     fn toggle_fill_co_authors(
@@ -4244,8 +4269,9 @@ impl Render for GitPanel {
         let has_write_access = self.has_write_access(cx);
 
         let has_co_authors = room.map_or(false, |room| {
-            room.read(cx)
-                .remote_participants()
+            self.load_local_committer(cx);
+            let room = room.read(cx);
+            room.remote_participants()
                 .values()
                 .any(|remote_participant| remote_participant.can_write())
         });

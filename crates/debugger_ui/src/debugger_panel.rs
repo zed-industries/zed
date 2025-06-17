@@ -2,10 +2,10 @@ use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
-    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewProcessModal,
-    NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop, ToggleExpandItem,
-    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
+    ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
+    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
+    NewProcessModal, NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop,
+    ToggleExpandItem, ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
 use anyhow::Result;
 use dap::adapters::DebugAdapterName;
@@ -16,9 +16,9 @@ use dap::{
 };
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
-    actions, anchored, deferred,
+    Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
+    WeakEntity, actions, anchored, deferred,
 };
 
 use language::Buffer;
@@ -30,6 +30,7 @@ use settings::Settings;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
+use util::maybe;
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -175,10 +176,24 @@ impl DebugPanel {
             dap_store.new_session(
                 scenario.label.clone(),
                 DebugAdapterName(scenario.adapter.clone()),
+                task_context.clone(),
                 None,
                 cx,
             )
         });
+        let worktree = worktree_id.or_else(|| {
+            active_buffer
+                .as_ref()
+                .and_then(|buffer| buffer.read(cx).file())
+                .map(|f| f.worktree_id(cx))
+        });
+        let Some(worktree) = worktree
+            .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
+            .or_else(|| self.project.read(cx).visible_worktrees(cx).next())
+        else {
+            log::debug!("Could not find a worktree to spawn the debug session in");
+            return;
+        };
         self.debug_scenario_scheduled_last = true;
         if let Some(inventory) = self
             .project
@@ -213,7 +228,7 @@ impl DebugPanel {
                     .await?;
                 dap_store
                     .update(cx, |dap_store, cx| {
-                        dap_store.boot_session(session.clone(), definition, cx)
+                        dap_store.boot_session(session.clone(), definition, worktree, cx)
                     })?
                     .await
             }
@@ -322,22 +337,41 @@ impl DebugPanel {
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let label = curr_session.read(cx).label().clone();
         let adapter = curr_session.read(cx).adapter().clone();
-        let binary = curr_session.read(cx).binary().clone();
+        let binary = curr_session.read(cx).binary().cloned().unwrap();
         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+        let task_context = curr_session.read(cx).task_context().clone();
 
         cx.spawn_in(window, async move |this, cx| {
             task.await;
 
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(label, adapter, None, cx);
+                let session = dap_store.new_session(label, adapter, task_context, None, cx);
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
             })?;
-            Self::register_session(this.clone(), session, true, cx).await?;
-            task.await
+            Self::register_session(this.clone(), session.clone(), true, cx).await?;
+
+            if let Err(error) = task.await {
+                session
+                    .update(cx, |session, cx| {
+                        session
+                            .console_output(cx)
+                            .unbounded_send(format!(
+                                "Session failed to restart with error: {}",
+                                error
+                            ))
+                            .ok();
+                        session.shutdown(cx)
+                    })?
+                    .await;
+
+                return Err(error);
+            };
+
+            Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -357,19 +391,32 @@ impl DebugPanel {
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let label = self.label_for_child_session(&parent_session, request, cx);
         let adapter = parent_session.read(cx).adapter().clone();
-        let mut binary = parent_session.read(cx).binary().clone();
+        let Some(mut binary) = parent_session.read(cx).binary().cloned() else {
+            log::error!("Attempted to start a child-session without a binary");
+            return;
+        };
+        let task_context = parent_session.read(cx).task_context().clone();
         binary.request_args = request.clone();
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
-                let session =
-                    dap_store.new_session(label, adapter, Some(parent_session.clone()), cx);
+                let session = dap_store.new_session(
+                    label,
+                    adapter,
+                    task_context,
+                    Some(parent_session.clone()),
+                    cx,
+                );
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
             })?;
-            Self::register_session(this, session, false, cx).await?;
+            // Focus child sessions if the parent has never emitted a stopped event;
+            // this improves our JavaScript experience, as it always spawns a "main" session that then spawns subsessions.
+            let parent_ever_stopped =
+                parent_session.update(cx, |this, _| this.has_ever_stopped())?;
+            Self::register_session(this, session, !parent_ever_stopped, cx).await?;
             task.await
         })
         .detach_and_log_err(cx);
@@ -483,6 +530,26 @@ impl DebugPanel {
                 cx.notify();
             });
             self.context_menu = Some((context_menu, position, subscription));
+        }
+    }
+
+    fn copy_debug_adapter_arguments(
+        &mut self,
+        _: &CopyDebugAdapterArguments,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let content = maybe!({
+            let mut session = self.active_session()?.read(cx).session(cx);
+            while let Some(parent) = session.read(cx).parent_session().cloned() {
+                session = parent;
+            }
+            let binary = session.read(cx).binary()?;
+            let content = serde_json::to_string_pretty(&binary).ok()?;
+            Some(content)
+        });
+        if let Some(content) = content {
+            cx.write_to_clipboard(ClipboardItem::new_string(content));
         }
     }
 
@@ -791,16 +858,21 @@ impl DebugPanel {
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
-                                                session
-                                                    .update(cx, |session, cx| session.threads(cx))
+                                                session.read(cx).is_running().then(|| {
+                                                    session.update(cx, |session, cx| {
+                                                        session.threads(cx)
+                                                    })
+                                                })
                                             });
 
-                                        self.render_thread_dropdown(
-                                            &running_state,
-                                            threads,
-                                            window,
-                                            cx,
-                                        )
+                                        threads.and_then(|threads| {
+                                            self.render_thread_dropdown(
+                                                &running_state,
+                                                threads,
+                                                window,
+                                                cx,
+                                            )
+                                        })
                                     })
                                     .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
                                 },
@@ -1317,6 +1389,7 @@ impl Render for DebugPanel {
                 });
                 cx.notify();
             }))
+            .on_action(cx.listener(Self::copy_debug_adapter_arguments))
             .when(self.active_session.is_some(), |this| {
                 this.on_mouse_down(
                     MouseButton::Right,
@@ -1362,14 +1435,27 @@ impl Render for DebugPanel {
                                 ),
                             )
                             .child(
-                                h_flex().flex_shrink().child(
-                                    Button::new("spawn-new-session-empty-state", "New Session")
-                                        .size(ButtonSize::Large)
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(crate::Start.boxed_clone(), cx);
-                                        }),
-                                ),
-                            ),
+                                v_flex().gap_4().items_center()
+                                .justify_center()
+                                .child(
+                                    h_flex().flex_shrink().child(
+                                        Button::new("spawn-new-session-empty-state", "New Session")
+                                            .size(ButtonSize::Large)
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(crate::Start.boxed_clone(), cx);
+                                            })
+                                    )
+                                )
+                                .child(
+                                    h_flex().flex_shrink().child(
+                                        Button::new("spawn-new-session-install-extensions", "Install Debug Extensions")
+                                            .label_size(LabelSize::Small)
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(zed_actions::Extensions { category_filter: Some(zed_actions::ExtensionCategoryFilter::DebugAdapters)}.boxed_clone(), cx);
+                                            })
+                                    )
+                                )
+                            )
                     )
                 }
             })

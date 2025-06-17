@@ -24,6 +24,7 @@ use gpui::{
     WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
+use language_model::ConfigurationError;
 use language_model::ConfiguredModel;
 use language_model::{LanguageModelRegistry, report_assistant_event};
 use multi_buffer::MultiBufferRow;
@@ -232,10 +233,9 @@ impl InlineAssistant {
             return;
         };
 
-        let is_authenticated = || {
-            LanguageModelRegistry::read_global(cx)
-                .inline_assistant_model()
-                .map_or(false, |model| model.provider.is_authenticated(cx))
+        let configuration_error = || {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.configuration_error(model_registry.inline_assistant_model(), cx)
         };
 
         let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
@@ -283,20 +283,23 @@ impl InlineAssistant {
                 }
             };
 
-        if is_authenticated() {
-            handle_assist(window, cx);
-        } else {
-            cx.spawn_in(window, async move |_workspace, cx| {
-                let Some(task) = cx.update(|_, cx| {
-                    LanguageModelRegistry::read_global(cx)
-                        .inline_assistant_model()
-                        .map_or(None, |model| Some(model.provider.authenticate(cx)))
-                })?
-                else {
+        if let Some(error) = configuration_error() {
+            if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
+                cx.spawn(async move |_, cx| {
+                    cx.update(|cx| provider.authenticate(cx))?.await?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+
+                if configuration_error().is_none() {
+                    handle_assist(window, cx);
+                }
+            } else {
+                cx.spawn_in(window, async move |_, cx| {
                     let answer = cx
                         .prompt(
                             gpui::PromptLevel::Warning,
-                            "No language model provider configured",
+                            &error.to_string(),
                             None,
                             &["Configure", "Cancel"],
                         )
@@ -310,17 +313,12 @@ impl InlineAssistant {
                             .ok();
                         }
                     }
-                    return Ok(());
-                };
-                task.await?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-
-            if is_authenticated() {
-                handle_assist(window, cx);
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
+        } else {
+            handle_assist(window, cx);
         }
     }
 
@@ -766,9 +764,6 @@ impl InlineAssistant {
             }
             PromptEditorEvent::CancelRequested => {
                 self.finish_assist(assist_id, true, window, cx);
-            }
-            PromptEditorEvent::DismissRequested => {
-                self.dismiss_assist(assist_id, window, cx);
             }
             PromptEditorEvent::Resized { .. } => {
                 // This only matters for the terminal inline assistant
@@ -1355,11 +1350,18 @@ impl InlineAssistant {
                 editor.clear_highlights::<InlineAssist>(cx);
             } else {
                 editor.highlight_text::<InlineAssist>(
-                    foreground_ranges,
-                    HighlightStyle {
-                        fade_out: Some(0.6),
-                        ..Default::default()
-                    },
+                    foreground_ranges
+                        .into_iter()
+                        .map(|range| {
+                            (
+                                range,
+                                HighlightStyle {
+                                    fade_out: Some(0.6),
+                                    ..Default::default()
+                                },
+                            )
+                        })
+                        .collect(),
                     cx,
                 );
             }

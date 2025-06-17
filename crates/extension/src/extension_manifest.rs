@@ -88,7 +88,9 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
     #[serde(default)]
-    pub debug_adapters: Vec<Arc<str>>,
+    pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
+    #[serde(default)]
+    pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -208,6 +210,14 @@ pub struct SlashCommandManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct IndexedDocsProviderEntry {}
 
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DebugAdapterManifestEntry {
+    pub schema_path: Option<PathBuf>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DebugLocatorManifestEntry {}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
@@ -276,7 +286,8 @@ fn manifest_from_old_manifest(
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
-        debug_adapters: vec![],
+        debug_adapters: Default::default(),
+        debug_locators: Default::default(),
     }
 }
 
@@ -305,6 +316,7 @@ mod tests {
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),
+            debug_locators: Default::default(),
         }
     }
 

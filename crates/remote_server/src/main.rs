@@ -12,6 +12,9 @@ struct Cli {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+    /// Used for loading the environment from the project.
+    #[arg(long, hide = true)]
+    printenv: bool,
 }
 
 #[derive(Subcommand)]
@@ -52,6 +55,11 @@ fn main() {
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
+        return;
+    }
+
+    if cli.printenv {
+        util::shell_env::print_env();
         return;
     }
 

@@ -3,6 +3,7 @@ pub mod wit;
 use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
@@ -32,6 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -377,6 +379,7 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
     async fn get_dap_binary(
         &self,
         dap_name: Arc<str>,
@@ -398,14 +401,71 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+    async fn dap_request_kind(
+        &self,
+        dap_name: Arc<str>,
+        config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        self.call(|extension, store| {
+            async move {
+                let kind = extension
+                    .call_dap_request_kind(store, dap_name, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                Ok(kind.into())
+            }
+            .boxed()
+        })
+        .await
+    }
 
-    async fn get_dap_schema(&self) -> Result<serde_json::Value> {
+    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
+        self.call(|extension, store| {
+            async move {
+                let kind = extension
+                    .call_dap_config_to_scenario(store, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                Ok(kind)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn dap_locator_create_scenario(
+        &self,
+        locator_name: String,
+        build_config_template: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>> {
         self.call(|extension, store| {
             async move {
                 extension
-                    .call_dap_schema(store)
+                    .call_dap_locator_create_scenario(
+                        store,
+                        locator_name,
+                        build_config_template,
+                        resolved_label,
+                        debug_adapter_name,
+                    )
                     .await
-                    .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
+            }
+            .boxed()
+        })
+        .await
+    }
+    async fn run_dap_locator(
+        &self,
+        locator_name: String,
+        config: SpawnInTerminal,
+    ) -> Result<DebugRequest> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_run_dap_locator(store, locator_name, config)
+                    .await?
                     .map_err(|err| store.data().extension_error(err))
             }
             .boxed()

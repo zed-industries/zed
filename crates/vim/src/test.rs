@@ -864,16 +864,13 @@ async fn test_jk(cx: &mut gpui::TestAppContext) {
 fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let highlights = editor
-            .text_highlights::<editor::PendingInput>(cx)
-            .unwrap()
-            .1;
+        let highlights = editor.text_highlights::<editor::PendingInput>(cx).unwrap();
         let (_, ranges) = marked_text_ranges(expected, false);
 
         assert_eq!(
             highlights
                 .iter()
-                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
+                .map(|(highlight, _)| highlight.to_offset(&snapshot.buffer_snapshot))
                 .collect::<Vec<_>>(),
             ranges
         )
@@ -923,15 +920,12 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.assert_state("ˇjhello", Mode::Insert);
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let highlights = editor
-            .text_highlights::<editor::PendingInput>(cx)
-            .unwrap()
-            .1;
+        let highlights = editor.text_highlights::<editor::PendingInput>(cx).unwrap();
 
         assert_eq!(
             highlights
                 .iter()
-                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
+                .map(|(highlight, _)| highlight.to_offset(&snapshot.buffer_snapshot))
                 .collect::<Vec<_>>(),
             vec![0..1]
         )

@@ -29,6 +29,9 @@ Zed supports a variety of debug adapters for different programming languages out
 
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
 
+> Is your desired debugger not listed? You can install a [Debug Adapter extension](https://zed.dev/extensions?filter=debug-adapters) to add support for your favorite debugger.
+> If that's not enough, you can contribute by creating an extension yourself. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
+
 ## Getting Started
 
 For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
@@ -111,20 +114,6 @@ Given a Zed task, Zed can automatically create a scenario for you. Automatic sce
 Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
 
 ### Example Configurations
-
-#### Go
-
-```json
-[
-  {
-    "label": "Go (Delve)",
-    "adapter": "Delve",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "mode": "debug"
-  }
-]
-```
 
 #### JavaScript
 
@@ -281,7 +270,7 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 #### Go
 
 Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications. Zed will automatically create debug scenarios for `func main` in your main packages, and also
-for any tests, so you can use the Play button in the gutter to debug these without configuration. We do not yet support attaching to an existing running copy of delve.
+for any tests, so you can use the Play button in the gutter to debug these without configuration.
 
 ##### Debug Go Packages
 
@@ -290,11 +279,23 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
 ```json
 [
   {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "mode": "debug"
+  }
+]
+```
+
+```json
+[
+  {
     "label": "Run server",
     "adapter": "Delve",
     "request": "launch",
     "mode": "debug",
-    // For Delve, the program is the package name
+    // For Delve, the program can be a package name
     "program": "./cmd/server"
     // "args": [],
     // "buildFlags": [],
@@ -350,7 +351,28 @@ and the "build" command should build that.
 }
 ```
 
-### Ruby
+##### Attaching to an existing instance of Delve
+
+You might find yourself needing to connect to an existing instance of Delve that's not necessarily running on your machine; in such case, you can use `tcp_arguments` to instrument Zed's connection to Delve.
+
+```
+{
+  "adapter": "Delve",
+  "label": "Connect to a running Delve instance",
+  "program": "/Users/zed/Projects/language_repositories/golang/hello/hello",
+  "cwd": "/Users/zed/Projects/language_repositories/golang/hello",
+  "args": [],
+  "env": {},
+  "request": "launch",
+  "mode": "exec",
+  "stopOnEntry": false,
+  "tcp_connection": { "host": "123.456.789.012", "port": 53412 }
+}
+```
+
+In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that _there will be no terminal_ in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
+
+#### Ruby
 
 To run a ruby task in the debugger, you will need to configure it in the `.zed/debug.json` file in your project. We don't yet have automatic detection of ruby tasks, nor do we support connecting to an existing process.
 

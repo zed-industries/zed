@@ -33,6 +33,7 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
+shlex.workspace = true
 smol.workspace = true
 take-until.workspace = true
 tempfile.workspace = true
@@ -44,6 +45,7 @@ workspace-hack.workspace = true
 [target.'cfg(unix)'.dependencies]
 command-fds = "0.3.1"
 libc.workspace = true
+nix = { workspace = true, features = ["user"] }
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"

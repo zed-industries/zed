@@ -816,10 +816,13 @@ impl RunningState {
             Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
-            let request_type = dap_registry
+            let request_type = match dap_registry
                 .adapter(&adapter)
-                .with_context(|| format!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.request_kind(&config));
+                .with_context(|| format!("{}: is not a valid adapter name", &adapter)) {
+                    Ok(adapter) => adapter.request_kind(&config).await,
+                    Err(e) => Err(e)
+                };
+
 
             let config_is_valid = request_type.is_ok();
 
@@ -847,15 +850,24 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
+                let Some(task) = task_template.resolve_task_and_check_cwd("debug-build-task", &task_context, cx.background_executor().clone()) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
+                };
+                let task = match task.await {
+                    Ok(task) => task,
+                    Err(e) => {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.show_error(&e, cx);
+                        }).ok();
+                        return Err(e)
+                    }
                 };
 
                 let locator_name = if let Some(locator_name) = locator_name {
                     debug_assert!(!config_is_valid);
                     Some(locator_name)
                 } else if !config_is_valid {
-                    dap_store
+                    let task = dap_store
                         .update(cx, |this, cx| {
                             this.debug_scenario_for_build_task(
                                 task.original_task().clone(),
@@ -863,17 +875,21 @@ impl RunningState {
                                 task.display_label().to_owned().into(),
                                 cx,
                             )
-                            .and_then(|scenario| {
-                                match scenario.build {
-                                    Some(BuildTaskDefinition::Template {
-                                        locator_name, ..
-                                    }) => locator_name,
-                                    _ => None,
-                                }
-                            })
+
+                        });
+                    if let Ok(t) = task {
+                        t.await.and_then(|scenario| {
+                            match scenario.build {
+                                Some(BuildTaskDefinition::Template {
+                                    locator_name, ..
+                                }) => locator_name,
+                                _ => None,
+                            }
                         })
-                        .ok()
-                        .flatten()
+                    } else {
+                        None
+                    }
+
                 } else {
                     None
                 };
@@ -954,8 +970,8 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                    .map(|adapter| adapter.config_from_zed_format(zed_config))??;
+                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
+.await?;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
@@ -993,7 +1009,7 @@ impl RunningState {
         let cwd = Some(&request.cwd)
             .filter(|cwd| cwd.len() > 0)
             .map(PathBuf::from)
-            .or_else(|| session.binary().cwd.clone());
+            .or_else(|| session.binary().unwrap().cwd.clone());
 
         let mut args = request.args.clone();
 
@@ -1008,7 +1024,8 @@ impl RunningState {
             None
         };
 
-        let mut envs: HashMap<String, String> = Default::default();
+        let mut envs: HashMap<String, String> =
+            self.session.read(cx).task_context().project_env.clone();
         if let Some(Value::Object(env)) = &request.env {
             for (key, value) in env {
                 let value_str = match (key.as_str(), value) {

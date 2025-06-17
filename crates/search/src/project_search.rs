@@ -41,7 +41,7 @@ use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
 };
 
@@ -530,13 +530,13 @@ impl Item for ProjectSearchView {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(format, project, window, cx))
+            .update(cx, |editor, cx| editor.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -1086,9 +1086,19 @@ impl ProjectSearchView {
                 let result = result_channel.await?;
                 let should_save = result == 0;
                 if should_save {
-                    this.update_in(cx, |this, window, cx| this.save(true, project, window, cx))?
-                        .await
-                        .log_err();
+                    this.update_in(cx, |this, window, cx| {
+                        this.save(
+                            SaveOptions {
+                                format: true,
+                                autosave: false,
+                            },
+                            project,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .log_err();
                 }
                 let should_search = result != 2;
                 should_search
@@ -1367,7 +1377,7 @@ impl ProjectSearchView {
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |theme| theme.search_match_background,
+                    |theme| theme.colors().search_match_background,
                     cx,
                 );
             });

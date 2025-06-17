@@ -265,7 +265,7 @@ impl Inventory {
         current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         add_current_language_tasks: bool,
         cx: &mut App,
-    ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
+    ) -> Task<(Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>)> {
         let mut scenarios = Vec::new();
 
         if let Some(worktree_id) = task_contexts
@@ -279,9 +279,13 @@ impl Inventory {
         }
         scenarios.extend(self.global_debug_scenarios_from_settings());
 
-        if let Some(location) = task_contexts.location() {
-            let file = location.buffer.read(cx).file();
-            let language = location.buffer.read(cx).language();
+        let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
+
+        let adapter = task_contexts.location().and_then(|location| {
+            let (file, language) = {
+                let buffer = location.buffer.read(cx);
+                (buffer.file(), buffer.language())
+            };
             let language_name = language.as_ref().map(|l| l.name());
             let adapter = language_settings(language_name, file, cx)
                 .debuggers
@@ -290,7 +294,10 @@ impl Inventory {
                 .or_else(|| {
                     language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
-            if let Some(adapter) = adapter {
+            adapter.map(|adapter| (adapter, DapRegistry::global(cx).locators()))
+        });
+        cx.background_spawn(async move {
+            if let Some((adapter, locators)) = adapter {
                 for (kind, task) in
                     lsp_tasks
                         .into_iter()
@@ -299,28 +306,21 @@ impl Inventory {
                                 || !matches!(kind, TaskSourceKind::Language { .. })
                         }))
                 {
-                    if let Some(scenario) =
-                        DapRegistry::global(cx)
-                            .locators()
-                            .values()
-                            .find_map(|locator| {
-                                locator.create_scenario(
-                                    &task.original_task().clone(),
-                                    &task.display_label(),
-                                    adapter.clone().into(),
-                                )
-                            })
-                    {
-                        scenarios.push((kind, scenario));
+                    let adapter = adapter.clone().into();
+
+                    for locator in locators.values() {
+                        if let Some(scenario) = locator
+                            .create_scenario(&task.original_task(), &task.display_label(), &adapter)
+                            .await
+                        {
+                            scenarios.push((kind, scenario));
+                            break;
+                        }
                     }
                 }
             }
-        }
-
-        (
-            self.last_scheduled_scenarios.iter().cloned().collect(),
-            scenarios,
-        )
+            (last_scheduled_scenarios, scenarios)
+        })
     }
 
     pub fn task_template_by_label(
@@ -412,8 +412,7 @@ impl Inventory {
         let fs = self.fs.clone();
         let worktree = task_contexts.worktree();
         let location = task_contexts.location();
-        let language = location
-            .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+        let language = location.and_then(|location| location.buffer.read(cx).language());
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
@@ -720,20 +719,37 @@ impl Inventory {
             }
         };
 
-        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            serde_json::from_value::<DebugScenario>(raw_template).log_err()
-        });
+        let new_templates = raw_tasks
+            .into_iter()
+            .filter_map(|raw_template| {
+                serde_json::from_value::<DebugScenario>(raw_template).log_err()
+            })
+            .collect::<Vec<_>>();
 
         let parsed_scenarios = &mut self.scenarios_from_settings;
+        let mut new_definitions: HashMap<_, _> = new_templates
+            .iter()
+            .map(|template| (template.label.clone(), template.clone()))
+            .collect();
+        let previously_existing_scenarios;
+
         match location {
             TaskSettingsLocation::Global(path) => {
+                previously_existing_scenarios = parsed_scenarios
+                    .global_scenarios()
+                    .map(|(_, scenario)| scenario.label.clone())
+                    .collect::<HashSet<_>>();
                 parsed_scenarios
                     .global
                     .entry(path.to_owned())
-                    .insert_entry(new_templates.collect());
+                    .insert_entry(new_templates);
             }
             TaskSettingsLocation::Worktree(location) => {
-                let new_templates = new_templates.collect::<Vec<_>>();
+                previously_existing_scenarios = parsed_scenarios
+                    .worktree_scenarios(location.worktree_id)
+                    .map(|(_, scenario)| scenario.label.clone())
+                    .collect::<HashSet<_>>();
+
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
                         parsed_scenarios.worktree.get_mut(&location.worktree_id)
@@ -749,6 +765,17 @@ impl Inventory {
                 }
             }
         }
+        self.last_scheduled_scenarios.retain_mut(|scenario| {
+            if !previously_existing_scenarios.contains(&scenario.label) {
+                return true;
+            }
+            if let Some(new_definition) = new_definitions.remove(&scenario.label) {
+                *scenario = new_definition;
+                true
+            } else {
+                false
+            }
+        });
 
         Ok(())
     }
@@ -1240,6 +1267,115 @@ mod tests {
                 "3_task".to_string(),
                 "10_hello".to_string(),
             ],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let inventory = cx.update(|cx| Inventory::new(fs, cx));
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_scenarios(
+                    TaskSettingsLocation::Global(Path::new("")),
+                    Some(
+                        r#"
+                        [{
+                            "label": "test scenario",
+                            "adapter": "CodeLLDB",
+                            "request": "launch",
+                            "program": "wowzer",
+                        }]
+                        "#,
+                    ),
+                )
+                .unwrap();
+        });
+
+        let (_, scenario) = inventory
+            .update(cx, |this, cx| {
+                this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+            })
+            .await
+            .1
+            .first()
+            .unwrap()
+            .clone();
+
+        inventory.update(cx, |this, _| {
+            this.scenario_scheduled(scenario.clone());
+        });
+
+        assert_eq!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .first()
+                .unwrap()
+                .clone(),
+            scenario
+        );
+
+        inventory.update(cx, |this, _| {
+            this.update_file_based_scenarios(
+                TaskSettingsLocation::Global(Path::new("")),
+                Some(
+                    r#"
+                        [{
+                            "label": "test scenario",
+                            "adapter": "Delve",
+                            "request": "launch",
+                            "program": "wowzer",
+                        }]
+                        "#,
+                ),
+            )
+            .unwrap();
+        });
+
+        assert_eq!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .first()
+                .unwrap()
+                .adapter,
+            "Delve",
+        );
+
+        inventory.update(cx, |this, _| {
+            this.update_file_based_scenarios(
+                TaskSettingsLocation::Global(Path::new("")),
+                Some(
+                    r#"
+                        [{
+                            "label": "testing scenario",
+                            "adapter": "Delve",
+                            "request": "launch",
+                            "program": "wowzer",
+                        }]
+                        "#,
+                ),
+            )
+            .unwrap();
+        });
+
+        assert_eq!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .first(),
+            None
         );
     }
 

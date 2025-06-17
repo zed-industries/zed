@@ -133,6 +133,12 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
+    pub usage: RequestUsage,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RequestUsage {
+    pub include: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

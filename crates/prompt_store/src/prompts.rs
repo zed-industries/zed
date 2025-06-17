@@ -74,6 +74,7 @@ pub struct UserRulesContext {
 #[derive(Debug, Clone, Serialize)]
 pub struct WorktreeContext {
     pub root_name: String,
+    pub abs_path: Arc<Path>,
     pub rules_file: Option<RulesFileContext>,
 }
 
@@ -455,6 +456,7 @@ mod test {
     fn test_assistant_system_prompt_renders() {
         let worktrees = vec![WorktreeContext {
             root_name: "path".into(),
+            abs_path: Path::new("/path/to/root").into(),
             rules_file: Some(RulesFileContext {
                 path_in_worktree: Path::new(".rules").into(),
                 text: "".into(),
@@ -484,6 +486,7 @@ mod test {
     fn test_assistant_system_prompt_depends_on_enabled_tools() {
         let worktrees = vec![WorktreeContext {
             root_name: "path".into(),
+            abs_path: Path::new("/path/to/root").into(),
             rules_file: None,
         }];
         let default_user_rules = vec![];

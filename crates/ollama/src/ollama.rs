@@ -183,6 +183,8 @@ pub struct ChatResponseDelta {
     pub done_reason: Option<String>,
     #[allow(unused)]
     pub done: bool,
+    pub prompt_eval_count: Option<u32>,
+    pub eval_count: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]

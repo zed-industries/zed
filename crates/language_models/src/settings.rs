@@ -13,7 +13,6 @@ use crate::provider::{
     anthropic::AnthropicSettings,
     bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
-    copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
@@ -65,7 +64,7 @@ pub struct AllLanguageModelSettings {
     pub open_router: OpenRouterSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
-    pub copilot_chat: CopilotChatSettings,
+
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
     pub mistral: MistralSettings,
@@ -83,7 +82,7 @@ pub struct AllLanguageModelSettingsContent {
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
-    pub copilot_chat: Option<CopilotChatSettingsContent>,
+
     pub mistral: Option<MistralSettingsContent>,
 }
 
@@ -272,13 +271,6 @@ pub struct ZedDotDevSettingsContent {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct CopilotChatSettingsContent {
-    pub api_url: Option<String>,
-    pub auth_url: Option<String>,
-    pub models_url: Option<String>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::open_router::AvailableModel>>,
@@ -433,24 +425,6 @@ impl settings::Settings for AllLanguageModelSettings {
             open_router
                 .as_ref()
                 .and_then(|s| s.available_models.clone());
-
-            // Copilot Chat
-            let copilot_chat = value.copilot_chat.clone().unwrap_or_default();
-
-            settings.copilot_chat.api_url = copilot_chat.api_url.map_or_else(
-                || Arc::from("https://api.githubcopilot.com/chat/completions"),
-                Arc::from,
-            );
-
-            settings.copilot_chat.auth_url = copilot_chat.auth_url.map_or_else(
-                || Arc::from("https://api.github.com/copilot_internal/v2/token"),
-                Arc::from,
-            );
-
-            settings.copilot_chat.models_url = copilot_chat.models_url.map_or_else(
-                || Arc::from("https://api.githubcopilot.com/models"),
-                Arc::from,
-            );
         }
 
         Ok(settings)

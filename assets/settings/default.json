@@ -307,6 +307,8 @@
   //    "all"
   // 4. Draw whitespaces at boundaries only:
   //    "boundary"
+  // 5. Draw whitespaces only after non-whitespace characters:
+  //    "trailing"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
