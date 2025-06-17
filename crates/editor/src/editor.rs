@@ -15130,16 +15130,21 @@ impl Editor {
                     })
                     .context("location tasks preparation")?;
 
-                let locations = future::join_all(location_tasks)
+                let locations: Vec<Location> = future::join_all(location_tasks)
                     .await
                     .into_iter()
                     .filter_map(|location| location.transpose())
                     .collect::<Result<_>>()
                     .context("location tasks")?;
 
+                if locations.is_empty() {
+                    return Ok(Navigated::No);
+                }
+
                 let Some(workspace) = workspace else {
                     return Ok(Navigated::No);
                 };
+
                 let opened = workspace
                     .update_in(cx, |workspace, window, cx| {
                         Self::open_locations_in_multibuffer(
@@ -15303,6 +15308,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if locations.is_empty() {
+            log::error!("bug: open_locations_in_multibuffer called with empty list of locations");
+            return;
+        }
+
         // If there are multiple definitions, open them in a multibuffer
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
         let mut locations = locations.into_iter().peekable();
@@ -18289,17 +18299,17 @@ impl Editor {
             return;
         };
 
+        let title = multibuffer.title(cx).to_string();
+
         let locations = self
             .selections
-            .disjoint_anchors()
-            .iter()
-            .map(|range| Location {
+            .all_anchors(cx)
+            .into_iter()
+            .map(|selection| Location {
                 buffer: buffer.clone(),
-                range: range.start.text_anchor..range.end.text_anchor,
+                range: selection.start.text_anchor..selection.end.text_anchor,
             })
             .collect::<Vec<_>>();
-
-        let title = multibuffer.title(cx).to_string();
 
         cx.spawn_in(window, async move |_, cx| {
             workspace.update_in(cx, |workspace, window, cx| {
