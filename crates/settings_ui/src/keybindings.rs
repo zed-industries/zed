@@ -4,15 +4,16 @@ use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, KeyContext,
-    ScrollStrategy, Subscription, actions, div,
+    AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Global, KeyContext, ScrollStrategy, Subscription, WeakEntity, actions, div,
 };
+use util::ResultExt;
 
 use ui::{
     ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render, SharedString, Styled as _,
     Window, prelude::*,
 };
-use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
+use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
 use crate::{
     keybindings::persistence::KEYBINDING_EDITORS,
@@ -27,7 +28,8 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &OpenKeymapEditor, window, cx| {
-            let open_keymap_editor = cx.new(|cx| KeymapEditor::new(window, cx));
+            let open_keymap_editor =
+                cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
             workspace.add_item_to_center(Box::new(open_keymap_editor), window, cx);
         });
     })
@@ -53,6 +55,7 @@ impl KeymapEventChannel {
 }
 
 struct KeymapEditor {
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     keybindings: Vec<ProcessedKeybinding>,
@@ -73,7 +76,7 @@ impl Focusable for KeymapEditor {
 }
 
 impl KeymapEditor {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let _keymap_subscription =
@@ -96,6 +99,7 @@ impl KeymapEditor {
         .detach();
 
         let mut this = Self {
+            workspace,
             keybindings: vec![],
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
@@ -207,7 +211,6 @@ impl KeymapEditor {
     fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("KeymapEditor");
-        dispatch_context.add("BufferSearchBar");
         dispatch_context.add("menu");
 
         // todo! track key context in keybind edit modal
@@ -290,6 +293,34 @@ impl KeymapEditor {
         }
     }
 
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.selected_index else {
+            return;
+        };
+        let keybind = self.keybindings[self.matches[index].candidate_id].clone();
+
+        self.edit_keybinding(keybind, window, cx);
+    }
+
+    fn edit_keybinding(
+        &mut self,
+        keybind: ProcessedKeybinding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // todo! how to map keybinds to how to update/edit them
+        _ = keybind;
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    let modal = KeybindingEditorModal::new(window, cx);
+                    window.focus(&modal.focus_handle(cx));
+                    modal
+                });
+            })
+            .log_err();
+    }
+
     fn focus_search(
         &mut self,
         _: &search::FocusSearch,
@@ -340,6 +371,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::focus_search))
+            .on_action(cx.listener(Self::confirm))
             .size_full()
             .bg(theme.colors().editor_background)
             .id("keymap-editor")
@@ -349,6 +381,11 @@ impl Render for KeymapEditor {
             .pb_4()
             .child(
                 h_flex()
+                    .key_context({
+                        let mut context = KeyContext::new_with_defaults();
+                        context.add("BufferSearchBar");
+                        context
+                    })
                     .w_full()
                     .h_12()
                     .px_4()
@@ -400,6 +437,59 @@ impl Render for KeymapEditor {
     }
 }
 
+struct KeybindingEditorModal {
+    keybind_editor: Entity<Editor>,
+}
+
+impl ModalView for KeybindingEditorModal {}
+
+impl EventEmitter<DismissEvent> for KeybindingEditorModal {}
+
+impl Focusable for KeybindingEditorModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.keybind_editor.focus_handle(cx)
+    }
+}
+
+impl KeybindingEditorModal {
+    pub fn new(window: &mut Window, cx: &mut App) -> Self {
+        let keybind_editor = cx.new(|cx| {
+            let editor = Editor::single_line(window, cx);
+            editor
+        });
+        Self { keybind_editor }
+    }
+}
+
+impl Render for KeybindingEditorModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().colors();
+        return v_flex()
+            .items_center()
+            .text_center()
+            .bg(theme.background)
+            .border_color(theme.border)
+            .border_2()
+            .px_4()
+            .py_2()
+            .w(rems(36.))
+            .child(div().text_lg().font_weight(FontWeight::BOLD).child(
+                // todo! better text
+                "Input desired keybinding, then hit Enter to save",
+            ))
+            .child(
+                h_flex()
+                    .w_full()
+                    .h_12()
+                    .px_4()
+                    .my_4()
+                    .border_2()
+                    .border_color(theme.border)
+                    .child(self.keybind_editor.clone()),
+            );
+    }
+}
+
 impl SerializableItem for KeymapEditor {
     fn serialized_item_kind() -> &'static str {
         "KeymapEditor"
@@ -421,19 +511,19 @@ impl SerializableItem for KeymapEditor {
     }
 
     fn deserialize(
-        _project: gpui::Entity<project::Project>,
-        _workspace: gpui::WeakEntity<Workspace>,
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
         cx: &mut App,
-    ) -> gpui::Task<gpui::Result<gpui::Entity<Self>>> {
+    ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
             if KEYBINDING_EDITORS
                 .get_keybinding_editor(item_id, workspace_id)?
                 .is_some()
             {
-                cx.update(|window, cx| cx.new(|cx| KeymapEditor::new(window, cx)))
+                cx.update(|window, cx| cx.new(|cx| KeymapEditor::new(workspace, window, cx)))
             } else {
                 Err(anyhow!("No keybinding editor to deserialize"))
             }
