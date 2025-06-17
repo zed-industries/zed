@@ -3,6 +3,7 @@ pub mod wit;
 use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
@@ -32,6 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -87,7 +89,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(command.into())
             }
@@ -113,7 +115,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -136,7 +138,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -161,7 +163,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -186,7 +188,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -208,7 +210,7 @@ impl extension::Extension for WasmExtension {
                         completions.into_iter().map(Into::into).collect(),
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(labels
                     .into_iter()
@@ -234,7 +236,7 @@ impl extension::Extension for WasmExtension {
                         symbols.into_iter().map(Into::into).collect(),
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(labels
                     .into_iter()
@@ -256,7 +258,7 @@ impl extension::Extension for WasmExtension {
                 let completions = extension
                     .call_complete_slash_command_argument(store, &command.into(), &arguments)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(completions.into_iter().map(Into::into).collect())
             }
@@ -282,7 +284,7 @@ impl extension::Extension for WasmExtension {
                 let output = extension
                     .call_run_slash_command(store, &command.into(), &arguments, resource)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(output.into())
             }
@@ -302,7 +304,7 @@ impl extension::Extension for WasmExtension {
                 let command = extension
                     .call_context_server_command(store, context_server_id.clone(), project_resource)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(command.into())
             }
             .boxed()
@@ -325,7 +327,7 @@ impl extension::Extension for WasmExtension {
                         project_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?
+                    .map_err(|err| store.data().extension_error(err))?
                 else {
                     return Ok(None);
                 };
@@ -343,7 +345,7 @@ impl extension::Extension for WasmExtension {
                 let packages = extension
                     .call_suggest_docs_packages(store, provider.as_ref())
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(packages)
             }
@@ -369,7 +371,7 @@ impl extension::Extension for WasmExtension {
                         kv_store_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 anyhow::Ok(())
             }
@@ -377,6 +379,7 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
     async fn get_dap_binary(
         &self,
         dap_name: Arc<str>,
@@ -390,7 +393,7 @@ impl extension::Extension for WasmExtension {
                 let dap_binary = extension
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 let dap_binary = dap_binary.try_into()?;
                 Ok(dap_binary)
             }
@@ -398,15 +401,72 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+    async fn dap_request_kind(
+        &self,
+        dap_name: Arc<str>,
+        config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        self.call(|extension, store| {
+            async move {
+                let kind = extension
+                    .call_dap_request_kind(store, dap_name, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                Ok(kind.into())
+            }
+            .boxed()
+        })
+        .await
+    }
 
-    async fn get_dap_schema(&self) -> Result<serde_json::Value> {
+    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
+        self.call(|extension, store| {
+            async move {
+                let kind = extension
+                    .call_dap_config_to_scenario(store, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                Ok(kind)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn dap_locator_create_scenario(
+        &self,
+        locator_name: String,
+        build_config_template: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>> {
         self.call(|extension, store| {
             async move {
                 extension
-                    .call_dap_schema(store)
+                    .call_dap_locator_create_scenario(
+                        store,
+                        locator_name,
+                        build_config_template,
+                        resolved_label,
+                        debug_adapter_name,
+                    )
                     .await
-                    .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
-                    .map_err(|err| anyhow!(err.to_string()))
+            }
+            .boxed()
+        })
+        .await
+    }
+    async fn run_dap_locator(
+        &self,
+        locator_name: String,
+        config: SpawnInTerminal,
+    ) -> Result<DebugRequest> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_run_dap_locator(store, locator_name, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))
             }
             .boxed()
         })
@@ -680,6 +740,15 @@ impl WasmState {
     fn work_dir(&self) -> PathBuf {
         self.host.work_dir.join(self.manifest.id.as_ref())
     }
+
+    fn extension_error(&self, message: String) -> anyhow::Error {
+        anyhow!(
+            "from extension \"{}\" version {}: {}",
+            self.manifest.name,
+            self.manifest.version,
+            message
+        )
+    }
 }
 
 impl wasi::WasiView for WasmState {
@@ -715,7 +784,7 @@ impl IncrementalCompilationCache {
 }
 
 impl CacheStore for IncrementalCompilationCache {
-    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+    fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>> {
         self.cache.get(key).map(|v| v.into())
     }
 

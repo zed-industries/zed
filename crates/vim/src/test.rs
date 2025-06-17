@@ -7,14 +7,15 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine, display_map::DisplayRow,
-    test::editor_test_context::EditorTestContext,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
+    display_map::DisplayRow, test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
+use util::test::marked_text_ranges;
 pub use vim_test_context::*;
 
 use indoc::indoc;
@@ -860,6 +861,46 @@ async fn test_jk(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("jˇohello");
 }
 
+fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let highlights = editor.text_highlights::<editor::PendingInput>(cx).unwrap();
+        let (_, ranges) = marked_text_ranges(expected, false);
+
+        assert_eq!(
+            highlights
+                .iter()
+                .map(|(highlight, _)| highlight.to_offset(&snapshot.buffer_snapshot))
+                .collect::<Vec<_>>(),
+            ranges
+        )
+    });
+}
+
+#[gpui::test]
+async fn test_jk_multi(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j k l",
+            NormalBefore,
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("ˇone ˇone ˇone", Mode::Normal);
+    cx.simulate_keystrokes("i j");
+    cx.simulate_keystrokes("k");
+    cx.assert_state("ˇjkone ˇjkone ˇjkone", Mode::Insert);
+    assert_pending_input(&mut cx, "«jk»one «jk»one «jk»one");
+    cx.simulate_keystrokes("o j k");
+    cx.assert_state("jkoˇjkone jkoˇjkone jkoˇjkone", Mode::Insert);
+    assert_pending_input(&mut cx, "jko«jk»one jko«jk»one jko«jk»one");
+    cx.simulate_keystrokes("l");
+    cx.assert_state("jkˇoone jkˇoone jkˇoone", Mode::Normal);
+}
+
 #[gpui::test]
 async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -876,7 +917,19 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("i j");
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
-    cx.assert_state("ˇhello", Mode::Insert);
+    cx.assert_state("ˇjhello", Mode::Insert);
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let highlights = editor.text_highlights::<editor::PendingInput>(cx).unwrap();
+
+        assert_eq!(
+            highlights
+                .iter()
+                .map(|(highlight, _)| highlight.to_offset(&snapshot.buffer_snapshot))
+                .collect::<Vec<_>>(),
+            vec![0..1]
+        )
+    });
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
     cx.assert_state("jˇhello", Mode::Insert);

@@ -4,14 +4,17 @@ use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
-use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
+    MIN_ACCOUNT_AGE_FOR_LLM_USE,
+};
 use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, Project, ProjectId, RejoinedProject, RemoveChannelMemberResult, ReplicaId,
+        NotificationId, ProjectId, RejoinedProject, RemoveChannelMemberResult,
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -65,7 +68,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
@@ -86,9 +89,35 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
+const MAX_CONCURRENT_CONNECTIONS: usize = 512;
+
+static CONCURRENT_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
+
+pub struct ConnectionGuard;
+
+impl ConnectionGuard {
+    pub fn try_acquire() -> Result<Self, ()> {
+        let current_connections = CONCURRENT_CONNECTIONS.fetch_add(1, SeqCst);
+        if current_connections >= MAX_CONCURRENT_CONNECTIONS {
+            CONCURRENT_CONNECTIONS.fetch_sub(1, SeqCst);
+            tracing::error!(
+                "too many concurrent connections: {}",
+                current_connections + 1
+            );
+            return Err(());
+        }
+        Ok(ConnectionGuard)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        CONCURRENT_CONNECTIONS.fetch_sub(1, SeqCst);
+    }
+}
 
 struct Response<R> {
     peer: Arc<Peer>,
@@ -722,6 +751,7 @@ impl Server {
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
+        connection_guard: Option<ConnectionGuard>,
     ) -> impl Future<Output = ()> + use<> {
         let this = self.clone();
         let span = info_span!("handle connection", %address,
@@ -742,6 +772,7 @@ impl Server {
                 tracing::error!("server is tearing down");
                 return
             }
+
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
                 .add_connection(connection, {
@@ -783,6 +814,7 @@ impl Server {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
+            drop(connection_guard);
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -1154,6 +1186,19 @@ pub async fn handle_websocket_request(
     }
 
     let socket_address = socket_address.to_string();
+
+    // Acquire connection guard before WebSocket upgrade
+    let connection_guard = match ConnectionGuard::try_acquire() {
+        Ok(guard) => guard,
+        Err(()) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent connections",
+            )
+                .into_response();
+        }
+    };
+
     ws.on_upgrade(move |socket| {
         let socket = socket
             .map_ok(to_tungstenite_message)
@@ -1171,6 +1216,7 @@ pub async fn handle_websocket_request(
                     system_id_header.map(|header| header.to_string()),
                     None,
                     Executor::Production,
+                    Some(connection_guard),
                 )
                 .await;
         }
@@ -1844,28 +1890,16 @@ async fn join_project(
 
     let db = session.db().await;
     let (project, replica_id) = &mut *db
-        .join_project(project_id, session.connection_id, session.user_id())
+        .join_project(
+            project_id,
+            session.connection_id,
+            session.user_id(),
+            request.committer_name.clone(),
+            request.committer_email.clone(),
+        )
         .await?;
     drop(db);
     tracing::info!(%project_id, "join remote project");
-    join_project_internal(response, session, project, replica_id)
-}
-
-trait JoinProjectInternalResponse {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
-}
-impl JoinProjectInternalResponse for Response<proto::JoinProject> {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
-        Response::<proto::JoinProject>::send(self, result)
-    }
-}
-
-fn join_project_internal(
-    response: impl JoinProjectInternalResponse,
-    session: Session,
-    project: &mut Project,
-    replica_id: &ReplicaId,
-) -> Result<()> {
     let collaborators = project
         .collaborators
         .iter()
@@ -1893,6 +1927,8 @@ fn join_project_internal(
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
             is_host: false,
+            committer_name: request.committer_name.clone(),
+            committer_email: request.committer_email.clone(),
         }),
     };
 
@@ -2521,7 +2557,6 @@ async fn get_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
-            email: user.email_address,
             name: user.name,
         })
         .collect();
@@ -2555,7 +2590,6 @@ async fn fuzzy_search_users(
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
             name: user.name,
-            email: user.email_address,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
@@ -2773,8 +2807,12 @@ async fn make_update_user_plan_message(
         (None, None)
     };
 
-    let account_too_young =
-        !matches!(plan, proto::Plan::ZedPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+    let bypass_account_age_check = feature_flags
+        .iter()
+        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
+    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
+        && !bypass_account_age_check
+        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
 
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
@@ -4074,9 +4112,6 @@ async fn accept_terms_of_service(
     })?;
     Ok(())
 }
-
-/// The minimum account age an account must have in order to use the LLM service.
-pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
 
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,

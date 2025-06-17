@@ -412,6 +412,7 @@ impl ExtensionIndexedDocsProviderProxy for ExtensionHostProxy {
 
 pub trait ExtensionDebugAdapterProviderProxy: Send + Sync + 'static {
     fn register_debug_adapter(&self, extension: Arc<dyn Extension>, debug_adapter_name: Arc<str>);
+    fn register_debug_locator(&self, extension: Arc<dyn Extension>, locator_name: Arc<str>);
 }
 
 impl ExtensionDebugAdapterProviderProxy for ExtensionHostProxy {
@@ -421,5 +422,13 @@ impl ExtensionDebugAdapterProviderProxy for ExtensionHostProxy {
         };
 
         proxy.register_debug_adapter(extension, debug_adapter_name)
+    }
+
+    fn register_debug_locator(&self, extension: Arc<dyn Extension>, locator_name: Arc<str>) {
+        let Some(proxy) = self.debug_adapter_provider_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.register_debug_locator(extension, locator_name)
     }
 }

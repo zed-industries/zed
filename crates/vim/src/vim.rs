@@ -790,8 +790,8 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
-                self.update_editor(window, cx, |_, editor, _, _| {
-                    editor.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction)
+                self.update_editor(window, cx, |_, editor, _, cx| {
+                    editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
                 });
                 return;
             }
@@ -915,6 +915,9 @@ impl Vim {
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
+            self.update_editor(window, cx, |_, editor, _, _| {
+                editor.clear_selection_drag_state();
+            });
         }
         Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {

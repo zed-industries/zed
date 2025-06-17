@@ -51,7 +51,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{path, separator, uri};
+use util::{path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
@@ -1684,13 +1684,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1717,13 +1717,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1814,13 +1814,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/j.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1884,7 +1884,6 @@ async fn test_active_call_events(
                 github_login: "user_a".to_string(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1904,7 +1903,6 @@ async fn test_active_call_events(
                 github_login: "user_b".to_string(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]
@@ -3325,13 +3323,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3343,13 +3341,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3369,14 +3367,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -3388,14 +3386,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });

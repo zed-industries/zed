@@ -501,8 +501,10 @@ impl Database {
 
     /// Returns all channels for the user with the given ID.
     pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
-        self.transaction(|tx| async move { self.get_user_channels(user_id, None, true, &tx).await })
-            .await
+        self.weak_transaction(
+            |tx| async move { self.get_user_channels(user_id, None, true, &tx).await },
+        )
+        .await
     }
 
     /// Returns all channels for the user with the given ID that are descendants
@@ -737,7 +739,6 @@ impl Database {
                         ),
                         github_login: user.github_login,
                         name: user.name,
-                        email: user.email_address,
                     })
                 }
                 proto::ChannelMember {

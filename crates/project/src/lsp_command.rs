@@ -260,7 +260,9 @@ pub(crate) struct LinkedEditingRange {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GetDocumentDiagnostics {}
+pub(crate) struct GetDocumentDiagnostics {
+    pub previous_result_id: Option<String>,
+}
 
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
@@ -3666,6 +3668,39 @@ impl LspCommand for LinkedEditingRange {
 }
 
 impl GetDocumentDiagnostics {
+    pub fn diagnostics_from_proto(
+        response: proto::GetDocumentDiagnosticsResponse,
+    ) -> Vec<LspPullDiagnostics> {
+        response
+            .pulled_diagnostics
+            .into_iter()
+            .filter_map(|diagnostics| {
+                Some(LspPullDiagnostics::Response {
+                    server_id: LanguageServerId::from_proto(diagnostics.server_id),
+                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
+                    diagnostics: if diagnostics.changed {
+                        PulledDiagnostics::Unchanged {
+                            result_id: diagnostics.result_id?,
+                        }
+                    } else {
+                        PulledDiagnostics::Changed {
+                            result_id: diagnostics.result_id,
+                            diagnostics: diagnostics
+                                .diagnostics
+                                .into_iter()
+                                .filter_map(|diagnostic| {
+                                    GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
+                                        .context("deserializing diagnostics")
+                                        .log_err()
+                                })
+                                .collect(),
+                        }
+                    },
+                })
+            })
+            .collect()
+    }
+
     fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
         let start = diagnostic.start.context("invalid start range")?;
         let end = diagnostic.end.context("invalid end range")?;
@@ -3810,6 +3845,109 @@ impl GetDocumentDiagnostics {
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })
     }
+
+    pub fn deserialize_workspace_diagnostics_report(
+        report: lsp::WorkspaceDiagnosticReportResult,
+        server_id: LanguageServerId,
+    ) -> Vec<WorkspaceLspPullDiagnostics> {
+        let mut pulled_diagnostics = HashMap::default();
+        match report {
+            lsp::WorkspaceDiagnosticReportResult::Report(workspace_diagnostic_report) => {
+                for report in workspace_diagnostic_report.items {
+                    match report {
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(report) => {
+                            process_full_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                        lsp::WorkspaceDocumentDiagnosticReport::Unchanged(report) => {
+                            process_unchanged_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                    }
+                }
+            }
+            lsp::WorkspaceDiagnosticReportResult::Partial(
+                workspace_diagnostic_report_partial_result,
+            ) => {
+                for report in workspace_diagnostic_report_partial_result.items {
+                    match report {
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(report) => {
+                            process_full_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                        lsp::WorkspaceDocumentDiagnosticReport::Unchanged(report) => {
+                            process_unchanged_workspace_diagnostics_report(
+                                &mut pulled_diagnostics,
+                                server_id,
+                                report,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        pulled_diagnostics.into_values().collect()
+    }
+}
+
+pub struct WorkspaceLspPullDiagnostics {
+    pub version: Option<i32>,
+    pub diagnostics: LspPullDiagnostics,
+}
+
+fn process_full_workspace_diagnostics_report(
+    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    server_id: LanguageServerId,
+    report: lsp::WorkspaceFullDocumentDiagnosticReport,
+) {
+    let mut new_diagnostics = HashMap::default();
+    process_full_diagnostics_report(
+        &mut new_diagnostics,
+        server_id,
+        report.uri,
+        report.full_document_diagnostic_report,
+    );
+    diagnostics.extend(new_diagnostics.into_iter().map(|(uri, diagnostics)| {
+        (
+            uri,
+            WorkspaceLspPullDiagnostics {
+                version: report.version.map(|v| v as i32),
+                diagnostics,
+            },
+        )
+    }));
+}
+
+fn process_unchanged_workspace_diagnostics_report(
+    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    server_id: LanguageServerId,
+    report: lsp::WorkspaceUnchangedDocumentDiagnosticReport,
+) {
+    let mut new_diagnostics = HashMap::default();
+    process_unchanged_diagnostics_report(
+        &mut new_diagnostics,
+        server_id,
+        report.uri,
+        report.unchanged_document_diagnostic_report,
+    );
+    diagnostics.extend(new_diagnostics.into_iter().map(|(uri, diagnostics)| {
+        (
+            uri,
+            WorkspaceLspPullDiagnostics {
+                version: report.version.map(|v| v as i32),
+                diagnostics,
+            },
+        )
+    }));
 }
 
 #[async_trait(?Send)]
@@ -3832,7 +3970,7 @@ impl LspCommand for GetDocumentDiagnostics {
     fn to_lsp(
         &self,
         path: &Path,
-        buffer: &Buffer,
+        _: &Buffer,
         language_server: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
@@ -3849,7 +3987,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 uri: file_path_to_lsp_url(path)?,
             },
             identifier,
-            previous_result_id: buffer.result_id(),
+            previous_result_id: self.previous_result_id.clone(),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
@@ -3932,17 +4070,14 @@ impl LspCommand for GetDocumentDiagnostics {
     }
 
     async fn from_proto(
-        message: proto::GetDocumentDiagnostics,
+        _: proto::GetDocumentDiagnostics,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
-        Ok(Self {})
+        anyhow::bail!(
+            "proto::GetDocumentDiagnostics is not expected to be converted from proto directly, as it needs `previous_result_id` fetched first"
+        )
     }
 
     fn response_to_proto(
@@ -4000,36 +4135,7 @@ impl LspCommand for GetDocumentDiagnostics {
         _: Entity<Buffer>,
         _: AsyncApp,
     ) -> Result<Self::Response> {
-        let pulled_diagnostics = response
-            .pulled_diagnostics
-            .into_iter()
-            .filter_map(|diagnostics| {
-                Some(LspPullDiagnostics::Response {
-                    server_id: LanguageServerId::from_proto(diagnostics.server_id),
-                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
-                    diagnostics: if diagnostics.changed {
-                        PulledDiagnostics::Unchanged {
-                            result_id: diagnostics.result_id?,
-                        }
-                    } else {
-                        PulledDiagnostics::Changed {
-                            result_id: diagnostics.result_id,
-                            diagnostics: diagnostics
-                                .diagnostics
-                                .into_iter()
-                                .filter_map(|diagnostic| {
-                                    GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
-                                        .context("deserializing diagnostics")
-                                        .log_err()
-                                })
-                                .collect(),
-                        }
-                    },
-                })
-            })
-            .collect();
-
-        Ok(pulled_diagnostics)
+        Ok(Self::diagnostics_from_proto(response))
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {

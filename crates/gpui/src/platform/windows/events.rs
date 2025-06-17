@@ -35,7 +35,7 @@ pub(crate) fn handle_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> LRESULT {
     let handled = match msg {
-        WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
+        WM_ACTIVATE => handle_activate_msg(wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
         WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
@@ -702,7 +702,7 @@ fn handle_ime_composition_inner(
     } else {
         if lparam & GCS_COMPSTR.0 > 0 {
             let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
-            let caret_pos = (lparam & GCS_CURSORPOS.0 > 0).then(|| {
+            let caret_pos = (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
                 let pos = retrieve_composition_cursor_position(ctx);
                 pos..pos
             });
@@ -778,21 +778,8 @@ fn handle_calc_client_size(
     Some(0)
 }
 
-fn handle_activate_msg(
-    handle: HWND,
-    wparam: WPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_activate_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let activated = wparam.loword() > 0;
-    if state_ptr.hide_title_bar {
-        if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
-            unsafe {
-                InvalidateRect(Some(handle), Some(&titlebar_rect), false)
-                    .ok()
-                    .log_err()
-            };
-        }
-    }
     let this = state_ptr.clone();
     state_ptr
         .executor
@@ -900,7 +887,30 @@ fn handle_hit_test_msg(
     if !state_ptr.is_movable {
         return None;
     }
+
+    let mut lock = state_ptr.state.borrow_mut();
+    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
+        drop(lock);
+        let area = callback();
+        state_ptr
+            .state
+            .borrow_mut()
+            .callbacks
+            .hit_test_window_control = Some(callback);
+        if let Some(area) = area {
+            return match area {
+                WindowControlArea::Drag => Some(HTCAPTION as _),
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max => Some(HTMAXBUTTON as _),
+                WindowControlArea::Min => Some(HTMINBUTTON as _),
+            };
+        }
+    } else {
+        drop(lock);
+    }
+
     if !state_ptr.hide_title_bar {
+        // If the OS draws the title bar, we don't need to handle hit test messages.
         return None;
     }
 
@@ -938,23 +948,6 @@ fn handle_hit_test_msg(
         return Some(HTTOP as _);
     }
 
-    let titlebar_rect = state_ptr.state.borrow().get_titlebar_rect();
-    if let Ok(titlebar_rect) = titlebar_rect {
-        if cursor_point.y < titlebar_rect.bottom {
-            let caption_btn_width = (state_ptr.state.borrow().caption_button_width().0
-                * state_ptr.state.borrow().scale_factor) as i32;
-            if cursor_point.x >= titlebar_rect.right - caption_btn_width {
-                return Some(HTCLOSE as _);
-            } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
-                return Some(HTMAXBUTTON as _);
-            } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 3 {
-                return Some(HTMINBUTTON as _);
-            }
-
-            return Some(HTCAPTION as _);
-        }
-    }
-
     Some(HTCLIENT as _)
 }
 
@@ -963,10 +956,6 @@ fn handle_nc_mouse_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
-        return None;
-    }
-
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
@@ -997,10 +986,6 @@ fn handle_nc_mouse_down_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
-        return None;
-    }
-
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -1052,10 +1037,6 @@ fn handle_nc_mouse_up_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
-        return None;
-    }
-
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;

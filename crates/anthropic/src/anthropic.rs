@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -32,15 +33,6 @@ pub enum AnthropicModelMode {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
-    Claude3_5Sonnet,
-    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
-    Claude3_7Sonnet,
-    #[serde(
-        rename = "claude-3-7-sonnet-thinking",
-        alias = "claude-3-7-sonnet-thinking-latest"
-    )]
-    Claude3_7SonnetThinking,
     #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
     ClaudeOpus4,
     #[serde(
@@ -56,6 +48,15 @@ pub enum Model {
         alias = "claude-sonnet-4-thinking-latest"
     )]
     ClaudeSonnet4Thinking,
+    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
+    Claude3_7Sonnet,
+    #[serde(
+        rename = "claude-3-7-sonnet-thinking",
+        alias = "claude-3-7-sonnet-thinking-latest"
+    )]
+    Claude3_7SonnetThinking,
+    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
+    Claude3_5Sonnet,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -89,46 +90,66 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
-        if id.starts_with("claude-3-5-sonnet") {
-            Ok(Self::Claude3_5Sonnet)
-        } else if id.starts_with("claude-3-7-sonnet-thinking") {
-            Ok(Self::Claude3_7SonnetThinking)
-        } else if id.starts_with("claude-3-7-sonnet") {
-            Ok(Self::Claude3_7Sonnet)
-        } else if id.starts_with("claude-3-5-haiku") {
-            Ok(Self::Claude3_5Haiku)
-        } else if id.starts_with("claude-3-opus") {
-            Ok(Self::Claude3Opus)
-        } else if id.starts_with("claude-3-sonnet") {
-            Ok(Self::Claude3Sonnet)
-        } else if id.starts_with("claude-3-haiku") {
-            Ok(Self::Claude3Haiku)
-        } else if id.starts_with("claude-opus-4-thinking") {
-            Ok(Self::ClaudeOpus4Thinking)
-        } else if id.starts_with("claude-opus-4") {
-            Ok(Self::ClaudeOpus4)
-        } else if id.starts_with("claude-sonnet-4-thinking") {
-            Ok(Self::ClaudeSonnet4Thinking)
-        } else if id.starts_with("claude-sonnet-4") {
-            Ok(Self::ClaudeSonnet4)
-        } else {
-            anyhow::bail!("invalid model id {id}");
+        if id.starts_with("claude-opus-4-thinking") {
+            return Ok(Self::ClaudeOpus4Thinking);
         }
+
+        if id.starts_with("claude-opus-4") {
+            return Ok(Self::ClaudeOpus4);
+        }
+
+        if id.starts_with("claude-sonnet-4-thinking") {
+            return Ok(Self::ClaudeSonnet4Thinking);
+        }
+
+        if id.starts_with("claude-sonnet-4") {
+            return Ok(Self::ClaudeSonnet4);
+        }
+
+        if id.starts_with("claude-3-7-sonnet-thinking") {
+            return Ok(Self::Claude3_7SonnetThinking);
+        }
+
+        if id.starts_with("claude-3-7-sonnet") {
+            return Ok(Self::Claude3_7Sonnet);
+        }
+
+        if id.starts_with("claude-3-5-sonnet") {
+            return Ok(Self::Claude3_5Sonnet);
+        }
+
+        if id.starts_with("claude-3-5-haiku") {
+            return Ok(Self::Claude3_5Haiku);
+        }
+
+        if id.starts_with("claude-3-opus") {
+            return Ok(Self::Claude3Opus);
+        }
+
+        if id.starts_with("claude-3-sonnet") {
+            return Ok(Self::Claude3Sonnet);
+        }
+
+        if id.starts_with("claude-3-haiku") {
+            return Ok(Self::Claude3Haiku);
+        }
+
+        Err(anyhow!("invalid model ID: {id}"))
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Model::ClaudeOpus4 => "claude-opus-4-latest",
-            Model::ClaudeOpus4Thinking => "claude-opus-4-thinking-latest",
-            Model::ClaudeSonnet4 => "claude-sonnet-4-latest",
-            Model::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
-            Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
-            Model::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
-            Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
-            Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
-            Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
-            Model::Claude3Haiku => "claude-3-haiku-20240307",
+            Self::ClaudeOpus4 => "claude-opus-4-latest",
+            Self::ClaudeOpus4Thinking => "claude-opus-4-thinking-latest",
+            Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
+            Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
+            Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Self::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
+            Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
+            Self::Claude3_5Haiku => "claude-3-5-haiku-latest",
+            Self::Claude3Opus => "claude-3-opus-latest",
+            Self::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Self::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }
@@ -136,24 +157,24 @@ impl Model {
     /// The id of the model that should be used for making API requests
     pub fn request_id(&self) -> &str {
         match self {
-            Model::ClaudeOpus4 | Model::ClaudeOpus4Thinking => "claude-opus-4-20250514",
-            Model::ClaudeSonnet4 | Model::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
-            Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
-            Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
-            Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
-            Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
-            Model::Claude3Haiku => "claude-3-haiku-20240307",
+            Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
+            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
+            Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
+            Self::Claude3_5Haiku => "claude-3-5-haiku-latest",
+            Self::Claude3Opus => "claude-3-opus-latest",
+            Self::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Self::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Model::ClaudeOpus4 => "Claude Opus 4",
-            Model::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
-            Model::ClaudeSonnet4 => "Claude Sonnet 4",
-            Model::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
+            Self::ClaudeOpus4 => "Claude Opus 4",
+            Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
+            Self::ClaudeSonnet4 => "Claude Sonnet 4",
+            Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
@@ -209,15 +230,15 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> u32 {
         match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
-            Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking
-            | Self::Claude3_5Haiku
-            | Self::ClaudeOpus4
+            Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
             | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking => 8_192,
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::Claude3_5Haiku => 8_192,
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -246,17 +267,17 @@ impl Model {
 
     pub fn mode(&self) -> AnthropicModelMode {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
+            | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
-            | Self::ClaudeOpus4
-            | Self::ClaudeSonnet4
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => AnthropicModelMode::Default,
-            Self::Claude3_7SonnetThinking
-            | Self::ClaudeOpus4Thinking
-            | Self::ClaudeSonnet4Thinking => AnthropicModelMode::Thinking {
+            Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
             },
             Self::Custom { mode, .. } => mode.clone(),
@@ -267,7 +288,7 @@ impl Model {
 
     pub fn beta_headers(&self) -> String {
         let mut headers = Self::DEFAULT_BETA_HEADERS
-            .into_iter()
+            .iter()
             .map(|header| header.to_string())
             .collect::<Vec<_>>();
 
@@ -406,6 +427,7 @@ impl RateLimit {
 /// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
 #[derive(Debug)]
 pub struct RateLimitInfo {
+    pub retry_after: Option<Duration>,
     pub requests: Option<RateLimit>,
     pub tokens: Option<RateLimit>,
     pub input_tokens: Option<RateLimit>,
@@ -417,10 +439,11 @@ impl RateLimitInfo {
         // Check if any rate limit headers exist
         let has_rate_limit_headers = headers
             .keys()
-            .any(|k| k.as_str().starts_with("anthropic-ratelimit-"));
+            .any(|k| k == "retry-after" || k.as_str().starts_with("anthropic-ratelimit-"));
 
         if !has_rate_limit_headers {
             return Self {
+                retry_after: None,
                 requests: None,
                 tokens: None,
                 input_tokens: None,
@@ -429,6 +452,11 @@ impl RateLimitInfo {
         }
 
         Self {
+            retry_after: headers
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs),
             requests: RateLimit::from_headers("requests", headers).ok(),
             tokens: RateLimit::from_headers("tokens", headers).ok(),
             input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
@@ -481,8 +509,8 @@ pub async fn stream_completion_with_rate_limit_info(
         .send(request)
         .await
         .context("failed to send request to Anthropic")?;
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
     if response.status().is_success() {
-        let rate_limits = RateLimitInfo::from_headers(response.headers());
         let reader = BufReader::new(response.into_body());
         let stream = reader
             .lines()
@@ -500,6 +528,8 @@ pub async fn stream_completion_with_rate_limit_info(
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
+    } else if let Some(retry_after) = rate_limits.retry_after {
+        Err(AnthropicError::RateLimit(retry_after))
     } else {
         let mut body = Vec::new();
         response
@@ -769,6 +799,8 @@ pub struct MessageDelta {
 
 #[derive(Error, Debug)]
 pub enum AnthropicError {
+    #[error("rate limit exceeded, retry after {0:?}")]
+    RateLimit(Duration),
     #[error("an error occurred while interacting with the Anthropic API: {error_type}: {message}", error_type = .0.error_type, message = .0.message)]
     ApiError(ApiError),
     #[error("{0}")]
