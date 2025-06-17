@@ -7,7 +7,7 @@ use crate::{
     NewProcessModal, NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop,
     ToggleExpandItem, ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result, anyhow};
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
@@ -21,14 +21,16 @@ use gpui::{
     WeakEntity, actions, anchored, deferred,
 };
 
+use itertools::Itertools as _;
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Fs, WorktreeId};
+use project::{Fs, ProjectPath, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
+use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
 use util::maybe;
 use workspace::SplitDirection;
@@ -957,69 +959,98 @@ impl DebugPanel {
         cx.notify();
     }
 
-    // TODO: restore once we have proper comment preserving file edits
-    // pub(crate) fn save_scenario(
-    //     &self,
-    //     scenario: &DebugScenario,
-    //     worktree_id: WorktreeId,
-    //     window: &mut Window,
-    //     cx: &mut App,
-    // ) -> Task<Result<ProjectPath>> {
-    //     self.workspace
-    //         .update(cx, |workspace, cx| {
-    //             let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
-    //                 return Task::ready(Err(anyhow!("Couldn't get worktree path")));
-    //             };
+    pub(crate) fn save_scenario(
+        &self,
+        scenario: &DebugScenario,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<ProjectPath>> {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
+                    return Task::ready(Err(anyhow!("Couldn't get worktree path")));
+                };
 
-    //             let serialized_scenario = serde_json::to_value(scenario);
+                let serialized_scenario = serde_json::to_value(scenario);
 
-    //             cx.spawn_in(window, async move |workspace, cx| {
-    //                 let serialized_scenario = serialized_scenario?;
-    //                 let fs =
-    //                     workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let serialized_scenario = serialized_scenario?;
+                    let fs =
+                        workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
-    //                 path.push(paths::local_settings_folder_relative_path());
-    //                 if !fs.is_dir(path.as_path()).await {
-    //                     fs.create_dir(path.as_path()).await?;
-    //                 }
-    //                 path.pop();
+                    path.push(paths::local_settings_folder_relative_path());
+                    if !fs.is_dir(path.as_path()).await {
+                        fs.create_dir(path.as_path()).await?;
+                    }
+                    path.pop();
 
-    //                 path.push(paths::local_debug_file_relative_path());
-    //                 let path = path.as_path();
+                    path.push(paths::local_debug_file_relative_path());
+                    let path = path.as_path();
 
-    //                 if !fs.is_file(path).await {
-    //                     fs.create_file(path, Default::default()).await?;
-    //                     fs.write(
-    //                         path,
-    //                         initial_local_debug_tasks_content().to_string().as_bytes(),
-    //                     )
-    //                     .await?;
-    //                 }
+                    if !fs.is_file(path).await {
+                        fs.create_file(path, Default::default()).await?;
+                        fs.write(
+                            path,
+                            settings::initial_local_debug_tasks_content()
+                                .to_string()
+                                .as_bytes(),
+                        )
+                        .await?;
+                    }
 
-    //                 let content = fs.load(path).await?;
-    //                 let mut values =
-    //                     serde_json_lenient::from_str::<Vec<serde_json::Value>>(&content)?;
-    //                 values.push(serialized_scenario);
-    //                 fs.save(
-    //                     path,
-    //                     &serde_json_lenient::to_string_pretty(&values).map(Into::into)?,
-    //                     Default::default(),
-    //                 )
-    //                 .await?;
+                    let mut content = fs.load(path).await?;
+                    let new_scenario = serde_json_lenient::to_string_pretty(&serialized_scenario)?
+                        .lines()
+                        .map(|l| format!("  {l}"))
+                        .join("\n");
 
-    //                 workspace.update(cx, |workspace, cx| {
-    //                     workspace
-    //                         .project()
-    //                         .read(cx)
-    //                         .project_path_for_absolute_path(&path, cx)
-    //                         .context(
-    //                             "Couldn't get project path for .zed/debug.json in active worktree",
-    //                         )
-    //                 })?
-    //             })
-    //         })
-    //         .unwrap_or_else(|err| Task::ready(Err(err)))
-    // }
+                    static ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
+                        Query::new(
+                            &tree_sitter_json::LANGUAGE.into(),
+                            "(document (array (object) @object))", // TODO: use "." anchor to only match last object
+                        )
+                        .expect("Failed to create ARRAY_QUERY")
+                    });
+
+                    let mut parser = tree_sitter::Parser::new();
+                    parser
+                        .set_language(&tree_sitter_json::LANGUAGE.into())
+                        .unwrap();
+                    let mut cursor = tree_sitter::QueryCursor::new();
+                    let syntax_tree = parser.parse(&content, None).unwrap();
+                    let mut matches =
+                        cursor.matches(&ARRAY_QUERY, syntax_tree.root_node(), content.as_bytes());
+
+                    // we don't have `.last()` since it's a lending iterator, so loop over
+                    // the whole thing to find the last one
+                    let mut last_offset = None;
+                    while let Some(mat) = matches.next() {
+                        if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
+                            last_offset = Some(pos)
+                        }
+                    }
+
+                    if let Some(pos) = last_offset {
+                        content.insert_str(pos, &new_scenario);
+                        content.insert_str(pos, ",\n");
+                    }
+
+                    fs.write(path, content.as_bytes()).await?;
+
+                    workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .project()
+                            .read(cx)
+                            .project_path_for_absolute_path(&path, cx)
+                            .context(
+                                "Couldn't get project path for .zed/debug.json in active worktree",
+                            )
+                    })?
+                })
+            })
+            .unwrap_or_else(|err| Task::ready(Err(err)))
+    }
 
     pub(crate) fn toggle_thread_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_picker_menu_handle.toggle(window, cx);
