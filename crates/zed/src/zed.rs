@@ -20,16 +20,15 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
-    image_cache, point, px, retain_all,
+    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -480,6 +479,7 @@ fn initialize_panels(
             workspace_handle.clone(),
             cx.clone(),
         );
+        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         let (
             project_panel,
@@ -489,6 +489,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -497,6 +498,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         )?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
@@ -507,20 +509,7 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-            cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |_, window, cx| {
-                cx.spawn_in(
-                    window,
-                    async move |workspace: gpui::WeakEntity<Workspace>,
-                                cx: &mut AsyncWindowContext| {
-                        let debug_panel = DebugPanel::load(workspace.clone(), cx).await?;
-                        workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.add_panel(debug_panel, window, cx);
-                        })?;
-                        anyhow::Ok(())
-                    },
-                )
-                .detach()
-            });
+            workspace.add_panel(debug_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
