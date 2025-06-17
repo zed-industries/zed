@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingSourceIndex, NoAction,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, NoAction,
 };
 use schemars::{
     JsonSchema,
@@ -153,14 +153,14 @@ impl KeymapFile {
 
     pub fn load_asset(
         asset_path: &str,
-        source: Option<KeyBindingSourceIndex>,
+        source: Option<KeyBindingMetaIndex>,
         cx: &App,
     ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::Success { mut key_bindings } => match source {
                 Some(source) => Ok({
                     for key_binding in &mut key_bindings {
-                        key_binding.set_source(source);
+                        key_binding.set_meta(source);
                     }
                     key_bindings
                 }),
@@ -627,6 +627,41 @@ impl KeymapFile {
                 }
                 Err(err)
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum KeybindSource {
+    /// User-defined keybinding, the usize is the index of the keybinding in the keymap file.
+    User,
+    Default, // todo! move base_keymap_setting.rs from welcome to settings
+    Base,
+    Vim,
+}
+
+impl KeybindSource {
+    pub const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
+    pub const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
+    pub const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
+    pub const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            KeybindSource::User => "User",
+            KeybindSource::Default => "Default",
+            KeybindSource::Base => "Base",
+            KeybindSource::Vim => "Vim",
+        }
+    }
+
+    pub fn from_meta_index(index: KeyBindingMetaIndex) -> Self {
+        match index {
+            _ if index == Self::USER => KeybindSource::User,
+            _ if index == Self::USER => KeybindSource::Base,
+            _ if index == Self::DEFAULT => KeybindSource::Default,
+            _ if index == Self::VIM => KeybindSource::Vim,
+            _ => unreachable!(),
         }
     }
 }

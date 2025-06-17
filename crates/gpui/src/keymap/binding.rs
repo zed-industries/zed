@@ -2,9 +2,7 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{
-    Action, InvalidKeystrokeError, KeyBindingContextPredicate, KeyBindingSourceIndex, Keystroke,
-};
+use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
@@ -12,7 +10,7 @@ pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
     pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
     pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
-    pub(crate) source: Option<KeyBindingSourceIndex>,
+    pub(crate) meta: Option<KeyBindingMetaIndex>,
 }
 
 impl Clone for KeyBinding {
@@ -21,7 +19,7 @@ impl Clone for KeyBinding {
             action: self.action.boxed_clone(),
             keystrokes: self.keystrokes.clone(),
             context_predicate: self.context_predicate.clone(),
-            source: self.source.clone(),
+            meta: self.meta.clone(),
         }
     }
 }
@@ -63,19 +61,19 @@ impl KeyBinding {
             keystrokes,
             action,
             context_predicate,
-            source: None,
+            meta: None,
         })
     }
 
     /// Set the source of this binding.
-    pub fn with_source(mut self, source: KeyBindingSourceIndex) -> Self {
-        self.source = Some(source);
+    pub fn with_meta(mut self, source: KeyBindingMetaIndex) -> Self {
+        self.meta = Some(source);
         self
     }
 
     /// Set the source of this binding.
-    pub fn set_source(&mut self, source: KeyBindingSourceIndex) {
-        self.source = Some(source);
+    pub fn set_meta(&mut self, source: KeyBindingMetaIndex) {
+        self.meta = Some(source);
     }
 
     /// Check if the given keystrokes match this binding.
@@ -109,8 +107,8 @@ impl KeyBinding {
     }
 
     /// Get the source of this binding, if one was set
-    pub fn source(&self) -> Option<KeyBindingSourceIndex> {
-        self.source
+    pub fn source(&self) -> Option<KeyBindingMetaIndex> {
+        self.meta
     }
 }
 
@@ -123,3 +121,9 @@ impl std::fmt::Debug for KeyBinding {
             .finish()
     }
 }
+
+/// A unique identifier for retrieval of metadata associated with a key binding.
+/// Intended to be used as an index or key into a user-defined store of metadata
+/// associated with the binding, such as the source of the binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyBindingMetaIndex(pub u32);

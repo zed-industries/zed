@@ -24,8 +24,8 @@ use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    KeyBindingSource, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
+    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
     Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
     image_cache, point, px, retain_all,
 };
@@ -47,8 +47,8 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile, KeymapFileLoadResult,
+    Settings, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
     initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use std::path::PathBuf;
@@ -1407,11 +1407,8 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
 
-    let user_keymap_source_index = cx.register_key_binding_source(
-        KeyBindingSource::new("User").with_static_path(paths::keymap_file()),
-    );
     for key_binding in &mut user_key_bindings {
-        key_binding.set_source(user_keymap_source_index);
+        key_binding.set_meta(KeybindSource::USER);
     }
     cx.bind_keys(user_key_bindings);
 
@@ -1430,20 +1427,25 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    let default_keymap_source = cx.register_key_binding_source(KeyBindingSource::new("Default"));
     cx.bind_keys(
-        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(default_keymap_source), cx).unwrap(),
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::DEFAULT), cx).unwrap(),
     );
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        let base_keymap_source = cx
-            .register_key_binding_source(KeyBindingSource::new(format!("Base ({})", base_keymap)));
-        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(base_keymap_source), cx).unwrap());
+        cx.bind_keys(
+            KeymapFile::load_asset(
+                asset_path,
+                Some(KeybindSource::BASE /* todo! which base? */),
+                cx,
+            )
+            .unwrap(),
+        );
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        let vim_keymap_source = cx.register_key_binding_source(KeyBindingSource::new("Vim"));
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(vim_keymap_source), cx).unwrap());
+        cx.bind_keys(
+            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::VIM), cx).unwrap(),
+        );
     }
 }
 
