@@ -1163,12 +1163,12 @@ impl SshRemoteClient {
         self.client.subscribe_to_entity(remote_id, entity);
     }
 
-    pub fn ssh_args(&self) -> Option<SshArgs> {
+    pub fn ssh_info(&self) -> Option<(SshArgs, PathStyle)> {
         self.state
             .lock()
             .as_ref()
             .and_then(|state| state.ssh_connection())
-            .map(|ssh_connection| ssh_connection.ssh_args())
+            .map(|ssh_connection| (ssh_connection.ssh_args(), ssh_connection.path_style()))
     }
 
     pub fn upload_directory(

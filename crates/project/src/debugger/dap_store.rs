@@ -240,11 +240,12 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let (mut ssh_command, askpass) = ssh_client.read_with(cx, |ssh, _| {
-                        let SshArgs { arguments, askpass } =
-                            ssh.ssh_args().context("SSH arguments not found")?;
-                        anyhow::Ok((SshCommand { arguments }, askpass))
-                    })??;
+                    let (mut ssh_command, askpass, path_style) =
+                        ssh_client.read_with(cx, |ssh, _| {
+                            let (SshArgs { arguments, askpass }, path_style) =
+                                ssh.ssh_info().context("SSH arguments not found")?;
+                            anyhow::Ok((SshCommand { arguments }, askpass, path_style))
+                        })??;
 
                     let mut connection = None;
                     if let Some(c) = binary.connection {

@@ -4,7 +4,7 @@ use collections::HashMap;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
-use remote::ssh_session::SshArgs;
+use remote::{path_buf::PathStyle, ssh_session::SshArgs};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -52,6 +52,7 @@ pub struct SshDetails {
     pub host: String,
     pub ssh_command: SshCommand,
     pub askpass: Option<String>,
+    pub path_style: PathStyle,
 }
 
 impl Project {
@@ -78,11 +79,12 @@ impl Project {
     pub fn ssh_details(&self, cx: &App) -> Option<SshDetails> {
         if let Some(ssh_client) = &self.ssh_client {
             let ssh_client = ssh_client.read(cx);
-            if let Some(SshArgs { arguments, askpass }) = ssh_client.ssh_args() {
+            if let Some((SshArgs { arguments, askpass }, path_style)) = ssh_client.ssh_info() {
                 return Some(SshDetails {
                     host: ssh_client.connection_options().host.clone(),
                     ssh_command: SshCommand { arguments },
                     askpass,
+                    path_style,
                 });
             }
         }
@@ -259,6 +261,7 @@ impl Project {
                         host,
                         ssh_command,
                         askpass,
+                        path_style,
                     }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
 
@@ -316,6 +319,7 @@ impl Project {
                         host,
                         ssh_command,
                         askpass,
+                        path_style,
                     }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
