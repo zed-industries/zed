@@ -6680,11 +6680,7 @@ impl LspStore {
         };
 
         if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
-            let snapshot = self
-                .as_local_mut()
-                .unwrap()
-                .buffer_snapshot_for_lsp_version(&buffer_handle, server_id, version, cx)?;
-
+            let snapshot = buffer_handle.read(cx).snapshot();
             let buffer = buffer_handle.read(cx);
             let reused_diagnostics = buffer
                 .get_diagnostics(server_id)
