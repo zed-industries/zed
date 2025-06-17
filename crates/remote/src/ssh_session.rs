@@ -29,8 +29,7 @@ use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
     proto::{
-        self, Envelope, EnvelopedMessage, FromProto, PeerId, RequestMessage, ToProto,
-        build_typed_envelope,
+        self, Envelope, EnvelopedMessage, PeerId, RequestMessage, ToProto, build_typed_envelope,
     },
 };
 use schemars::JsonSchema;
