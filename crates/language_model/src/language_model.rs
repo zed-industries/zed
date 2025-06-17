@@ -14,16 +14,16 @@ use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-use http_client::http::{HeaderMap, HeaderValue};
+use http_client::http::{self, HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::fmt;
 use std::ops::{Add, Sub};
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
 use zed_llm_client::{
@@ -81,7 +81,7 @@ pub enum LanguageModelCompletionEvent {
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
     #[error("rate limit exceeded, retry after {retry_after:?}")]
-    RateLimit { retry_after: Duration },
+    RateLimitExceeded { retry_after: Duration },
     #[error("received bad input JSON")]
     BadInputJson {
         id: LanguageModelToolUseId,
@@ -105,20 +105,36 @@ pub enum LanguageModelCompletionError {
     PromptTooLarge,
     #[error("internal server error in language model provider's API")]
     ApiInternalServerError,
+    #[error("I/O error reading response from language model provider's API: {0:?}")]
+    ApiReadResponseError(io::Error),
+    #[error("HTTP response error from language model provider's API: status {status} - {body:?}")]
+    HttpResponseError { status: u16, body: String },
+    #[error("error serializing request to language model provider API: {0}")]
+    SerializeRequest(serde_json::Error),
+    #[error("error building request body to language model provider API: {0}")]
+    BuildRequestBody(http::Error),
+    #[error("error sending HTTP request to language model provider API: {0}")]
+    HttpSend(anyhow::Error),
+    #[error("error deserializing language model provider API response: {0}")]
+    DeserializeResponse(serde_json::Error),
+    #[error("unexpected language model provider API response format: {0}")]
+    UnknownResponseFormat(String),
 }
 
 impl From<AnthropicError> for LanguageModelCompletionError {
     fn from(error: AnthropicError) -> Self {
         match error {
-            AnthropicError::SerializeRequest(error) => todo!(),
-            AnthropicError::BuildRequestBody(error) => todo!(),
-            AnthropicError::HttpSend(error) => todo!(),
-            AnthropicError::DeserializeResponse(error) => todo!(),
-            AnthropicError::ReadResponse(error) => todo!(),
-            AnthropicError::HttpError { status, body } => todo!(),
-            AnthropicError::RateLimit { retry_after } => Self::RateLimit { retry_after },
+            AnthropicError::SerializeRequest(error) => Self::SerializeRequest(error),
+            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody(error),
+            AnthropicError::HttpSend(error) => Self::HttpSend(error),
+            AnthropicError::DeserializeResponse(error) => Self::DeserializeResponse(error),
+            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError(error),
+            AnthropicError::HttpResponseError { status, body } => {
+                Self::HttpResponseError { status, body }
+            }
+            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded { retry_after },
             AnthropicError::ApiError(api_error) => api_error.into(),
-            AnthropicError::UnexpectedResponseFormat(_) => todo!(),
+            AnthropicError::UnexpectedResponseFormat(error) => Self::UnknownResponseFormat(error),
         }
     }
 }
@@ -134,7 +150,7 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
                 PermissionError => LanguageModelCompletionError::PermissionError,
                 NotFoundError => LanguageModelCompletionError::ApiEndpointNotFound,
                 RequestTooLarge => LanguageModelCompletionError::PromptTooLarge,
-                RateLimitError => LanguageModelCompletionError::RateLimit {
+                RateLimitError => LanguageModelCompletionError::RateLimitExceeded {
                     retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
                 },
                 ApiError => LanguageModelCompletionError::ApiInternalServerError,
@@ -407,6 +423,18 @@ pub trait LanguageModel: Send + Sync {
 pub enum LanguageModelKnownError {
     #[error("Context window limit exceeded ({tokens})")]
     ContextWindowLimitExceeded { tokens: u64 },
+    #[error("Language model provider's API is currently overloaded")]
+    Overloaded,
+    #[error("Language model provider's API encountered an internal server error")]
+    ApiInternalServerError,
+    #[error("I/O error while reading response from language model provider's API: {0:?}")]
+    ReadResponseError(io::Error),
+    #[error("Error deserializing response from language model provider's API: {0:?}")]
+    DeserializeResponse(serde_json::Error),
+    #[error("Language model provider's API returned a response in an unknown format")]
+    UnknownResponseFormat(String),
+    #[error("Rate limit exceeded for language model provider's API; retry in {retry_after:?}")]
+    RateLimiteExceeded { retry_after: Duration },
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {

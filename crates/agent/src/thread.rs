@@ -1558,48 +1558,62 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         let event = match event {
                             Ok(event) => event,
-                            Err(LanguageModelCompletionError::BadInputJson {
-                                id,
-                                tool_name,
-                                raw_input: invalid_input_json,
-                                json_parse_error,
-                            }) => {
-                                thread.receive_invalid_tool_json(
-                                    id,
-                                    tool_name,
-                                    invalid_input_json,
-                                    json_parse_error,
-                                    window,
-                                    cx,
-                                );
-                                return Ok(());
-                            }
-                            Err(LanguageModelCompletionError::Other(error)) => {
-                                return Err(error);
-                            }
-                            Err(err @ LanguageModelCompletionError::RateLimit { .. }) => {
-                                return Err(err.into());
-                            }
-                            Err(LanguageModelCompletionError::Overloaded) => {
-                                todo!()
-                            }
-                            Err(LanguageModelCompletionError::BadRequestFormat) => {
-                                todo!()
-                            }
-                            Err(LanguageModelCompletionError::AuthenticationError) => {
-                                todo!()
-                            }
-                            Err(LanguageModelCompletionError::PermissionError) => {
-                                todo!()
-                            }
-                            Err(LanguageModelCompletionError::PromptTooLarge) => {
-                                todo!()
-                            }
-                            Err(LanguageModelCompletionError::ApiEndpointNotFound) => {
-                                todo!()
-                            }
-                            Err(LanguageModelCompletionError::ApiInternalServerError) => {
-                                todo!()
+                            Err(error) => {
+                                match error {
+                                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
+                                        anyhow::bail!(LanguageModelKnownError::RateLimiteExceeded { retry_after });
+                                    }
+                                    LanguageModelCompletionError::Overloaded => {
+                                        anyhow::bail!(LanguageModelKnownError::Overloaded);
+                                    }
+                                    LanguageModelCompletionError::ApiInternalServerError =>{
+                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
+                                    }
+                                    LanguageModelCompletionError::PromptTooLarge => {
+                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens: todo!() }); // TODO Anthropic doesn't always give us this
+                                    }
+                                    LanguageModelCompletionError::ApiReadResponseError(io_error) => {
+                                        anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
+                                    }
+                                    LanguageModelCompletionError::UnknownResponseFormat(error) => {
+                                        anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
+                                    }
+                                    LanguageModelCompletionError::HttpResponseError { status, body } => {
+                                        let todo = todo!(); // TODO depending on status code, generate a different LanguageModelKnownError
+                                    }
+                                    LanguageModelCompletionError::DeserializeResponse(error) => {
+                                        anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
+                                    }
+                                    LanguageModelCompletionError::BadInputJson {
+                                        id,
+                                        tool_name,
+                                        raw_input: invalid_input_json,
+                                        json_parse_error,
+                                    } => {
+                                        thread.receive_invalid_tool_json(
+                                            id,
+                                            tool_name,
+                                            invalid_input_json,
+                                            json_parse_error,
+                                            window,
+                                            cx,
+                                        );
+                                        return Ok(());
+                                    }
+                                    // These are all errors we can't automatically attempt to recover from (e.g. by retrying)
+                                    err @ LanguageModelCompletionError::BadRequestFormat |
+                                    err @ LanguageModelCompletionError::AuthenticationError |
+                                    err @ LanguageModelCompletionError::PermissionError |
+                                    err @ LanguageModelCompletionError::ApiEndpointNotFound |
+                                    err @ LanguageModelCompletionError::SerializeRequest(_) |
+                                    err @ LanguageModelCompletionError::BuildRequestBody(_) |
+                                    err @ LanguageModelCompletionError::HttpSend(_) => {
+                                        anyhow::bail!(err);
+                                    }
+                                    LanguageModelCompletionError::Other(error) => {
+                                        return Err(error);
+                                    }
+                                }
                             }
                         };
 
@@ -1849,14 +1863,26 @@ impl Thread {
                                 error.downcast_ref::<LanguageModelKnownError>()
                             {
                                 match known_error {
-                                    LanguageModelKnownError::ContextWindowLimitExceeded {
-                                        tokens,
-                                    } => {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
                                             token_count: *tokens,
                                         });
                                         cx.notify();
+                                    }
+                                    LanguageModelKnownError::RateLimiteExceeded { retry_after } => {
+                                        let todo = todo!(); // TODO report the error to the user, wait retry_after, and then etc.
+                                    }
+                                    LanguageModelKnownError::Overloaded => {
+                                        let todo = todo!(); // TODO wait and then retry up to N times
+                                    }
+                                    LanguageModelKnownError::ApiInternalServerError => {
+                                        let todo = todo!(); // TODO retry request, but only once
+                                    }
+                                    LanguageModelKnownError::ReadResponseError(error) => todo!(), // TODO attempt to re-roll response, but only once
+                                    LanguageModelKnownError::DeserializeResponse(error) => todo!(), // TODO attempt to re-roll response, but only once
+                                    LanguageModelKnownError::UnknownResponseFormat(_) => {
+                                        let todo = todo!(); // TODO attempt to re-roll response, but only once
                                     }
                                 }
                             } else {

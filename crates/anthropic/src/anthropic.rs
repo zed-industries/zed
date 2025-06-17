@@ -365,7 +365,7 @@ pub async fn complete(
     if status.is_success() {
         Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
     } else {
-        Err(AnthropicError::HttpError {
+        Err(AnthropicError::HttpResponseError {
             status: status.as_u16(),
             body,
         })
@@ -531,7 +531,7 @@ pub async fn stream_completion_with_rate_limit_info(
         match serde_json::from_str::<Event>(&body) {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
             Ok(_) => Err(AnthropicError::UnexpectedResponseFormat(body)),
-            Err(_) => Err(AnthropicError::HttpError {
+            Err(_) => Err(AnthropicError::HttpResponseError {
                 status: response.status().as_u16(),
                 body: body,
             }),
@@ -800,7 +800,7 @@ pub enum AnthropicError {
     ReadResponse(io::Error),
 
     /// HTTP error response from the API
-    HttpError { status: u16, body: String },
+    HttpResponseError { status: u16, body: String },
 
     /// Rate limit exceeded
     RateLimit { retry_after: Duration },
