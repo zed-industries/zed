@@ -127,6 +127,12 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    pub usage: RequestUsage,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RequestUsage {
+    pub include: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

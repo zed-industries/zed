@@ -858,16 +858,21 @@ impl DebugPanel {
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
-                                                session
-                                                    .update(cx, |session, cx| session.threads(cx))
+                                                session.read(cx).is_running().then(|| {
+                                                    session.update(cx, |session, cx| {
+                                                        session.threads(cx)
+                                                    })
+                                                })
                                             });
 
-                                        self.render_thread_dropdown(
-                                            &running_state,
-                                            threads,
-                                            window,
-                                            cx,
-                                        )
+                                        threads.and_then(|threads| {
+                                            self.render_thread_dropdown(
+                                                &running_state,
+                                                threads,
+                                                window,
+                                                cx,
+                                            )
+                                        })
                                     })
                                     .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
                                 },
@@ -1430,14 +1435,27 @@ impl Render for DebugPanel {
                                 ),
                             )
                             .child(
-                                h_flex().flex_shrink().child(
-                                    Button::new("spawn-new-session-empty-state", "New Session")
-                                        .size(ButtonSize::Large)
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(crate::Start.boxed_clone(), cx);
-                                        }),
-                                ),
-                            ),
+                                v_flex().gap_4().items_center()
+                                .justify_center()
+                                .child(
+                                    h_flex().flex_shrink().child(
+                                        Button::new("spawn-new-session-empty-state", "New Session")
+                                            .size(ButtonSize::Large)
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(crate::Start.boxed_clone(), cx);
+                                            })
+                                    )
+                                )
+                                .child(
+                                    h_flex().flex_shrink().child(
+                                        Button::new("spawn-new-session-install-extensions", "Install Debug Extensions")
+                                            .label_size(LabelSize::Small)
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(zed_actions::Extensions { category_filter: Some(zed_actions::ExtensionCategoryFilter::DebugAdapters)}.boxed_clone(), cx);
+                                            })
+                                    )
+                                )
+                            )
                     )
                 }
             })

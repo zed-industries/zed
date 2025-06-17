@@ -53,6 +53,7 @@ pub enum ExtensionCategoryFilter {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]

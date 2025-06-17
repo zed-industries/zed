@@ -152,6 +152,10 @@ fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvide
         provides.insert(ExtensionProvides::Snippets);
     }
 
+    if !manifest.debug_adapters.is_empty() {
+        provides.insert(ExtensionProvides::DebugAdapters);
+    }
+
     provides
 }
 
