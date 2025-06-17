@@ -1045,6 +1045,19 @@
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
+  // How to render LSP `textDocument/documentColor` colors in the editor.
+  //
+  // Possible values:
+  //
+  // 1. Do not query and render document colors.
+  //      "lsp_document_colors": "none",
+  // 2. Render document colors as inlay hints near the color text (default).
+  //      "lsp_document_colors": "inlay",
+  // 3. Draw a border around the color text.
+  //      "lsp_document_colors": "border",
+  // 4. Draw a background behind the color text..
+  //      "lsp_document_colors": "background",
+  "lsp_document_colors": "inlay",
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.

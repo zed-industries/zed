@@ -16,8 +16,9 @@ use crate::{
         ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, MinimapThumb, MinimapThumbBorder,
-        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
+        CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, MinimapThumb,
+        MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
+        ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -5676,6 +5677,7 @@ impl EditorElement {
 
                 self.paint_lines_background(layout, window, cx);
                 let invisible_display_ranges = self.paint_highlights(layout, window);
+                self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
@@ -5703,6 +5705,7 @@ impl EditorElement {
             for (range, color) in &layout.highlighted_ranges {
                 self.paint_highlighted_range(
                     range.clone(),
+                    true,
                     *color,
                     Pixels::ZERO,
                     line_end_overshoot,
@@ -5717,6 +5720,7 @@ impl EditorElement {
                 for selection in selections.iter() {
                     self.paint_highlighted_range(
                         selection.range.clone(),
+                        true,
                         player_color.selection,
                         corner_radius,
                         corner_radius * 2.,
@@ -5792,6 +5796,7 @@ impl EditorElement {
             for range in layout.redacted_ranges.iter() {
                 self.paint_highlighted_range(
                     range.clone(),
+                    true,
                     redaction_color.into(),
                     Pixels::ZERO,
                     line_end_overshoot,
@@ -5800,6 +5805,48 @@ impl EditorElement {
                 );
             }
         });
+    }
+
+    fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window) {
+        let Some((colors_render_mode, image_colors)) = &layout.document_colors else {
+            return;
+        };
+        if image_colors.is_empty()
+            || colors_render_mode == &DocumentColorsRenderMode::None
+            || colors_render_mode == &DocumentColorsRenderMode::Inlay
+        {
+            return;
+        }
+
+        let line_end_overshoot = layout.line_end_overshoot();
+
+        for (range, color) in image_colors {
+            match colors_render_mode {
+                DocumentColorsRenderMode::Inlay | DocumentColorsRenderMode::None => return,
+                DocumentColorsRenderMode::Background => {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        true,
+                        *color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        window,
+                    );
+                }
+                DocumentColorsRenderMode::Border => {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        false,
+                        *color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        window,
+                    );
+                }
+            }
+        }
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
@@ -6240,6 +6287,7 @@ impl EditorElement {
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
+        fill: bool,
         color: Hsla,
         corner_radius: Pixels,
         line_end_overshoot: Pixels,
@@ -6290,7 +6338,7 @@ impl EditorElement {
                     .collect(),
             };
 
-            highlighted_range.paint(layout.position_map.text_hitbox.bounds, window);
+            highlighted_range.paint(fill, layout.position_map.text_hitbox.bounds, window);
         }
     }
 
@@ -8061,6 +8109,12 @@ impl Element for EditorElement {
                             cx,
                         );
 
+                    let document_colors = self
+                        .editor
+                        .read(cx)
+                        .colors
+                        .as_ref()
+                        .map(|colors| colors.editor_display_highlights(&snapshot));
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
@@ -8808,6 +8862,7 @@ impl Element for EditorElement {
                         highlighted_ranges,
                         highlighted_gutter_ranges,
                         redacted_ranges,
+                        document_colors,
                         line_elements,
                         line_numbers,
                         blamed_display_rows,
@@ -9013,6 +9068,7 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
+    document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
 }
 
 impl EditorLayout {
@@ -9735,17 +9791,18 @@ pub struct HighlightedRangeLine {
 }
 
 impl HighlightedRange {
-    pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
+    pub fn paint(&self, fill: bool, bounds: Bounds<Pixels>, window: &mut Window) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
-            self.paint_lines(self.start_y, &self.lines[0..1], bounds, window);
+            self.paint_lines(self.start_y, &self.lines[0..1], fill, bounds, window);
             self.paint_lines(
                 self.start_y + self.line_height,
                 &self.lines[1..],
+                fill,
                 bounds,
                 window,
             );
         } else {
-            self.paint_lines(self.start_y, &self.lines, bounds, window);
+            self.paint_lines(self.start_y, &self.lines, fill, bounds, window);
         }
     }
 
@@ -9753,6 +9810,7 @@ impl HighlightedRange {
         &self,
         start_y: Pixels,
         lines: &[HighlightedRangeLine],
+        fill: bool,
         _bounds: Bounds<Pixels>,
         window: &mut Window,
     ) {
@@ -9779,7 +9837,11 @@ impl HighlightedRange {
         };
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-        let mut builder = gpui::PathBuilder::fill();
+        let mut builder = if fill {
+            gpui::PathBuilder::fill()
+        } else {
+            gpui::PathBuilder::stroke(px(1.))
+        };
         builder.move_to(first_top_right - top_curve_width);
         builder.curve_to(first_top_right + curve_height, first_top_right);
 

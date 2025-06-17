@@ -29,6 +29,7 @@ mod inlay_hint_cache;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
+mod lsp_colors;
 mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
@@ -63,8 +64,8 @@ use dap::TelemetrySpawnLocation;
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes,
-    SearchSettings, ShowScrollbar,
+    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -79,6 +80,7 @@ use futures::{
     stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
+use lsp_colors::LspColorData;
 
 use ::git::blame::BlameEntry;
 use ::git::{Restore, blame::ParsedCommitMessage};
@@ -109,10 +111,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiagnosticSourceKind, DiffOptions, DocumentationConfig,
-    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
-    WordsQuery,
+    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -125,7 +126,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, PulledDiagnostics,
+    BreakpointWithPosition, CompletionResponse, ProjectPath,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -274,16 +275,19 @@ impl InlineValueCache {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
     InlineCompletion(usize),
-    Hint(usize),
     DebuggerValue(usize),
+    // LSP
+    Hint(usize),
+    Color(usize),
 }
 
 impl InlayId {
     fn id(&self) -> usize {
         match self {
             Self::InlineCompletion(id) => *id,
-            Self::Hint(id) => *id,
             Self::DebuggerValue(id) => *id,
+            Self::Hint(id) => *id,
+            Self::Color(id) => *id,
         }
     }
 }
@@ -1134,6 +1138,8 @@ pub struct Editor {
     inline_value_cache: InlineValueCache,
     selection_drag_state: SelectionDragState,
     drag_and_drop_selection_enabled: bool,
+    next_color_inlay_id: usize,
+    colors: Option<LspColorData>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1795,13 +1801,13 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded(..)
-                        | project::Event::LanguageServerRemoved(..) => {
+                        project::Event::LanguageServerAdded(server_id, ..)
+                        | project::Event::LanguageServerRemoved(server_id) => {
                             if editor.tasks_update_task.is_none() {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.pull_diagnostics(None, window, cx);
+                            editor.update_lsp_data(false, Some(*server_id), None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -2070,6 +2076,8 @@ impl Editor {
             ],
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
+            colors: None,
+            next_color_inlay_id: 0,
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -2211,7 +2219,8 @@ impl Editor {
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
-            editor.pull_diagnostics(None, window, cx);
+            editor.colors = Some(LspColorData::new(cx));
+            editor.update_lsp_data(false, None, None, window, cx);
         }
 
         editor.report_editor_event("Editor Opened", None, cx);
@@ -4895,6 +4904,15 @@ impl Editor {
             .read(cx)
             .current_inlays()
             .filter(|inlay| matches!(inlay.id, InlayId::DebuggerValue(_)))
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn all_inlays(&self, cx: &App) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
             .cloned()
             .collect()
     }
@@ -16241,8 +16259,14 @@ impl Editor {
             let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
                 buffers
                     .into_iter()
-                    .flat_map(|buffer| {
-                        Some(project.upgrade()?.pull_diagnostics_for_buffer(buffer, cx))
+                    .filter_map(|buffer| {
+                        project
+                            .update(cx, |project, cx| {
+                                project.lsp_store().update(cx, |lsp_store, cx| {
+                                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                                })
+                            })
+                            .ok()
                     })
                     .collect::<FuturesUnordered<_>>()
             }) else {
@@ -19066,7 +19090,7 @@ impl Editor {
                             .into_iter()
                             .flatten()
                             .for_each(|hint| {
-                                let inlay = Inlay::debugger_hint(
+                                let inlay = Inlay::debugger(
                                     post_inc(&mut editor.next_inlay_id),
                                     Anchor::in_buffer(excerpt_id, buffer_id, hint.position),
                                     hint.text(),
@@ -19117,17 +19141,15 @@ impl Editor {
                                         .register_buffer_with_language_servers(&edited_buffer, cx)
                                 });
                         });
-                        if edited_buffer.read(cx).file().is_some() {
-                            self.pull_diagnostics(
-                                Some(edited_buffer.read(cx).remote_id()),
-                                window,
-                                cx,
-                            );
-                        }
                     }
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
+
+                if let Some(buffer) = edited_buffer {
+                    self.update_lsp_data(true, None, Some(buffer.read(cx).remote_id()), window, cx);
+                }
+
                 if *singleton_buffer_edited {
                     if let Some(buffer) = edited_buffer {
                         if buffer.read(cx).file().is_none() {
@@ -19190,6 +19212,7 @@ impl Editor {
                         .detach();
                     }
                 }
+                self.update_lsp_data(false, None, Some(buffer_id), window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -19209,7 +19232,7 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsRemoved {
                     ids: ids.clone(),
                     removed_buffer_ids: removed_buffer_ids.clone(),
-                })
+                });
             }
             multi_buffer::Event::ExcerptsEdited {
                 excerpt_ids,
@@ -19220,7 +19243,7 @@ impl Editor {
                 });
                 cx.emit(EditorEvent::ExcerptsEdited {
                     ids: excerpt_ids.clone(),
-                })
+                });
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
@@ -19364,6 +19387,15 @@ impl Editor {
                     })
                 }
             }
+        }
+
+        if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
+            colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
+        }) {
+            if !inlay_splice.to_insert.is_empty() || !inlay_splice.to_remove.is_empty() {
+                self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
+            }
+            self.refresh_colors(true, None, None, window, cx);
         }
 
         cx.notify();
@@ -20251,6 +20283,18 @@ impl Editor {
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
+
+    fn update_lsp_data(
+        &mut self,
+        update_on_edit: bool,
+        for_server_id: Option<LanguageServerId>,
+        for_buffer: Option<BufferId>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.pull_diagnostics(for_buffer, window, cx);
+        self.refresh_colors(update_on_edit, for_server_id, for_buffer, window, cx);
+    }
 }
 
 fn vim_enabled(cx: &App) -> bool {
@@ -20937,12 +20981,6 @@ pub trait SemanticsProvider {
         new_name: String,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
-
-    fn pull_diagnostics_for_buffer(
-        &self,
-        buffer: Entity<Buffer>,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<()>>;
 }
 
 pub trait CompletionProvider {
@@ -21459,85 +21497,6 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
-    }
-
-    fn pull_diagnostics_for_buffer(
-        &self,
-        buffer: Entity<Buffer>,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
-        let diagnostics = self.update(cx, |project, cx| {
-            project
-                .lsp_store()
-                .update(cx, |lsp_store, cx| lsp_store.pull_diagnostics(buffer, cx))
-        });
-        let project = self.clone();
-        cx.spawn(async move |cx| {
-            let diagnostics = diagnostics.await.context("pulling diagnostics")?;
-            project.update(cx, |project, cx| {
-                project.lsp_store().update(cx, |lsp_store, cx| {
-                    for diagnostics_set in diagnostics {
-                        let LspPullDiagnostics::Response {
-                            server_id,
-                            uri,
-                            diagnostics,
-                        } = diagnostics_set
-                        else {
-                            continue;
-                        };
-
-                        let adapter = lsp_store.language_server_adapter_for_id(server_id);
-                        let disk_based_sources = adapter
-                            .as_ref()
-                            .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                            .unwrap_or(&[]);
-                        match diagnostics {
-                            PulledDiagnostics::Unchanged { result_id } => {
-                                lsp_store
-                                    .merge_diagnostics(
-                                        server_id,
-                                        lsp::PublishDiagnosticsParams {
-                                            uri: uri.clone(),
-                                            diagnostics: Vec::new(),
-                                            version: None,
-                                        },
-                                        Some(result_id),
-                                        DiagnosticSourceKind::Pulled,
-                                        disk_based_sources,
-                                        |_, _| true,
-                                        cx,
-                                    )
-                                    .log_err();
-                            }
-                            PulledDiagnostics::Changed {
-                                diagnostics,
-                                result_id,
-                            } => {
-                                lsp_store
-                                    .merge_diagnostics(
-                                        server_id,
-                                        lsp::PublishDiagnosticsParams {
-                                            uri: uri.clone(),
-                                            diagnostics,
-                                            version: None,
-                                        },
-                                        result_id,
-                                        DiagnosticSourceKind::Pulled,
-                                        disk_based_sources,
-                                        |old_diagnostic, _| match old_diagnostic.source_kind {
-                                            DiagnosticSourceKind::Pulled => false,
-                                            DiagnosticSourceKind::Other
-                                            | DiagnosticSourceKind::Pushed => true,
-                                        },
-                                        cx,
-                                    )
-                                    .log_err();
-                            }
-                        }
-                    }
-                })
-            })
-        })
     }
 }
 

@@ -50,6 +50,22 @@ pub struct EditorSettings {
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: bool,
+    pub lsp_document_colors: DocumentColorsRenderMode,
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentColorsRenderMode {
+    /// Do not query and render document colors.
+    None,
+    /// Render document colors as inlay hints near the color text.
+    #[default]
+    Inlay,
+    /// Draw a border around the color text.
+    Border,
+    /// Draw a background behind the color text.
+    Background,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -521,6 +537,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop_selection: Option<bool>,
+
+    /// How to render LSP `textDocument/documentColor` colors in the editor.
+    ///
+    /// Default: [`DocumentColorsRenderMode::Inlay`]
+    pub lsp_document_colors: Option<DocumentColorsRenderMode>,
 }
 
 // Toolbar related settings
