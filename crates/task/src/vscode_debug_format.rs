@@ -154,11 +154,7 @@ mod tests {
                     "type": "node",
                     "port": 17,
                 }),
-                tcp_connection: Some(TcpArgumentsTemplate {
-                    port: Some(17),
-                    host: None,
-                    timeout: None,
-                }),
+                tcp_connection: None,
                 build: None
             }])
         );
