@@ -260,7 +260,7 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
             .collect();
 
         let completions_menu = Self {
@@ -1050,6 +1050,8 @@ impl CompletionsMenu {
         snippet_sort_order: SnippetSortOrder,
         completions: &[Completion],
     ) -> Vec<StringMatch> {
+        dbg!(&query, &matches);
+
         let mut matches = matches;
 
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1058,8 +1060,8 @@ impl CompletionsMenu {
                 sort_capitalize: Reverse<usize>,
                 sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
-                sort_kind: usize,
                 sort_fuzzy_bracket: Reverse<usize>,
+                sort_kind: usize,
                 sort_text: Option<&'a str>,
                 sort_score: Reverse<OrderedFloat<f64>>,
                 sort_label: &'a str,
@@ -1141,8 +1143,8 @@ impl CompletionsMenu {
                     sort_capitalize,
                     sort_positions,
                     sort_snippet,
-                    sort_kind,
                     sort_fuzzy_bracket,
+                    sort_kind,
                     sort_text,
                     sort_score,
                     sort_label,

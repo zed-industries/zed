@@ -294,9 +294,9 @@ impl<'a> Matcher<'a> {
                 let mut multiplier = char_score;
 
                 // Scale the score based on how deep within the path we found the match.
-                if query_idx == 0 {
-                    multiplier /= ((prefix.len() + path.len()) - last_slash) as f64;
-                }
+                // if query_idx == 0 {
+                //     multiplier /= ((prefix.len() + path.len()) - last_slash) as f64;
+                // }
 
                 let mut next_score = 1.0;
                 if self.min_score > 0.0 {
