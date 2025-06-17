@@ -1428,7 +1428,12 @@ impl PickerDelegate for DebugDelegate {
         .detach();
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) {
         let debug_scenario = self
             .matches
             .get(self.selected_index())
@@ -1449,12 +1454,34 @@ impl PickerDelegate for DebugDelegate {
             })
             .unwrap_or_default();
 
-        send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
-        self.debug_panel
-            .update(cx, |panel, cx| {
-                panel.start_session(debug_scenario, task_context, None, worktree_id, window, cx);
+        if secondary {
+            // TODO: handle tasks from debug.json separately, just open the file and scroll to it
+            let Some(id) = worktree_id else { return };
+            let debug_panel = self.debug_panel.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                debug_panel
+                    .update_in(cx, |debug_panel, window, cx| {
+                        debug_panel.save_scenario(&debug_scenario, id, window, cx)
+                    })?
+                    .await?;
+                anyhow::Ok(())
             })
-            .ok();
+            .detach_and_log_err(cx);
+        } else {
+            send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
+            self.debug_panel
+                .update(cx, |panel, cx| {
+                    panel.start_session(
+                        debug_scenario,
+                        task_context,
+                        None,
+                        worktree_id,
+                        window,
+                        cx,
+                    );
+                })
+                .ok();
+        }
 
         cx.emit(DismissEvent);
     }
@@ -1475,16 +1502,20 @@ impl PickerDelegate for DebugDelegate {
             .justify_end()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
-            // .child(
-            //     // TODO: add button to open selected task in debug.json
-            //     h_flex().into_any_element(),
-            // )
+            .children({
+                let action = menu::SecondaryConfirm.boxed_clone();
+                KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                    Button::new("edit-task", "Edit configuration")
+                        .label_size(LabelSize::Small)
+                        .key_binding(keybind)
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(action.boxed_clone(), cx)
+                        })
+                })
+            })
             .map(|this| {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {
-                    let action = picker::ConfirmInput {
-                        secondary: current_modifiers.secondary(),
-                    }
-                    .boxed_clone();
+                    let action = picker::ConfirmInput { secondary: false }.boxed_clone();
                     this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
                         Button::new("launch-custom", "Launch Custom")
                             .key_binding(keybind)
