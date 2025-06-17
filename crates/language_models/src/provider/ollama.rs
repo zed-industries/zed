@@ -46,7 +46,7 @@ pub struct AvailableModel {
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
@@ -377,7 +377,7 @@ impl LanguageModel for OllamaLanguageModel {
         format!("ollama/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -385,7 +385,7 @@ impl LanguageModel for OllamaLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         // There is no endpoint for this _yet_ in Ollama
         // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
         let token_count = request
@@ -395,7 +395,7 @@ impl LanguageModel for OllamaLanguageModel {
             .sum::<usize>()
             / 4;
 
-        async move { Ok(token_count) }.boxed()
+        async move { Ok(token_count as u64) }.boxed()
     }
 
     fn stream_completion(

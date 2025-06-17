@@ -126,7 +126,7 @@ struct ModelLimits {
     #[serde(default)]
     max_output_tokens: usize,
     #[serde(default)]
-    max_prompt_tokens: usize,
+    max_prompt_tokens: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -182,7 +182,7 @@ impl Model {
         self.name.as_str()
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.capabilities.limits.max_prompt_tokens
     }
 
@@ -316,15 +316,15 @@ pub struct ResponseEvent {
 
 #[derive(Deserialize, Debug)]
 pub struct Usage {
-    pub completion_tokens: u32,
-    pub prompt_tokens: u32,
+    pub completion_tokens: u64,
+    pub prompt_tokens: u64,
     pub prompt_tokens_details: PromptTokensDetails,
-    pub total_tokens: u32,
+    pub total_tokens: u64,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct PromptTokensDetails {
-    pub cached_tokens: u32,
+    pub cached_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
