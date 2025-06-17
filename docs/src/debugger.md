@@ -251,7 +251,7 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 ```json
 [
   {
-    "label": "Launch Chromee (TypeScript)",
+    "label": "Launch Chrome (TypeScript)",
     "adapter": "JavaScript",
     "type": "pwa-chrome",
     "request": "launch",
