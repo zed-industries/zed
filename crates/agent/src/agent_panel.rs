@@ -520,9 +520,14 @@ impl AgentPanel {
         });
 
         let message_editor_subscription =
-            cx.subscribe(&message_editor, |_, _, event, cx| match event {
+            cx.subscribe(&message_editor, |this, _, event, cx| match event {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => {
+                    this.thread.update(cx, |thread, cx| {
+                        thread.scroll_to_bottom(cx);
+                    });
                 }
             });
 
@@ -803,9 +808,14 @@ impl AgentPanel {
         self.message_editor.focus_handle(cx).focus(window);
 
         let message_editor_subscription =
-            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+            cx.subscribe(&self.message_editor, |this, _, event, cx| match event {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => {
+                    this.thread.update(cx, |thread, cx| {
+                        thread.scroll_to_bottom(cx);
+                    });
                 }
             });
 
@@ -1018,9 +1028,14 @@ impl AgentPanel {
         self.message_editor.focus_handle(cx).focus(window);
 
         let message_editor_subscription =
-            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+            cx.subscribe(&self.message_editor, |this, _, event, cx| match event {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => {
+                    this.thread.update(cx, |thread, cx| {
+                        thread.scroll_to_bottom(cx);
+                    });
                 }
             });
 
