@@ -5063,6 +5063,12 @@ impl Project {
     pub fn agent_location(&self) -> Option<AgentLocation> {
         self.agent_location.clone()
     }
+
+    pub fn mark_buffer_as_non_searchable(&self, buffer_id: BufferId, cx: &mut Context<Project>) {
+        self.buffer_store.update(cx, |buffer_store, _| {
+            buffer_store.mark_buffer_as_non_searchable(buffer_id)
+        });
+    }
 }
 
 pub struct PathMatchCandidateSet {
