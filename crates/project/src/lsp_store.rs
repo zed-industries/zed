@@ -3573,7 +3573,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_inlay_hints);
         client.add_entity_request_handler(Self::handle_get_project_symbols);
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
-        client.add_entity_request_handler(Self::handle_color_presentation);
+        client.add_entity_request_handler(Self::handle_get_color_presentation);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
         client.add_entity_request_handler(Self::handle_refresh_code_lens);
@@ -8752,7 +8752,7 @@ impl LspStore {
         })
     }
 
-    async fn handle_color_presentation(
+    async fn handle_get_color_presentation(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::GetColorPresentation>,
         mut cx: AsyncApp,

@@ -96,6 +96,11 @@ impl Inlay {
             color: None,
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_color(&self) -> Option<Hsla> {
+        self.color
+    }
 }
 
 impl sum_tree::Item for Transform {

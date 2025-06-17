@@ -4908,6 +4908,15 @@ impl Editor {
             .collect()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn all_inlays(&self, cx: &App) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .cloned()
+            .collect()
+    }
+
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
         if self.semantics_provider.is_none() || !self.mode.is_full() {
             return;
