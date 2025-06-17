@@ -64,7 +64,7 @@ impl TransportPipe {
     }
 }
 
-type Requests = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response>>>>>;
+type Requests = Arc<parking_lot::Mutex<HashMap<u64, oneshot::Sender<Result<Response>>>>>;
 type LogHandlers = Arc<parking_lot::Mutex<SmallVec<[(LogKind, IoHandler); 2]>>>;
 
 pub enum Transport {
@@ -200,7 +200,7 @@ impl TransportDelegate {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger output: {e}"),
                 }
-                let mut pending_requests = pending_requests.lock().await;
+                let mut pending_requests = pending_requests.lock();
                 pending_requests.drain().for_each(|(_, request)| {
                     request
                         .send(Err(anyhow!("debugger shutdown unexpectedly")))
@@ -226,12 +226,9 @@ impl TransportDelegate {
                 }));
             }
 
-            let pending_requests = self.pending_requests.clone();
             let log_handler = log_handler.clone();
             self._tasks.push(cx.background_spawn(async move {
-                match Self::handle_input(params.input, client_rx, pending_requests, log_handler)
-                    .await
-                {
+                match Self::handle_input(params.input, client_rx, log_handler).await {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger input: {e}"),
                 }
@@ -246,12 +243,12 @@ impl TransportDelegate {
         Ok((server_rx, server_tx))
     }
 
-    pub(crate) async fn add_pending_request(
+    pub(crate) fn add_pending_request(
         &self,
         sequence_id: u64,
         request: oneshot::Sender<Result<Response>>,
     ) {
-        let mut pending_requests = self.pending_requests.lock().await;
+        let mut pending_requests = self.pending_requests.lock();
         pending_requests.insert(sequence_id, request);
     }
 
@@ -307,7 +304,6 @@ impl TransportDelegate {
     async fn handle_input<Stdin>(
         mut server_stdin: Stdin,
         client_rx: Receiver<Message>,
-        pending_requests: Requests,
         log_handlers: Option<LogHandlers>,
     ) -> Result<()>
     where
@@ -377,7 +373,8 @@ impl TransportDelegate {
                     return Ok(());
                 }
                 ConnectionResult::Result(Ok(Message::Response(res))) => {
-                    if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
+                    let tx = pending_requests.lock().remove(&res.request_seq);
+                    if let Some(tx) = tx {
                         if let Err(e) = tx.send(Self::process_response(res)) {
                             log::trace!("Did not send response `{:?}` for a cancelled", e);
                         }
@@ -531,13 +528,8 @@ impl TransportDelegate {
             server_tx.close();
         }
 
-        let mut pending_requests = self.pending_requests.lock().await;
-
-        pending_requests.clear();
-
+        self.pending_requests.lock().clear();
         self.transport.kill().await;
-
-        drop(pending_requests);
 
         log::debug!("Shutdown client completed");
 

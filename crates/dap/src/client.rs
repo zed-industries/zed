@@ -152,8 +152,7 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
         self.transport_delegate
-            .add_pending_request(sequence_id, callback_tx)
-            .await;
+            .add_pending_request(sequence_id, callback_tx);
 
         log::debug!(
             "Client {} send `{}` request with sequence_id: {}",
