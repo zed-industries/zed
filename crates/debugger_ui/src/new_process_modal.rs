@@ -1439,9 +1439,22 @@ impl PickerDelegate for DebugDelegate {
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((_, debug_scenario)) = debug_scenario else {
+        let Some((kind, debug_scenario)) = debug_scenario else {
             return;
         };
+
+        if secondary {
+            match kind {
+                Some(TaskSourceKind::Worktree) {
+                    id,
+                    directory_in_worktree,
+                    id_base,
+                } => return,
+                Some(TaskSourceKind::AbsPath) { id_base, abs_path } => return,
+                // TODO: handle tasks from debug.json separately, just open the file and scroll to it
+                _ => {}
+            }
+        }
 
         let (task_context, worktree_id) = self
             .task_contexts
@@ -1455,7 +1468,6 @@ impl PickerDelegate for DebugDelegate {
             .unwrap_or_default();
 
         if secondary {
-            // TODO: handle tasks from debug.json separately, just open the file and scroll to it
             let Some(id) = worktree_id else { return };
             let debug_panel = self.debug_panel.clone();
             cx.spawn_in(window, async move |_, cx| {
