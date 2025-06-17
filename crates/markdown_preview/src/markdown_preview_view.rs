@@ -60,7 +60,9 @@ impl MarkdownPreviewView {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
                 workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane, &editor, cx) {
+                    if let Some(existing_view_idx) =
+                        Self::find_existing_preview_item_idx(pane, &editor, cx)
+                    {
                         pane.activate_item(existing_view_idx, true, true, window, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
@@ -84,7 +86,9 @@ impl MarkdownPreviewView {
                         )
                     });
                 pane.update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane, &editor, cx) {
+                    if let Some(existing_view_idx) =
+                        Self::find_existing_preview_item_idx(pane, &editor, cx)
+                    {
                         pane.activate_item(existing_view_idx, true, true, window, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), false, false, None, window, cx)
@@ -96,7 +100,11 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn find_existing_preview_item_idx(pane: &Pane, editor: &Entity<Editor>, cx: &App) -> Option<usize> {
+    fn find_existing_preview_item_idx(
+        pane: &Pane,
+        editor: &Entity<Editor>,
+        cx: &App,
+    ) -> Option<usize> {
         pane.items_of_type::<MarkdownPreviewView>()
             .find(|view| {
                 if let Some(active_editor) = &view.read(cx).active_editor {
