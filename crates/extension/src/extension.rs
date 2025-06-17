@@ -151,11 +151,7 @@ pub trait Extension: Send + Sync + 'static {
         config: serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest>;
 
-    async fn dap_config_to_scenario(
-        &self,
-        config: ZedDebugConfig,
-        worktree: Arc<dyn WorktreeDelegate>,
-    ) -> Result<DebugScenario>;
+    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario>;
 
     async fn dap_locator_create_scenario(
         &self,

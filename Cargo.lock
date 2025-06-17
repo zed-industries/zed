@@ -4268,6 +4268,7 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "client",
  "collections",
@@ -8944,6 +8945,7 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "log",
  "parking_lot",
  "proto",
  "schemars",
@@ -8979,6 +8981,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "language",
  "language_model",
  "lmstudio",
  "log",
@@ -15834,6 +15837,7 @@ dependencies = [
  "serde_json_lenient",
  "sha2",
  "shellexpand 2.1.2",
+ "smol",
  "util",
  "workspace-hack",
  "zed_actions",

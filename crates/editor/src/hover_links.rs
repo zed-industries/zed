@@ -635,7 +635,7 @@ pub fn show_link_definition(
 
                         match highlight_range {
                             RangeInEditor::Text(text_range) => editor
-                                .highlight_text::<HoveredLinkState>(vec![text_range], style, cx),
+                                .highlight_text::<HoveredLinkState>(vec![(text_range, style)], cx),
                             RangeInEditor::Inlay(highlight) => editor
                                 .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
                         }
@@ -1403,7 +1403,6 @@ mod tests {
                 let snapshot = editor.snapshot(window, cx);
                 let actual_ranges = snapshot
                     .text_highlight_ranges::<HoveredLinkState>()
-                    .map(|ranges| ranges.as_ref().clone().1)
                     .unwrap_or_default();
 
                 assert!(actual_ranges.is_empty(), "When no cmd is pressed, should have no hint label selected, but got: {actual_ranges:?}");
@@ -1635,7 +1634,6 @@ mod tests {
                     .snapshot(window, cx)
                     .text_highlight_ranges::<HoveredLinkState>()
                     .unwrap_or_default()
-                    .1
                     .is_empty()
             );
         });
@@ -1842,7 +1840,6 @@ mod tests {
                     .snapshot(window, cx)
                     .text_highlight_ranges::<HoveredLinkState>()
                     .unwrap_or_default()
-                    .1
                     .is_empty()
             );
         });

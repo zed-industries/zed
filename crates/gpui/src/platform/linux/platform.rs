@@ -647,41 +647,57 @@ pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<V
     Ok(buffer)
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) const DEFAULT_CURSOR_ICON_NAME: &str = "left_ptr";
+
 impl CursorStyle {
     #[cfg(any(feature = "wayland", feature = "x11"))]
-    pub(super) fn to_icon_name(&self) -> &'static str {
-        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
-        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
-        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
+    pub(super) fn to_icon_names(&self) -> &'static [&'static str] {
+        // Based on cursor names from chromium:
+        // https://github.com/chromium/chromium/blob/d3069cf9c973dc3627fa75f64085c6a86c8f41bf/ui/base/cursor/cursor_factory.cc#L113
         match self {
-            CursorStyle::Arrow => "left_ptr",
-            CursorStyle::IBeam => "text",
-            CursorStyle::Crosshair => "crosshair",
-            CursorStyle::ClosedHand => "grabbing",
-            CursorStyle::OpenHand => "grab",
-            CursorStyle::PointingHand => "pointer",
-            CursorStyle::ResizeLeft => "w-resize",
-            CursorStyle::ResizeRight => "e-resize",
-            CursorStyle::ResizeLeftRight => "ew-resize",
-            CursorStyle::ResizeUp => "n-resize",
-            CursorStyle::ResizeDown => "s-resize",
-            CursorStyle::ResizeUpDown => "ns-resize",
-            CursorStyle::ResizeUpLeftDownRight => "nwse-resize",
-            CursorStyle::ResizeUpRightDownLeft => "nesw-resize",
-            CursorStyle::ResizeColumn => "col-resize",
-            CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
-            CursorStyle::OperationNotAllowed => "not-allowed",
-            CursorStyle::DragLink => "alias",
-            CursorStyle::DragCopy => "copy",
-            CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::Arrow => &[DEFAULT_CURSOR_ICON_NAME],
+            CursorStyle::IBeam => &["text", "xterm"],
+            CursorStyle::Crosshair => &["crosshair", "cross"],
+            CursorStyle::ClosedHand => &["closedhand", "grabbing", "hand2"],
+            CursorStyle::OpenHand => &["openhand", "grab", "hand1"],
+            CursorStyle::PointingHand => &["pointer", "hand", "hand2"],
+            CursorStyle::ResizeLeft => &["w-resize", "left_side"],
+            CursorStyle::ResizeRight => &["e-resize", "right_side"],
+            CursorStyle::ResizeLeftRight => &["ew-resize", "sb_h_double_arrow"],
+            CursorStyle::ResizeUp => &["n-resize", "top_side"],
+            CursorStyle::ResizeDown => &["s-resize", "bottom_side"],
+            CursorStyle::ResizeUpDown => &["sb_v_double_arrow", "ns-resize"],
+            CursorStyle::ResizeUpLeftDownRight => &["size_fdiag", "bd_double_arrow", "nwse-resize"],
+            CursorStyle::ResizeUpRightDownLeft => &["size_bdiag", "nesw-resize", "fd_double_arrow"],
+            CursorStyle::ResizeColumn => &["col-resize", "sb_h_double_arrow"],
+            CursorStyle::ResizeRow => &["row-resize", "sb_v_double_arrow"],
+            CursorStyle::IBeamCursorForVerticalLayout => &["vertical-text"],
+            CursorStyle::OperationNotAllowed => &["not-allowed", "crossed_circle"],
+            CursorStyle::DragLink => &["alias"],
+            CursorStyle::DragCopy => &["copy"],
+            CursorStyle::ContextualMenu => &["context-menu"],
             CursorStyle::None => {
                 #[cfg(debug_assertions)]
                 panic!("CursorStyle::None should be handled separately in the client");
                 #[cfg(not(debug_assertions))]
-                "default"
+                &[DEFAULT_CURSOR_ICON_NAME]
             }
         }
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
+    if let Ok(xcursor_path) = env::var("XCURSOR_PATH") {
+        log::warn!(
+            "{:#}\ncursor icon loading may be failing if XCURSOR_PATH environment variable is invalid. \
+                    XCURSOR_PATH overrides the default icon search. Its current value is '{}'",
+            message,
+            xcursor_path
+        );
+    } else {
+        log::warn!("{:#}", message);
     }
 }
 
