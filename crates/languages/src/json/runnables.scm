@@ -19,3 +19,14 @@
     (#set! tag package-script)
     (#set! tag composer-script)
 )
+
+; Runnables from our `debug.json` and `tasks.json`
+
+(
+    (document
+        (array
+            (object) @config
+        )
+    )
+    (#set! tag task)
+)
