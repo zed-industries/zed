@@ -239,7 +239,6 @@ impl HeadlessExtensionStore {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
 
-        log::error!("==> install extension: {tmp_path:?}<->{path:?}");
         cx.spawn(async move |this, cx| {
             if fs.is_dir(&path).await {
                 this.update(cx, |this, cx| {
