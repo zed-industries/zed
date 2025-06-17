@@ -222,6 +222,8 @@ pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
+    #[serde(default)]
+    pub clone: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
@@ -230,6 +232,8 @@ pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
+    #[serde(default)]
+    pub clone: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
@@ -3355,7 +3359,7 @@ impl Workspace {
         let destination = match panes.get(action.destination) {
             Some(&destination) => destination.clone(),
             None => {
-                if self.active_pane.read(cx).items_len() < 2 {
+                if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
                 let direction = SplitDirection::Right;
@@ -3375,14 +3379,18 @@ impl Workspace {
             }
         };
 
-        move_active_item(
-            &self.active_pane,
-            &destination,
-            action.focus,
-            true,
-            window,
-            cx,
-        )
+        if action.clone {
+            clone_active_item(&self.active_pane, &destination, action.focus, window, cx)
+        } else {
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            )
+        }
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3526,7 +3534,7 @@ impl Workspace {
         let destination = match self.find_pane_in_direction(action.direction, cx) {
             Some(destination) => destination,
             None => {
-                if self.active_pane.read(cx).items_len() < 2 {
+                if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
                 let new_pane = self.add_pane(window, cx);
@@ -3542,14 +3550,18 @@ impl Workspace {
             }
         };
 
-        move_active_item(
-            &self.active_pane,
-            &destination,
-            action.focus,
-            true,
-            window,
-            cx,
-        );
+        if action.clone {
+            clone_active_item(&self.active_pane, &destination, action.focus, window, cx)
+        } else {
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -7631,6 +7643,34 @@ pub fn move_active_item(
     });
 }
 
+pub fn clone_active_item(
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
+    focus_destination: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if source == destination {
+        return;
+    }
+    let Some(active_item) = source.read(cx).active_item() else {
+        return;
+    };
+    destination.update(cx, |target_pane, cx| {
+        let Some(clone) = active_item.clone_on_split(None, window, cx) else {
+            return;
+        };
+        target_pane.add_item(
+            clone,
+            focus_destination,
+            focus_destination,
+            Some(target_pane.items_len()),
+            window,
+            cx,
+        );
+    });
+}
+
 #[derive(Debug)]
 pub struct WorkspacePosition {
     pub window_bounds: Option<WindowBounds>,
@@ -9814,6 +9854,7 @@ mod tests {
                 &MoveItemToPaneInDirection {
                     direction: SplitDirection::Right,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9822,6 +9863,7 @@ mod tests {
                 &MoveItemToPane {
                     destination: 3,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9848,6 +9890,7 @@ mod tests {
                 &MoveItemToPaneInDirection {
                     direction: SplitDirection::Right,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9884,6 +9927,7 @@ mod tests {
                 &MoveItemToPane {
                     destination: 3,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9905,6 +9949,61 @@ mod tests {
                 "New item should have been moved to the new pane"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_moving_items_can_clone_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item_1 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_1), None, true, window, cx);
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 3, "Two new panes were created");
+            for pane in workspace.panes() {
+                assert_eq!(
+                    pane_items_paths(pane, cx),
+                    vec!["first.txt".to_string()],
+                    "Single item exists in all panes"
+                );
+            }
+        });
+
+        // verify that the active pane has been updated after waiting for the
+        // pane focus event to fire and resolve
+        workspace.read_with(cx, |workspace, _app| {
+            assert_eq!(
+                workspace.active_pane(),
+                &workspace.panes[2],
+                "The third pane should be the active one: {:?}",
+                workspace.panes
+            );
+        })
     }
 
     mod register_project_item_tests {
