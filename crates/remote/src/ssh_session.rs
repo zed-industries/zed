@@ -29,9 +29,7 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
-    proto::{
-        self, Envelope, EnvelopedMessage, PeerId, RequestMessage, ToProto, build_typed_envelope,
-    },
+    proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,11 +39,10 @@ use smol::{
 };
 use std::{
     any::TypeId,
-    borrow::Cow,
     collections::VecDeque,
     fmt, iter,
     ops::ControlFlow,
-    path::{Display, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
@@ -1401,7 +1398,7 @@ trait RemoteConnection: Send + Sync {
 struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<Child>>,
-    remote_binary_path: Option<PathBuf>,
+    remote_binary_path: Option<TargetPathBuf>,
     ssh_platform: SshPlatform,
     ssh_path_style: PathStyle,
     _temp_dir: TempDir,
@@ -1490,7 +1487,7 @@ impl RemoteConnection for SshRemoteConnection {
 
         let mut start_proxy_command = shell_script!(
             "exec {binary_path} proxy --identifier {identifier}",
-            binary_path = &remote_binary_path.to_string_lossy(),
+            binary_path = &remote_binary_path.to_string(),
             identifier = &unique_identifier,
         );
 
@@ -1919,7 +1916,7 @@ impl SshRemoteConnection {
                     &body,
                     &url,
                     "-o",
-                    &tmp_path_gz.to_string_lossy(),
+                    &tmp_path_gz.to_string(),
                 ],
             )
             .await
@@ -1941,7 +1938,7 @@ impl SshRemoteConnection {
                             &body,
                             &url,
                             "-O",
-                            &tmp_path_gz.to_string_lossy(),
+                            &tmp_path_gz.to_string(),
                         ],
                     )
                     .await
@@ -2539,36 +2536,6 @@ impl ProtoClient for ChannelClient {
 
     fn is_via_collab(&self) -> bool {
         false
-    }
-}
-
-#[derive(Debug, Clone)]
-struct UnixStylePathBuf(PathBuf);
-
-impl From<PathBuf> for UnixStylePathBuf {
-    fn from(path: PathBuf) -> Self {
-        let path = path.to_proto().into();
-        Self(path)
-    }
-}
-
-impl From<UnixStylePathBuf> for PathBuf {
-    fn from(path: UnixStylePathBuf) -> Self {
-        path.0.to_string_lossy().replace('\\', "/").into()
-    }
-}
-
-impl UnixStylePathBuf {
-    fn parent(&self) -> Option<&Path> {
-        self.0.parent()
-    }
-
-    fn to_string_lossy(&self) -> Cow<str> {
-        self.0.to_string_lossy()
-    }
-
-    fn display(&self) -> Display<'_> {
-        self.0.display()
     }
 }
 
