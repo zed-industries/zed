@@ -199,7 +199,7 @@ pub trait Extension: Send + Sync {
         &mut self,
         _adapter_name: String,
         _config: DebugTaskDefinition,
-        _user_provided_path: Option<String>,
+        _user_provided_debug_adapter_path: Option<String>,
         _worktree: &Worktree,
     ) -> Result<DebugAdapterBinary, String> {
         Err("`get_dap_binary` not implemented".to_string())
@@ -219,10 +219,7 @@ pub trait Extension: Send + Sync {
     ///
     /// In layman's terms: given a program, list of arguments, current working directory and environment variables,
     /// create a configuration that can be used to start a debug session.
-    fn dap_config_to_scenario(
-        &mut self,
-        _adapter_name: DebugConfig,
-    ) -> Result<DebugScenario, String> {
+    fn dap_config_to_scenario(&mut self, _config: DebugConfig) -> Result<DebugScenario, String> {
         Err("`dap_config_to_scenario` not implemented".to_string())
     }
 

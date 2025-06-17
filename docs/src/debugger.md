@@ -29,6 +29,8 @@ Zed supports a variety of debug adapters for different programming languages out
 
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
 
+> Is your desired debugger not listed? You can contribute by adding support for your favorite language or debugger. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
+
 ## Getting Started
 
 For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
