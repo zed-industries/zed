@@ -4226,7 +4226,6 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "anyhow",
  "client",
  "collections",
