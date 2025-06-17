@@ -16,10 +16,10 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent, MessageContent,
+    RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -407,14 +407,7 @@ impl AnthropicModel {
             let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.map_err(|err| match err {
-                AnthropicError::RateLimit { retry_after } => {
-                    LanguageModelCompletionError::RateLimit { retry_after }
-                }
-                err @ (AnthropicError::ApiError(..) | AnthropicError::Other(..)) => {
-                    LanguageModelCompletionError::Other(anthropic_err_to_anyhow(err))
-                }
-            })
+            request.await.map_err(Into::into)
         }
         .boxed()
     }
@@ -714,7 +707,7 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -859,9 +852,7 @@ impl AnthropicEventMapper {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    AnthropicError::ApiError(error)
-                )))]
+                vec![Err(error.into())]
             }
             _ => Vec::new(),
         }
@@ -872,16 +863,6 @@ struct RawToolUse {
     id: String,
     name: String,
     input_json: String,
-}
-
-pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
-    if let AnthropicError::ApiError(api_err) = &err {
-        if let Some(tokens) = api_err.match_window_exceeded() {
-            return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });
-        }
-    }
-
-    anyhow!(err)
 }
 
 /// Updates usage data by preferring counts from `new`.

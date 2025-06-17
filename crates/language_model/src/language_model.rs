@@ -8,6 +8,7 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
+use anthropic::AnthropicError;
 use anyhow::{Context as _, Result};
 use client::Client;
 use futures::FutureExt;
@@ -38,6 +39,10 @@ pub use crate::role::*;
 pub use crate::telemetry::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
+
+/// If we get a rate limit error that doesn't tell us when we can retry,
+/// default to waiting this long before retrying.
+const DEFAULT_RATE_LIMIT_RETRY_AFTER: Duration = Duration::from_secs(4);
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
@@ -84,8 +89,60 @@ pub enum LanguageModelCompletionError {
         raw_input: Arc<str>,
         json_parse_error: String,
     },
+    #[error("language model provider's API is overloaded")]
+    Overloaded,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+    #[error("invalid request format to language model provider's API")]
+    BadRequestFormat,
+    #[error("authentication error with language model provider's API")]
+    AuthenticationError,
+    #[error("permission error with language model provider's API")]
+    PermissionError,
+    #[error("language model provider API endpoint not found")]
+    ApiEndpointNotFound,
+    #[error("prompt too large for context window")]
+    PromptTooLarge,
+    #[error("internal server error in language model provider's API")]
+    ApiInternalServerError,
+}
+
+impl From<AnthropicError> for LanguageModelCompletionError {
+    fn from(error: AnthropicError) -> Self {
+        match error {
+            AnthropicError::SerializeRequest(error) => todo!(),
+            AnthropicError::BuildRequestBody(error) => todo!(),
+            AnthropicError::HttpSend(error) => todo!(),
+            AnthropicError::DeserializeResponse(error) => todo!(),
+            AnthropicError::ReadResponse(error) => todo!(),
+            AnthropicError::HttpError { status, body } => todo!(),
+            AnthropicError::RateLimit { retry_after } => Self::RateLimit { retry_after },
+            AnthropicError::ApiError(api_error) => api_error.into(),
+            AnthropicError::UnexpectedResponseFormat(_) => todo!(),
+        }
+    }
+}
+
+impl From<anthropic::ApiError> for LanguageModelCompletionError {
+    fn from(error: anthropic::ApiError) -> Self {
+        use anthropic::ApiErrorCode::*;
+
+        match error.code() {
+            Some(code) => match code {
+                InvalidRequestError => LanguageModelCompletionError::BadRequestFormat,
+                AuthenticationError => LanguageModelCompletionError::AuthenticationError,
+                PermissionError => LanguageModelCompletionError::PermissionError,
+                NotFoundError => LanguageModelCompletionError::ApiEndpointNotFound,
+                RequestTooLarge => LanguageModelCompletionError::PromptTooLarge,
+                RateLimitError => LanguageModelCompletionError::RateLimit {
+                    retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
+                },
+                ApiError => LanguageModelCompletionError::ApiInternalServerError,
+                OverloadedError => LanguageModelCompletionError::Overloaded,
+            },
+            None => LanguageModelCompletionError::Other(error.into()),
+        }
+    }
 }
 
 /// Indicates the format used to define the input schema for a language model tool.

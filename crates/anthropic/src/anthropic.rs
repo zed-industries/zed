@@ -1,13 +1,13 @@
+use std::io;
 use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::http::{HeaderMap, HeaderValue};
+use http_client::http::{self, HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
-use thiserror::Error;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
@@ -344,27 +344,26 @@ pub async fn complete(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
-    let serialized_request = serde_json::to_string(&request)
-        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
+    let serialized_request =
+        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
     let request = request_builder
         .body(AsyncBody::from(serialized_request))
-        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
+        .map_err(AnthropicError::BuildRequestBody)?;
 
     let mut response = client
         .send(request)
         .await
-        .map_err(|e| AnthropicError::HttpSend(e.to_string()))?;
+        .map_err(AnthropicError::HttpSend)?;
     let status = response.status();
     let mut body = String::new();
     response
         .body_mut()
         .read_to_string(&mut body)
         .await
-        .map_err(|e| AnthropicError::ResponseBodyRead(e.to_string()))?;
+        .map_err(AnthropicError::ReadResponse)?;
 
     if status.is_success() {
-        Ok(serde_json::from_str(&body)
-            .map_err(|e| AnthropicError::ResponseDeserialization(e.to_string()))?)
+        Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
     } else {
         Err(AnthropicError::HttpError {
             status: status.as_u16(),
@@ -490,16 +489,16 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
-    let serialized_request = serde_json::to_string(&request)
-        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
+    let serialized_request =
+        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
     let request = request_builder
         .body(AsyncBody::from(serialized_request))
-        .map_err(|e| AnthropicError::RequestConstruction(e.to_string()))?;
+        .map_err(AnthropicError::BuildRequestBody)?;
 
     let mut response = client
         .send(request)
         .await
-        .map_err(|e| AnthropicError::HttpSend(e.to_string()))?;
+        .map_err(AnthropicError::HttpSend)?;
     let rate_limits = RateLimitInfo::from_headers(response.headers());
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -511,10 +510,10 @@ pub async fn stream_completion_with_rate_limit_info(
                         let line = line.strip_prefix("data: ")?;
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
-                            Err(error) => Some(Err(AnthropicError::StreamParse(error.to_string()))),
+                            Err(error) => Some(Err(AnthropicError::DeserializeResponse(error))),
                         }
                     }
-                    Err(error) => Some(Err(AnthropicError::StreamRead(error.to_string()))),
+                    Err(error) => Some(Err(AnthropicError::ReadResponse(error))),
                 }
             })
             .boxed();
@@ -527,11 +526,11 @@ pub async fn stream_completion_with_rate_limit_info(
             .body_mut()
             .read_to_string(&mut body)
             .await
-            .map_err(|e| AnthropicError::ResponseBodyRead(e.to_string()))?;
+            .map_err(AnthropicError::ReadResponse)?;
 
         match serde_json::from_str::<Event>(&body) {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) => Err(AnthropicError::UnexpectedResponse(body)),
+            Ok(_) => Err(AnthropicError::UnexpectedResponseFormat(body)),
             Err(_) => Err(AnthropicError::HttpError {
                 status: response.status().as_u16(),
                 body: body,
@@ -783,47 +782,34 @@ pub struct MessageDelta {
 }
 
 /// Comprehensive error type for all Anthropic API operations
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum AnthropicError {
+    /// Failed to serialize the HTTP request body to JSON
+    SerializeRequest(serde_json::Error),
+
     /// Failed to construct the HTTP request body
-    #[error("failed to construct request body: {0}")]
-    RequestConstruction(String),
+    BuildRequestBody(http::Error),
 
     /// Failed to send the HTTP request
-    #[error("failed to send HTTP request to Anthropic: {0}")]
-    HttpSend(String),
-
-    /// Failed to read the response body
-    #[error("failed to read HTTP response body from Anthropic: {0}")]
-    ResponseBodyRead(String),
+    HttpSend(anyhow::Error),
 
     /// Failed to deserialize the response from JSON
-    #[error("failed to deserialize HTTP response body from Anthropic: {0}")]
-    ResponseDeserialization(String),
+    DeserializeResponse(serde_json::Error),
+
+    /// Failed to read from response stream
+    ReadResponse(io::Error),
 
     /// HTTP error response from the API
-    #[error("HTTP error {status}: {body}")]
     HttpError { status: u16, body: String },
 
     /// Rate limit exceeded
-    #[error("rate limit exceeded, retry after {retry_after:?}")]
     RateLimit { retry_after: Duration },
 
     /// API returned an error response
-    #[error("API error: {error_type}: {message}", error_type = .0.error_type, message = .0.message)]
     ApiError(ApiError),
 
-    /// Failed to parse streaming response line
-    #[error("failed to parse streaming response: {0}")]
-    StreamParse(String),
-
-    /// Failed to read from stream
-    #[error("failed to read from stream: {0}")]
-    StreamRead(String),
-
     /// Unexpected response format
-    #[error("unexpected response: {0}")]
-    UnexpectedResponse(String),
+    UnexpectedResponseFormat(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -832,6 +818,18 @@ pub struct ApiError {
     pub error_type: String,
     pub message: String,
 }
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Anthropic API Error: {}: {}",
+            self.error_type, self.message
+        )
+    }
+}
+
+impl std::error::Error for ApiError {}
 
 /// An Anthropic API error code.
 /// <https://docs.anthropic.com/en/api/errors#http-errors>

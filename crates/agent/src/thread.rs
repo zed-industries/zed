@@ -1577,8 +1577,29 @@ impl Thread {
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
                             }
-                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                            Err(err @ LanguageModelCompletionError::RateLimit { .. }) => {
                                 return Err(err.into());
+                            }
+                            Err(LanguageModelCompletionError::Overloaded) => {
+                                todo!()
+                            }
+                            Err(LanguageModelCompletionError::BadRequestFormat) => {
+                                todo!()
+                            }
+                            Err(LanguageModelCompletionError::AuthenticationError) => {
+                                todo!()
+                            }
+                            Err(LanguageModelCompletionError::PermissionError) => {
+                                todo!()
+                            }
+                            Err(LanguageModelCompletionError::PromptTooLarge) => {
+                                todo!()
+                            }
+                            Err(LanguageModelCompletionError::ApiEndpointNotFound) => {
+                                todo!()
+                            }
+                            Err(LanguageModelCompletionError::ApiInternalServerError) => {
+                                todo!()
                             }
                         };
 
