@@ -1050,7 +1050,7 @@ impl CompletionsMenu {
         snippet_sort_order: SnippetSortOrder,
         completions: &[Completion],
     ) -> Vec<StringMatch> {
-        dbg!(&query, &matches);
+        dbg!(&query, &matches, &completions);
 
         let mut matches = matches;
 
@@ -1060,10 +1060,10 @@ impl CompletionsMenu {
                 sort_capitalize: Reverse<usize>,
                 sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
-                sort_fuzzy_bracket: Reverse<usize>,
-                sort_kind: usize,
-                sort_text: Option<&'a str>,
                 sort_score: Reverse<OrderedFloat<f64>>,
+                // sort_fuzzy_bracket: Reverse<usize>,
+                sort_text: Option<&'a str>,
+                sort_kind: usize,
                 sort_label: &'a str,
             },
             OtherMatch {
@@ -1143,10 +1143,10 @@ impl CompletionsMenu {
                     sort_capitalize,
                     sort_positions,
                     sort_snippet,
-                    sort_fuzzy_bracket,
+                    sort_score,
+                    // sort_fuzzy_bracket,
                     sort_kind,
                     sort_text,
-                    sort_score,
                     sort_label,
                 }
             }
