@@ -174,17 +174,16 @@ impl RunningMode {
             }
         });
 
-        let mut client = if let Some(client) = parent_session
+        let client = if let Some(client) = parent_session
             .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
             .flatten()
         {
             client
-                .create_child_connection(session_id, binary.clone(), cx)
+                .create_child_connection(session_id, binary.clone(), message_handler, cx)
                 .await?
         } else {
-            DebugAdapterClient::start(session_id, binary.clone(), cx).await?
+            DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx).await?
         };
-        client.connect(message_handler, cx).await?;
 
         Ok(Self {
             client: Arc::new(client),
@@ -485,16 +484,20 @@ impl RunningMode {
         })
     }
 
-    fn reconnect(&self, cx: &mut AsyncApp) -> Task<Result<()>> {
+    fn reconnect(&self, cx: &mut AsyncApp) -> Option<Task<Result<()>>> {
         let client = self.client.clone();
         let messages_tx = self.messages_tx.clone();
         let message_handler = Box::new(move |message| {
             messages_tx.unbounded_send(message).ok();
         });
-        cx.spawn(async move |cx| {
-            client.connect(message_handler, cx).await?;
-            anyhow::Ok(())
-        })
+        if client.can_reconnect() {
+            Some(cx.spawn(async move |cx| {
+                client.connect(message_handler, cx).await?;
+                anyhow::Ok(())
+            }))
+        } else {
+            None
+        }
     }
 
     fn request<R: LocalDapCommand>(&self, request: R) -> Task<Result<R::Response>>
@@ -1147,45 +1150,58 @@ impl Session {
     pub(super) fn request_initialize(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let adapter_id = self.adapter().to_string();
         let request = Initialize { adapter_id };
-        match &self.mode {
-            Mode::Running(local_mode) => {
-                let mut response = local_mode.request(request.clone());
 
-                cx.spawn(async move |this, cx| {
-                    loop {
-                        let capabilities = response.await;
-                        match capabilities {
-                            Err(e) => {
-                                local_mode.reconnect(cx).await;
-                                response = local_mode.request(request.clone());
-                            }
-                            Ok(capabilities) => {
-                                this.update(cx, |session, cx| {
-                                    session.capabilities = capabilities;
-                                    let filters = session
-                                        .capabilities
-                                        .exception_breakpoint_filters
-                                        .clone()
-                                        .unwrap_or_default();
-                                    for filter in filters {
-                                        let default = filter.default.unwrap_or_default();
-                                        session
-                                            .exception_breakpoints
-                                            .entry(filter.filter.clone())
-                                            .or_insert_with(|| (filter, default));
-                                    }
-                                    cx.emit(SessionEvent::CapabilitiesLoaded);
-                                })?;
-                                return Ok(());
-                            }
-                        }
-                    }
-                })
-            }
-            Mode::Building => Task::ready(Err(anyhow!(
+        let Mode::Running(running) = &self.mode else {
+            return Task::ready(Err(anyhow!(
                 "Cannot send initialize request, task still building"
-            ))),
-        }
+            )));
+        };
+        let mut response = running.request(request.clone());
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                let capabilities = response.await;
+                match capabilities {
+                    Err(e) => {
+                        let Ok(Some(reconnect)) = this.update(cx, |this, cx| {
+                            this.as_running()
+                                .and_then(|running| running.reconnect(&mut cx.to_async()))
+                        }) else {
+                            return Err(e);
+                        };
+                        log::info!("Failed to connect to debug adapter: {}, retrying...", e);
+                        reconnect.await?;
+
+                        let Ok(Some(r)) = this.update(cx, |this, _| {
+                            this.as_running()
+                                .map(|running| running.request(request.clone()))
+                        }) else {
+                            return Err(e);
+                        };
+                        response = r
+                    }
+                    Ok(capabilities) => {
+                        this.update(cx, |session, cx| {
+                            session.capabilities = capabilities;
+                            let filters = session
+                                .capabilities
+                                .exception_breakpoint_filters
+                                .clone()
+                                .unwrap_or_default();
+                            for filter in filters {
+                                let default = filter.default.unwrap_or_default();
+                                session
+                                    .exception_breakpoints
+                                    .entry(filter.filter.clone())
+                                    .or_insert_with(|| (filter, default));
+                            }
+                            cx.emit(SessionEvent::CapabilitiesLoaded);
+                        })?;
+                        return Ok(());
+                    }
+                }
+            }
+        })
     }
 
     pub(super) fn initialize_sequence(

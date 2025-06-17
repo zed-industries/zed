@@ -1,23 +1,22 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 #[cfg(any(test, feature = "test-support"))]
 use async_pipe::{PipeReader, PipeWriter};
-use async_trait::async_trait;
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
 };
 use futures::{AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
+use parking_lot::Mutex;
+use proto::ErrorExt;
 use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
     channel::{Receiver, Sender, unbounded},
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
-    lock::Mutex,
     net::{TcpListener, TcpStream},
 };
 use std::{
-    cell::RefCell,
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     process::Stdio,
@@ -29,6 +28,7 @@ use util::ConnectionResult;
 
 use crate::{
     adapters::{DebugAdapterBinary, TcpArguments},
+    client::DapMessageHandler,
     debugger_settings::DebuggerSettings,
 };
 
@@ -49,19 +49,20 @@ pub enum IoKind {
     StdErr,
 }
 
-type Requests = Arc<parking_lot::Mutex<HashMap<u64, oneshot::Sender<Result<Response>>>>>;
-type LogHandlers = Arc<parking_lot::Mutex<SmallVec<[(LogKind, IoHandler); 2]>>>;
+type Requests = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response>>>>>;
+type LogHandlers = Arc<Mutex<SmallVec<[(LogKind, IoHandler); 2]>>>;
 
-#[async_trait]
 pub trait Transport: Send + Sync {
     fn has_adapter_logs(&self) -> bool;
     fn tcp_arguments(&self) -> Option<TcpArguments>;
-    async fn connect(
+    fn connect(
         &mut self,
-    ) -> Result<(
-        Box<dyn AsyncWrite + Unpin + Send + 'static>,
-        Box<dyn AsyncRead + Unpin + Send + 'static>,
-    )>;
+    ) -> Task<
+        Result<(
+            Box<dyn AsyncWrite + Unpin + Send + 'static>,
+            Box<dyn AsyncRead + Unpin + Send + 'static>,
+        )>,
+    >;
     fn kill(&self);
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
@@ -93,9 +94,9 @@ async fn start(
 pub(crate) struct TransportDelegate {
     log_handlers: LogHandlers,
     pending_requests: Requests,
-    pub transport: Box<dyn Transport>,
-    server_tx: Option<Sender<Message>>,
-    _tasks: Vec<Task<()>>,
+    pub(crate) transport: Mutex<Box<dyn Transport>>,
+    server_tx: smol::lock::Mutex<Option<Sender<Message>>>,
+    tasks: Mutex<Vec<Task<()>>>,
 }
 
 impl TransportDelegate {
@@ -103,27 +104,29 @@ impl TransportDelegate {
         let log_handlers: LogHandlers = Default::default();
         let transport = start(binary, log_handlers.clone(), cx).await?;
         Ok(Self {
-            transport: RefCell::new(transport),
+            transport: Mutex::new(transport),
             log_handlers,
             server_tx: Default::default(),
             pending_requests: Default::default(),
-            _tasks: Vec::new(),
+            tasks: Default::default(),
         })
     }
 
     pub async fn connect(
-        &mut self,
+        &self,
+        message_handler: DapMessageHandler,
         cx: &mut AsyncApp,
-    ) -> Result<(Receiver<Message>, Sender<Message>)> {
-        let (client_tx, server_rx) = unbounded::<Message>();
+    ) -> Result<()> {
         let (server_tx, client_rx) = unbounded::<Message>();
+        self.tasks.lock().clear();
 
         let log_dap_communications =
             cx.update(|cx| DebuggerSettings::get_global(cx).log_dap_communications)
                 .with_context(|| "Failed to get Debugger Setting log dap communications error in transport::start_handlers. Defaulting to false")
                 .unwrap_or(false);
 
-        let (input, output) = self.transport.connect().await?;
+        let connect = self.transport.lock().connect();
+        let (input, output) = connect.await?;
 
         let log_handler = if log_dap_communications {
             Some(self.log_handlers.clone())
@@ -131,44 +134,52 @@ impl TransportDelegate {
             None
         };
 
-        cx.update(|cx| {
-            let pending_requests = self.pending_requests.clone();
-            let output_log_handler = log_handler.clone();
-            self._tasks.push(cx.background_spawn(async move {
-                match Self::handle_output(
+        let pending_requests = self.pending_requests.clone();
+        let output_log_handler = log_handler.clone();
+        {
+            let mut tasks = self.tasks.lock();
+            tasks.push(cx.background_spawn(async move {
+                match Self::recv_from_server(
                     output,
-                    client_tx,
+                    message_handler,
                     pending_requests.clone(),
                     output_log_handler,
                 )
                 .await
                 {
-                    Ok(()) => {}
-                    Err(e) => log::error!("Error handling debugger output: {e}"),
+                    Ok(()) => {
+                        pending_requests.lock().drain().for_each(|(_, request)| {
+                            request
+                                .send(Err(anyhow!("debugger shutdown unexpectedly")))
+                                .ok();
+                        });
+                    }
+                    Err(e) => {
+                        pending_requests.lock().drain().for_each(|(_, request)| {
+                            request.send(Err(e.cloned())).ok();
+                        });
+                    }
                 }
-                let mut pending_requests = pending_requests.lock();
-                pending_requests.drain().for_each(|(_, request)| {
-                    request
-                        .send(Err(anyhow!("debugger shutdown unexpectedly")))
-                        .ok();
-                });
             }));
 
-            let log_handler = log_handler.clone();
-            self._tasks.push(cx.background_spawn(async move {
-                match Self::handle_input(input, client_rx, log_handler).await {
+            tasks.push(cx.background_spawn(async move {
+                match Self::send_to_server(input, client_rx, log_handler).await {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger input: {e}"),
                 }
             }));
-        })?;
+        }
 
         {
             let mut lock = self.server_tx.lock().await;
             *lock = Some(server_tx.clone());
         }
 
-        Ok((server_rx, server_tx))
+        Ok(())
+    }
+
+    pub(crate) fn tcp_arguments(&self) -> Option<TcpArguments> {
+        self.transport.lock().tcp_arguments()
     }
 
     pub(crate) fn add_pending_request(
@@ -220,7 +231,7 @@ impl TransportDelegate {
         format!("Content-Length: {}\r\n\r\n{}", message.len(), message)
     }
 
-    async fn handle_input<Stdin>(
+    async fn send_to_server<Stdin>(
         mut server_stdin: Stdin,
         client_rx: Receiver<Message>,
         log_handlers: Option<LogHandlers>,
@@ -270,9 +281,9 @@ impl TransportDelegate {
         result
     }
 
-    async fn handle_output<Stdout>(
+    async fn recv_from_server<Stdout>(
         server_stdout: Stdout,
-        client_tx: Sender<Message>,
+        mut message_handler: DapMessageHandler,
         pending_requests: Requests,
         log_handlers: Option<LogHandlers>,
     ) -> Result<()>
@@ -298,15 +309,14 @@ impl TransportDelegate {
                             log::trace!("Did not send response `{:?}` for a cancelled", e);
                         }
                     } else {
-                        client_tx.send(Message::Response(res)).await?;
+                        message_handler(Message::Response(res))
                     }
                 }
-                ConnectionResult::Result(Ok(message)) => client_tx.send(message).await?,
+                ConnectionResult::Result(Ok(message)) => message_handler(message),
                 ConnectionResult::Result(Err(e)) => break Err(e),
             }
         };
 
-        drop(client_tx);
         log::debug!("Handle adapter output dropped");
 
         result
@@ -345,14 +355,10 @@ impl TransportDelegate {
         loop {
             buffer.truncate(0);
 
-            match reader
-                .read_line(buffer)
-                .await
-                .with_context(|| "reading a message from server")
-            {
+            match reader.read_line(buffer).await {
                 Ok(0) => return ConnectionResult::ConnectionReset,
                 Ok(_) => {}
-                Err(e) => return ConnectionResult::Result(Err(e)),
+                Err(e) => return ConnectionResult::Result(Err(e.into())),
             };
 
             if buffer == "\r\n" {
@@ -414,7 +420,7 @@ impl TransportDelegate {
         }
 
         self.pending_requests.lock().clear();
-        self.transport.kill();
+        self.transport.lock().kill();
 
         log::debug!("Shutdown client completed");
 
@@ -422,12 +428,8 @@ impl TransportDelegate {
     }
 
     pub fn has_adapter_logs(&self) -> bool {
-        self.transport.has_adapter_logs()
+        self.transport.lock().has_adapter_logs()
     }
-
-    // pub fn transport(&self) -> &Transport {
-    //     &self.transport
-    // }
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
     where
@@ -443,7 +445,7 @@ pub struct TcpTransport {
     pub port: u16,
     pub host: Ipv4Addr,
     pub timeout: u64,
-    process: Arc<parking_lot::Mutex<Option<Child>>>,
+    process: Arc<Mutex<Option<Child>>>,
     _stderr_task: Option<Task<()>>,
     _stdout_task: Option<Task<()>>,
 }
@@ -516,7 +518,7 @@ impl TcpTransport {
 
         let timeout = connection_args.timeout.unwrap_or_else(|| {
             cx.update(|cx| DebuggerSettings::get_global(cx).timeout)
-                .unwrap_or(2000u64)
+                .unwrap_or(20000u64)
         });
 
         log::info!(
@@ -529,7 +531,7 @@ impl TcpTransport {
             executor: cx.background_executor().clone(),
             port,
             host,
-            process: Arc::new(parking_lot::Mutex::new(process)),
+            process: Arc::new(Mutex::new(process)),
             timeout,
             _stdout_task: stdout_task,
             _stderr_task: stderr_task,
@@ -539,7 +541,6 @@ impl TcpTransport {
     }
 }
 
-#[async_trait]
 impl Transport for TcpTransport {
     fn has_adapter_logs(&self) -> bool {
         true
@@ -553,55 +554,59 @@ impl Transport for TcpTransport {
 
     fn tcp_arguments(&self) -> Option<TcpArguments> {
         Some(TcpArguments {
-            host: self.host.clone(),
+            host: self.host,
             port: self.port,
             timeout: Some(self.timeout),
         })
     }
 
-    async fn connect(
+    fn connect(
         &mut self,
-    ) -> Result<(
-        Box<dyn AsyncWrite + Unpin + Send + 'static>,
-        Box<dyn AsyncRead + Unpin + Send + 'static>,
-    )> {
+    ) -> Task<
+        Result<(
+            Box<dyn AsyncWrite + Unpin + Send + 'static>,
+            Box<dyn AsyncRead + Unpin + Send + 'static>,
+        )>,
+    > {
         let executor = self.executor.clone();
         let timeout = self.timeout;
         let address = SocketAddrV4::new(self.host, self.port);
         let process = self.process.clone();
-        select! {
-            _ = executor.timer(Duration::from_millis(timeout)).fuse() => {
-                anyhow::bail!("Connection to TCP DAP timeout {address}");
-            },
-            result = executor.clone().spawn(async move {
-                loop {
-                    match TcpStream::connect(address).await {
-                        Ok(stream) => {
-                            let (read, write) = stream.split();
-                            return Ok((Box::new(write) as _, Box::new(read) as _))
-                        },
-                        Err(_) => {
-                            let has_process = process.lock().is_some();
-                            if has_process {
-                                let status = process.lock().as_mut().unwrap().try_status();
-                                if let Ok(Some(_)) = status {
-                                    let process = process.lock().take().unwrap().into_inner();
-                                    let output = process.output().await?;
-                                    let output = if output.stderr.is_empty() {
-                                        String::from_utf8_lossy(&output.stdout).to_string()
-                                    } else {
-                                        String::from_utf8_lossy(&output.stderr).to_string()
-                                    };
-                                    anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+        executor.clone().spawn(async move {
+            select! {
+                _ = executor.timer(Duration::from_millis(timeout)).fuse() => {
+                    anyhow::bail!("Connection to TCP DAP timeout {address}");
+                },
+                result = executor.clone().spawn(async move {
+                    loop {
+                        match TcpStream::connect(address).await {
+                            Ok(stream) => {
+                                let (read, write) = stream.split();
+                                return Ok((Box::new(write) as _, Box::new(read) as _))
+                            },
+                            Err(_) => {
+                                let has_process = process.lock().is_some();
+                                if has_process {
+                                    let status = process.lock().as_mut().unwrap().try_status();
+                                    if let Ok(Some(_)) = status {
+                                        let process = process.lock().take().unwrap().into_inner();
+                                        let output = process.output().await?;
+                                        let output = if output.stderr.is_empty() {
+                                            String::from_utf8_lossy(&output.stdout).to_string()
+                                        } else {
+                                            String::from_utf8_lossy(&output.stderr).to_string()
+                                        };
+                                        anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                                    }
                                 }
-                            }
 
-                            executor.timer(Duration::from_millis(100)).await;
+                                executor.timer(Duration::from_millis(100)).await;
+                            }
                         }
                     }
-                }
-            }).fuse() => result
-        }
+                }).fuse() => result
+            }
+        })
     }
 }
 
@@ -614,8 +619,8 @@ impl Drop for TcpTransport {
 }
 
 pub struct StdioTransport {
-    process: parking_lot::Mutex<Child>,
-    err_task: Option<Task<()>>,
+    process: Mutex<Child>,
+    _stderr_task: Option<Task<()>>,
 }
 
 impl StdioTransport {
@@ -655,13 +660,15 @@ impl StdioTransport {
             ))
         });
 
-        let process = parking_lot::Mutex::new(process);
+        let process = Mutex::new(process);
 
-        Ok(Self { process, err_task })
+        Ok(Self {
+            process,
+            _stderr_task: err_task,
+        })
     }
 }
 
-#[async_trait]
 impl Transport for StdioTransport {
     fn has_adapter_logs(&self) -> bool {
         false
@@ -671,17 +678,22 @@ impl Transport for StdioTransport {
         self.process.lock().kill()
     }
 
-    async fn connect(
+    fn connect(
         &mut self,
-    ) -> Result<(
-        Box<dyn AsyncWrite + Unpin + Send + 'static>,
-        Box<dyn AsyncRead + Unpin + Send + 'static>,
-    )> {
+    ) -> Task<
+        Result<(
+            Box<dyn AsyncWrite + Unpin + Send + 'static>,
+            Box<dyn AsyncRead + Unpin + Send + 'static>,
+        )>,
+    > {
         let mut process = self.process.lock();
-        Ok((
-            Box::new(process.stdin.take().context("Cannot reconnect")?),
-            Box::new(process.stdout.take().context("Cannot reconnect")?),
-        ))
+        let result = util::maybe!({
+            Ok((
+                Box::new(process.stdin.take().context("Cannot reconnect")?) as _,
+                Box::new(process.stdout.take().context("Cannot reconnect")?) as _,
+            ))
+        });
+        Task::ready(result)
     }
 
     fn tcp_arguments(&self) -> Option<TcpArguments> {
@@ -705,9 +717,9 @@ type ResponseHandler = Box<dyn Send + Fn(Response)>;
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeTransport {
     // for sending fake response back from adapter side
-    request_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, RequestHandler>>>,
+    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
     // for reverse request responses
-    response_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, ResponseHandler>>>,
+    response_handlers: Arc<Mutex<HashMap<&'static str, ResponseHandler>>>,
 
     stdin_writer: Option<PipeWriter>,
     stdout_reader: Option<PipeReader>,
@@ -746,7 +758,7 @@ impl FakeTransport {
         );
     }
 
-    pub async fn on_response<R: dap_types::requests::Request, F>(&self, handler: F)
+    pub fn on_response<R: dap_types::requests::Request, F>(&self, handler: F)
     where
         F: 'static + Send + Fn(Response),
     {
@@ -763,15 +775,15 @@ impl FakeTransport {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
         let this = Self {
-            request_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
-            response_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
+            request_handlers: Arc::new(Mutex::new(HashMap::default())),
+            response_handlers: Arc::new(Mutex::new(HashMap::default())),
             stdin_writer: Some(stdin_writer),
             stdout_reader: Some(stdout_reader),
         };
 
         let request_handlers = this.request_handlers.clone();
         let response_handlers = this.response_handlers.clone();
-        let stdout_writer = Arc::new(Mutex::new(stdout_writer));
+        let stdout_writer = Arc::new(smol::lock::Mutex::new(stdout_writer));
 
         cx.background_spawn(async move {
             let mut reader = BufReader::new(stdin_reader);
@@ -866,22 +878,26 @@ impl FakeTransport {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait]
 impl Transport for FakeTransport {
     fn tcp_arguments(&self) -> Option<TcpArguments> {
         None
     }
 
-    async fn connect(
+    fn connect(
         &mut self,
-    ) -> Result<(
-        Box<dyn AsyncWrite + Unpin + Send + 'static>,
-        Box<dyn AsyncRead + Unpin + Send + 'static>,
-    )> {
-        Ok((
-            Box::new(self.stdin_writer.take().context("Cannot reconnect")?),
-            Box::new(self.stdout_reader.take().context("Cannot reconnect")?),
-        ))
+    ) -> Task<
+        Result<(
+            Box<dyn AsyncWrite + Unpin + Send + 'static>,
+            Box<dyn AsyncRead + Unpin + Send + 'static>,
+        )>,
+    > {
+        let result = util::maybe!({
+            Ok((
+                Box::new(self.stdin_writer.take().context("Cannot reconnect")?) as _,
+                Box::new(self.stdout_reader.take().context("Cannot reconnect")?) as _,
+            ))
+        });
+        Task::ready(result)
     }
 
     fn has_adapter_logs(&self) -> bool {

@@ -8,7 +8,7 @@ use dap_types::{
     requests::Request,
 };
 use futures::channel::oneshot;
-use gpui::{AppContext, AsyncApp, Task};
+use gpui::AsyncApp;
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
@@ -34,7 +34,6 @@ pub struct DebugAdapterClient {
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
     transport_delegate: TransportDelegate,
-    connection_task: Option<Task<()>>,
 }
 
 pub type DapMessageHandler = Box<dyn FnMut(Message) + 'static + Send + Sync>;
@@ -48,40 +47,37 @@ impl DebugAdapterClient {
     ) -> Result<Self> {
         let transport_delegate = TransportDelegate::start(&binary, cx).await?;
         // start handling events/reverse requests
-        let mut this = Self {
+        let this = Self {
             id,
             binary,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
-            connection_task: None,
         };
-        this.reconnect(message_handler, cx).await?;
+        this.connect(message_handler, cx).await?;
 
         Ok(this)
     }
 
-    pub async fn reconnect(
+    pub fn can_reconnect(&self) -> bool {
+        self.transport_delegate.tcp_arguments().is_some()
+    }
+
+    pub async fn connect(
         &self,
-        mut message_handler: DapMessageHandler,
+        message_handler: DapMessageHandler,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        self.transport_delegate.connect(cx, message_handler).await?;
-        let (server_rx, _) = self.transport_delegate.reconnect(cx).await?;
-        self.connection_task = Some(cx.background_spawn(async move {
-            while let Ok(message) = server_rx.recv().await {
-                message_handler(message)
-            }
-        }));
-        Ok(())
+        self.transport_delegate.connect(message_handler, cx).await
     }
 
     pub async fn create_child_connection(
         &self,
         session_id: SessionId,
         binary: DebugAdapterBinary,
+        message_handler: DapMessageHandler,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let binary = if let Some(connection) = self.transport_delegate.transport.tcp_arguments() {
+        let binary = if let Some(connection) = self.transport_delegate.tcp_arguments() {
             DebugAdapterBinary {
                 command: None,
                 arguments: Default::default(),
@@ -189,8 +185,11 @@ impl DebugAdapterClient {
             + Send
             + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
     {
-        let transport = self.transport_delegate.transport.as_fake();
-        transport.on_request::<R, F>(handler);
+        self.transport_delegate
+            .transport
+            .lock()
+            .as_fake()
+            .on_request::<R, F>(handler);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -209,8 +208,11 @@ impl DebugAdapterClient {
     where
         F: 'static + Send + Fn(Response),
     {
-        let transport = self.transport_delegate.transport.as_fake();
-        transport.on_response::<R, F>(handler).await;
+        self.transport_delegate
+            .transport
+            .lock()
+            .as_fake()
+            .on_response::<R, F>(handler);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -407,7 +409,7 @@ mod tests {
                     );
                 }
             }),
-            cx.to_async(),
+            &mut cx.to_async(),
         )
         .await
         .unwrap();
