@@ -96,26 +96,50 @@ async fn test_fuzzy_score(cx: &mut TestAppContext) {
         assert_eq!(matches[1].string, "set_text_style_refinement");
         assert_eq!(matches[2].string, "set_context_menu_options");
     }
+
+    // fuzzy filter text over label, sort_text and sort_kind
+    {
+        // Case 1: "awa"
+        let completions = vec![
+            CompletionBuilder::method("await", Some("await"), "7fffffff"),
+            CompletionBuilder::method("await.ne", Some("ne"), "80000010"),
+            CompletionBuilder::method("await.eq", Some("eq"), "80000010"),
+            CompletionBuilder::method("await.or", Some("or"), "7ffffff8"),
+            CompletionBuilder::method("await.zip", Some("zip"), "80000006"),
+            CompletionBuilder::method("await.xor", Some("xor"), "7ffffff8"),
+            CompletionBuilder::method("await.and", Some("and"), "80000006"),
+            CompletionBuilder::method("await.map", Some("map"), "80000006"),
+        ];
+
+        test_for_each_prefix("await", &completions, cx, |matches| {
+            // for each prefix, first item should always be one with lower sort_text
+            assert_eq!(matches[0].string, "await");
+        })
+        .await;
+    }
 }
 
 #[gpui::test]
 async fn test_sort_text(cx: &mut TestAppContext) {
-    let completions = vec![
-        CompletionBuilder::function("unreachable", None, "80000000"),
-        CompletionBuilder::function("unreachable!(…)", None, "7fffffff"),
-        CompletionBuilder::function("unchecked_rem", None, "80000000"),
-        CompletionBuilder::function("unreachable_unchecked", None, "80000000"),
-    ];
+    // sort text takes precedance over sort_kind, when fuzzy is same
+    {
+        let completions = vec![
+            CompletionBuilder::variable("unreachable", None, "80000000"),
+            CompletionBuilder::function("unreachable!(…)", None, "7fffffff"),
+            CompletionBuilder::function("unchecked_rem", None, "80000010"),
+            CompletionBuilder::function("unreachable_unchecked", None, "80000020"),
+        ];
 
-    test_for_each_prefix("unreachable", &completions, cx, |matches| {
-        // for each prefix, first item should always be one with lower sort_text
-        assert_eq!(matches[0].string, "unreachable!(…)");
-        assert_eq!(matches[0].string, "unreachable");
+        test_for_each_prefix("unreachable", &completions, cx, |matches| {
+            // for each prefix, first item should always be one with lower sort_text
+            assert_eq!(matches[0].string, "unreachable!(…)");
+            assert_eq!(matches[1].string, "unreachable");
 
-        // fuzzy score should match for first two items as query is common prefix
-        assert_eq!(matches[0].score, matches[1].score);
-    })
-    .await;
+            // fuzzy score should match for first two items as query is common prefix
+            assert_eq!(matches[0].score, matches[1].score);
+        })
+        .await;
+    }
 }
 
 #[gpui::test]
@@ -129,41 +153,6 @@ async fn test_sort_snippet(cx: &mut TestAppContext) {
     // snippet take precedence over sort_text and sort_kind
     assert_eq!(matches[0].string, "println!(…)");
 }
-
-// // convert this test to filter test where filter is happening right
-
-// // #[gpui::test]
-// // async fn test_sort_matches_for_await(cx: &mut TestAppContext) {
-// //     // Case 1: "awa"
-// //     let completions = vec![
-// //         CompletionBuilder::keyword("await", "7fffffff"),
-// //         CompletionBuilder::function("await.ne", "80000010"),
-// //         CompletionBuilder::function("await.eq", "80000010"),
-// //         CompletionBuilder::function("await.or", "7ffffff8"),
-// //         CompletionBuilder::function("await.zip", "80000006"),
-// //         CompletionBuilder::function("await.xor", "7ffffff8"),
-// //         CompletionBuilder::function("await.and", "80000006"),
-// //         CompletionBuilder::function("await.map", "80000006"),
-// //         CompletionBuilder::function("await.take", "7ffffff8"),
-// //     ];
-// //     let matches = sort_matches("awa", &completions, SnippetSortOrder::Top, cx).await;
-// //     assert_eq!(matches[0], "await");
-
-// //     // Case 2: "await"
-// //     let completions = vec![
-// //         CompletionBuilder::keyword("await", "7fffffff"),
-// //         CompletionBuilder::function("await.ne", "80000010"),
-// //         CompletionBuilder::function("await.eq", "80000010"),
-// //         CompletionBuilder::function("await.or", "7ffffff8"),
-// //         CompletionBuilder::function("await.zip", "80000006"),
-// //         CompletionBuilder::function("await.xor", "7ffffff8"),
-// //         CompletionBuilder::function("await.and", "80000006"),
-// //         CompletionBuilder::function("await.map", "80000006"),
-// //         CompletionBuilder::function("await.take", "7ffffff8"),
-// //     ];
-// //     let matches = sort_matches("await", &completions, SnippetSortOrder::Top, cx).await;
-// //     assert_eq!(matches[0], "await");
-// // }
 
 // #[gpui::test]
 // async fn test_sort_matches_for_python_init(cx: &mut TestAppContext) {
@@ -180,16 +169,16 @@ async fn test_sort_snippet(cx: &mut TestAppContext) {
 //     assert_eq!(matches[0], "__init__");
 //     assert_eq!(matches[1], "__init__");
 
-//     // // Case 2: "__ini"
-//     // let completions = vec![
-//     //     CompletionBuilder::function("__init__", "05.0004.__init__"),
-//     //     CompletionBuilder::function("__init__", "05.0004"),
-//     //     CompletionBuilder::function("__init_subclass__", "05.0003.__init_subclass__"),
-//     //     CompletionBuilder::function("__init_subclass__", "05.0003"),
-//     // ];
-//     // let matches = sort_matches("__ini", &completions, SnippetSortOrder::Top, cx).await;
-//     // assert_eq!(matches[0], "__init__");
-//     // assert_eq!(matches[1], "__init__");
+//     // Case 2: "__ini"
+//     let completions = vec![
+//         CompletionBuilder::function("__init__", "05.0004.__init__"),
+//         CompletionBuilder::function("__init__", "05.0004"),
+//         CompletionBuilder::function("__init_subclass__", "05.0003.__init_subclass__"),
+//         CompletionBuilder::function("__init_subclass__", "05.0003"),
+//     ];
+//     let matches = sort_matches("__ini", &completions, SnippetSortOrder::Top, cx).await;
+//     assert_eq!(matches[0], "__init__");
+//     assert_eq!(matches[1], "__init__");
 
 //     // Case 3: "__init"
 //     let completions = vec![
@@ -241,24 +230,6 @@ async fn test_sort_snippet(cx: &mut TestAppContext) {
 //     let matches =
 //         filter_and_sort_matches("into", &completions, SnippetSortOrder::default(), cx).await;
 //     // assert_eq!(matches[0], "into");
-// }
-
-// #[gpui::test]
-// async fn test_sort_matches_for_local_methods_over_library(cx: &mut TestAppContext) {
-//     // Case 1: "setis"
-//     let completions = vec![
-//         CompletionBuilder::variable("setISODay", "16"),
-//         CompletionBuilder::variable("setISOWeek", "16"),
-//         CompletionBuilder::variable("setISOWeekYear", "16"),
-//         CompletionBuilder::function("setISOWeekYear", "16"),
-//         CompletionBuilder::variable("setIsRefreshing", "11"),
-//         CompletionBuilder::function("setFips", "16"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("setis", &completions, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "setIsRefreshing");
-//     assert_eq!(matches[1], "setISODay");
-//     assert_eq!(matches[2], "setISOWeek");
 // }
 
 // #[gpui::test]
@@ -361,6 +332,10 @@ impl CompletionBuilder {
 
     fn function(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
         Self::new(label, filter_text, sort_text, CompletionItemKind::FUNCTION)
+    }
+
+    fn method(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
+        Self::new(label, filter_text, sort_text, CompletionItemKind::METHOD)
     }
 
     fn variable(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
