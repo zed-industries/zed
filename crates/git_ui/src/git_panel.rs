@@ -143,7 +143,7 @@ fn git_panel_context_menu(
             )
             .separator()
             .map(|menu| {
-                if state.has_unstaged_changes {
+                if state.has_new_changes || state.has_tracked_changes {
                     menu.action("Stash All", StashAll.boxed_clone())
                 } else {
                     menu.disabled_action("Stash All", StashAll.boxed_clone())
