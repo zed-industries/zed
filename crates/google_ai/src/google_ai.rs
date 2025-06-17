@@ -491,33 +491,41 @@ impl<'de> Deserialize<'de> for ModelName {
 pub enum Model {
     #[serde(rename = "gemini-1.5-pro")]
     Gemini15Pro,
+    #[serde(rename = "gemini-1.5-flash-8b")]
+    Gemini15Flash8b,
     #[serde(rename = "gemini-1.5-flash")]
     Gemini15Flash,
-    #[serde(rename = "gemini-2.0-pro-exp")]
-    Gemini20Pro,
-    #[serde(rename = "gemini-2.0-flash")]
-    #[default]
-    Gemini20Flash,
-    #[serde(rename = "gemini-2.0-flash-thinking-exp")]
-    Gemini20FlashThinking,
-    #[serde(rename = "gemini-2.0-flash-lite-preview")]
-    Gemini20FlashLite,
-    #[serde(rename = "gemini-2.5-pro-exp-03-25")]
-    Gemini25ProExp0325,
-    #[serde(rename = "gemini-2.5-pro-preview-03-25")]
-    Gemini25ProPreview0325,
-    #[serde(rename = "gemini-2.5-flash-preview-04-17")]
-    Gemini25FlashPreview0417,
     #[serde(
-        rename = "gemini-2.5-flash-preview-latest",
-        alias = "gemini-2.5-flash-preview-05-20"
+        rename = "gemini-2.0-flash-lite",
+        alias = "gemini-2.0-flash-lite-preview"
     )]
-    Gemini25FlashPreview,
+    Gemini20FlashLite,
+    #[serde(rename = "gemini-2.0-flash")]
+    Gemini20Flash,
     #[serde(
-        rename = "gemini-2.5-pro-preview-latest",
+        rename = "gemini-2.5-flash-lite-preview",
+        alias = "gemini-2.5-flash-lite-preview-06-17"
+    )]
+    Gemini25FlashLitePreview,
+    #[serde(
+        rename = "gemini-2.5-flash",
+        alias = "gemini-2.0-flash-thinking-exp",
+        alias = "gemini-2.5-flash-preview-04-17",
+        alias = "gemini-2.5-flash-preview-05-20",
+        alias = "gemini-2.5-flash-preview-latest"
+    )]
+    #[default]
+    Gemini25Flash,
+    #[serde(
+        rename = "gemini-2.5-pro",
+        alias = "gemini-2.0-pro-exp",
+        alias = "gemini-2.5-pro-preview-latest",
+        alias = "gemini-2.5-pro-exp-03-25",
+        alias = "gemini-2.5-pro-preview-03-25",
+        alias = "gemini-2.5-pro-preview-05-06",
         alias = "gemini-2.5-pro-preview-06-05"
     )]
-    Gemini25ProPreview,
+    Gemini25Pro,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -530,56 +538,47 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Model {
-        Model::Gemini20Flash
+    pub fn default_fast() -> Self {
+        Self::Gemini20FlashLite
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Gemini15Pro => "gemini-1.5-pro",
-            Model::Gemini15Flash => "gemini-1.5-flash",
-            Model::Gemini20Pro => "gemini-2.0-pro-exp",
-            Model::Gemini20Flash => "gemini-2.0-flash",
-            Model::Gemini20FlashThinking => "gemini-2.0-flash-thinking-exp",
-            Model::Gemini20FlashLite => "gemini-2.0-flash-lite-preview",
-            Model::Gemini25ProExp0325 => "gemini-2.5-pro-exp-03-25",
-            Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
-            Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
-            Model::Gemini25FlashPreview => "gemini-2.5-flash-preview-latest",
-            Model::Gemini25ProPreview => "gemini-2.5-pro-preview-latest",
-            Model::Custom { name, .. } => name,
+            Self::Gemini15Pro => "gemini-1.5-pro",
+            Self::Gemini15Flash8b => "gemini-1.5-flash-8b",
+            Self::Gemini15Flash => "gemini-1.5-flash",
+            Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
+            Self::Gemini20Flash => "gemini-2.0-flash",
+            Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview",
+            Self::Gemini25Flash => "gemini-2.5-flash",
+            Self::Gemini25Pro => "gemini-2.5-pro",
+            Self::Custom { name, .. } => name,
         }
     }
     pub fn request_id(&self) -> &str {
         match self {
-            Model::Gemini15Pro => "gemini-1.5-pro",
-            Model::Gemini15Flash => "gemini-1.5-flash",
-            Model::Gemini20Pro => "gemini-2.0-pro-exp",
-            Model::Gemini20Flash => "gemini-2.0-flash",
-            Model::Gemini20FlashThinking => "gemini-2.0-flash-thinking-exp",
-            Model::Gemini20FlashLite => "gemini-2.0-flash-lite-preview",
-            Model::Gemini25ProExp0325 => "gemini-2.5-pro-exp-03-25",
-            Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
-            Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
-            Model::Gemini25FlashPreview => "gemini-2.5-flash-preview-05-20",
-            Model::Gemini25ProPreview => "gemini-2.5-pro-preview-06-05",
-            Model::Custom { name, .. } => name,
+            Self::Gemini15Pro => "gemini-1.5-pro",
+            Self::Gemini15Flash8b => "gemini-1.5-flash-8b",
+            Self::Gemini15Flash => "gemini-1.5-flash",
+            Self::Gemini20FlashLite => "gemini-2.0-flash-lite",
+            Self::Gemini20Flash => "gemini-2.0-flash",
+            Self::Gemini25FlashLitePreview => "gemini-2.5-flash-lite-preview-06-17",
+            Self::Gemini25Flash => "gemini-2.5-flash",
+            Self::Gemini25Pro => "gemini-2.5-pro",
+            Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Model::Gemini15Pro => "Gemini 1.5 Pro",
-            Model::Gemini15Flash => "Gemini 1.5 Flash",
-            Model::Gemini20Pro => "Gemini 2.0 Pro",
-            Model::Gemini20Flash => "Gemini 2.0 Flash",
-            Model::Gemini20FlashThinking => "Gemini 2.0 Flash Thinking",
-            Model::Gemini20FlashLite => "Gemini 2.0 Flash Lite",
-            Model::Gemini25ProExp0325 => "Gemini 2.5 Pro Exp",
-            Model::Gemini25ProPreview0325 => "Gemini 2.5 Pro Preview (0325)",
-            Model::Gemini25FlashPreview0417 => "Gemini 2.5 Flash Preview (0417)",
-            Model::Gemini25FlashPreview => "Gemini 2.5 Flash Preview",
-            Model::Gemini25ProPreview => "Gemini 2.5 Pro Preview",
+            Self::Gemini15Pro => "Gemini 1.5 Pro",
+            Self::Gemini15Flash8b => "Gemini 1.5 Flash-8b",
+            Self::Gemini15Flash => "Gemini 1.5 Flash",
+            Self::Gemini20FlashLite => "Gemini 2.0 Flash-Lite",
+            Self::Gemini20Flash => "Gemini 2.0 Flash",
+            Self::Gemini25FlashLitePreview => "Gemini 2.5 Flash-Lite Preview",
+            Self::Gemini25Flash => "Gemini 2.5 Flash",
+            Self::Gemini25Pro => "Gemini 2.5 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -587,37 +586,55 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
-        const ONE_MILLION: usize = 1_048_576;
-        const TWO_MILLION: usize = 2_097_152;
         match self {
-            Model::Gemini15Pro => TWO_MILLION,
-            Model::Gemini15Flash => ONE_MILLION,
-            Model::Gemini20Pro => TWO_MILLION,
-            Model::Gemini20Flash => ONE_MILLION,
-            Model::Gemini20FlashThinking => ONE_MILLION,
-            Model::Gemini20FlashLite => ONE_MILLION,
-            Model::Gemini25ProExp0325 => ONE_MILLION,
-            Model::Gemini25ProPreview0325 => ONE_MILLION,
-            Model::Gemini25FlashPreview0417 => ONE_MILLION,
-            Model::Gemini25FlashPreview => ONE_MILLION,
-            Model::Gemini25ProPreview => ONE_MILLION,
-            Model::Custom { max_tokens, .. } => *max_tokens,
+            Self::Gemini15Pro => 2_097_152,
+            Self::Gemini15Flash8b => 1_048_576,
+            Self::Gemini15Flash => 1_048_576,
+            Self::Gemini20FlashLite => 1_048_576,
+            Self::Gemini20Flash => 1_048_576,
+            Self::Gemini25FlashLitePreview => 1_000_000,
+            Self::Gemini25Flash => 1_048_576,
+            Self::Gemini25Pro => 1_048_576,
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
+    }
+
+    pub fn max_output_tokens(&self) -> Option<u32> {
+        match self {
+            Model::Gemini15Pro => Some(8_192),
+            Model::Gemini15Flash8b => Some(8_192),
+            Model::Gemini15Flash => Some(8_192),
+            Model::Gemini20FlashLite => Some(8_192),
+            Model::Gemini20Flash => Some(8_192),
+            Model::Gemini25FlashLitePreview => Some(64_000),
+            Model::Gemini25Flash => Some(65_536),
+            Model::Gemini25Pro => Some(65_536),
+            Model::Custom { .. } => None,
+        }
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        true
+    }
+
+    pub fn supports_images(&self) -> bool {
+        true
     }
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
             Self::Gemini15Pro
+            | Self::Gemini15Flash8b
             | Self::Gemini15Flash
-            | Self::Gemini20Pro
-            | Self::Gemini20Flash
-            | Self::Gemini20FlashThinking
             | Self::Gemini20FlashLite
-            | Self::Gemini25ProExp0325
-            | Self::Gemini25ProPreview
-            | Self::Gemini25FlashPreview
-            | Self::Gemini25ProPreview0325
-            | Self::Gemini25FlashPreview0417 => GoogleModelMode::Default,
+            | Self::Gemini20Flash => GoogleModelMode::Default,
+            Self::Gemini25FlashLitePreview | Self::Gemini25Flash | Self::Gemini25Pro => {
+                GoogleModelMode::Thinking {
+                    // By default these models are set to "auto", so we preserve that behavior
+                    // but indicate they are capable of thinking mode
+                    budget_tokens: None,
+                }
+            }
             Self::Custom { mode, .. } => *mode,
         }
     }
