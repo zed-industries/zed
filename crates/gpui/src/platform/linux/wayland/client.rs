@@ -537,7 +537,7 @@ impl WaylandClient {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme.as_str());
+                            client.cursor.set_theme(theme);
                         }
                     }
                     XDPEvent::CursorSize(size) => {
