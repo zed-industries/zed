@@ -96,6 +96,9 @@ impl JsDebugAdapter {
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
 
             configuration.entry("type").and_modify(normalize_task_type);
+            configuration
+                .entry("console")
+                .or_insert("externalTerminal".into());
         }
 
         Ok(DebugAdapterBinary {

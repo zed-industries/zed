@@ -26,14 +26,14 @@ struct VsCodeDebugTaskDefinition {
 }
 
 impl VsCodeDebugTaskDefinition {
-    fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
+    fn try_to_zed(mut self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
         let label = replacer.replace(&self.name);
         let mut config = replacer.replace_value(self.other_attributes);
         let adapter = task_type_to_adapter_name(&self.r#type);
         if let Some(config) = config.as_object_mut() {
             if adapter == "JavaScript" {
                 config.insert("type".to_owned(), self.r#type.clone().into());
-                if let Some(port) = self.port {
+                if let Some(port) = self.port.take() {
                     config.insert("port".to_owned(), port.into());
                 }
             }
