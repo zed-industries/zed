@@ -7,16 +7,17 @@ use language::point_from_lsp;
 use lsp::LanguageServerId;
 use multi_buffer::Anchor;
 use project::DocumentColor;
+use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
-use ui::{Context, Window};
+use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
     display_map::Inlay, editor_settings::DocumentColorsRenderMode,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct LspColorData {
     colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
     inlay_colors: HashMap<InlayId, usize>,
@@ -24,6 +25,14 @@ pub(super) struct LspColorData {
 }
 
 impl LspColorData {
+    pub fn new(cx: &App) -> Self {
+        Self {
+            colors: Vec::new(),
+            inlay_colors: HashMap::default(),
+            render_mode: EditorSettings::get_global(cx).lsp_document_colors,
+        }
+    }
+
     pub fn render_mode_updated(
         &mut self,
         new_render_mode: DocumentColorsRenderMode,
@@ -125,7 +134,11 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        if self.colors.render_mode == DocumentColorsRenderMode::None {
+        if self
+            .colors
+            .as_ref()
+            .is_none_or(|colors| colors.render_mode == DocumentColorsRenderMode::None)
+        {
             return;
         }
 
@@ -241,7 +254,10 @@ impl Editor {
                 .update(cx, |editor, cx| {
                     let mut colors_splice = InlaySplice::default();
                     let mut new_color_inlays = Vec::with_capacity(new_editor_colors.len());
-                    let mut existing_colors = editor.colors.colors.iter().peekable();
+                    let Some(colors) = &mut editor.colors else {
+                        return;
+                    };
+                    let mut existing_colors = colors.colors.iter().peekable();
                     for (new_range, new_color) in new_editor_colors {
                         let rgba_color = Rgba {
                             r: new_color.color.red,
@@ -322,8 +338,8 @@ impl Editor {
                             .extend(existing_colors.map(|(_, _, id)| *id));
                     }
 
-                    let mut updated = editor.colors.set_colors(new_color_inlays);
-                    if editor.colors.render_mode == DocumentColorsRenderMode::Inlay
+                    let mut updated = colors.set_colors(new_color_inlays);
+                    if colors.render_mode == DocumentColorsRenderMode::Inlay
                         && (!colors_splice.to_insert.is_empty()
                             || !colors_splice.to_remove.is_empty())
                     {

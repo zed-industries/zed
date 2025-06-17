@@ -521,7 +521,7 @@ pub struct EditorSettingsContent {
 
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///
-    /// Default: `DocumentColors::Underline`
+    /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
 }
 

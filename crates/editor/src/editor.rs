@@ -64,8 +64,8 @@ use dap::TelemetrySpawnLocation;
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes,
-    SearchSettings, ShowScrollbar,
+    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -1139,7 +1139,7 @@ pub struct Editor {
     selection_drag_state: SelectionDragState,
     drag_and_drop_selection_enabled: bool,
     next_color_inlay_id: usize,
-    colors: LspColorData,
+    colors: Option<LspColorData>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2076,7 +2076,7 @@ impl Editor {
             ],
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
-            colors: LspColorData::default(),
+            colors: None,
             next_color_inlay_id: 0,
             linked_edit_ranges: Default::default(),
             in_project_search: false,
@@ -2219,6 +2219,7 @@ impl Editor {
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            editor.colors = Some(LspColorData::new(cx));
             editor.update_lsp_data(false, None, None, window, cx);
         }
 
@@ -19379,10 +19380,9 @@ impl Editor {
             }
         }
 
-        if let Some(inlay_splice) = self
-            .colors
-            .render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
-        {
+        if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
+            colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
+        }) {
             if !inlay_splice.to_insert.is_empty() || !inlay_splice.to_remove.is_empty() {
                 self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
             }

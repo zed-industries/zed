@@ -5795,7 +5795,9 @@ impl EditorElement {
     }
 
     fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window) {
-        let (colors_render_mode, image_colors) = &layout.document_colors;
+        let Some((colors_render_mode, image_colors)) = &layout.document_colors else {
+            return;
+        };
         if image_colors.is_empty()
             || colors_render_mode == &DocumentColorsRenderMode::None
             || colors_render_mode == &DocumentColorsRenderMode::Inlay
@@ -8098,7 +8100,8 @@ impl Element for EditorElement {
                         .editor
                         .read(cx)
                         .colors
-                        .editor_display_highlights(&snapshot);
+                        .as_ref()
+                        .map(|colors| colors.editor_display_highlights(&snapshot));
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
@@ -9052,7 +9055,7 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
-    document_colors: (DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>),
+    document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
 }
 
 impl EditorLayout {
