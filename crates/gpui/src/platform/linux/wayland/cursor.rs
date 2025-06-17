@@ -1,5 +1,6 @@
 use crate::Globals;
-use crate::platform::linux::DEFAULT_CURSOR_ICON_NAME;
+use crate::platform::linux::{DEFAULT_CURSOR_ICON_NAME, log_cursor_icon_warning};
+use anyhow::anyhow;
 use util::ResultExt;
 
 use wayland_client::Connection;
@@ -104,18 +105,18 @@ impl Cursor {
 
             if let Some(cursor) = theme.get_cursor(DEFAULT_CURSOR_ICON_NAME) {
                 buffer = &cursor[0];
-                log::warn!(
-                    "Wayland: Unable to get cursor icon {:?}. \
+                log_cursor_icon_warning(anyhow!(
+                    "wayland: Unable to get cursor icon {:?}. \
                     Using default cursor icon: '{}'",
                     cursor_icon_names,
                     DEFAULT_CURSOR_ICON_NAME
-                );
+                ));
             } else {
-                log::warn!(
-                    "Wayland: Unable to fallback on default cursor icon '{}' for theme '{}'",
+                log_cursor_icon_warning(anyhow!(
+                    "wayland: Unable to fallback on default cursor icon '{}' for theme '{}'",
                     DEFAULT_CURSOR_ICON_NAME,
                     self.theme_name.as_deref().unwrap_or("default")
-                );
+                ));
                 return;
             }
         }

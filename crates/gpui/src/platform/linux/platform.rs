@@ -688,6 +688,20 @@ impl CursorStyle {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
+    if let Ok(xcursor_path) = env::var("XCURSOR_PATH") {
+        log::warn!(
+            "{:#}\ncursor icon loading may be failing if XCURSOR_PATH environment variable is invalid. \
+                    XCURSOR_PATH overrides the default icon search. Its current value is '{}'",
+            message,
+            xcursor_path
+        );
+    } else {
+        log::warn!("{:#}", message);
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
 impl crate::Keystroke {
     pub(super) fn from_xkb(
         state: &State,
