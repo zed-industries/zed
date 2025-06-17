@@ -135,7 +135,7 @@ pub trait TerminalProvider {
         &self,
         task: SpawnInTerminal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut App,
     ) -> Task<Option<Result<ExitStatus>>>;
 }
 
