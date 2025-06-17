@@ -1449,15 +1449,17 @@ impl Render for DebugPanel {
                                                 Button::new("edit-debug-settings", "Edit debug.json")
                                                     .icon(IconName::Code)
                                                     .icon_size(IconSize::XSmall)
+                                                    .color(Color::Muted)
                                                     .icon_color(Color::Muted)
                                                     .icon_position(IconPosition::Start)
                                                     .on_click(|_, window, cx| {
-                                                        window.dispatch_action(zed::OpenProjectDebugTasks.boxed_clone(), cx);
+                                                        window.dispatch_action(zed_actions::OpenProjectDebugTasks.boxed_clone(), cx);
                                                     })
                                             )
                                             .child(
                                                 Button::new("open-debugger-docs", "Debugger Docs")
                                                     .icon(IconName::Book)
+                                                    .color(Color::Muted)
                                                     .icon_size(IconSize::XSmall)
                                                     .icon_color(Color::Muted)
                                                     .icon_position(IconPosition::Start)
@@ -1468,6 +1470,7 @@ impl Render for DebugPanel {
                                             .child(
                                                 Button::new("spawn-new-session-install-extensions", "Debugger Extensions")
                                                     .icon(IconName::Blocks)
+                                                    .color(Color::Muted)
                                                     .icon_size(IconSize::XSmall)
                                                     .icon_color(Color::Muted)
                                                     .icon_position(IconPosition::Start)
