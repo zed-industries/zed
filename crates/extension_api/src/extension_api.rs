@@ -20,9 +20,10 @@ pub use wit::{
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::dap::{
+        AttachRequest, BuildTaskDefinition, BuildTaskDefinitionTemplatePayload, BuildTaskTemplate,
         DebugAdapterBinary, DebugConfig, DebugRequest, DebugScenario, DebugTaskDefinition,
-        StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TaskTemplate,
-        TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
+        LaunchRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+        TaskTemplate, TcpArguments, TcpArgumentsTemplate, resolve_tcp_template,
     },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
@@ -198,12 +199,15 @@ pub trait Extension: Send + Sync {
         &mut self,
         _adapter_name: String,
         _config: DebugTaskDefinition,
-        _user_provided_path: Option<String>,
+        _user_provided_debug_adapter_path: Option<String>,
         _worktree: &Worktree,
     ) -> Result<DebugAdapterBinary, String> {
         Err("`get_dap_binary` not implemented".to_string())
     }
 
+    /// Determines whether the specified adapter configuration should *launch* a new debuggee process
+    /// or *attach* to an existing one. This function should not perform any further validation (outside of determining the kind of a request).
+    /// This function should return an error when the kind cannot be determined (rather than fall back to a known default).
     fn dap_request_kind(
         &mut self,
         _adapter_name: String,
@@ -211,12 +215,31 @@ pub trait Extension: Send + Sync {
     ) -> Result<StartDebuggingRequestArgumentsRequest, String> {
         Err("`dap_request_kind` not implemented".to_string())
     }
-    fn dap_config_to_scenario(
-        &mut self,
-        _adapter_name: DebugConfig,
-    ) -> Result<DebugScenario, String> {
+    /// Converts a high-level definition of a debug scenario (originating in a new session UI) to a "low-level" configuration suitable for a particular adapter.
+    ///
+    /// In layman's terms: given a program, list of arguments, current working directory and environment variables,
+    /// create a configuration that can be used to start a debug session.
+    fn dap_config_to_scenario(&mut self, _config: DebugConfig) -> Result<DebugScenario, String> {
         Err("`dap_config_to_scenario` not implemented".to_string())
     }
+
+    /// Locators are entities that convert a Zed task into a debug scenario.
+    ///
+    /// They can be provided even by extensions that don't provide a debug adapter.
+    /// For all tasks applicable to a given buffer, Zed will query all locators to find one that can turn the task into a debug scenario.
+    /// A converted debug scenario can include a build task (it shouldn't contain any configuration in such case); a build task result will later
+    /// be resolved with [`Extension::run_dap_locator`].
+    ///
+    /// To work through a real-world example, take a `cargo run` task and a hypothetical `cargo` locator:
+    /// 1. We may need to modify the task; in this case, it is problematic that `cargo run` spawns a binary. We should turn `cargo run` into a debug scenario with
+    /// `cargo build` task. This is the decision we make at `dap_locator_create_scenario` scope.
+    /// 2. Then, after the build task finishes, we will run `run_dap_locator` of the locator that produced the build task to find the program to be debugged. This function
+    /// should give us a debugger-agnostic configuration for launching a debug target (that we end up resolving with [`Extension::dap_config_to_scenario`]). It's almost as if the user
+    /// found the artifact path by themselves.
+    ///
+    /// Note that you're not obliged to use build tasks with locators. Specifically, it is sufficient to provide a debug configuration directly in the return value of
+    /// `dap_locator_create_scenario` if you're able to do that. Make sure to not fill out `build` field in that case, as that will prevent Zed from running second phase of resolution in such case.
+    /// This might be of particular relevance to interpreted languages.
     fn dap_locator_create_scenario(
         &mut self,
         _locator_name: String,
@@ -226,6 +249,9 @@ pub trait Extension: Send + Sync {
     ) -> Option<DebugScenario> {
         None
     }
+
+    /// Runs the second phase of locator resolution.
+    /// See [`Extension::dap_locator_create_scenario`] for a hefty comment on locators.
     fn run_dap_locator(
         &mut self,
         _locator_name: String,
