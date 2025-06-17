@@ -399,8 +399,7 @@ message Envelope {
         GetColorPresentationResponse get_color_presentation_response = 356;
 
         Stash stash = 357;
-        PopStash pop_stash = 358; // current max
-
+        StashPop stash_pop = 358; // current max
     }
 
     reserved 87 to 88;
