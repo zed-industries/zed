@@ -29,7 +29,8 @@ Zed supports a variety of debug adapters for different programming languages out
 
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
 
-> Is your desired debugger not listed? You can contribute by adding support for your favorite language or debugger. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
+> Is your desired debugger not listed? You can install a [Debug Adapter extension](https://zed.dev/extensions?filter=debug-adapters) to add support for your favorite debugger.
+> If that's not enough, you can contribute by creating an extension yourself. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
 
 ## Getting Started
 
