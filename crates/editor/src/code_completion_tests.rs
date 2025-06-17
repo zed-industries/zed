@@ -203,74 +203,58 @@ async fn test_sort_snippet(cx: &mut TestAppContext) {
 //     // assert_eq!(matches[1], "__init__");
 // }
 
-// #[gpui::test]
-// async fn test_sort_matches_for_rust_into(cx: &mut TestAppContext) {
-//     // Case 1: "int"
-//     let completions = vec![
-//         CompletionBuilder::function("into", "80000004"),
-//         CompletionBuilder::function("try_into", "80000004"),
-//         CompletionBuilder::snippet("println", "80000004"),
-//         CompletionBuilder::function("clone_into", "80000004"),
-//         CompletionBuilder::function("into_searcher", "80000000"),
-//         CompletionBuilder::snippet("eprintln", "80000004"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("int", &completions, SnippetSortOrder::default(), cx).await;
-//     // assert_eq!(matches[0], "into");
+#[gpui::test]
+async fn test_sort_exact(cx: &mut TestAppContext) {
+    // sort_text takes over if no exact match
+    let completions = vec![
+        CompletionBuilder::function("into", None, "80000004"),
+        CompletionBuilder::function("try_into", None, "80000004"),
+        CompletionBuilder::snippet("println", None, "80000004"),
+        CompletionBuilder::function("clone_into", None, "80000004"),
+        CompletionBuilder::function("into_searcher", None, "80000000"),
+        CompletionBuilder::snippet("eprintln", None, "80000004"),
+    ];
+    let matches =
+        filter_and_sort_matches("int", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(matches[0].string, "into_searcher");
 
-//     // Case 2: "into"
-//     let completions = vec![
-//         CompletionBuilder::function("into", "80000004"),
-//         CompletionBuilder::function("try_into", "80000004"),
-//         CompletionBuilder::function("clone_into", "80000004"),
-//         CompletionBuilder::function("into_searcher", "80000000"),
-//         CompletionBuilder::function("split_terminator", "7fffffff"),
-//         CompletionBuilder::function("rsplit_terminator", "7fffffff"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("into", &completions, SnippetSortOrder::default(), cx).await;
-//     // assert_eq!(matches[0], "into");
-// }
+    // exact match takes over sort_text
+    let completions = vec![
+        CompletionBuilder::function("into", None, "80000004"),
+        CompletionBuilder::function("try_into", None, "80000004"),
+        CompletionBuilder::function("clone_into", None, "80000004"),
+        CompletionBuilder::function("into_searcher", None, "80000000"),
+        CompletionBuilder::function("split_terminator", None, "7fffffff"),
+        CompletionBuilder::function("rsplit_terminator", None, "7fffffff"),
+    ];
+    let matches =
+        filter_and_sort_matches("into", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(matches[0].string, "into");
+}
 
-// #[gpui::test]
-// async fn test_sort_matches_for_prioritize_not_exact_match(cx: &mut TestAppContext) {
-//     // Case 1: "item"
-//     let completions = vec![
-//         CompletionBuilder::function("Item", "16"),
-//         CompletionBuilder::variable("Item", "16"),
-//         CompletionBuilder::variable("items", "11"),
-//         CompletionBuilder::function("ItemText", "16"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("item", &completions, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "items");
-//     assert_eq!(matches[1], "Item");
-//     assert_eq!(matches[2], "Item");
-//     assert_eq!(matches[3], "ItemText");
-// }
+#[gpui::test]
+async fn test_sort_positions(cx: &mut TestAppContext) {
+    // positions take precedence over fuzzy score and sort_text
+    let completions = vec![
+        CompletionBuilder::function("rounded-full", None, "15788"),
+        CompletionBuilder::variable("rounded-t-full", None, "15846"),
+        CompletionBuilder::variable("rounded-b-full", None, "15731"),
+        CompletionBuilder::function("rounded-tr-full", None, "15866"),
+    ];
 
-// #[gpui::test]
-// async fn test_sort_matches_for_tailwind_classes(cx: &mut TestAppContext) {
-//     let completions = vec![
-//         CompletionBuilder::function("rounded-full", "15788"),
-//         CompletionBuilder::variable("rounded-t-full", "15846"),
-//         CompletionBuilder::variable("rounded-b-full", "15731"),
-//         CompletionBuilder::function("rounded-tr-full", "15866"),
-//     ];
-//     // Case 1: "rounded-full"
-//     let matches = filter_and_sort_matches(
-//         "rounded-full",
-//         &completions,
-//         SnippetSortOrder::default(),
-//         cx,
-//     )
-//     .await;
-//     assert_eq!(matches[0], "rounded-full");
-//     // Case 2: "roundedfull"
-//     let matches =
-//         filter_and_sort_matches("roundedfull", &completions, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "rounded-full");
-// }
+    let matches = filter_and_sort_matches(
+        "rounded-full",
+        &completions,
+        SnippetSortOrder::default(),
+        cx,
+    )
+    .await;
+    assert_eq!(matches[0].string, "rounded-full");
+
+    let matches =
+        filter_and_sort_matches("roundedfull", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(matches[0].string, "rounded-full");
+}
 
 // #[gpui::test]
 // async fn test_sort_matches_for_special_characters(cx: &mut TestAppContext) {

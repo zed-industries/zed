@@ -999,6 +999,8 @@ impl CompletionsMenu {
         cx.foreground_executor().spawn(async move {
             let mut matches = matches_task.await;
 
+            dbg!(&matches);
+
             if sort_completions {
                 matches = Self::sort_string_matches(
                     matches,
@@ -1061,7 +1063,7 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_capitalize: Reverse<usize>,
+                sort_exact: Reverse<i32>,
                 sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
@@ -1119,18 +1121,15 @@ impl CompletionsMenu {
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
-                let sort_capitalize = Reverse(
-                    query
-                        .as_ref()
-                        .and_then(|q| q.chars().next())
-                        .zip(string_match.string.chars().next())
-                        .map(|(q_char, s_char)| if q_char == s_char { 1 } else { 0 })
-                        .unwrap_or(0),
-                );
                 let sort_positions = string_match.positions.clone();
+                let sort_exact = Reverse(if Some(completion.filter_text()) == query {
+                    1
+                } else {
+                    0
+                });
 
                 MatchTier::WordStartMatch {
-                    sort_capitalize,
+                    sort_exact,
                     sort_positions,
                     sort_snippet,
                     sort_score,
