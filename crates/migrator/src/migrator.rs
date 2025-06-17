@@ -1010,4 +1010,46 @@ mod tests {
             ),
         );
     }
+
+    #[test]
+    fn test_mcp_settings_migration_doesnt_change_valid_settings() {
+        let settings = r#"{
+    "context_servers": {
+        "empty_server": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#;
+        assert_migrate_settings(settings, None);
+    }
 }
