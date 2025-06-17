@@ -4737,11 +4737,6 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
-        let p = Arc::<Path>::from_proto(envelope.payload.path.clone());
-        log::error!(
-            "==> handle_open_buffer_by_path: {p:?}<->{}",
-            envelope.payload.path
-        );
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let open_buffer = this.update(&mut cx, |this, cx| {
             this.open_buffer(
