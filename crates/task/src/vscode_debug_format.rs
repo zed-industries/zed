@@ -103,7 +103,7 @@ fn task_type_to_adapter_name(task_type: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use crate::{DebugScenario, DebugTaskFile, TcpArgumentsTemplate};
+    use crate::{DebugScenario, DebugTaskFile};
 
     use super::VsCodeDebugTaskFile;
 
