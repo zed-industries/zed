@@ -1445,12 +1445,12 @@ impl PickerDelegate for DebugDelegate {
 
         if secondary {
             match kind {
-                Some(TaskSourceKind::Worktree) {
-                    id,
-                    directory_in_worktree,
-                    id_base,
-                } => return,
-                Some(TaskSourceKind::AbsPath) { id_base, abs_path } => return,
+                Some(TaskSourceKind::Worktree {
+                    id: _,
+                    directory_in_worktree: _,
+                    id_base: _,
+                }) => return,
+                Some(TaskSourceKind::AbsPath { id_base: _, abs_path: _ }) => return,
                 // TODO: handle tasks from debug.json separately, just open the file and scroll to it
                 _ => {}
             }
