@@ -26,7 +26,6 @@ test-support = [
 ]
 
 [dependencies]
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true

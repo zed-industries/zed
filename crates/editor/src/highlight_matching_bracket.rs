@@ -40,7 +40,7 @@ pub fn refresh_matching_bracket_highlights(
                 opening_range.to_anchors(&snapshot.buffer_snapshot),
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
-            |theme| theme.colors().editor_document_highlight_bracket_background,
+            |theme| theme.editor_document_highlight_bracket_background,
             cx,
         )
     }

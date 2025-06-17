@@ -197,7 +197,7 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope};
 use theme::{
-    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
+    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings,
     observe_buffer_font_size_adjustment,
 };
 use ui::{
@@ -708,12 +708,7 @@ impl EditorActionId {
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-#[derive(Clone)]
-pub struct BackgroundHighlight {
-    pub range: Range<Anchor>,
-    pub color_fetcher: fn(&Theme) -> Hsla,
-}
-
+type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
 #[derive(Default)]
@@ -1022,7 +1017,7 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
-    background_highlights: TreeMap<TypeId, Vec<BackgroundHighlight>>,
+    background_highlights: TreeMap<TypeId, BackgroundHighlight>,
     gutter_highlights: TreeMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
@@ -6185,7 +6180,7 @@ impl Editor {
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
-                    |theme| theme.colors().editor_highlighted_line_background,
+                    |theme| theme.editor_highlighted_line_background,
                     cx,
                 );
             });
@@ -6540,12 +6535,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         &read_ranges,
-                        |theme| theme.colors().editor_document_highlight_read_background,
+                        |theme| theme.editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         &write_ranges,
-                        |theme| theme.colors().editor_document_highlight_write_background,
+                        |theme| theme.editor_document_highlight_write_background,
                         cx,
                     );
                     cx.notify();
@@ -6647,7 +6642,7 @@ impl Editor {
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &match_ranges,
-                            |theme| theme.colors().editor_document_highlight_bracket_background,
+                            |theme| theme.editor_document_highlight_bracket_background,
                             cx,
                         )
                     }
@@ -7523,15 +7518,12 @@ impl Editor {
                     self.splice_inlays(&[], inlays, cx);
                 } else {
                     let background_color = cx.theme().status().deleted_background;
-                    let style = HighlightStyle {
-                        background_color: Some(background_color),
-                        ..Default::default()
-                    };
                     self.highlight_text::<InlineCompletionHighlight>(
-                        edits
-                            .iter()
-                            .map(|(range, _)| (range.clone(), style))
-                            .collect(),
+                        edits.iter().map(|(range, _)| range.clone()).collect(),
+                        HighlightStyle {
+                            background_color: Some(background_color),
+                            ..Default::default()
+                        },
                         cx,
                     );
                 }
@@ -15405,7 +15397,7 @@ impl Editor {
                     }
                     editor.highlight_background::<Self>(
                         &ranges,
-                        |theme| theme.colors().editor_highlighted_line_background,
+                        |theme| theme.editor_highlighted_line_background,
                         cx,
                     );
                 }
@@ -15560,28 +15552,25 @@ impl Editor {
                     })
                     .detach();
 
-                    let write_highlights = this
-                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
-                        .unwrap_or_default();
-                    let read_highlights = this
-                        .clear_background_highlights::<DocumentHighlightRead>(cx)
-                        .unwrap_or_default();
+                    let write_highlights =
+                        this.clear_background_highlights::<DocumentHighlightWrite>(cx);
+                    let read_highlights =
+                        this.clear_background_highlights::<DocumentHighlightRead>(cx);
                     let ranges = write_highlights
                         .iter()
-                        .chain(read_highlights.iter())
+                        .flat_map(|(_, ranges)| ranges.iter())
+                        .chain(read_highlights.iter().flat_map(|(_, ranges)| ranges.iter()))
                         .cloned()
-                        .map(|highlight| {
-                            (
-                                highlight.range,
-                                HighlightStyle {
-                                    fade_out: Some(0.6),
-                                    ..Default::default()
-                                },
-                            )
-                        })
                         .collect();
 
-                    this.highlight_text::<Rename>(ranges, cx);
+                    this.highlight_text::<Rename>(
+                        ranges,
+                        HighlightStyle {
+                            fade_out: Some(0.6),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
                     let rename_focus_handle = rename_editor.focus_handle(cx);
                     window.focus(&rename_focus_handle);
                     let block_id = this.insert_blocks(
@@ -18563,7 +18552,7 @@ impl Editor {
     pub fn set_search_within_ranges(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         self.highlight_background::<SearchWithinRange>(
             ranges,
-            |theme| theme.colors().editor_document_highlight_read_background,
+            |colors| colors.editor_document_highlight_read_background,
             cx,
         )
     }
@@ -18579,29 +18568,11 @@ impl Editor {
     pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: &[Range<Anchor>],
-        color_fetcher: fn(&Theme) -> Hsla,
+        color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut Context<Self>,
     ) {
-        let highlights = ranges
-            .iter()
-            .map(|range| BackgroundHighlight {
-                range: range.clone(),
-                color_fetcher,
-            })
-            .collect();
         self.background_highlights
-            .insert(TypeId::of::<T>(), highlights);
-        self.scrollbar_marker_state.dirty = true;
-        cx.notify();
-    }
-
-    pub fn highlight_background_ranges<T: 'static>(
-        &mut self,
-        background_highlights: Vec<BackgroundHighlight>,
-        cx: &mut Context<'_, Editor>,
-    ) {
-        self.background_highlights
-            .insert(TypeId::of::<T>(), background_highlights);
+            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
@@ -18609,9 +18580,9 @@ impl Editor {
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> Option<Vec<BackgroundHighlight>> {
+    ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
-        if !text_highlights.is_empty() {
+        if !text_highlights.1.is_empty() {
             self.scrollbar_marker_state.dirty = true;
             cx.notify();
         }
@@ -18706,7 +18677,7 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        let theme = cx.theme();
+        let theme = cx.theme().colors();
         self.background_highlights_in_range(start..end, &snapshot, theme)
     }
 
@@ -18718,13 +18689,10 @@ impl Editor {
             .background_highlights
             .get(&TypeId::of::<items::BufferSearchHighlights>());
 
-        if let Some(highlights) = highlights {
-            highlights
+        if let Some((_color, ranges)) = highlights {
+            ranges
                 .iter()
-                .map(|highlight| {
-                    highlight.range.start.to_point(&snapshot)
-                        ..highlight.range.end.to_point(&snapshot)
-                })
+                .map(|range| range.start.to_point(&snapshot)..range.end.to_point(&snapshot))
                 .collect_vec()
         } else {
             vec![]
@@ -18738,18 +18706,20 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = &'a Range<Anchor>> {
         let read_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightRead>());
+            .get(&TypeId::of::<DocumentHighlightRead>())
+            .map(|h| &h.1);
         let write_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightWrite>());
+            .get(&TypeId::of::<DocumentHighlightWrite>())
+            .map(|h| &h.1);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
         read_highlights
             .into_iter()
             .chain(write_highlights)
-            .flat_map(move |highlights| {
-                let start_ix = match highlights.binary_search_by(|probe| {
-                    let cmp = probe.range.end.cmp(&left_position, buffer);
+            .flat_map(move |ranges| {
+                let start_ix = match ranges.binary_search_by(|probe| {
+                    let cmp = probe.end.cmp(&left_position, buffer);
                     if cmp.is_ge() {
                         Ordering::Greater
                     } else {
@@ -18759,32 +18729,29 @@ impl Editor {
                     Ok(i) | Err(i) => i,
                 };
 
-                highlights[start_ix..]
+                ranges[start_ix..]
                     .iter()
-                    .take_while(move |highlight| {
-                        highlight.range.start.cmp(&right_position, buffer).is_le()
-                    })
-                    .map(|highlight| &highlight.range)
+                    .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())
             })
     }
 
     pub fn has_background_highlights<T: 'static>(&self) -> bool {
         self.background_highlights
             .get(&TypeId::of::<T>())
-            .map_or(false, |highlights| !highlights.is_empty())
+            .map_or(false, |(_, highlights)| !highlights.is_empty())
     }
 
     pub fn background_highlights_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        theme: &Theme,
+        theme: &ThemeColors,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
-        for highlights in self.background_highlights.values() {
-            let start_ix = match highlights.binary_search_by(|probe| {
+        for (color_fetcher, ranges) in self.background_highlights.values() {
+            let color = color_fetcher(theme);
+            let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe
-                    .range
                     .end
                     .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
                 if cmp.is_gt() {
@@ -18795,9 +18762,8 @@ impl Editor {
             }) {
                 Ok(i) | Err(i) => i,
             };
-            for highlight in &highlights[start_ix..] {
-                if highlight
-                    .range
+            for range in &ranges[start_ix..] {
+                if range
                     .start
                     .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
                     .is_ge()
@@ -18805,9 +18771,8 @@ impl Editor {
                     break;
                 }
 
-                let start = highlight.range.start.to_display_point(display_snapshot);
-                let end = highlight.range.end.to_display_point(display_snapshot);
-                let color = (highlight.color_fetcher)(theme);
+                let start = range.start.to_display_point(display_snapshot);
+                let end = range.end.to_display_point(display_snapshot);
                 results.push((start..end, color))
             }
         }
@@ -18821,13 +18786,12 @@ impl Editor {
         count: usize,
     ) -> Vec<RangeInclusive<DisplayPoint>> {
         let mut results = Vec::new();
-        let Some(highlights) = self.background_highlights.get(&TypeId::of::<T>()) else {
+        let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
             return vec![];
         };
 
-        let start_ix = match highlights.binary_search_by(|probe| {
+        let start_ix = match ranges.binary_search_by(|probe| {
             let cmp = probe
-                .range
                 .end
                 .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
             if cmp.is_gt() {
@@ -18848,31 +18812,24 @@ impl Editor {
         };
         let mut start_row: Option<Point> = None;
         let mut end_row: Option<Point> = None;
-        if highlights.len() > count {
+        if ranges.len() > count {
             return Vec::new();
         }
-        for highlight in &highlights[start_ix..] {
-            if highlight
-                .range
+        for range in &ranges[start_ix..] {
+            if range
                 .start
                 .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
                 .is_ge()
             {
                 break;
             }
-            let end = highlight
-                .range
-                .end
-                .to_point(&display_snapshot.buffer_snapshot);
+            let end = range.end.to_point(&display_snapshot.buffer_snapshot);
             if let Some(current_row) = &end_row {
                 if end.row == current_row.row {
                     continue;
                 }
             }
-            let start = highlight
-                .range
-                .start
-                .to_point(&display_snapshot.buffer_snapshot);
+            let start = range.start.to_point(&display_snapshot.buffer_snapshot);
             if start_row.is_none() {
                 assert_eq!(end_row, None);
                 start_row = Some(start);
@@ -18968,11 +18925,13 @@ impl Editor {
 
     pub fn highlight_text<T: 'static>(
         &mut self,
-        ranges: Vec<(Range<Anchor>, HighlightStyle)>,
+        ranges: Vec<Range<Anchor>>,
+        style: HighlightStyle,
         cx: &mut Context<Self>,
     ) {
-        self.display_map
-            .update(cx, |map, _| map.highlight_text(TypeId::of::<T>(), ranges));
+        self.display_map.update(cx, |map, _| {
+            map.highlight_text(TypeId::of::<T>(), ranges, style)
+        });
         cx.notify();
     }
 
@@ -18991,7 +18950,7 @@ impl Editor {
     pub fn text_highlights<'a, T: 'static>(
         &'a self,
         cx: &'a App,
-    ) -> Option<&'a [(Range<Anchor>, HighlightStyle)]> {
+    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
     }
 
@@ -19002,14 +18961,6 @@ impl Editor {
         if cleared {
             cx.notify();
         }
-    }
-
-    pub fn remove_text_highlights<T: 'static>(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<Vec<(Range<Anchor>, HighlightStyle)>> {
-        self.display_map
-            .update(cx, |map, _| map.remove_text_highlights(TypeId::of::<T>()))
     }
 
     pub fn show_local_cursors(&self, window: &mut Window, cx: &mut App) -> bool {
@@ -19682,11 +19633,11 @@ impl Editor {
 
     fn marked_text_ranges(&self, cx: &App) -> Option<Vec<Range<OffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
-        let ranges = self.text_highlights::<InputComposition>(cx)?;
+        let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
         Some(
             ranges
                 .iter()
-                .map(move |(range, _)| {
+                .map(move |range| {
                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
                 })
                 .collect(),
@@ -19997,12 +19948,9 @@ impl Editor {
             pending = "".to_string();
         }
 
-        let existing_pending = self.text_highlights::<PendingInput>(cx).map(|ranges| {
-            ranges
-                .iter()
-                .map(|(range, _)| range.clone())
-                .collect::<Vec<_>>()
-        });
+        let existing_pending = self
+            .text_highlights::<PendingInput>(cx)
+            .map(|(_, ranges)| ranges.iter().cloned().collect::<Vec<_>>());
         if existing_pending.is_none() && pending.is_empty() {
             return;
         }
@@ -20030,27 +19978,28 @@ impl Editor {
             .all::<usize>(cx)
             .into_iter()
             .map(|selection| {
-                (
-                    snapshot.buffer_snapshot.anchor_after(selection.end)
-                        ..snapshot
-                            .buffer_snapshot
-                            .anchor_before(selection.end + pending.len()),
-                    HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
-                            color: None,
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                )
+                snapshot.buffer_snapshot.anchor_after(selection.end)
+                    ..snapshot
+                        .buffer_snapshot
+                        .anchor_before(selection.end + pending.len())
             })
             .collect();
 
         if pending.is_empty() {
             self.clear_highlights::<PendingInput>(cx);
         } else {
-            self.highlight_text::<PendingInput>(ranges, cx);
+            self.highlight_text::<PendingInput>(
+                ranges,
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
         }
 
         self.ime_transaction = self.ime_transaction.or(transaction);
@@ -22050,7 +21999,7 @@ impl EntityInputHandler for Editor {
 
     fn marked_text_range(&self, _: &mut Window, cx: &mut Context<Self>) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
-        let (range, _) = self.text_highlights::<InputComposition>(cx)?.first()?;
+        let range = self.text_highlights::<InputComposition>(cx)?.1.first()?;
         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }
 
@@ -22187,18 +22136,7 @@ impl EntityInputHandler for Editor {
                     .disjoint_anchors()
                     .iter()
                     .map(|selection| {
-                        (
-                            selection.start.bias_left(&snapshot)
-                                ..selection.end.bias_right(&snapshot),
-                            HighlightStyle {
-                                underline: Some(UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: None,
-                                    wavy: false,
-                                }),
-                                ..Default::default()
-                            },
-                        )
+                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
                     })
                     .collect::<Vec<_>>()
             };
@@ -22206,7 +22144,18 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 this.unmark_text(window, cx);
             } else {
-                this.highlight_text::<InputComposition>(marked_ranges.clone(), cx);
+                this.highlight_text::<InputComposition>(
+                    marked_ranges.clone(),
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                );
             }
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
@@ -22222,7 +22171,7 @@ impl EntityInputHandler for Editor {
                 let snapshot = this.buffer.read(cx).read(cx);
                 let new_selected_ranges = marked_ranges
                     .into_iter()
-                    .map(|(marked_range, _)| {
+                    .map(|marked_range| {
                         let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
                         let new_start = OffsetUtf16(new_selected_range.start + insertion_start);
                         let new_end = OffsetUtf16(new_selected_range.end + insertion_start);
