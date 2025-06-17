@@ -1496,17 +1496,16 @@ impl Thread {
         request
     }
 
-    fn attach_tracked_files_state(&mut self, cx: &mut Context<Self>) {
+    pub fn attach_tracked_files_state(&mut self, cx: &mut Context<Self>) {
+        let action_log = self.action_log.read(cx);
         let mut stale_files = String::new();
 
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            let version = stale_file.read(cx).version();
-            if self.last_buffer_notifications.get(&stale_file) != Some(&version) {
-                if let Some(file) = stale_file.read(cx).file() {
+        for stale_buffer in action_log.stale_buffers(cx) {
+            let version = stale_buffer.read(cx).version();
+            if self.last_buffer_notifications.get(&stale_buffer) != Some(&version) {
+                if let Some(file) = stale_buffer.read(cx).file() {
                     self.last_buffer_notifications
-                        .insert(stale_file.clone(), version);
+                        .insert(stale_buffer.clone(), version);
                     writeln!(&mut stale_files, "- {}", file.path().display()).ok();
                 }
             }
@@ -3273,7 +3272,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store, model) =
+        let (_workspace, _thread_store, thread, context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open buffer and add it to context
@@ -3292,24 +3291,14 @@ fn main() {{
             thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
         });
 
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        // Initially, no messages should have stale buffer notification
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages.len(), 1);
+            assert!(!thread.messages[0].is_hidden);
         });
 
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
-        assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
-        );
-
-        // Modify the buffer
+        // Modify the buffer to make it stale
         buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
             buffer.edit(
                 [(1..1, "\n    println!(\"Added a new line\");\n")],
                 None,
@@ -3317,50 +3306,63 @@ fn main() {{
             );
         });
 
-        // Insert another user message without context
+        // Check that the stale file notification was added
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What does the code do now?",
-                ContextLoadResult::default(),
-                None,
-                Vec::new(),
+            thread.attach_tracked_files_state(cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            // Should have 2 messages now: original user message + hidden stale notification
+            assert_eq!(thread.messages.len(), 2);
+
+            let stale_msg = &thread.messages[1];
+            assert!(stale_msg.is_hidden, "Stale notification should be hidden");
+            assert_eq!(stale_msg.role, Role::User);
+
+            let expected_content = "[The following is an auto-generated notification; do not reply]\n\nThese files have changed since the last read:\n- code.rs\n";
+            assert_eq!(
+                stale_msg.to_string(),
+                expected_content,
+                "Stale buffer notification should have the correct format"
+            );
+        });
+
+        // Test that calling attach_tracked_files_state again doesn't add duplicate notifications
+        thread.update(cx, |thread, cx| {
+            thread.attach_tracked_files_state(cx);
+        });
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages.len(), 2);
+        });
+
+        // Test with assistant message - notification should be inserted before it
+        thread.update(cx, |thread, cx| {
+            thread.insert_assistant_message(
+                vec![MessageSegment::Text("Here's an explanation...".into())],
                 cx,
-            )
+            );
         });
 
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        // Modify buffer again to create a new version
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "\n    // Another change\n")], None, cx);
         });
 
-        // We should have a stale file warning as the last message
-        let last_message = new_request
-            .messages
-            .last()
-            .expect("Request should have messages");
+        thread.update(cx, |thread, cx| {
+            thread.attach_tracked_files_state(cx);
+        });
 
-        // The last message should be the stale buffer notification
-        assert_eq!(last_message.role, Role::User);
+        thread.read_with(cx, |thread, _| {
+            // Should have 4 messages: user, stale notification, new stale notification, assistant
+            assert_eq!(thread.messages.len(), 4);
 
-        // Check the exact content of the message
-        let expected_content = "[The following is an auto-generated notification; do not reply]
-
-These files have changed since the last read:
-- code.rs
-";
-        assert_eq!(
-            last_message.string_contents(),
-            expected_content,
-            "Last message should be exactly the stale buffer notification"
-        );
-
-        // The message before the notification should be cached
-        let index = new_request.messages.len() - 2;
-        let previous_message = new_request.messages.get(index).unwrap();
-        assert!(
-            previous_message.cache,
-            "Message before the stale buffer notification should be cached"
-        );
+            // The new stale notification should be inserted before the assistant message
+            let new_stale_msg = &thread.messages[2];
+            assert!(
+                new_stale_msg
+                    .to_string()
+                    .contains("These files have changed since the last read:")
+            );
+        });
     }
 
     #[gpui::test]
