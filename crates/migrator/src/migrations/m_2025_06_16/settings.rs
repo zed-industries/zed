@@ -42,11 +42,10 @@ fn migrate_context_server_settings(
     for child in server_settings.children(&mut cursor) {
         if child.kind() == "pair" {
             if let Some(key_node) = child.child_by_field_name("key") {
+                if let (None, Some(quote_content)) = (column, key_node.child(0)) {
+                    column = Some(quote_content.start_position().column);
+                }
                 if let Some(string_content) = key_node.child(1) {
-                    if column.is_none() {
-                        // Move left for the quote
-                        column = Some(string_content.start_position().column.saturating_sub(1));
-                    }
                     let key = &contents[string_content.byte_range()];
                     match key {
                         // If it already has a source key, don't modify it
