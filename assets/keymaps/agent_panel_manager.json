@@ -1,0 +1,21 @@
+[
+  {
+    "context": "AgentPanelManager",
+    "bindings": {
+      "cmd-t": "agent_panel_manager::SpawnInstance",
+      "cmd-w": "agent_panel_manager::CloseActiveInstance",
+      "cmd-shift-]": "agent_panel_manager::NextInstance",
+      "cmd-shift-[": "agent_panel_manager::PreviousInstance",
+      "ctrl-t": "agent_panel_manager::SpawnInstance",
+      "ctrl-w": "agent_panel_manager::CloseActiveInstance",
+      "ctrl-shift-]": "agent_panel_manager::NextInstance",
+      "ctrl-shift-[": "agent_panel_manager::PreviousInstance"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-shift-a": "zed_actions::assistant::ToggleFocus"
+    }
+  }
+]

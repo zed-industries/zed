@@ -527,7 +527,7 @@ fn initialize_panels(
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
             let agent_panel =
-                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+                agent::AgentPanelManager::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
             Some(agent_panel)
@@ -553,7 +553,7 @@ fn initialize_panels(
                 );
 
                 workspace
-                    .register_action(agent::AgentPanel::toggle_focus)
+                    .register_action(agent::AgentPanelManager::toggle_focus)
                     .register_action(agent::InlineAssistant::inline_assist);
             }
         })?;
