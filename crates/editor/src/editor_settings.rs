@@ -218,9 +218,9 @@ pub enum ShowMinimap {
 #[serde(rename_all = "snake_case")]
 pub enum DisplayIn {
     /// Show on all open editors.
-    #[default]
     AllEditors,
     /// Show the minimap on the active editor only.
+    #[default]
     ActiveEditor,
 }
 
@@ -615,7 +615,7 @@ pub struct MinimapContent {
 
     /// Where to show the minimap in the editor.
     ///
-    /// Default: all_editors
+    /// Default: [`DisplayIn::ActiveEditor`]
     pub display_in: Option<DisplayIn>,
 
     /// When to show the minimap thumb.
