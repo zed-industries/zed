@@ -73,9 +73,9 @@ pub struct AvailableModel {
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,
     /// The maximum number of output tokens allowed by the model.
-    pub max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u64>,
     /// The maximum number of completion tokens allowed by the model (o1-* only)
-    pub max_completion_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u64>,
     /// Override this model with a different Anthropic model for tool calls.
     pub tool_override: Option<String>,
     /// Indicates whether this custom model supports caching.
@@ -715,8 +715,8 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
-    fn max_token_count(&self) -> usize {
-        self.model.max_token_count
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count as u64
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -737,7 +737,7 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
             zed_llm_client::LanguageModelProvider::OpenAi => {
@@ -786,7 +786,7 @@ impl LanguageModel for CloudLanguageModel {
                         let response_body: CountTokensResponse =
                             serde_json::from_str(&response_body)?;
 
-                        Ok(response_body.tokens)
+                        Ok(response_body.tokens as u64)
                     } else {
                         Err(anyhow!(ApiError {
                             status,
@@ -821,7 +821,7 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     self.model.id.to_string(),
                     1.0,
-                    self.model.max_output_tokens as u32,
+                    self.model.max_output_tokens as u64,
                     if self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),

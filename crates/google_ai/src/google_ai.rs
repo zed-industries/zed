@@ -276,17 +276,17 @@ pub struct PromptFeedback {
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_token_count: Option<usize>,
+    pub prompt_token_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached_content_token_count: Option<usize>,
+    pub cached_content_token_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub candidates_token_count: Option<usize>,
+    pub candidates_token_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_use_prompt_token_count: Option<usize>,
+    pub tool_use_prompt_token_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thoughts_token_count: Option<usize>,
+    pub thoughts_token_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_token_count: Option<usize>,
+    pub total_token_count: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -395,7 +395,7 @@ pub struct CountTokensRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensResponse {
-    pub total_tokens: usize,
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -523,7 +523,7 @@ pub enum Model {
         name: String,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        max_tokens: usize,
+        max_tokens: u64,
         #[serde(default)]
         mode: GoogleModelMode,
     },
@@ -586,9 +586,9 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
-        const ONE_MILLION: usize = 1_048_576;
-        const TWO_MILLION: usize = 2_097_152;
+    pub fn max_token_count(&self) -> u64 {
+        const ONE_MILLION: u64 = 1_048_576;
+        const TWO_MILLION: u64 = 2_097_152;
         match self {
             Model::Gemini15Pro => TWO_MILLION,
             Model::Gemini15Flash => ONE_MILLION,

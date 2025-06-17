@@ -53,7 +53,7 @@ pub fn init_settings(cx: &mut App) {
 pub struct LanguageModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub should_speculate: bool,
-    pub min_total_token: usize,
+    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
@@ -135,17 +135,17 @@ impl RequestUsage {
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
-    pub input_tokens: u32,
+    pub input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub output_tokens: u32,
+    pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_creation_input_tokens: u32,
+    pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_read_input_tokens: u32,
+    pub cache_read_input_tokens: u64,
 }
 
 impl TokenUsage {
-    pub fn total_tokens(&self) -> u32 {
+    pub fn total_tokens(&self) -> u64 {
         self.input_tokens
             + self.output_tokens
             + self.cache_read_input_tokens
@@ -254,8 +254,8 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelToolSchemaFormat::JsonSchema
     }
 
-    fn max_token_count(&self) -> usize;
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_token_count(&self) -> u64;
+    fn max_output_tokens(&self) -> Option<u64> {
         None
     }
 
@@ -263,7 +263,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>>;
+    ) -> BoxFuture<'static, Result<u64>>;
 
     fn stream_completion(
         &self,
@@ -349,7 +349,7 @@ pub trait LanguageModel: Send + Sync {
 #[derive(Debug, Error)]
 pub enum LanguageModelKnownError {
     #[error("Context window limit exceeded ({tokens})")]
-    ContextWindowLimitExceeded { tokens: usize },
+    ContextWindowLimitExceeded { tokens: u64 },
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {

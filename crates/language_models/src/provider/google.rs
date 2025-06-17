@@ -79,7 +79,7 @@ impl From<GoogleModelMode> for ModelMode {
 pub struct AvailableModel {
     name: String,
     display_name: Option<String>,
-    max_tokens: usize,
+    max_tokens: u64,
     mode: Option<ModelMode>,
 }
 
@@ -365,7 +365,7 @@ impl LanguageModel for GoogleLanguageModel {
         format!("google/{}", self.model.request_id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -373,7 +373,7 @@ impl LanguageModel for GoogleLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         let model_id = self.model.request_id().to_string();
         let request = into_google(request, model_id.clone(), self.model.mode());
         let http_client = self.http_client.clone();
@@ -702,7 +702,7 @@ impl GoogleEventMapper {
 pub fn count_google_tokens(
     request: LanguageModelRequest,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     // We couldn't use the GoogleLanguageModelProvider to count tokens because the github copilot doesn't have the access to google_ai directly.
     // So we have to use tokenizer from tiktoken_rs to count tokens.
     cx.background_spawn(async move {
@@ -723,7 +723,7 @@ pub fn count_google_tokens(
 
         // Tiktoken doesn't yet support these models, so we manually use the
         // same tokenizer as GPT-4.
-        tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+        tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
     })
     .boxed()
 }
@@ -750,10 +750,10 @@ fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
 }
 
 fn convert_usage(usage: &UsageMetadata) -> language_model::TokenUsage {
-    let prompt_tokens = usage.prompt_token_count.unwrap_or(0) as u32;
-    let cached_tokens = usage.cached_content_token_count.unwrap_or(0) as u32;
+    let prompt_tokens = usage.prompt_token_count.unwrap_or(0);
+    let cached_tokens = usage.cached_content_token_count.unwrap_or(0);
     let input_tokens = prompt_tokens - cached_tokens;
-    let output_tokens = usage.candidates_token_count.unwrap_or(0) as u32;
+    let output_tokens = usage.candidates_token_count.unwrap_or(0);
 
     language_model::TokenUsage {
         input_tokens,
