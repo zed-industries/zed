@@ -46,7 +46,6 @@ impl DebugAdapterClient {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let transport_delegate = TransportDelegate::start(&binary, cx).await?;
-        // start handling events/reverse requests
         let this = Self {
             id,
             binary,
@@ -58,8 +57,9 @@ impl DebugAdapterClient {
         Ok(this)
     }
 
-    pub fn can_reconnect(&self) -> bool {
+    pub fn should_reconnect_for_ssh(&self) -> bool {
         self.transport_delegate.tcp_arguments().is_some()
+            && self.binary.command.as_deref() == Some("ssh")
     }
 
     pub async fn connect(

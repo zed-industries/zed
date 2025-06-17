@@ -484,13 +484,13 @@ impl RunningMode {
         })
     }
 
-    fn reconnect(&self, cx: &mut AsyncApp) -> Option<Task<Result<()>>> {
+    fn reconnect_for_ssh(&self, cx: &mut AsyncApp) -> Option<Task<Result<()>>> {
         let client = self.client.clone();
         let messages_tx = self.messages_tx.clone();
         let message_handler = Box::new(move |message| {
             messages_tx.unbounded_send(message).ok();
         });
-        if client.can_reconnect() {
+        if client.should_reconnect_for_ssh() {
             Some(cx.spawn(async move |cx| {
                 client.connect(message_handler, cx).await?;
                 anyhow::Ok(())
@@ -1165,7 +1165,7 @@ impl Session {
                     Err(e) => {
                         let Ok(Some(reconnect)) = this.update(cx, |this, cx| {
                             this.as_running()
-                                .and_then(|running| running.reconnect(&mut cx.to_async()))
+                                .and_then(|running| running.reconnect_for_ssh(&mut cx.to_async()))
                         }) else {
                             return Err(e);
                         };
