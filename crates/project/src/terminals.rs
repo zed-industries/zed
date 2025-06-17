@@ -4,7 +4,10 @@ use collections::HashMap;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
-use remote::{path_buf::PathStyle, ssh_session::SshArgs};
+use remote::{
+    path_buf::{PathStyle, TargetPathBuf},
+    ssh_session::SshArgs,
+};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -172,6 +175,7 @@ impl Project {
             Some(SshDetails {
                 ssh_command,
                 askpass,
+                path_style,
                 ..
             }) => {
                 let (command, args) = wrap_for_ssh(
@@ -180,6 +184,7 @@ impl Project {
                     path.as_deref(),
                     env,
                     None,
+                    path_style,
                 );
                 let mut command = std::process::Command::new(command);
                 command.args(args);
@@ -272,8 +277,14 @@ impl Project {
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
 
-                        let (program, args) =
-                            wrap_for_ssh(&ssh_command, None, path.as_deref(), env, None);
+                        let (program, args) = wrap_for_ssh(
+                            &ssh_command,
+                            None,
+                            path.as_deref(),
+                            env,
+                            None,
+                            path_style,
+                        );
                         env = HashMap::default();
                         if let Some(askpass) = askpass {
                             env.insert("SSH_ASKPASS".to_string(), askpass);
@@ -330,6 +341,7 @@ impl Project {
                             path.as_deref(),
                             env,
                             python_venv_directory.as_deref(),
+                            path_style,
                         );
                         env = HashMap::default();
                         if let Some(askpass) = askpass {
@@ -561,6 +573,7 @@ pub fn wrap_for_ssh(
     path: Option<&Path>,
     env: HashMap<String, String>,
     venv_directory: Option<&Path>,
+    path_style: PathStyle,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
         // DEFAULT_REMOTE_SHELL is '"${SHELL:-sh}"' so must not be escaped
@@ -583,12 +596,13 @@ pub fn wrap_for_ssh(
     }
     if let Some(venv_directory) = venv_directory {
         if let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()) {
-            env_changes.push_str(&format!("PATH={}:$PATH ", str));
+            let path = TargetPathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
+            env_changes.push_str(&format!("PATH={}:$PATH ", path));
         }
     }
 
     let commands = if let Some(path) = path {
-        let path = path.to_string_lossy().replace('\\', "/");
+        let path = TargetPathBuf::new(path.to_path_buf(), path_style).to_string();
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace ith with something that works
         let tilde_prefix = "~/";
