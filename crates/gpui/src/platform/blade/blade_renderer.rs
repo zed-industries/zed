@@ -336,6 +336,7 @@ impl BladeRenderer {
         // workaround for https://github.com/zed-industries/zed/issues/26143
         let sample_count = std::env::var("ZED_SAMPLE_COUNT")
             .ok()
+            .or_else(|| std::env::var("ZED_PATH_SAMPLE_COUNT").ok())
             .and_then(|v| v.parse().ok())
             .or_else(|| {
                 [4, 2, 1]
@@ -815,8 +816,6 @@ impl BladeRenderer {
                 }
             }
         }
-
-        // draw to screen
 
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
