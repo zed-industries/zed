@@ -1791,9 +1791,7 @@ impl SshRemoteConnection {
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
         if let Some(build_remote_server) = build_remote_server {
-            let ret = self
-                .build_local(build_remote_server, self.platform().await?, delegate, cx)
-                .await;
+            let ret = self.build_local(build_remote_server, delegate, cx).await;
             let src_path = ret?;
             let tmp_path =
                 UnixStylePathBuf::from(paths::remote_server_dir_relative().join(format!(
@@ -1831,8 +1829,6 @@ impl SshRemoteConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })??;
 
-        let platform = self.platform().await?;
-
         let tmp_path_gz = UnixStylePathBuf::from(PathBuf::from(format!(
             "{}-download-{}.gz",
             dst_path.to_string_lossy(),
@@ -1840,7 +1836,7 @@ impl SshRemoteConnection {
         )));
         if !self.socket.connection_options.upload_binary_over_ssh {
             if let Some((url, body)) = delegate
-                .get_download_params(platform, release_channel, wanted_version, cx)
+                .get_download_params(self.ssh_platform, release_channel, wanted_version, cx)
                 .await?
             {
                 match self
@@ -1863,7 +1859,7 @@ impl SshRemoteConnection {
         }
 
         let src_path = delegate
-            .download_server_binary_locally(platform, release_channel, wanted_version, cx)
+            .download_server_binary_locally(self.ssh_platform, release_channel, wanted_version, cx)
             .await?;
         self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
             .await?;
@@ -2059,7 +2055,6 @@ impl SshRemoteConnection {
     async fn build_local(
         &self,
         build_remote_server: String,
-        platform: SshPlatform,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
@@ -2078,7 +2073,9 @@ impl SshRemoteConnection {
             Ok(())
         }
 
-        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+        if self.ssh_platform.arch == std::env::consts::ARCH
+            && self.ssh_platform.os == std::env::consts::OS
+        {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
             run_cmd(Command::new("cargo").args([
@@ -2104,8 +2101,8 @@ impl SshRemoteConnection {
             let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
             return Ok(path);
         }
-        let Some(triple) = platform.triple() else {
-            anyhow::bail!("can't cross compile for: {:?}", platform);
+        let Some(triple) = self.ssh_platform.triple() else {
+            anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform);
         };
         smol::fs::create_dir_all("target/remote_server").await?;
 
