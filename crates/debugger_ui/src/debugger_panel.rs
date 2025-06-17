@@ -1,6 +1,7 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
+use crate::session::running::breakpoint_list::BreakpointList;
 use crate::{
     ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
     FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
@@ -70,6 +71,7 @@ pub struct DebugPanel {
     fs: Arc<dyn Fs>,
     is_zoomed: bool,
     _subscriptions: [Subscription; 1],
+    breakpoint_list: Entity<BreakpointList>,
 }
 
 impl DebugPanel {
@@ -97,6 +99,7 @@ impl DebugPanel {
                 sessions: vec![],
                 active_session: None,
                 focus_handle,
+                breakpoint_list: BreakpointList::new(None, workspace.weak_handle(), &project, cx),
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
@@ -1428,11 +1431,13 @@ impl Render for DebugPanel {
                             .items_center()
                             .justify_center()
                             .child(
-                                h_flex()
+                                h_flex().size_full()
                                     .items_start()
-                                    .gap_8()
+
+                                    .child(v_flex().bg(cx.theme().colors().background).items_start().min_w_1_3().h_full().p_1().child(Label::new("Breakpoint List").size(LabelSize::Small)).child(self.breakpoint_list.clone()))
+                                    .child(Divider::vertical())
                                     .child(
-                                        v_flex()
+                                        v_flex().w_2_3().h_full().items_center().justify_center()
                                             .gap_2()
                                             .pr_8()
                                             .child(
