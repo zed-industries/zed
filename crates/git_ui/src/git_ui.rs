@@ -118,12 +118,12 @@ pub fn init(cx: &mut App) {
                 panel.stash_all(action, window, cx);
             });
         });
-        workspace.register_action(|workspace, action: &git::PopStash, window, cx| {
+        workspace.register_action(|workspace, action: &git::StashPop, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
             panel.update(cx, |panel, cx| {
-                panel.pop_stash(action, window, cx);
+                panel.stash_pop(action, window, cx);
             });
         });
         workspace.register_action(|workspace, action: &git::StageAll, window, cx| {

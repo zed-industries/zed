@@ -408,7 +408,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn pop_stash(
+    fn stash_pop(
         &self,
         _index: Option<u64>,
         _env: Arc<HashMap<String, String>>,

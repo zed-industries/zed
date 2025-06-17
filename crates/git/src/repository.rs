@@ -403,7 +403,7 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
-    fn pop_stash(
+    fn stash_pop(
         &self,
         index: Option<u64>,
         env: Arc<HashMap<String, String>>,
@@ -1240,7 +1240,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn pop_stash(
+    fn stash_pop(
         &self,
         index: Option<u64>,
         env: Arc<HashMap<String, String>>,

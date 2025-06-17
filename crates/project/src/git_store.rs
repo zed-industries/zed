@@ -420,7 +420,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_stash);
-        client.add_entity_request_handler(Self::handle_pop_stash);
+        client.add_entity_request_handler(Self::handle_stash_pop);
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
@@ -1727,9 +1727,9 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
-    async fn handle_pop_stash(
+    async fn handle_stash_pop(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::PopStash>,
+        envelope: TypedEnvelope<proto::StashPop>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
@@ -1739,7 +1739,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.pop_stash(index, cx)
+                repository_handle.stash_pop(index, cx)
             })?
             .await?;
 
@@ -3565,7 +3565,7 @@ impl Repository {
         })
     }
 
-    pub fn pop_stash(
+    pub fn stash_pop(
         &mut self,
         index: Option<u64>,
         cx: &mut Context<Self>,
@@ -3579,16 +3579,16 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        } => backend.pop_stash(index, environment).await,
+                        } => backend.stash_pop(index, environment).await,
                         RepositoryState::Remote { project_id, client } => {
                             client
-                                .request(proto::PopStash {
+                                .request(proto::StashPop {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
                                     stash_index: index,
                                 })
                                 .await
-                                .context("sending pop stash request")?;
+                                .context("sending stash pop request")?;
                             Ok(())
                         }
                     }
