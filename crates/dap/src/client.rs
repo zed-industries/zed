@@ -79,10 +79,10 @@ impl DebugAdapterClient {
     ) -> Result<Self> {
         let binary = match self.transport_delegate.transport() {
             crate::transport::Transport::Tcp(tcp_transport) => DebugAdapterBinary {
-                command: binary.command,
-                arguments: binary.arguments,
-                envs: binary.envs,
-                cwd: binary.cwd,
+                command: None,
+                arguments: Default::default(),
+                envs: Default::default(),
+                cwd: Default::default(),
                 connection: Some(crate::adapters::TcpArguments {
                     host: tcp_transport.host,
                     port: tcp_transport.port,
