@@ -972,6 +972,9 @@ impl CompletionsMenu {
         let matches_task = cx.background_spawn({
             let query = query.clone();
             let match_candidates = self.match_candidates.clone();
+
+            // dbg!(&query, &match_candidates);
+
             let cancel_filter = self.cancel_filter.clone();
             let background_executor = cx.background_executor().clone();
             async move {
@@ -988,6 +991,9 @@ impl CompletionsMenu {
         });
 
         let completions = self.completions.clone();
+
+        dbg!(&completions);
+
         let sort_completions = self.sort_completions;
         let snippet_sort_order = self.snippet_sort_order;
         cx.foreground_executor().spawn(async move {
@@ -1050,8 +1056,6 @@ impl CompletionsMenu {
         snippet_sort_order: SnippetSortOrder,
         completions: &[Completion],
     ) -> Vec<StringMatch> {
-        dbg!(&query, &matches, &completions);
-
         let mut matches = matches;
 
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1061,7 +1065,6 @@ impl CompletionsMenu {
                 sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
-                // sort_fuzzy_bracket: Reverse<usize>,
                 sort_text: Option<&'a str>,
                 sort_kind: usize,
                 sort_label: &'a str,
@@ -1070,14 +1073,6 @@ impl CompletionsMenu {
                 sort_score: Reverse<OrderedFloat<f64>>,
             },
         }
-
-        // Our goal here is to intelligently sort completion suggestions. We want to
-        // balance the raw fuzzy match score with hints from the language server
-
-        // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
-        // The remaining matches are partitioned into two groups at 3/5 of the max_score.
-        let max_score = matches.iter().map(|mat| mat.score).fold(0.0, f64::max);
-        let fuzzy_bracket_threshold = max_score * (3.0 / 5.0);
 
         let query_start_lower = query
             .as_ref()
@@ -1119,11 +1114,6 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_fuzzy_bracket = Reverse(if score >= fuzzy_bracket_threshold {
-                    1
-                } else {
-                    0
-                });
                 let sort_snippet = match snippet_sort_order {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
@@ -1144,9 +1134,8 @@ impl CompletionsMenu {
                     sort_positions,
                     sort_snippet,
                     sort_score,
-                    // sort_fuzzy_bracket,
-                    sort_kind,
                     sort_text,
+                    sort_kind,
                     sort_label,
                 }
             }
