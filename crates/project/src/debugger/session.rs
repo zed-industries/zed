@@ -29,6 +29,7 @@ use dap::{
     StartDebuggingRequestArgumentsRequest,
 };
 use futures::SinkExt;
+use futures::channel::mpsc::UnboundedSender;
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -139,6 +140,7 @@ pub struct RunningMode {
     executor: BackgroundExecutor,
     is_started: bool,
     has_ever_stopped: bool,
+    messages_tx: UnboundedSender<Message>,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -163,34 +165,36 @@ impl RunningMode {
         worktree: WeakEntity<Worktree>,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let message_handler = Box::new(move |message| {
-            messages_tx.unbounded_send(message).ok();
+        let message_handler = Box::new({
+            let messages_tx = messages_tx.clone();
+            move |message| {
+                messages_tx.unbounded_send(message).ok();
+            }
         });
 
-        let client = Arc::new(
-            if let Some(client) = parent_session
-                .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-                .flatten()
-            {
-                client
-                    .reconnect(session_id, binary.clone(), message_handler, cx.clone())
-                    .await?
-            } else {
-                DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
-                    .await?
-            },
-        );
+        let mut client = if let Some(client) = parent_session
+            .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
+            .flatten()
+        {
+            client
+                .create_child_connection(session_id, binary.clone(), cx)
+                .await?
+        } else {
+            DebugAdapterClient::start(session_id, binary.clone(), cx).await?
+        };
+        client.connect(message_handler, cx).await?;
 
         Ok(Self {
-            client,
+            client: Arc::new(client),
             worktree,
             tmp_breakpoint: None,
             binary,
             executor: cx.background_executor().clone(),
             is_started: false,
             has_ever_stopped: false,
+            messages_tx,
         })
     }
 
@@ -477,6 +481,18 @@ impl RunningMode {
             .ok();
 
             result?;
+            anyhow::Ok(())
+        })
+    }
+
+    fn reconnect(&self, cx: &mut AsyncApp) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let messages_tx = self.messages_tx.clone();
+        let message_handler = Box::new(move |message| {
+            messages_tx.unbounded_send(message).ok();
+        });
+        cx.spawn(async move |cx| {
+            client.connect(message_handler, cx).await?;
             anyhow::Ok(())
         })
     }
@@ -855,7 +871,7 @@ impl Session {
                 worktree.downgrade(),
                 binary.clone(),
                 message_tx,
-                cx.clone(),
+                cx,
             )
             .await?;
             this.update(cx, |this, cx| {
@@ -1133,27 +1149,37 @@ impl Session {
         let request = Initialize { adapter_id };
         match &self.mode {
             Mode::Running(local_mode) => {
-                let capabilities = local_mode.request(request);
+                let mut response = local_mode.request(request.clone());
 
                 cx.spawn(async move |this, cx| {
-                    let capabilities = capabilities.await?;
-                    this.update(cx, |session, cx| {
-                        session.capabilities = capabilities;
-                        let filters = session
-                            .capabilities
-                            .exception_breakpoint_filters
-                            .clone()
-                            .unwrap_or_default();
-                        for filter in filters {
-                            let default = filter.default.unwrap_or_default();
-                            session
-                                .exception_breakpoints
-                                .entry(filter.filter.clone())
-                                .or_insert_with(|| (filter, default));
+                    loop {
+                        let capabilities = response.await;
+                        match capabilities {
+                            Err(e) => {
+                                local_mode.reconnect(cx).await;
+                                response = local_mode.request(request.clone());
+                            }
+                            Ok(capabilities) => {
+                                this.update(cx, |session, cx| {
+                                    session.capabilities = capabilities;
+                                    let filters = session
+                                        .capabilities
+                                        .exception_breakpoint_filters
+                                        .clone()
+                                        .unwrap_or_default();
+                                    for filter in filters {
+                                        let default = filter.default.unwrap_or_default();
+                                        session
+                                            .exception_breakpoints
+                                            .entry(filter.filter.clone())
+                                            .or_insert_with(|| (filter, default));
+                                    }
+                                    cx.emit(SessionEvent::CapabilitiesLoaded);
+                                })?;
+                                return Ok(());
+                            }
                         }
-                        cx.emit(SessionEvent::CapabilitiesLoaded);
-                    })?;
-                    Ok(())
+                    }
                 })
             }
             Mode::Building => Task::ready(Err(anyhow!(

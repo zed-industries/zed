@@ -8,8 +8,7 @@ use dap_types::{
     requests::Request,
 };
 use futures::channel::oneshot;
-use gpui::{AppContext, AsyncApp};
-use smol::channel::{Receiver, Sender};
+use gpui::{AppContext, AsyncApp, Task};
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
@@ -35,6 +34,7 @@ pub struct DebugAdapterClient {
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
     transport_delegate: TransportDelegate,
+    connection_task: Option<Task<()>>,
 }
 
 pub type DapMessageHandler = Box<dyn FnMut(Message) + 'static + Send + Sync>;
@@ -44,97 +44,57 @@ impl DebugAdapterClient {
         id: SessionId,
         binary: DebugAdapterBinary,
         message_handler: DapMessageHandler,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let ((server_rx, server_tx), transport_delegate) =
-            TransportDelegate::start(&binary, cx.clone()).await?;
-        let this = Self {
+        let transport_delegate = TransportDelegate::start(&binary, cx).await?;
+        // start handling events/reverse requests
+        let mut this = Self {
             id,
             binary,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
+            connection_task: None,
         };
-        log::info!("Successfully connected to debug adapter");
-
-        let client_id = this.id;
-
-        // start handling events/reverse requests
-        cx.background_spawn(Self::handle_receive_messages(
-            client_id,
-            server_rx,
-            server_tx.clone(),
-            message_handler,
-        ))
-        .detach();
+        this.reconnect(message_handler, cx).await?;
 
         Ok(this)
     }
 
     pub async fn reconnect(
         &self,
+        mut message_handler: DapMessageHandler,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        self.transport_delegate.connect(cx, message_handler).await?;
+        let (server_rx, _) = self.transport_delegate.reconnect(cx).await?;
+        self.connection_task = Some(cx.background_spawn(async move {
+            while let Ok(message) = server_rx.recv().await {
+                message_handler(message)
+            }
+        }));
+        Ok(())
+    }
+
+    pub async fn create_child_connection(
+        &self,
         session_id: SessionId,
         binary: DebugAdapterBinary,
-        message_handler: DapMessageHandler,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let binary = match self.transport_delegate.transport() {
-            crate::transport::Transport::Tcp(tcp_transport) => DebugAdapterBinary {
-                command: binary.command,
-                arguments: binary.arguments,
-                envs: binary.envs,
-                cwd: binary.cwd,
-                connection: Some(crate::adapters::TcpArguments {
-                    host: tcp_transport.host,
-                    port: tcp_transport.port,
-                    timeout: Some(tcp_transport.timeout),
-                }),
+        let binary = if let Some(connection) = self.transport_delegate.transport.tcp_arguments() {
+            DebugAdapterBinary {
+                command: None,
+                arguments: Default::default(),
+                envs: Default::default(),
+                cwd: Default::default(),
+                connection: Some(connection),
                 request_args: binary.request_args,
-            },
-            _ => self.binary.clone(),
+            }
+        } else {
+            self.binary.clone()
         };
 
         Self::start(session_id, binary, message_handler, cx).await
-    }
-
-    async fn handle_receive_messages(
-        client_id: SessionId,
-        server_rx: Receiver<Message>,
-        client_tx: Sender<Message>,
-        mut message_handler: DapMessageHandler,
-    ) -> Result<()> {
-        let result = loop {
-            let message = match server_rx.recv().await {
-                Ok(message) => message,
-                Err(e) => break Err(e.into()),
-            };
-            match message {
-                Message::Event(ev) => {
-                    log::debug!("Client {} received event `{}`", client_id.0, &ev);
-
-                    message_handler(Message::Event(ev))
-                }
-                Message::Request(req) => {
-                    log::debug!(
-                        "Client {} received reverse request `{}`",
-                        client_id.0,
-                        &req.command
-                    );
-
-                    message_handler(Message::Request(req))
-                }
-                Message::Response(response) => {
-                    log::debug!("Received response after request timeout: {:#?}", response);
-                }
-            }
-
-            smol::future::yield_now().await;
-        };
-
-        drop(client_tx);
-
-        log::debug!("Handle receive messages dropped");
-
-        result
     }
 
     /// Send a request to an adapter and get a response back
@@ -229,7 +189,7 @@ impl DebugAdapterClient {
             + Send
             + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
     {
-        let transport = self.transport_delegate.transport().as_fake();
+        let transport = self.transport_delegate.transport.as_fake();
         transport.on_request::<R, F>(handler);
     }
 
@@ -249,7 +209,7 @@ impl DebugAdapterClient {
     where
         F: 'static + Send + Fn(Response),
     {
-        let transport = self.transport_delegate.transport().as_fake();
+        let transport = self.transport_delegate.transport.as_fake();
         transport.on_response::<R, F>(handler).await;
     }
 
@@ -307,7 +267,7 @@ mod tests {
                 },
             },
             Box::new(|_| panic!("Did not expect to hit this code path")),
-            cx.to_async(),
+            &mut cx.to_async(),
         )
         .await
         .unwrap();
@@ -389,7 +349,7 @@ mod tests {
                     );
                 }
             }),
-            cx.to_async(),
+            &mut cx.to_async(),
         )
         .await
         .unwrap();
