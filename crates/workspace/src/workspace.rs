@@ -239,6 +239,7 @@ actions!(
         ToggleRightDock,
         /// Toggles zoom on the active pane.
         ToggleZoom,
+        ToggleEditorZoom,
         /// Stops following a collaborator.
         Unfollow,
         /// Shows the welcome screen.
@@ -1046,6 +1047,7 @@ pub struct Workspace {
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
+    editor_zoomed: Option<AnyWeakView>,
     center: PaneGroup,
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
@@ -1375,6 +1377,7 @@ impl Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
             zoomed_position: None,
+            editor_zoomed: None,
             previous_dock_drag_coordinates: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
@@ -3053,6 +3056,10 @@ impl Workspace {
         if self.zoomed_position != dock_to_reveal {
             self.zoomed = None;
             self.zoomed_position = None;
+            // Only clear editor zoom when NOT revealing a dock (i.e., when switching center panes)
+            if dock_to_reveal.is_none() {
+                self.editor_zoomed = None;
+            }
             cx.emit(Event::ZoomChanged);
         }
 
@@ -3626,14 +3633,7 @@ impl Workspace {
 
         match target {
             Some(ActivateInDirectionTarget::Pane(pane)) => {
-                let pane = pane.read(cx);
-                if let Some(item) = pane.active_item() {
-                    item.item_focus_handle(cx).focus(window);
-                } else {
-                    log::error!(
-                        "Could not find a focus target when in switching focus in {direction} direction for a pane",
-                    );
-                }
+                window.focus(&pane.focus_handle(cx));
             }
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.
@@ -3765,14 +3765,17 @@ impl Workspace {
             self.set_active_pane(&pane, window, cx);
         }
 
-        if self.last_active_center_pane.is_none() {
-            self.last_active_center_pane = Some(pane.downgrade());
-        }
+        let is_center_pane = self.panes.contains(&pane);
 
-        self.dismiss_zoomed_items_to_reveal(None, window, cx);
-        if pane.read(cx).is_zoomed() {
+        if is_center_pane {
+            if self.last_active_center_pane.is_none() {
+                self.last_active_center_pane = Some(pane.downgrade());
+            }
+            self.dismiss_zoomed_items_to_reveal(None, window, cx);
+        }
+        if pane.read(cx).is_zoomed() && self.editor_zoomed.is_none() {
             self.zoomed = Some(pane.downgrade().into());
-        } else {
+        } else if self.editor_zoomed.is_none() {
             self.zoomed = None;
         }
         self.zoomed_position = None;
@@ -3881,6 +3884,8 @@ impl Workspace {
                 if *pane == self.active_pane {
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                     if pane.read(cx).has_focus(window, cx) {
+                        // Clear editor zoom when activating workspace zoom
+                        self.editor_zoomed = None;
                         self.zoomed = Some(pane.downgrade().into());
                         self.zoomed_position = None;
                         cx.emit(Event::ZoomChanged);
@@ -3895,6 +3900,22 @@ impl Workspace {
                     cx.emit(Event::ZoomChanged);
                 }
                 cx.notify();
+            }
+            pane::Event::ToggleEditorZoom => {
+                if *pane == self.active_pane {
+                    // Clear workspace zoom when toggling editor zoom
+                    self.zoomed = None;
+                    self.zoomed_position = None;
+
+                    if self.editor_zoomed.is_some() {
+                        self.editor_zoomed = None;
+                    } else {
+                        self.editor_zoomed = Some(pane.downgrade().into());
+                    }
+
+                    cx.emit(Event::ZoomChanged);
+                    cx.notify();
+                }
             }
             pane::Event::ItemPinned | pane::Event::ItemUnpinned => {}
         }
@@ -4035,6 +4056,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Clear editor zoom if the removed pane is the editor zoomed pane
+        if self.editor_zoomed.as_ref() == Some(&pane.downgrade().into()) {
+            self.editor_zoomed = None;
+            cx.emit(Event::ZoomChanged);
+        }
+
         if self.center.remove(&pane).unwrap() {
             self.force_remove_pane(&pane, &focus_on, window, cx);
             self.unfollow_in_pane(&pane, window, cx);
@@ -6335,20 +6362,39 @@ impl Render for Workspace {
                                                                             )
                                                                         },
                                                                     )
-                                                                    .child(self.center.render(
-                                                                        self.zoomed.as_ref(),
-                                                                        &PaneRenderContext {
-                                                                            follower_states:
-                                                                                &self.follower_states,
-                                                                            active_call: self.active_call(),
-                                                                            active_pane: &self.active_pane,
-                                                                            app_state: &self.app_state,
-                                                                            project: &self.project,
-                                                                            workspace: &self.weak_self,
-                                                                        },
-                                                                        window,
-                                                                        cx,
-                                                                    ))
+                                                                    .child(if self.editor_zoomed.is_some() {
+                                                                        // When editor is zoomed, render only the active pane with visual indicator
+                                                                        div()
+                                                                            .flex_1()
+                                                                            .size_full()
+                                                                            .p_2()
+                                                                            .child(
+                                                                                div()
+                                                                                    .size_full()
+                                                                                    .bg(cx.theme().colors().background)
+                                                                                    .border_1()
+                                                                                    .border_color(cx.theme().colors().border_variant)
+                                                                                    .rounded_md()
+                                                                                    .shadow_lg()
+                                                                                    .child(self.active_pane.clone())
+                                                                            )
+                                                                            .into_any_element()
+                                                                    } else {
+                                                                        self.center.render(
+                                                                            self.zoomed.as_ref(),
+                                                                            &PaneRenderContext {
+                                                                                follower_states:
+                                                                                    &self.follower_states,
+                                                                                active_call: self.active_call(),
+                                                                                active_pane: &self.active_pane,
+                                                                                app_state: &self.app_state,
+                                                                                project: &self.project,
+                                                                                workspace: &self.weak_self,
+                                                                            },
+                                                                            window,
+                                                                            cx,
+                                                                        ).into_any_element()
+                                                                    })
                                                                     .when_some(
                                                                         paddings.1,
                                                                         |this, p| {
@@ -6399,20 +6445,39 @@ impl Render for Workspace {
                                                                         h_flex()
                                                                             .flex_1()
                                                                             .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
-                                                                            .child(self.center.render(
-                                                                                self.zoomed.as_ref(),
-                                                                                &PaneRenderContext {
-                                                                                    follower_states:
-                                                                                        &self.follower_states,
-                                                                                    active_call: self.active_call(),
-                                                                                    active_pane: &self.active_pane,
-                                                                                    app_state: &self.app_state,
-                                                                                    project: &self.project,
-                                                                                    workspace: &self.weak_self,
-                                                                                },
-                                                                                window,
-                                                                                cx,
-                                                                            ))
+                                                                            .child(if self.editor_zoomed.is_some() {
+                                                                                // When editor is zoomed, render only the active pane with visual indicator
+                                                                                div()
+                                                                                    .flex_1()
+                                                                                    .size_full()
+                                                                                    .p_2()
+                                                                                    .child(
+                                                                                        div()
+                                                                                            .size_full()
+                                                                                            .bg(cx.theme().colors().background)
+                                                                                            .border_1()
+                                                                                            .border_color(cx.theme().colors().border_variant)
+                                                                                            .rounded_md()
+                                                                                            .shadow_lg()
+                                                                                            .child(self.active_pane.clone())
+                                                                                    )
+                                                                                    .into_any_element()
+                                                                            } else {
+                                                                                self.center.render(
+                                                                                    self.zoomed.as_ref(),
+                                                                                    &PaneRenderContext {
+                                                                                        follower_states:
+                                                                                            &self.follower_states,
+                                                                                        active_call: self.active_call(),
+                                                                                        active_pane: &self.active_pane,
+                                                                                        app_state: &self.app_state,
+                                                                                        project: &self.project,
+                                                                                        workspace: &self.weak_self,
+                                                                                    },
+                                                                                    window,
+                                                                                    cx,
+                                                                                ).into_any_element()
+                                                                            })
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
@@ -6461,20 +6526,40 @@ impl Render for Workspace {
                                                                         h_flex()
                                                                             .flex_1()
                                                                             .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
-                                                                            .child(self.center.render(
-                                                                                self.zoomed.as_ref(),
-                                                                                &PaneRenderContext {
-                                                                                    follower_states:
-                                                                                        &self.follower_states,
-                                                                                    active_call: self.active_call(),
-                                                                                    active_pane: &self.active_pane,
-                                                                                    app_state: &self.app_state,
-                                                                                    project: &self.project,
-                                                                                    workspace: &self.weak_self,
-                                                                                },
-                                                                                window,
-                                                                                cx,
-                                                                            ))
+                                                                            .child(if self.editor_zoomed.is_some() {
+                                                                                // When editor is zoomed, render only the active pane with visual indicator
+                                                                                div()
+                                                                                    .flex_1()
+                                                                                    .size_full()
+                                                                                    .p_2()
+                                                                                    .child(
+                                                                                        div()
+                                                                                            .size_full()
+                                                                                            .bg(cx.theme().colors().background)
+                                                                                            .border_1()
+                                                                                            .border_color(cx.theme().colors().border_variant)
+                                                                                            .rounded_md()
+                                                                                            .shadow_lg()
+                                                                                            .child(self.active_pane.clone())
+                                                                                    )
+                                                                                    .into_any_element()
+                                                                            } else {
+                                                                                // Normal rendering
+                                                                                self.center.render(
+                                                                                    self.zoomed.as_ref(),
+                                                                                    &PaneRenderContext {
+                                                                                        follower_states:
+                                                                                            &self.follower_states,
+                                                                                        active_call: self.active_call(),
+                                                                                        active_pane: &self.active_pane,
+                                                                                        app_state: &self.app_state,
+                                                                                        project: &self.project,
+                                                                                        workspace: &self.weak_self,
+                                                                                    },
+                                                                                    window,
+                                                                                    cx,
+                                                                                ).into_any_element()
+                                                                            })
                                                                             .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
@@ -6509,20 +6594,40 @@ impl Render for Workspace {
                                                             .when_some(paddings.0, |this, p| {
                                                                 this.child(p.border_r_1())
                                                             })
-                                                            .child(self.center.render(
-                                                                self.zoomed.as_ref(),
-                                                                &PaneRenderContext {
-                                                                    follower_states:
-                                                                        &self.follower_states,
-                                                                    active_call: self.active_call(),
-                                                                    active_pane: &self.active_pane,
-                                                                    app_state: &self.app_state,
-                                                                    project: &self.project,
-                                                                    workspace: &self.weak_self,
-                                                                },
-                                                                window,
-                                                                cx,
-                                                            ))
+                                                            .child(if self.editor_zoomed.is_some() {
+                                                                // When editor is zoomed, render only the active pane with visual indicator
+                                                                div()
+                                                                    .flex_1()
+                                                                    .size_full()
+                                                                    .p_2()
+                                                                    .child(
+                                                                        div()
+                                                                            .size_full()
+                                                                            .bg(cx.theme().colors().background)
+                                                                            .border_1()
+                                                                            .border_color(cx.theme().colors().border_variant)
+                                                                            .rounded_md()
+                                                                            .shadow_lg()
+                                                                            .child(self.active_pane.clone())
+                                                                    )
+                                                                    .into_any_element()
+                                                            } else {
+                                                                // Normal rendering
+                                                                self.center.render(
+                                                                    self.zoomed.as_ref(),
+                                                                    &PaneRenderContext {
+                                                                        follower_states:
+                                                                            &self.follower_states,
+                                                                        active_call: self.active_call(),
+                                                                        active_pane: &self.active_pane,
+                                                                        app_state: &self.app_state,
+                                                                        project: &self.project,
+                                                                        workspace: &self.weak_self,
+                                                                    },
+                                                                    window,
+                                                                    cx,
+                                                                ).into_any_element()
+                                                            })
                                                             .when_some(paddings.1, |this, p| {
                                                                 this.child(p.border_l_1())
                                                             }),
