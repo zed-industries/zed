@@ -43,7 +43,7 @@ actions!(
         StageAll,
         UnstageAll,
         StashAll,
-        PopStash,
+        StashPop,
         RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,

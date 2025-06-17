@@ -295,7 +295,7 @@ message Stash {
     repeated string paths = 6;
 }
 
-message PopStash {
+message StashPop {
     uint64 project_id = 1;
     uint64 repository_id = 2;
     optional uint64 stash_index = 3;
