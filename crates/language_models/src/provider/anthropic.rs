@@ -504,7 +504,6 @@ impl LanguageModel for AnthropicModel {
     }
     
     fn supports_max_mode(&self) -> bool {
-        // Enable burn mode for all Anthropic models
         true
     }
     
