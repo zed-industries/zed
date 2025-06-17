@@ -89,11 +89,25 @@ impl zed::Extension for MyExtension {
 zed::register_extension!(MyExtension);
 ```
 
+## Forking and cloning the repo
+
+1. Fork the repo
+
+> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
+
+2. Clone the repo to your local machine
+
+```sh
+# Substitute the url of your fork here:
+# git clone https://github.com/zed-industries/extensions
+cd extensions
+git submodule init
+git submodule update
+```
+
 ## Publishing your extension
 
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
-
-> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
 
 In your PR, do the following:
 
