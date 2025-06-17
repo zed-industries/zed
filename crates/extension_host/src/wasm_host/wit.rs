@@ -9,6 +9,7 @@ mod since_v0_5_0;
 mod since_v0_6_0;
 use dap::DebugRequest;
 use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
+use gpui::BackgroundExecutor;
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
@@ -39,9 +40,10 @@ pub use latest::{
 pub use since_v0_0_4::LanguageServerConfig;
 
 pub fn new_linker(
+    executor: &BackgroundExecutor,
     f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
 ) -> Linker<WasmState> {
-    let mut linker = Linker::new(&wasm_engine());
+    let mut linker = Linker::new(&wasm_engine(executor));
     wasmtime_wasi::add_to_linker_async(&mut linker).unwrap();
     f(&mut linker, wasi_view).unwrap();
     linker
@@ -109,6 +111,7 @@ pub enum Extension {
 
 impl Extension {
     pub async fn instantiate_async(
+        executor: &BackgroundExecutor,
         store: &mut Store<WasmState>,
         release_channel: ReleaseChannel,
         version: SemanticVersion,
@@ -121,7 +124,7 @@ impl Extension {
             authorize_access_to_unreleased_wasm_api_version(release_channel)?;
 
             let extension =
-                latest::Extension::instantiate_async(store, component, latest::linker())
+                latest::Extension::instantiate_async(store, component, latest::linker(executor))
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_6_0(extension))
@@ -129,7 +132,7 @@ impl Extension {
             let extension = since_v0_5_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_5_0::linker(),
+                since_v0_5_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -138,7 +141,7 @@ impl Extension {
             let extension = since_v0_4_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_4_0::linker(),
+                since_v0_4_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -147,7 +150,7 @@ impl Extension {
             let extension = since_v0_3_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_3_0::linker(),
+                since_v0_3_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -156,7 +159,7 @@ impl Extension {
             let extension = since_v0_2_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_2_0::linker(),
+                since_v0_2_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -165,7 +168,7 @@ impl Extension {
             let extension = since_v0_1_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_1_0::linker(),
+                since_v0_1_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -174,7 +177,7 @@ impl Extension {
             let extension = since_v0_0_6::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_0_6::linker(),
+                since_v0_0_6::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -183,7 +186,7 @@ impl Extension {
             let extension = since_v0_0_4::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_0_4::linker(),
+                since_v0_0_4::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -192,7 +195,7 @@ impl Extension {
             let extension = since_v0_0_1::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_0_1::linker(),
+                since_v0_0_1::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
