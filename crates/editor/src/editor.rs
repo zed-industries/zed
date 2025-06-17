@@ -73,7 +73,6 @@ use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layo
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use feature_flags::FeatureFlagAppExt;
 use futures::{
     FutureExt, StreamExt as _,
     future::{self, Shared, join},

@@ -32,7 +32,6 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
-use feature_flags::FeatureFlagAppExt;
 use file_icons::FileIcons;
 use git::{
     Oid,
@@ -8683,19 +8682,23 @@ impl Element for EditorElement {
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
-                    let breakpoints = self.layout_breakpoints(
-                        line_height,
-                        start_row..end_row,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        &display_hunks,
-                        &snapshot,
-                        breakpoint_rows,
-                        &row_infos,
-                        window,
-                        cx,
-                    );
+                    let breakpoints = if show_breakpoints {
+                        self.layout_breakpoints(
+                            line_height,
+                            start_row..end_row,
+                            scroll_pixel_position,
+                            &gutter_dimensions,
+                            &gutter_hitbox,
+                            &display_hunks,
+                            &snapshot,
+                            breakpoint_rows,
+                            &row_infos,
+                            window,
+                            cx,
+                        )
+                    } else {
+                        Vec::new()
+                    };
 
                     self.layout_signature_help(
                         &hitbox,
