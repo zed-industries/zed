@@ -15,7 +15,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
+pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
 use call::{ActiveCall, call_settings::CallSettings};
@@ -922,7 +922,7 @@ type PromptForOpenPath = Box<
 /// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
     weak_self: WeakEntity<Self>,
-    workspace_actions: Vec<Box<dyn Fn(Div, &mut Window, &mut Context<Self>) -> Div>>,
+    workspace_actions: Vec<Box<dyn Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
@@ -1399,15 +1399,23 @@ impl Workspace {
                     .await;
             }
             let window = if let Some(window) = requesting_window {
+                let centered_layout = serialized_workspace
+                    .as_ref()
+                    .map(|w| w.centered_layout)
+                    .unwrap_or(false);
+
                 cx.update_window(window.into(), |_, window, cx| {
                     window.replace_root(cx, |window, cx| {
-                        Workspace::new(
+                        let mut workspace = Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
                             app_state.clone(),
                             window,
                             cx,
-                        )
+                        );
+
+                        workspace.centered_layout = centered_layout;
+                        workspace
                     });
                 })?;
                 window
@@ -2401,7 +2409,7 @@ impl Workspace {
                                 })
                             }
                         })
-                        .log_err()?;
+                        .ok()?;
                         None
                     } else {
                         Some(
@@ -2414,7 +2422,7 @@ impl Workspace {
                                     cx,
                                 )
                             })
-                            .log_err()?
+                            .ok()?
                             .await,
                         )
                     }
@@ -3111,7 +3119,7 @@ impl Workspace {
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
-                let result = pane.open_item(
+                pane.open_item(
                     project_entry_id,
                     project_path,
                     focus_item,
@@ -3121,9 +3129,7 @@ impl Workspace {
                     window,
                     cx,
                     build_item,
-                );
-
-                result
+                )
             });
             result
         })
@@ -5438,12 +5444,19 @@ impl Workspace {
     ) -> &mut Self {
         let callback = Arc::new(callback);
 
-        self.workspace_actions.push(Box::new(move |div, _, cx| {
+        self.workspace_actions.push(Box::new(move |div, _, _, cx| {
             let callback = callback.clone();
             div.on_action(cx.listener(move |workspace, event, window, cx| {
                 (callback)(workspace, event, window, cx)
             }))
         }));
+        self
+    }
+    pub fn register_action_renderer(
+        &mut self,
+        callback: impl Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div + 'static,
+    ) -> &mut Self {
+        self.workspace_actions.push(Box::new(callback));
         self
     }
 
@@ -5454,7 +5467,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         for action in self.workspace_actions.iter() {
-            div = (action)(div, window, cx)
+            div = (action)(div, self, window, cx)
         }
         div
     }
@@ -6240,7 +6253,14 @@ fn resize_bottom_dock(
     let size =
         new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        bottom_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Bottom)
+        {
+            bottom_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            bottom_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6250,9 +6270,24 @@ fn resize_right_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    workspace.left_dock.read_with(cx, |left_dock, cx| {
+        let left_dock_size = left_dock
+            .active_panel_size(window, cx)
+            .unwrap_or(Pixels(0.0));
+        if left_dock_size + size > workspace.bounds.right() {
+            size = workspace.bounds.right() - left_dock_size
+        }
+    });
     workspace.right_dock.update(cx, |right_dock, cx| {
-        right_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Right)
+        {
+            right_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            right_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6265,7 +6300,14 @@ fn resize_left_dock(
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
 
     workspace.left_dock.update(cx, |left_dock, cx| {
-        left_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Left)
+        {
+            left_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            left_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -7017,6 +7059,11 @@ async fn open_ssh_project_inner(
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
             workspace.set_serialized_ssh_project(serialized_ssh_project);
             workspace.update_history(cx);
+
+            if let Some(ref serialized) = serialized_workspace {
+                workspace.centered_layout = serialized.centered_layout;
+            }
+
             workspace
         });
     })?;
@@ -7392,7 +7439,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            Some(&hitbox),
+                            &hitbox,
                         );
                     },
                 )
@@ -7640,6 +7687,33 @@ pub fn ssh_workspace_position_from_db(
             centered_layout,
         })
     })
+}
+
+pub fn with_active_or_new_workspace(
+    cx: &mut App,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
+) {
+    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
+        Some(workspace) => {
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
+                    .log_err();
+            });
+        }
+        None => {
+            let app_state = AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(
+                    OpenOptions::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| f(workspace, window, cx),
+                )
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -24,6 +24,8 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
+use itertools::FoldWhile::{Continue, Done};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
@@ -408,7 +410,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
+    pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
 }
 
@@ -416,6 +418,19 @@ pub(crate) struct CursorStyleRequest {
 pub(crate) struct HitTest {
     pub(crate) ids: SmallVec<[HitboxId; 8]>,
     pub(crate) hover_hitbox_count: usize,
+}
+
+/// A type of window control area that corresponds to the platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowControlArea {
+    /// An area that allows dragging of the platform window.
+    Drag,
+    /// An area that allows closing of the platform window.
+    Close,
+    /// An area that allows maximizing of the platform window.
+    Max,
+    /// An area that allows minimizing of the platform window.
+    Min,
 }
 
 /// An identifier for a [Hitbox] which also includes [HitboxBehavior].
@@ -604,6 +619,7 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
@@ -647,6 +663,7 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
@@ -673,6 +690,7 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
 
@@ -681,6 +699,19 @@ impl Frame {
             self.next_inspector_instance_ids.clear();
             self.inspector_hitboxes.clear();
         }
+    }
+
+    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        self.cursor_styles
+            .iter()
+            .rev()
+            .fold_while(None, |style, request| match request.hitbox_id {
+                None => Done(Some(request.style)),
+                Some(hitbox_id) => Continue(
+                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
+                ),
+            })
+            .into_inner()
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -1011,6 +1042,22 @@ impl Window {
                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
+            })
+        });
+        platform_window.on_hit_test_window_control({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                                return Some(*area);
+                            }
+                        }
+                        None
+                    })
+                    .log_err()
+                    .unwrap_or(None)
             })
         });
 
@@ -2125,12 +2172,24 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.map(|hitbox| hitbox.id),
+            hitbox_id: Some(hitbox.id),
             style,
         });
+    }
+
+    /// Updates the cursor style for the entire window at the platform level. A cursor
+    /// style using this method will have precedence over any cursor style set using
+    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// phase of element drawing.
+    pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.cursor_styles.push(CursorStyleRequest {
+            hitbox_id: None,
+            style,
+        })
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -3002,6 +3061,14 @@ impl Window {
         hitbox
     }
 
+    /// Set a hitbox which will act as a control area of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_control_hitboxes.push((area, hitbox));
+    }
+
     /// Sets the key context for the current element. This context will be used to translate
     /// keybindings into actions.
     ///
@@ -3205,15 +3272,7 @@ impl Window {
         if self.is_window_hovered() {
             let style = self
                 .rendered_frame
-                .cursor_styles
-                .iter()
-                .rev()
-                .find(|request| {
-                    request
-                        .hitbox_id
-                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
-                })
-                .map(|request| request.style)
+                .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -3248,8 +3307,7 @@ impl Window {
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
     /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
-        self.bindings_for_action(action)
-            .last()
+        self.highest_precedence_binding_for_action(action)
             .map(|binding| {
                 binding
                     .keystrokes()
@@ -3503,6 +3561,7 @@ impl Window {
                         .dispatch_tree
                         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
+                    window.pending_input_changed(cx);
                     window.replay_pending_input(to_replay, cx)
                 })
                 .log_err();
@@ -3921,6 +3980,38 @@ impl Window {
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
+    /// Returns the highest precedence key binding that invokes an action on the currently focused
+    /// element. This is more efficient than getting the last result of `bindings_for_action`.
+    pub fn highest_precedence_binding_for_action(&self, action: &dyn Action) -> Option<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .highest_precedence_binding_for_action(
+                action,
+                &self.rendered_frame.dispatch_tree.context_stack,
+            )
+    }
+
+    /// Returns the key bindings for an action in a context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
+    }
+
+    /// Returns the highest precedence key binding for an action in a context. This is more
+    /// efficient than getting the last result of `bindings_for_action_in_context`.
+    pub fn highest_precedence_binding_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.highest_precedence_binding_for_action(action, &[context])
+    }
+
     /// Returns any bindings that would invoke an action on the given focus handle if it were
     /// focused. Bindings are returned in the order they were added. For display, the last binding
     /// should take precedence.
@@ -3930,26 +4021,37 @@ impl Window {
         focus_handle: &FocusHandle,
     ) -> Vec<KeyBinding> {
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-
-        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+        let Some(context_stack) = self.context_stack_for_focus_handle(focus_handle) else {
             return vec![];
         };
+        dispatch_tree.bindings_for_action(action, &context_stack)
+    }
+
+    /// Returns the highest precedence key binding that would invoke an action on the given focus
+    /// handle if it were focused. This is more efficient than getting the last result of
+    /// `bindings_for_action_in`.
+    pub fn highest_precedence_binding_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let context_stack = self.context_stack_for_focus_handle(focus_handle)?;
+        dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
+    }
+
+    fn context_stack_for_focus_handle(
+        &self,
+        focus_handle: &FocusHandle,
+    ) -> Option<Vec<KeyContext>> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let node_id = dispatch_tree.focusable_node_id(focus_handle.id)?;
         let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
-    }
-
-    /// Returns the key bindings for the given action in the given context.
-    pub fn bindings_for_action_in_context(
-        &self,
-        action: &dyn Action,
-        context: KeyContext,
-    ) -> Vec<KeyBinding> {
-        let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        dispatch_tree.bindings_for_action(action, &[context])
+        Some(context_stack)
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.

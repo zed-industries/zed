@@ -30,7 +30,7 @@ use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
-use util::{path, separator};
+use util::path;
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -198,7 +198,7 @@ async fn test_sharing_an_ssh_remote_project(
                 .path()
                 .to_string_lossy()
                 .to_string(),
-            separator!("src/renamed.rs").to_string()
+            path!("src/renamed.rs").to_string()
         );
     });
 }
@@ -671,7 +671,7 @@ async fn test_remote_server_debugger(
     });
 
     session.update(cx_a, |session, _| {
-        assert_eq!(session.binary().command, "ssh");
+        assert_eq!(session.binary().unwrap().command.as_deref(), Some("ssh"));
     });
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {

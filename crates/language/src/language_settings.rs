@@ -288,6 +288,8 @@ pub struct CopilotSettings {
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
+    /// Enterprise URI for Copilot.
+    pub enterprise_uri: Option<String>,
 }
 
 /// The settings for all languages.
@@ -607,6 +609,11 @@ pub struct CopilotSettingsContent {
     /// Default: false
     #[serde(default)]
     pub proxy_no_verify: Option<bool>,
+    /// Enterprise URI for Copilot.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub enterprise_uri: Option<String>,
 }
 
 /// The settings for enabling/disabling features.
@@ -765,6 +772,8 @@ pub enum ShowWhitespaceSetting {
     /// - It is adjacent to an edge (start or end)
     /// - It is adjacent to a whitespace (left or right)
     Boundary,
+    /// Draw whitespaces only after non-whitespace characters.
+    Trailing,
 }
 
 /// Controls which formatter should be used when formatting code.
@@ -1226,10 +1235,10 @@ impl settings::Settings for AllLanguageSettings {
         let mut copilot_settings = default_value
             .edit_predictions
             .as_ref()
-            .map(|settings| settings.copilot.clone())
-            .map(|copilot| CopilotSettings {
-                proxy: copilot.proxy,
-                proxy_no_verify: copilot.proxy_no_verify,
+            .map(|settings| CopilotSettings {
+                proxy: settings.copilot.proxy.clone(),
+                proxy_no_verify: settings.copilot.proxy_no_verify,
+                enterprise_uri: settings.copilot.enterprise_uri.clone(),
             })
             .unwrap_or_default();
 
@@ -1283,6 +1292,14 @@ impl settings::Settings for AllLanguageSettings {
                 .and_then(|settings| settings.copilot.proxy_no_verify)
             {
                 copilot_settings.proxy_no_verify = Some(proxy_no_verify);
+            }
+
+            if let Some(enterprise_uri) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.enterprise_uri.clone())
+            {
+                copilot_settings.enterprise_uri = Some(enterprise_uri);
             }
 
             // A user's global settings override the default global settings and
@@ -1452,7 +1469,8 @@ impl settings::Settings for AllLanguageSettings {
         vscode.bool_setting("editor.inlineSuggest.enabled", &mut d.show_edit_predictions);
         vscode.enum_setting("editor.renderWhitespace", &mut d.show_whitespaces, |s| {
             Some(match s {
-                "boundary" | "trailing" => ShowWhitespaceSetting::Boundary,
+                "boundary" => ShowWhitespaceSetting::Boundary,
+                "trailing" => ShowWhitespaceSetting::Trailing,
                 "selection" => ShowWhitespaceSetting::Selection,
                 "all" => ShowWhitespaceSetting::All,
                 _ => ShowWhitespaceSetting::None,
@@ -1824,7 +1842,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_resolve_language_servers() {
+    fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
                 .iter()

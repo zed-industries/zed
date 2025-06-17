@@ -8,7 +8,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
@@ -406,6 +406,7 @@ impl LanguageModel for OllamaLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_ollama_request(request);
@@ -415,7 +416,7 @@ impl LanguageModel for OllamaLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
             settings.api_url.clone()
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
@@ -506,6 +507,12 @@ fn map_to_language_model_completion_events(
             };
 
             if delta.done {
+                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: delta.prompt_eval_count.unwrap_or(0),
+                    output_tokens: delta.eval_count.unwrap_or(0),
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })));
                 if state.used_tools {
                     state.used_tools = false;
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));

@@ -897,6 +897,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     home_dir: Option<PathBuf>,
 }
@@ -1083,6 +1084,7 @@ impl FakeFs {
                 events_paused: false,
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
+                path_write_counts: Default::default(),
                 moves: Default::default(),
                 home_dir: None,
             })),
@@ -1173,6 +1175,8 @@ impl FakeFs {
         recreate_inode: bool,
     ) -> Result<()> {
         let mut state = self.state.lock();
+        let path_buf = path.as_ref().to_path_buf();
+        *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
         let new_inode = state.get_and_increment_inode();
         let new_mtime = state.get_and_increment_mtime();
         let new_len = new_content.len() as u64;
@@ -1456,7 +1460,12 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
+    pub fn set_head_for_repo(
+        &self,
+        dot_git: &Path,
+        head_state: &[(RepoPath, String)],
+        sha: impl Into<String>,
+    ) {
         self.with_git_state(dot_git, true, |state| {
             state.head_contents.clear();
             state.head_contents.extend(
@@ -1464,6 +1473,7 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
+            state.refs.insert("HEAD".into(), sha.into());
         })
         .unwrap();
     }
@@ -1719,6 +1729,17 @@ impl FakeFs {
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
+    }
+
+    /// How many write operations have been issued for a specific path.
+    pub fn write_count_for_path(&self, path: impl AsRef<Path>) -> usize {
+        let path = path.as_ref().to_path_buf();
+        self.state
+            .lock()
+            .path_write_counts
+            .get(&path)
+            .copied()
+            .unwrap_or(0)
     }
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {

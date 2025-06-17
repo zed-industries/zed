@@ -26,6 +26,7 @@ test-support = [
 ]
 
 [dependencies]
+alacritty_terminal.workspace = true
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -39,6 +40,7 @@ file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true

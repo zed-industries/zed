@@ -5,10 +5,11 @@
 Extensions can add the following capabilities to Zed:
 
 - [Languages](./languages.md)
+- [Debuggers](./debugger-extensions.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
 - [Slash Commands](./slash-commands.md)
-- [Context Servers](./context-servers.md)
+- [MCP Servers](./mcp-extensions.md)
 
 ## Developing an Extension Locally
 

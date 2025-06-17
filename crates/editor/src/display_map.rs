@@ -80,7 +80,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<TypeId, Vec<(Range<Anchor>, HighlightStyle)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -474,11 +474,9 @@ impl DisplayMap {
     pub fn highlight_text(
         &mut self,
         type_id: TypeId,
-        ranges: Vec<Range<Anchor>>,
-        style: HighlightStyle,
+        ranges: Vec<(Range<Anchor>, HighlightStyle)>,
     ) {
-        self.text_highlights
-            .insert(type_id, Arc::new((style, ranges)));
+        self.text_highlights.insert(type_id, ranges);
     }
 
     pub(crate) fn highlight_inlays(
@@ -500,14 +498,23 @@ impl DisplayMap {
         }
     }
 
-    pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&type_id)?;
-        Some((highlights.0, &highlights.1))
+    pub fn text_highlights(&self, type_id: TypeId) -> Option<&[(Range<Anchor>, HighlightStyle)]> {
+        self.text_highlights
+            .get(&type_id)
+            .map(|highlights| highlights.as_slice())
     }
+
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
         let mut cleared = self.text_highlights.remove(&type_id).is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
+    }
+
+    pub fn remove_text_highlights(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<Vec<(Range<Anchor>, HighlightStyle)>> {
+        self.text_highlights.remove(&type_id)
     }
 
     pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut Context<Self>) -> bool {
@@ -639,6 +646,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
+    pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -652,6 +660,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
+        let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -667,6 +676,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -693,6 +703,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -716,6 +727,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -728,6 +740,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
+                    is_inlay,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -984,6 +997,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
+                is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
@@ -1324,7 +1338,7 @@ impl DisplaySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub fn text_highlight_ranges<Tag: ?Sized + 'static>(
         &self,
-    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+    ) -> Option<Vec<(Range<Anchor>, HighlightStyle)>> {
         let type_id = TypeId::of::<Tag>();
         self.text_highlights.get(&type_id).cloned()
     }
@@ -2000,11 +2014,11 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay {
-                    id: InlayId::InlineCompletion(0),
-                    position: buffer_snapshot.anchor_after(0),
-                    text: "\n".into(),
-                }],
+                vec![Inlay::inline_completion(
+                    0,
+                    buffer_snapshot.anchor_after(0),
+                    "\n",
+                )],
                 cx,
             );
         });
@@ -2289,12 +2303,17 @@ pub mod tests {
             map.highlight_text(
                 TypeId::of::<usize>(),
                 vec![
-                    buffer_snapshot.anchor_before(Point::new(3, 9))
-                        ..buffer_snapshot.anchor_after(Point::new(3, 14)),
-                    buffer_snapshot.anchor_before(Point::new(3, 17))
-                        ..buffer_snapshot.anchor_after(Point::new(3, 18)),
+                    (
+                        buffer_snapshot.anchor_before(Point::new(3, 9))
+                            ..buffer_snapshot.anchor_after(Point::new(3, 14)),
+                        red.into(),
+                    ),
+                    (
+                        buffer_snapshot.anchor_before(Point::new(3, 17))
+                            ..buffer_snapshot.anchor_after(Point::new(3, 18)),
+                        red.into(),
+                    ),
                 ],
-                red.into(),
             );
             map.insert_blocks(
                 [BlockProperties {
@@ -2613,11 +2632,13 @@ pub mod tests {
                 highlighted_ranges
                     .into_iter()
                     .map(|range| {
-                        buffer_snapshot.anchor_before(range.start)
-                            ..buffer_snapshot.anchor_before(range.end)
+                        (
+                            buffer_snapshot.anchor_before(range.start)
+                                ..buffer_snapshot.anchor_before(range.end),
+                            style,
+                        )
                     })
                     .collect(),
-                style,
             );
         });
 

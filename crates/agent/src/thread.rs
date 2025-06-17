@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -41,6 +41,7 @@ use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
 
 use crate::ThreadStore;
+use crate::agent_profile::AgentProfile;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
@@ -194,20 +195,20 @@ impl MessageSegment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
     pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorktreeSnapshot {
     pub worktree_path: String,
     pub git_state: Option<GitState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GitState {
     pub remote_url: Option<String>,
     pub head_sha: Option<String>,
@@ -246,7 +247,7 @@ impl LastRestoreCheckpoint {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum DetailedSummaryState {
     #[default]
     NotGenerated,
@@ -360,6 +361,7 @@ pub struct Thread {
     >,
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
+    profile: AgentProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -389,7 +391,7 @@ impl ThreadSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
@@ -407,6 +409,7 @@ impl Thread {
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
 
         Self {
             id: ThreadId::new(),
@@ -449,6 +452,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
+            profile: AgentProfile::new(profile_id, tools),
         }
     }
 
@@ -495,6 +499,9 @@ impl Thread {
         let completion_mode = serialized
             .completion_mode
             .unwrap_or_else(|| AgentSettings::get_global(cx).preferred_completion_mode);
+        let profile_id = serialized
+            .profile
+            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
         Self {
             id,
@@ -554,7 +561,7 @@ impl Thread {
             pending_checkpoint: None,
             project: project.clone(),
             prompt_builder,
-            tools,
+            tools: tools.clone(),
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
@@ -570,6 +577,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
+            profile: AgentProfile::new(profile_id, tools),
         }
     }
 
@@ -583,6 +591,17 @@ impl Thread {
 
     pub fn id(&self) -> &ThreadId {
         &self.id
+    }
+
+    pub fn profile(&self) -> &AgentProfile {
+        &self.profile
+    }
+
+    pub fn set_profile(&mut self, id: AgentProfileId, cx: &mut Context<Self>) {
+        if &id != self.profile.id() {
+            self.profile = AgentProfile::new(id, self.tools.clone());
+            cx.emit(ThreadEvent::ProfileChanged);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -919,8 +938,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            self.tools()
-                .read(cx)
+            self.profile
                 .enabled_tools(cx)
                 .into_iter()
                 .filter_map(|tool| {
@@ -1180,6 +1198,7 @@ impl Thread {
                     }),
                 completion_mode: Some(this.completion_mode),
                 tool_use_limit_reached: this.tool_use_limit_reached,
+                profile: Some(this.profile.id().clone()),
             })
         })
     }
@@ -1370,7 +1389,7 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attached_tracked_files_state(&mut request.messages, cx);
+        self.attach_tracked_files_state(&mut request.messages, cx);
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
@@ -1434,43 +1453,57 @@ impl Thread {
         request
     }
 
-    fn attached_tracked_files_state(
+    fn attach_tracked_files_state(
         &self,
         messages: &mut Vec<LanguageModelRequestMessage>,
         cx: &App,
     ) {
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-
-        let mut stale_message = String::new();
+        let mut stale_files = String::new();
 
         let action_log = self.action_log.read(cx);
 
         for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER.trim()).ok();
+            if let Some(file) = stale_file.read(cx).file() {
+                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
             }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
-        let mut content = Vec::with_capacity(2);
-
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
+        if stale_files.is_empty() {
+            return;
         }
 
-        if !content.is_empty() {
-            let context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content,
-                cache: false,
-            };
+        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
+        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
+        let content = MessageContent::Text(
+            format!("{STALE_FILES_HEADER}{stale_files}").replace("\r\n", "\n"),
+        );
 
-            messages.push(context_message);
+        // Insert our message before the last Assistant message.
+        // Inserting it to the tail distracts the agent too much
+        let insert_position = messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map_or(messages.len(), |(i, _)| i);
+
+        let request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![content],
+            cache: false,
+        };
+
+        messages.insert(insert_position, request_message);
+
+        // It makes no sense to cache messages after this one because
+        // the cache is invalidated when this message is gone.
+        // Move the cache marker before this message.
+        let has_cached_messages_after = messages
+            .iter()
+            .skip(insert_position + 1)
+            .any(|message| message.cache);
+
+        if has_cached_messages_after {
+            messages[insert_position - 1].cache = true;
         }
     }
 
@@ -1543,6 +1576,9 @@ impl Thread {
                             }
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
+                            }
+                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                                return Err(err.into());
                             }
                         };
 
@@ -2121,7 +2157,7 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let available_tools = self.tools.read(cx).enabled_tools(cx);
+        let available_tools = self.profile.enabled_tools(cx);
 
         let tool_list = available_tools
             .iter()
@@ -2213,19 +2249,15 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
-        } else {
-            tool.run(
-                input,
-                request,
-                self.project.clone(),
-                self.action_log.clone(),
-                model,
-                window,
-                cx,
-            )
-        };
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project.clone(),
+            self.action_log.clone(),
+            model,
+            window,
+            cx,
+        );
 
         // Store the card separately if it exists
         if let Some(card) = tool_result.card.clone() {
@@ -2344,8 +2376,7 @@ impl Thread {
         let client = self.project.read(cx).client();
 
         let enabled_tool_names: Vec<String> = self
-            .tools()
-            .read(cx)
+            .profile
             .enabled_tools(cx)
             .iter()
             .map(|tool| tool.name())
@@ -2858,6 +2889,7 @@ pub enum ThreadEvent {
     ToolUseLimitReached,
     CancelEditing,
     CompletionCanceled,
+    ProfileChanged,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -2872,7 +2904,7 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use agent_settings::{AgentSettings, LanguageModelParameters};
+    use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -3277,11 +3309,88 @@ fn main() {{
         assert_eq!(last_message.role, Role::User);
 
         // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
+        let expected_content = "[The following is an auto-generated notification; do not reply]
+
+These files have changed since the last read:
+- code.rs
+";
         assert_eq!(
             last_message.string_contents(),
             expected_content,
             "Last message should be exactly the stale buffer notification"
+        );
+
+        // The message before the notification should be cached
+        let index = new_request.messages.len() - 2;
+        let previous_message = new_request.messages.get(index).unwrap();
+        assert!(
+            previous_message.cache,
+            "Message before the stale buffer notification should be cached"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, thread_store, thread, _context_store, _model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Check that we are starting with the default profile
+        let profile = cx.read(|cx| thread.read(cx).profile.clone());
+        let tool_set = cx.read(|cx| thread_store.read(cx).tools());
+        assert_eq!(
+            profile,
+            AgentProfile::new(AgentProfileId::default(), tool_set)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_serializing_thread_profile(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, thread_store, thread, _context_store, _model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Profile gets serialized with default values
+        let serialized = thread
+            .update(cx, |thread, cx| thread.serialize(cx))
+            .await
+            .unwrap();
+
+        assert_eq!(serialized.profile, Some(AgentProfileId::default()));
+
+        let deserialized = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                Thread::deserialize(
+                    thread.id.clone(),
+                    serialized,
+                    thread.project.clone(),
+                    thread.tools.clone(),
+                    thread.prompt_builder.clone(),
+                    thread.project_context.clone(),
+                    None,
+                    cx,
+                )
+            })
+        });
+        let tool_set = cx.read(|cx| thread_store.read(cx).tools());
+
+        assert_eq!(
+            deserialized.profile,
+            AgentProfile::new(AgentProfileId::default(), tool_set)
         );
     }
 

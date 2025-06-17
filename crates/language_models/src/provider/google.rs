@@ -362,7 +362,7 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("google/{}", self.model.id())
+        format!("google/{}", self.model.request_id())
     }
 
     fn max_token_count(&self) -> usize {
@@ -374,7 +374,7 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model_id = self.model.id().to_string();
+        let model_id = self.model.request_id().to_string();
         let request = into_google(request, model_id.clone(), self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
@@ -409,9 +409,14 @@ impl LanguageModel for GoogleLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
-        let request = into_google(request, self.model.id().to_string(), self.model.mode());
+        let request = into_google(
+            request,
+            self.model.request_id().to_string(),
+            self.model.mode(),
+        );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request
@@ -432,13 +437,28 @@ pub fn into_google(
         content
             .into_iter()
             .flat_map(|content| match content {
-                language_model::MessageContent::Text(text)
-                | language_model::MessageContent::Thinking { text, .. } => {
+                language_model::MessageContent::Text(text) => {
                     if !text.is_empty() {
                         vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
                         vec![]
                     }
+                }
+                language_model::MessageContent::Thinking {
+                    text: _,
+                    signature: Some(signature),
+                } => {
+                    if !signature.is_empty() {
+                        vec![Part::ThoughtPart(google_ai::ThoughtPart {
+                            thought: true,
+                            thought_signature: signature,
+                        })]
+                    } else {
+                        vec![]
+                    }
+                }
+                language_model::MessageContent::Thinking { .. } => {
+                    vec![]
                 }
                 language_model::MessageContent::RedactedThinking(_) => vec![],
                 language_model::MessageContent::Image(image) => {
@@ -659,7 +679,12 @@ impl GoogleEventMapper {
                             )));
                         }
                         Part::FunctionResponsePart(_) => {}
-                        Part::ThoughtPart(_) => {}
+                        Part::ThoughtPart(part) => {
+                            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                text: "(Encrypted thought)".to_string(), // TODO: Can we populate this from thought summaries?
+                                signature: Some(part.thought_signature),
+                            }));
+                        }
                     });
             }
         }

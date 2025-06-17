@@ -3,6 +3,7 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
+mod agent_profile;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -36,7 +37,7 @@ use fs::Fs;
 use gpui::{App, Entity, actions, impl_actions};
 use language::LanguageRegistry;
 use language_model::{
-    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
@@ -132,6 +133,11 @@ impl ModelUsageContext {
             }
         }
     }
+
+    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.configured_model(cx)
+            .map(|configured_model| configured_model.model)
+    }
 }
 
 /// Initializes the `agent` crate.
@@ -156,7 +162,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry, cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

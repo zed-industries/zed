@@ -70,7 +70,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, RestoreBanner};
+use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -111,6 +111,98 @@ pub fn init(cx: &mut App) {
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
+
+    cx.on_action(|_: &OpenLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                asset_str::<Assets>("licenses.md"),
+                "Open Source License Attribution",
+                "Markdown",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_telemetry_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|&zed_actions::OpenKeymap, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::keymap_file(),
+                || settings::initial_keymap_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenSettings, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenAccountSettings, cx| {
+        with_active_or_new_workspace(cx, |_, _, cx| {
+            cx.open_url(&zed_urls::account_url(cx));
+        });
+    });
+    cx.on_action(|_: &OpenTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::tasks_file(),
+                || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDebugTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::debug_scenarios_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDefaultSettings, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_keymap(),
+                "Default Key Bindings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -255,7 +347,7 @@ pub fn initialize_workspace(
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously
-                    workspace.close_window(&Default::default(), window, cx);
+                    workspace.close_window(&CloseWindow, window, cx);
                     false
                 })
                 .unwrap_or(true)
@@ -380,6 +472,7 @@ fn initialize_panels(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
@@ -393,12 +486,14 @@ fn initialize_panels(
             project_panel,
             outline_panel,
             terminal_panel,
+            git_panel,
             channels_panel,
             chat_panel,
             notification_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
+            git_panel,
             terminal_panel,
             channels_panel,
             chat_panel,
@@ -409,6 +504,7 @@ fn initialize_panels(
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
+            workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
@@ -426,12 +522,6 @@ fn initialize_panels(
                 )
                 .detach()
             });
-
-            let entity = cx.entity();
-            let project = workspace.project().clone();
-            let app_state = workspace.app_state().clone();
-            let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
-            workspace.add_panel(git_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
@@ -683,99 +773,9 @@ fn register_actions(
                 |_, _, _| None,
             );
         })
-        .register_action(|workspace, _: &OpenLog, window, cx| {
-            open_log_file(workspace, window, cx);
-        })
-        .register_action(|workspace, _: &zed_actions::OpenLicenses, window, cx| {
-            open_bundled_file(
-                workspace,
-                asset_str::<Assets>("licenses.md"),
-                "Open Source License Attribution",
-                "Markdown",
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            move |workspace: &mut Workspace,
-                  _: &zed_actions::OpenTelemetryLog,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_telemetry_log_file(workspace, window, cx);
-            },
-        )
-        .register_action(
-            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
-                cx.open_url(&zed_urls::account_url(cx));
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenTasks, window, cx| {
-            open_settings_file(
-                paths::tasks_file(),
-                || settings::initial_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
         .register_action(open_project_debug_tasks_file)
-        .register_action(
-            move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_keymap(),
-                    "Default Key Bindings",
-                    "JSON",
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
-                cx,
-            );
-        })
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
@@ -1760,10 +1760,11 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, separator};
+    use util::path;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
+        item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
@@ -2863,8 +2864,8 @@ mod tests {
             opened_paths,
             vec![
                 None,
-                Some(separator!(".git/HEAD").to_string()),
-                Some(separator!("excluded_dir/file").to_string()),
+                Some(path!(".git/HEAD").to_string()),
+                Some(path!("excluded_dir/file").to_string()),
             ],
             "Excluded files should get opened, excluded dir should not get opened"
         );
@@ -2890,7 +2891,7 @@ mod tests {
                 opened_buffer_paths.sort();
                 assert_eq!(
                     opened_buffer_paths,
-                    vec![separator!(".git/HEAD").to_string(), separator!("excluded_dir/file").to_string()],
+                    vec![path!(".git/HEAD").to_string(), path!("excluded_dir/file").to_string()],
                     "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
                 );
             });
@@ -3025,7 +3026,7 @@ mod tests {
         });
         cx.read(|cx| {
             assert!(editor.is_dirty(cx));
-            assert_eq!(editor.read(cx).title(cx), "untitled");
+            assert_eq!(editor.read(cx).title(cx), "hi");
         });
 
         // When the save completes, the buffer's title is updated and the language is assigned based
@@ -3356,7 +3357,15 @@ mod tests {
                     editor.newline(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
-                    editor.save(true, project.clone(), window, cx)
+                    editor.save(
+                        SaveOptions {
+                            format: true,
+                            autosave: false,
+                        },
+                        project.clone(),
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -4284,7 +4293,12 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(app_state.fs.clone(), app_state.client.http_client(), cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client(),
+                copilot::copilot_chat::CopilotChatConfiguration::default(),
+                cx,
+            );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
             language_models::init(

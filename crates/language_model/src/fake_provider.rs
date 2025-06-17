@@ -185,6 +185,7 @@ impl LanguageModel for FakeLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let (tx, rx) = mpsc::unbounded();

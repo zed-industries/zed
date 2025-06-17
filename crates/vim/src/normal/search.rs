@@ -1,9 +1,10 @@
-use editor::Editor;
+use editor::{Editor, EditorSettings};
 use gpui::{Context, Window, actions, impl_actions, impl_internal_actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde_derive::Deserialize;
+use settings::Settings;
 use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
@@ -157,6 +158,9 @@ impl Vim {
                     }
                     if action.backwards {
                         options |= SearchOptions::BACKWARDS;
+                    }
+                    if EditorSettings::get_global(cx).search.case_sensitive {
+                        options |= SearchOptions::CASE_SENSITIVE;
                     }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {

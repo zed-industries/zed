@@ -1,16 +1,16 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
 use std::{
     any::TypeId,
     cmp,
     iter::{self, Peekable},
     ops::Range,
-    sync::Arc,
     vec,
 };
-use sum_tree::TreeMap;
+
+use crate::display_map::TextHighlights;
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -19,15 +19,15 @@ pub struct CustomHighlightsChunks<'a> {
     multibuffer_snapshot: &'a MultiBufferSnapshot,
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
-    active_highlights: BTreeMap<TypeId, HighlightStyle>,
-    text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
+    active_highlights: BTreeMap<(TypeId, usize), HighlightStyle>,
+    text_highlights: Option<&'a TextHighlights>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct HighlightEndpoint {
     offset: usize,
     is_start: bool,
-    tag: TypeId,
+    tag: (TypeId, usize),
     style: HighlightStyle,
 }
 
@@ -35,7 +35,7 @@ impl<'a> CustomHighlightsChunks<'a> {
     pub fn new(
         range: Range<usize>,
         language_aware: bool,
-        text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
+        text_highlights: Option<&'a TextHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -66,7 +66,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 
 fn create_highlight_endpoints(
     range: &Range<usize>,
-    text_highlights: Option<&TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
+    text_highlights: Option<&TextHighlights>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -74,10 +74,7 @@ fn create_highlight_endpoints(
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
         for (&tag, text_highlights) in text_highlights.iter() {
-            let style = text_highlights.0;
-            let ranges = &text_highlights.1;
-
-            let start_ix = match ranges.binary_search_by(|probe| {
+            let start_ix = match text_highlights.binary_search_by(|(probe, _)| {
                 let cmp = probe.end.cmp(&start, &buffer);
                 if cmp.is_gt() {
                     cmp::Ordering::Greater
@@ -88,7 +85,7 @@ fn create_highlight_endpoints(
                 Ok(i) | Err(i) => i,
             };
 
-            for range in &ranges[start_ix..] {
+            for (ix, (range, style)) in text_highlights[start_ix..].iter().enumerate() {
                 if range.start.cmp(&end, &buffer).is_ge() {
                     break;
                 }
@@ -96,14 +93,14 @@ fn create_highlight_endpoints(
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.start.to_offset(&buffer),
                     is_start: true,
-                    tag,
-                    style,
+                    tag: (tag, ix),
+                    style: *style,
                 });
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.end.to_offset(&buffer),
                     is_start: false,
-                    tag,
-                    style,
+                    tag: (tag, ix),
+                    style: *style,
                 });
             }
         }
