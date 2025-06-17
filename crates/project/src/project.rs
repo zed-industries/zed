@@ -1154,9 +1154,11 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let ssh_proto = ssh.read(cx).proto_client();
-            let worktree_store =
-                cx.new(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
+            let (ssh_proto, path_style) =
+                ssh.update(cx, |cx, _| (cx.proto_client(), cx.path_style()));
+            let worktree_store = cx.new(|_| {
+                WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID, path_style)
+            });
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1405,8 +1407,15 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
+        // TODO:
+        // Add proper path style
         let worktree_store = cx.new(|_| {
-            WorktreeStore::remote(true, client.clone().into(), response.payload.project_id)
+            WorktreeStore::remote(
+                true,
+                client.clone().into(),
+                response.payload.project_id,
+                remote::path_buf::PathStyle::Posix,
+            )
         })?;
         let buffer_store = cx.new(|cx| {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
@@ -4728,6 +4737,11 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
+        let p = Arc::<Path>::from_proto(envelope.payload.path.clone());
+        log::error!(
+            "==> handle_open_buffer_by_path: {p:?}<->{}",
+            envelope.payload.path
+        );
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let open_buffer = this.update(&mut cx, |this, cx| {
             this.open_buffer(

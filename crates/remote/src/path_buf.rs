@@ -19,6 +19,10 @@ impl TargetPathBuf {
         Self { inner: path, style }
     }
 
+    pub fn path_style(&self) -> PathStyle {
+        self.style
+    }
+
     pub fn to_target(self) -> PathBuf {
         match self.style {
             PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/").into(),
