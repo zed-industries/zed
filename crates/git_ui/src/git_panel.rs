@@ -143,7 +143,7 @@ fn git_panel_context_menu(
             )
             .separator()
             .action_disabled_when(
-                !state.has_unstaged_changes,
+                !(state.has_new_changes || state.has_tracked_changes),
                 "Stash All",
                 StashAll.boxed_clone(),
             )
