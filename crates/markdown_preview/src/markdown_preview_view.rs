@@ -1,4 +1,4 @@
-use std::sync::Arc;
+    use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
@@ -58,9 +58,9 @@ impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
-                let view = Self::create_markdown_view(workspace, editor, window, cx);
+                let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
                 workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
+                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane, &editor, cx) {
                         pane.activate_item(existing_view_idx, true, true, window, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
@@ -84,7 +84,7 @@ impl MarkdownPreviewView {
                         )
                     });
                 pane.update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
+                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane, &editor, cx) {
                         pane.activate_item(existing_view_idx, true, true, window, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), false, false, None, window, cx)
@@ -96,9 +96,15 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn find_existing_preview_item_idx(pane: &Pane) -> Option<usize> {
+    fn find_existing_preview_item_idx(pane: &Pane, editor: &Entity<Editor>, cx: &App) -> Option<usize> {
         pane.items_of_type::<MarkdownPreviewView>()
-            .nth(0)
+            .find(|view| {
+                if let Some(active_editor) = &view.read(cx).active_editor {
+                    active_editor.editor == *editor
+                } else {
+                    false
+                }
+            })
             .and_then(|view| pane.index_for_item(&view))
     }
 
@@ -126,7 +132,7 @@ impl MarkdownPreviewView {
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace_handle = workspace.weak_handle();
         MarkdownPreviewView::new(
-            MarkdownPreviewMode::Follow,
+            MarkdownPreviewMode::Default,
             editor,
             workspace_handle,
             language_registry,
@@ -343,9 +349,7 @@ impl MarkdownPreviewView {
         );
 
         let tab_content = editor.read(cx).tab_content_text(0, cx);
-        if self.tab_content_text.is_none() {
-            self.tab_content_text = Some(format!("Preview {}", tab_content).into());
-        }
+        self.tab_content_text = Some(format!("Preview {}", tab_content).into());
 
         self.active_editor = Some(EditorState {
             editor,
