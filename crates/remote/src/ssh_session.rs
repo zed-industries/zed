@@ -1,5 +1,6 @@
 use crate::{
     json_log::LogRecord,
+    path_buf::{PathStyle, TargetPathBuf},
     protocol::{
         MESSAGE_LEN_SIZE, MessageId, message_len_from_buffer, read_message_with_len, write_message,
     },
@@ -1402,6 +1403,7 @@ struct SshRemoteConnection {
     master_process: Mutex<Option<Child>>,
     remote_binary_path: Option<PathBuf>,
     ssh_platform: SshPlatform,
+    ssh_path_style: PathStyle,
     _temp_dir: TempDir,
 }
 
@@ -1636,12 +1638,17 @@ impl SshRemoteConnection {
         drop(askpass);
 
         let ssh_platform = socket.platform().await?;
+        let ssh_path_style = match ssh_platform.os {
+            "windows" => PathStyle::Windows,
+            _ => PathStyle::Posix,
+        };
 
         let mut this = Self {
             socket,
             master_process: Mutex::new(Some(master_process)),
             _temp_dir: temp_dir,
             remote_binary_path: None,
+            ssh_path_style,
             ssh_platform,
         };
 
