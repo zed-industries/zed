@@ -1428,33 +1428,54 @@ impl Render for DebugPanel {
                             .items_center()
                             .justify_center()
                             .child(
-                                h_flex().child(
-                                    Label::new("No Debugging Sessions")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                            )
-                            .child(
-                                v_flex().gap_4().items_center()
-                                .justify_center()
-                                .child(
-                                    h_flex().flex_shrink().child(
-                                        Button::new("spawn-new-session-empty-state", "New Session")
-                                            .size(ButtonSize::Large)
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(crate::Start.boxed_clone(), cx);
-                                            })
+                                h_flex()
+                                    .items_start()
+                                    .gap_8()
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .pr_8()
+                                            .child(
+                                                Button::new("spawn-new-session-empty-state", "New Session")
+                                                    .icon(IconName::Plus)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_position(IconPosition::Start)
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(crate::Start.boxed_clone(), cx);
+                                                    })
+                                            )
+                                            .child(
+                                                Button::new("edit-debug-settings", "Edit debug.json")
+                                                    .icon(IconName::Code)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_position(IconPosition::Start)
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(zed::OpenProjectDebugTasks.boxed_clone(), cx);
+                                                    })
+                                            )
+                                            .child(
+                                                Button::new("open-debugger-docs", "Debugger Docs")
+                                                    .icon(IconName::Book)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_position(IconPosition::Start)
+                                                    .on_click(|_, _, cx| {
+                                                        cx.open_url("https://zed.dev/docs/debugger")
+                                                    })
+                                            )
+                                            .child(
+                                                Button::new("spawn-new-session-install-extensions", "Debugger Extensions")
+                                                    .icon(IconName::Blocks)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_position(IconPosition::Start)
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(zed_actions::Extensions { category_filter: Some(zed_actions::ExtensionCategoryFilter::DebugAdapters)}.boxed_clone(), cx);
+                                                    })
+                                            )
                                     )
-                                )
-                                .child(
-                                    h_flex().flex_shrink().child(
-                                        Button::new("spawn-new-session-install-extensions", "Install Debug Extensions")
-                                            .label_size(LabelSize::Small)
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(zed_actions::Extensions { category_filter: Some(zed_actions::ExtensionCategoryFilter::DebugAdapters)}.boxed_clone(), cx);
-                                            })
-                                    )
-                                )
                             )
                     )
                 }
