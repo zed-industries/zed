@@ -458,6 +458,37 @@ impl SshSocket {
             askpass: Some(self.askpass_content.clone()),
         }
     }
+
+    async fn platform(&self) -> Result<SshPlatform> {
+        let uname = self.run_command("sh", &["-c", "uname -sm"]).await?;
+        let Some((os, arch)) = uname.split_once(" ") else {
+            anyhow::bail!("unknown uname: {uname:?}")
+        };
+
+        let os = match os.trim() {
+            "Darwin" => "macos",
+            "Linux" => "linux",
+            _ => anyhow::bail!(
+                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+            ),
+        };
+        // exclude armv5,6,7 as they are 32-bit.
+        let arch = if arch.starts_with("armv8")
+            || arch.starts_with("armv9")
+            || arch.starts_with("arm64")
+            || arch.starts_with("aarch64")
+        {
+            "aarch64"
+        } else if arch.starts_with("x86") {
+            "x86_64"
+        } else {
+            anyhow::bail!(
+                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+            )
+        };
+
+        Ok(SshPlatform { os, arch })
+    }
 }
 
 const MAX_MISSED_HEARTBEATS: usize = 5;
@@ -1370,6 +1401,7 @@ struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<Child>>,
     remote_binary_path: Option<PathBuf>,
+    ssh_platform: SshPlatform,
     _temp_dir: TempDir,
 }
 
@@ -1603,11 +1635,14 @@ impl SshRemoteConnection {
         let socket = SshSocket::new(connection_options, &temp_dir, askpass.get_password())?;
         drop(askpass);
 
+        let ssh_platform = socket.platform().await?;
+
         let mut this = Self {
             socket,
             master_process: Mutex::new(Some(master_process)),
             _temp_dir: temp_dir,
             remote_binary_path: None,
+            ssh_platform,
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
@@ -1623,37 +1658,6 @@ impl SshRemoteConnection {
         );
 
         Ok(this)
-    }
-
-    async fn platform(&self) -> Result<SshPlatform> {
-        let uname = self.socket.run_command("sh", &["-c", "uname -sm"]).await?;
-        let Some((os, arch)) = uname.split_once(" ") else {
-            anyhow::bail!("unknown uname: {uname:?}")
-        };
-
-        let os = match os.trim() {
-            "Darwin" => "macos",
-            "Linux" => "linux",
-            _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ),
-        };
-        // exclude armv5,6,7 as they are 32-bit.
-        let arch = if arch.starts_with("armv8")
-            || arch.starts_with("armv9")
-            || arch.starts_with("arm64")
-            || arch.starts_with("aarch64")
-        {
-            "aarch64"
-        } else if arch.starts_with("x86") {
-            "x86_64"
-        } else {
-            anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-            )
-        };
-
-        Ok(SshPlatform { os, arch })
     }
 
     fn multiplex(
