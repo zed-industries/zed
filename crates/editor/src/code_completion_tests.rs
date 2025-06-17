@@ -18,7 +18,7 @@ async fn test_sort_kind(cx: &mut TestAppContext) {
     let matches =
         filter_and_sort_matches("foo", &completions, SnippetSortOrder::default(), cx).await;
 
-    // variable takes precedance over constant
+    // variable takes precedence over constant
     // constant take precedence over function
     assert_eq!(
         matches
@@ -33,25 +33,69 @@ async fn test_sort_kind(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_fuzzy_for_first_character_case(cx: &mut TestAppContext) {
-    let completions = vec![
-        CompletionBuilder::variable("element_type", None, "7ffffffe"),
-        CompletionBuilder::constant("ElementType", None, "7fffffff"),
-    ];
-    let matches =
-        filter_and_sort_matches("Elem", &completions, SnippetSortOrder::default(), cx).await;
+async fn test_fuzzy_score(cx: &mut TestAppContext) {
+    // first character sensitive over sort_text and sort_kind
+    {
+        let completions = vec![
+            CompletionBuilder::variable("element_type", None, "7ffffffe"),
+            CompletionBuilder::constant("ElementType", None, "7fffffff"),
+        ];
+        let matches =
+            filter_and_sort_matches("Elem", &completions, SnippetSortOrder::default(), cx).await;
+        assert_eq!(
+            matches
+                .iter()
+                .map(|m| m.string.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ElementType", "element_type"]
+        );
+        assert!(matches[0].score > matches[1].score);
+    }
 
-    // first character case takes precedance over sort_text and sort_kind
-    assert_eq!(
-        matches
-            .iter()
-            .map(|m| m.string.as_str())
-            .collect::<Vec<_>>(),
-        vec!["ElementType", "element_type"]
-    );
+    // fuzzy takes over sort_text and sort_kind
+    {
+        let completions = vec![
+            CompletionBuilder::function("onAbort?", None, "12"),
+            CompletionBuilder::function("onAuxClick?", None, "12"),
+            CompletionBuilder::variable("onPlay?", None, "12"),
+            CompletionBuilder::variable("onLoad?", None, "12"),
+            CompletionBuilder::variable("onDrag?", None, "12"),
+            CompletionBuilder::function("onPause?", None, "10"),
+            CompletionBuilder::function("onPaste?", None, "10"),
+            CompletionBuilder::function("onAnimationEnd?", None, "12"),
+            CompletionBuilder::function("onAbortCapture?", None, "12"),
+            CompletionBuilder::constant("onChange?", None, "12"),
+            CompletionBuilder::constant("onWaiting?", None, "12"),
+            CompletionBuilder::function("onCanPlay?", None, "12"),
+        ];
+        let matches =
+            filter_and_sort_matches("ona", &completions, SnippetSortOrder::default(), cx).await;
+        for i in 0..4 {
+            assert!(matches[i].string.to_lowercase().starts_with("ona"));
+        }
+    }
 
-    // fuzzy score for matched case item should be higher
-    assert!(matches[0].score > matches[1].score);
+    // plain fuzzy prefix match
+    {
+        let completions = vec![
+            CompletionBuilder::function("set_text", None, "7fffffff"),
+            CompletionBuilder::function("set_placeholder_text", None, "7fffffff"),
+            CompletionBuilder::function("set_text_style_refinement", None, "7fffffff"),
+            CompletionBuilder::function("set_context_menu_options", None, "7fffffff"),
+            CompletionBuilder::function("select_to_next_word_end", None, "7fffffff"),
+            CompletionBuilder::function("select_to_next_subword_end", None, "7fffffff"),
+            CompletionBuilder::function("set_custom_context_menu", None, "7fffffff"),
+            CompletionBuilder::function("select_to_end_of_excerpt", None, "7fffffff"),
+            CompletionBuilder::function("select_to_start_of_excerpt", None, "7fffffff"),
+            CompletionBuilder::function("select_to_start_of_next_excerpt", None, "7fffffff"),
+            CompletionBuilder::function("select_to_end_of_previous_excerpt", None, "7fffffff"),
+        ];
+        let matches =
+            filter_and_sort_matches("set_text", &completions, SnippetSortOrder::Top, cx).await;
+        assert_eq!(matches[0].string, "set_text");
+        assert_eq!(matches[1].string, "set_text_style_refinement");
+        assert_eq!(matches[2].string, "set_context_menu_options");
+    }
 }
 
 #[gpui::test]
@@ -66,6 +110,7 @@ async fn test_sort_text(cx: &mut TestAppContext) {
     test_for_each_prefix("unreachable", &completions, cx, |matches| {
         // for each prefix, first item should always be one with lower sort_text
         assert_eq!(matches[0].string, "unreachable!(…)");
+        assert_eq!(matches[0].string, "unreachable");
 
         // fuzzy score should match for first two items as query is common prefix
         assert_eq!(matches[0].score, matches[1].score);
@@ -73,96 +118,17 @@ async fn test_sort_text(cx: &mut TestAppContext) {
     .await;
 }
 
-// #[gpui::test]
-// async fn test_sort_matches_for_jsx_event_handler(cx: &mut TestAppContext) {
-//     // Case 1: "on"
-//     let completions = vec![
-//         CompletionBuilder::function("onCut?", "12"),
-//         CompletionBuilder::function("onPlay?", "12"),
-//         CompletionBuilder::function("color?", "12"),
-//         CompletionBuilder::function("defaultValue?", "12"),
-//         CompletionBuilder::function("style?", "12"),
-//         CompletionBuilder::function("className?", "12"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("on", &completions, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "onCut?");
-//     assert_eq!(matches[1], "onPlay?");
+#[gpui::test]
+async fn test_sort_snippet(cx: &mut TestAppContext) {
+    let completions = vec![
+        CompletionBuilder::constant("println", None, "7fffffff"),
+        CompletionBuilder::snippet("println!(…)", None, "80000000"),
+    ];
+    let matches = filter_and_sort_matches("prin", &completions, SnippetSortOrder::Top, cx).await;
 
-//     // Case 2: "ona"
-//     let completions = vec![
-//         CompletionBuilder::function("onAbort?", "12"),
-//         CompletionBuilder::function("onAuxClick?", "12"),
-//         CompletionBuilder::function("onPlay?", "12"),
-//         CompletionBuilder::function("onLoad?", "12"),
-//         CompletionBuilder::function("onDrag?", "12"),
-//         CompletionBuilder::function("onPause?", "12"),
-//         CompletionBuilder::function("onPaste?", "12"),
-//         CompletionBuilder::function("onAnimationEnd?", "12"),
-//         CompletionBuilder::function("onAbortCapture?", "12"),
-//         CompletionBuilder::function("onChange?", "12"),
-//         CompletionBuilder::function("onWaiting?", "12"),
-//         CompletionBuilder::function("onCanPlay?", "12"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("ona", &completions, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "onAbort?");
-//     assert_eq!(matches[1], "onAbortCapture?");
-// }
-
-// #[gpui::test]
-// async fn test_sort_matches_for_snippets(cx: &mut TestAppContext) {
-//     // Case 1: "prin"
-//     let completions = vec![
-//         CompletionBuilder::constant("println", "80000000"),
-//         CompletionBuilder::snippet("println!(…)", "80000000"),
-//     ];
-//     let matches = filter_and_sort_matches("prin", &completions, SnippetSortOrder::Top, cx).await;
-//     assert_eq!(matches[0], "println!(…)");
-// }
-
-// #[gpui::test]
-// async fn test_sort_matches_for_exact_match(cx: &mut TestAppContext) {
-//     // Case 1: "set_text"
-//     let completions = vec![
-//         CompletionBuilder::function("set_text", "7fffffff"),
-//         CompletionBuilder::function("set_placeholder_text", "7fffffff"),
-//         CompletionBuilder::function("set_text_style_refinement", "7fffffff"),
-//         CompletionBuilder::function("set_context_menu_options", "7fffffff"),
-//         CompletionBuilder::function("select_to_next_word_end", "7fffffff"),
-//         CompletionBuilder::function("select_to_next_subword_end", "7fffffff"),
-//         CompletionBuilder::function("set_custom_context_menu", "7fffffff"),
-//         CompletionBuilder::function("select_to_end_of_excerpt", "7fffffff"),
-//         CompletionBuilder::function("select_to_start_of_excerpt", "7fffffff"),
-//         CompletionBuilder::function("select_to_start_of_next_excerpt", "7fffffff"),
-//         CompletionBuilder::function("select_to_end_of_previous_excerpt", "7fffffff"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("set_text", &completions, SnippetSortOrder::Top, cx).await;
-//     assert_eq!(matches[0], "set_text");
-//     assert_eq!(matches[1], "set_text_style_refinement");
-//     assert_eq!(matches[2], "set_context_menu_options");
-// }
-
-// #[gpui::test]
-// async fn test_sort_matches_for_prefix_matches(cx: &mut TestAppContext) {
-//     // Case 1: "set"
-//     let completions = vec![
-//         CompletionBuilder::function("select_to_beginning", "7fffffff"),
-//         CompletionBuilder::function("set_collapse_matches", "7fffffff"),
-//         CompletionBuilder::function("set_autoindent", "7fffffff"),
-//         CompletionBuilder::function("set_all_diagnostics_active", "7fffffff"),
-//         CompletionBuilder::function("select_to_end_of_line", "7fffffff"),
-//         CompletionBuilder::function("select_all", "7fffffff"),
-//         CompletionBuilder::function("select_line", "7fffffff"),
-//         CompletionBuilder::function("select_left", "7fffffff"),
-//         CompletionBuilder::function("select_down", "7fffffff"),
-//     ];
-//     let matches = filter_and_sort_matches("set", &completions, SnippetSortOrder::Top, cx).await;
-//     assert_eq!(matches[0], "set_all_diagnostics_active");
-//     assert_eq!(matches[1], "set_autoindent");
-//     assert_eq!(matches[2], "set_collapse_matches");
-// }
+    // snippet take precedence over sort_text and sort_kind
+    assert_eq!(matches[0].string, "println!(…)");
+}
 
 // // convert this test to filter test where filter is happening right
 
@@ -275,25 +241,6 @@ async fn test_sort_text(cx: &mut TestAppContext) {
 //     let matches =
 //         filter_and_sort_matches("into", &completions, SnippetSortOrder::default(), cx).await;
 //     // assert_eq!(matches[0], "into");
-// }
-
-// #[gpui::test]
-// async fn test_sort_matches_for_variable_over_function(cx: &mut TestAppContext) {
-//     // Case 1: "serial"
-//     let completions = vec![
-//         CompletionBuilder::function("serialize", "80000000"),
-//         CompletionBuilder::function("serialize", "80000000"),
-//         CompletionBuilder::variable("serialization_key", "7ffffffe"),
-//         CompletionBuilder::function("serialize_version", "80000000"),
-//         CompletionBuilder::function("deserialize", "80000000"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("serial", &completions, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "serialization_key");
-//     assert_eq!(matches[1], "serialize");
-//     assert_eq!(matches[2], "serialize");
-//     assert_eq!(matches[3], "serialize_version");
-//     assert_eq!(matches[4], "deserialize");
 // }
 
 // #[gpui::test]
