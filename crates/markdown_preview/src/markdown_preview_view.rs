@@ -1,4 +1,4 @@
-    use std::sync::Arc;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
