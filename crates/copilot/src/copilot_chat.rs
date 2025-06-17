@@ -311,6 +311,20 @@ pub struct FunctionContent {
 pub struct ResponseEvent {
     pub choices: Vec<ResponseChoice>,
     pub id: String,
+    pub usage: Option<Usage>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Usage {
+    pub completion_tokens: u32,
+    pub prompt_tokens: u32,
+    pub prompt_tokens_details: PromptTokensDetails,
+    pub total_tokens: u32,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct PromptTokensDetails {
+    pub cached_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
