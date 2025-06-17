@@ -379,6 +379,7 @@ pub struct StreamResponse {
     pub created: u64,
     pub model: String,
     pub choices: Vec<StreamChoice>,
+    pub usage: Option<Usage>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

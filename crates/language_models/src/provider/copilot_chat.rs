@@ -24,7 +24,7 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    StopReason, TokenUsage,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -376,6 +376,17 @@ pub fn map_to_language_model_completion_events(
                                     entry.arguments.push_str(&arguments);
                                 }
                             }
+                        }
+
+                        if let Some(usage) = event.usage {
+                            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                                TokenUsage {
+                                    input_tokens: usage.prompt_tokens,
+                                    output_tokens: usage.completion_tokens,
+                                    cache_creation_input_tokens: 0,
+                                    cache_read_input_tokens: 0,
+                                },
+                            )));
                         }
 
                         match choice.finish_reason.as_deref() {
