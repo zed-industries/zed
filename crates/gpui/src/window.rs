@@ -3532,6 +3532,7 @@ impl Window {
                         return;
                     };
 
+                    let node_id = window.focus_node_id_in_rendered_frame(window.focus);
                     let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
                     let to_replay = window
