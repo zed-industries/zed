@@ -404,10 +404,9 @@ impl Telemetry {
                 .insert(worktree_id);
         }
 
-        let mut project_names_vec: Vec<String> =
-            project_types.into_iter().map(String::from).collect();
-        project_names_vec.sort();
-        Some(project_names_vec)
+        let mut project_types: Vec<_> = project_types.into_iter().map(String::from).collect();
+        project_types.sort();
+        Some(project_types)
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
