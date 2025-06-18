@@ -16,6 +16,7 @@ use calloop::{
 use collections::HashMap;
 use futures::channel::oneshot;
 use http_client::Url;
+use log::Level;
 use smallvec::SmallVec;
 use util::ResultExt;
 
@@ -40,12 +41,12 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail,
+    ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
+    XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
-    get_valuator_axis_index, modifiers_from_state, pressed_button_from_mask,
+    get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
+    pressed_button_from_mask,
 };
-use super::{X11Display, X11WindowStatePtr, XcbAtoms};
-use super::{XimCallbackEvent, XimHandler};
 
 use crate::platform::{
     LinuxCommon, PlatformWindow,
@@ -226,12 +227,14 @@ pub struct X11ClientState {
 pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
 
 impl X11ClientStatePtr {
-    fn get_client(&self) -> X11Client {
-        X11Client(self.0.upgrade().expect("client already dropped"))
+    fn get_client(&self) -> Option<X11Client> {
+        self.0.upgrade().map(X11Client)
     }
 
     pub fn drop_window(&self, x_window: u32) {
-        let client = self.get_client();
+        let Some(client) = self.get_client() else {
+            return;
+        };
         let mut state = client.0.borrow_mut();
 
         if let Some(window_ref) = state.windows.remove(&x_window) {
@@ -258,14 +261,23 @@ impl X11ClientStatePtr {
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
-        let client = self.get_client();
+        let Some(client) = self.get_client() else {
+            return;
+        };
         let mut state = client.0.borrow_mut();
         if state.composing || state.ximc.is_none() {
             return;
         }
 
-        let mut ximc = state.ximc.take().unwrap();
-        let xim_handler = state.xim_handler.take().unwrap();
+        let Some(mut ximc) = state.ximc.take() else {
+            log::error!("bug: xim connection not set");
+            return;
+        };
+        let Some(xim_handler) = state.xim_handler.take() else {
+            log::error!("bug: xim handler not set");
+            state.ximc = Some(ximc);
+            return;
+        };
         let ic_attributes = ximc
             .build_ic_attributes()
             .push(
@@ -296,8 +308,8 @@ impl X11ClientStatePtr {
 pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
-    pub(crate) fn new() -> Self {
-        let event_loop = EventLoop::try_new().unwrap();
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        let event_loop = EventLoop::try_new()?;
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
@@ -317,39 +329,34 @@ impl X11Client {
                     }
                 }
             })
-            .unwrap();
+            .map_err(|err| {
+                anyhow!("Failed to initialize event loop handling of foreground tasks: {err:?}")
+            })?;
 
-        let (xcb_connection, x_root_index) = XCBConnection::connect(None).unwrap();
-        xcb_connection
-            .prefetch_extension_information(xkb::X11_EXTENSION_NAME)
-            .unwrap();
-        xcb_connection
-            .prefetch_extension_information(randr::X11_EXTENSION_NAME)
-            .unwrap();
-        xcb_connection
-            .prefetch_extension_information(render::X11_EXTENSION_NAME)
-            .unwrap();
-        xcb_connection
-            .prefetch_extension_information(xinput::X11_EXTENSION_NAME)
-            .unwrap();
+        let (xcb_connection, x_root_index) = XCBConnection::connect(None)?;
+        xcb_connection.prefetch_extension_information(xkb::X11_EXTENSION_NAME)?;
+        xcb_connection.prefetch_extension_information(randr::X11_EXTENSION_NAME)?;
+        xcb_connection.prefetch_extension_information(render::X11_EXTENSION_NAME)?;
+        xcb_connection.prefetch_extension_information(xinput::X11_EXTENSION_NAME)?;
 
         // Announce to X server that XInput up to 2.1 is supported. To increase this to 2.2 and
         // beyond, support for touch events would need to be added.
-        let xinput_version = xcb_connection
-            .xinput_xi_query_version(2, 1)
-            .unwrap()
-            .reply()
-            .unwrap();
-        // XInput 1.x is not supported.
+        let xinput_version = get_reply(
+            || "XInput XiQueryVersion failed",
+            xcb_connection.xinput_xi_query_version(2, 1),
+        )?;
         assert!(
             xinput_version.major_version >= 2,
             "XInput version >= 2 required."
         );
 
         let pointer_device_states =
-            get_new_pointer_device_states(&xcb_connection, &BTreeMap::new());
+            current_pointer_device_states(&xcb_connection, &BTreeMap::new()).unwrap_or_default();
 
-        let atoms = XcbAtoms::new(&xcb_connection).unwrap().reply().unwrap();
+        let atoms = XcbAtoms::new(&xcb_connection)
+            .context("Failed to get XCB atoms")?
+            .reply()
+            .context("Failed to get XCB atoms")?;
 
         let root = xcb_connection.setup().roots[0].root;
         let compositor_present = check_compositor_present(&xcb_connection, root);
@@ -362,11 +369,11 @@ impl X11Client {
             gtk_frame_extents_supported
         );
 
-        let xkb = xcb_connection
-            .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
-            .unwrap()
-            .reply()
-            .unwrap();
+        let xkb = get_reply(
+            || "Failed to initialize XKB extension",
+            xcb_connection
+                .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION),
+        )?;
 
         let events = xkb::EventType::STATE_NOTIFY
             | xkb::EventType::MAP_NOTIFY
@@ -379,16 +386,17 @@ impl X11Client {
             | xkb::MapPart::KEY_BEHAVIORS
             | xkb::MapPart::VIRTUAL_MODS
             | xkb::MapPart::VIRTUAL_MOD_MAP;
-        xcb_connection
-            .xkb_select_events(
+        check_reply(
+            || "Failed to select XKB events",
+            xcb_connection.xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
                 0u8.into(),
                 events,
                 map_notify_parts,
                 map_notify_parts,
                 &xkb::SelectEventsAux::new(),
-            )
-            .unwrap();
+            ),
+        )?;
         assert!(xkb.supported);
 
         let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
@@ -410,9 +418,10 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
 
-        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
+        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
+            .context("Failed to create resource database")?;
         let scale_factor = resource_database
             .get_value("Xft.dpi", "Xft.dpi")
             .ok()
@@ -420,11 +429,11 @@ impl X11Client {
             .map(|dpi: f32| dpi / 96.0)
             .unwrap_or(1.0);
         let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
-            .unwrap()
+            .context("Failed to initialize cursor theme handler")?
             .reply()
-            .unwrap();
+            .context("Failed to initialize cursor theme handler")?;
 
-        let clipboard = Clipboard::new().unwrap();
+        let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -453,7 +462,7 @@ impl X11Client {
                     }
                 },
             )
-            .expect("Failed to initialize x11 event source");
+            .map_err(|err| anyhow!("Failed to initialize X11 event source: {err:?}"))?;
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -469,9 +478,9 @@ impl X11Client {
                     }
                 }
             })
-            .unwrap();
+            .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
 
-        X11Client(Rc::new(RefCell::new(X11ClientState {
+        Ok(X11Client(Rc::new(RefCell::new(X11ClientState {
             modifiers: Modifiers::default(),
             last_modifiers_changed_event: Modifiers::default(),
             event_loop: Some(event_loop),
@@ -514,7 +523,7 @@ impl X11Client {
             clipboard,
             clipboard_item: None,
             xdnd_state: Xdnd::default(),
-        })))
+        }))))
     }
 
     pub fn process_x11_events(
@@ -600,8 +609,9 @@ impl X11Client {
                     Ok(None) => {
                         break;
                     }
-                    Err(e) => {
-                        log::warn!("error polling for X11 events: {e:?}");
+                    Err(err) => {
+                        let err = handle_connection_error(err);
+                        log::warn!("error while polling for X11 events: {err:?}");
                         break;
                     }
                 }
@@ -627,14 +637,15 @@ impl X11Client {
 
             for event in events.into_iter() {
                 let mut state = self.0.borrow_mut();
-                if state.ximc.is_none() || state.xim_handler.is_none() {
+                if !state.has_xim() {
                     drop(state);
                     self.handle_event(event);
                     continue;
                 }
 
-                let mut ximc = state.ximc.take().unwrap();
-                let mut xim_handler = state.xim_handler.take().unwrap();
+                let Some((mut ximc, mut xim_handler)) = state.take_xim() else {
+                    continue;
+                };
                 let xim_connected = xim_handler.connected;
                 drop(state);
 
@@ -648,8 +659,7 @@ impl X11Client {
                 let xim_callback_event = xim_handler.last_callback_event.take();
 
                 let mut state = self.0.borrow_mut();
-                state.ximc = Some(ximc);
-                state.xim_handler = Some(xim_handler);
+                state.restore_xim(ximc, xim_handler);
                 drop(state);
 
                 if let Some(event) = xim_callback_event {
@@ -672,12 +682,13 @@ impl X11Client {
 
     pub fn enable_ime(&self) {
         let mut state = self.0.borrow_mut();
-        if state.ximc.is_none() {
+        if !state.has_xim() {
             return;
         }
 
-        let mut ximc = state.ximc.take().unwrap();
-        let mut xim_handler = state.xim_handler.take().unwrap();
+        let Some((mut ximc, mut xim_handler)) = state.take_xim() else {
+            return;
+        };
         let mut ic_attributes = ximc
             .build_ic_attributes()
             .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
@@ -687,7 +698,13 @@ impl X11Client {
         let window_id = state.keyboard_focused_window;
         drop(state);
         if let Some(window_id) = window_id {
-            let window = self.get_window(window_id).unwrap();
+            let Some(window) = self.get_window(window_id) else {
+                log::error!("Failed to get window for IME positioning");
+                let mut state = self.0.borrow_mut();
+                state.ximc = Some(ximc);
+                state.xim_handler = Some(xim_handler);
+                return;
+            };
             if let Some(area) = window.get_ime_area() {
                 ic_attributes =
                     ic_attributes.nested_list(xim::AttributeName::PreeditAttributes, |b| {
@@ -703,17 +720,19 @@ impl X11Client {
         }
         ximc.create_ic(xim_handler.im_id, ic_attributes.build())
             .ok();
-        state = self.0.borrow_mut();
-        state.xim_handler = Some(xim_handler);
-        state.ximc = Some(ximc);
+        let mut state = self.0.borrow_mut();
+        state.restore_xim(ximc, xim_handler);
     }
 
     pub fn reset_ime(&self) {
         let mut state = self.0.borrow_mut();
         state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
-            let xim_handler = state.xim_handler.as_ref().unwrap();
-            ximc.reset_ic(xim_handler.im_id, xim_handler.ic_id).ok();
+            if let Some(xim_handler) = state.xim_handler.as_ref() {
+                ximc.reset_ic(xim_handler.im_id, xim_handler.ic_id).ok();
+            } else {
+                log::error!("bug: xim handler not set in reset_ime");
+            }
             state.ximc = Some(ximc);
         }
     }
@@ -793,26 +812,25 @@ impl X11Client {
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 } else if event.type_ == state.atoms.XdndPosition {
-                    if let Ok(pos) = state
-                        .xcb_connection
-                        .query_pointer(event.window)
-                        .unwrap()
-                        .reply()
-                    {
+                    if let Ok(pos) = get_reply(
+                        || "Failed to query pointer position",
+                        state.xcb_connection.query_pointer(event.window),
+                    ) {
                         state.xdnd_state.position =
                             Point::new(Pixels(pos.win_x as f32), Pixels(pos.win_y as f32));
                     }
                     if !state.xdnd_state.retrieved {
-                        state
-                            .xcb_connection
-                            .convert_selection(
+                        check_reply(
+                            || "Failed to convert selection for drag and drop",
+                            state.xcb_connection.convert_selection(
                                 event.window,
                                 state.atoms.XdndSelection,
                                 state.xdnd_state.drag_type,
                                 state.atoms.XDND_DATA,
                                 arg3,
-                            )
-                            .unwrap();
+                            ),
+                        )
+                        .log_err();
                     }
                     xdnd_send_status(
                         &state.xcb_connection,
@@ -842,35 +860,37 @@ impl X11Client {
             Event::SelectionNotify(event) => {
                 let window = self.get_window(event.requestor)?;
                 let mut state = self.0.borrow_mut();
-                let property = state.xcb_connection.get_property(
-                    false,
-                    event.requestor,
-                    state.atoms.XDND_DATA,
-                    AtomEnum::ANY,
-                    0,
-                    1024,
-                );
-                if property.as_ref().log_err().is_none() {
+                let reply = get_reply(
+                    || "Failed to get XDND_DATA",
+                    state.xcb_connection.get_property(
+                        false,
+                        event.requestor,
+                        state.atoms.XDND_DATA,
+                        AtomEnum::ANY,
+                        0,
+                        1024,
+                    ),
+                )
+                .log_err();
+                let Some(reply) = reply else {
                     return Some(());
-                }
-                if let Ok(reply) = property.unwrap().reply() {
-                    match str::from_utf8(&reply.value) {
-                        Ok(file_list) => {
-                            let paths: SmallVec<[_; 2]> = file_list
-                                .lines()
-                                .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| url.to_file_path().log_err())
-                                .collect();
-                            let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                                position: state.xdnd_state.position,
-                                paths: crate::ExternalPaths(paths),
-                            });
-                            drop(state);
-                            window.handle_input(input);
-                            self.0.borrow_mut().xdnd_state.retrieved = true;
-                        }
-                        Err(_) => {}
+                };
+                match str::from_utf8(&reply.value) {
+                    Ok(file_list) => {
+                        let paths: SmallVec<[_; 2]> = file_list
+                            .lines()
+                            .filter_map(|path| Url::parse(path).log_err())
+                            .filter_map(|url| url.to_file_path().log_err())
+                            .collect();
+                        let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                            position: state.xdnd_state.position,
+                            paths: crate::ExternalPaths(paths),
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                        self.0.borrow_mut().xdnd_state.retrieved = true;
                     }
+                    Err(_) => {}
                 }
             }
             Event::ConfigureNotify(event) => {
@@ -885,11 +905,17 @@ impl X11Client {
                     },
                 };
                 let window = self.get_window(event.window)?;
-                window.configure(bounds).unwrap();
+                window
+                    .set_bounds(bounds)
+                    .context("X11: Failed to set window bounds")
+                    .log_err();
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
-                window.property_notify(event).unwrap();
+                window
+                    .property_notify(event)
+                    .context("X11: Failed to handle property notify")
+                    .log_err();
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
@@ -1248,10 +1274,12 @@ impl X11Client {
                         state.pointer_device_states.remove(&info.deviceid);
                     }
                 }
-                state.pointer_device_states = get_new_pointer_device_states(
+                if let Some(pointer_device_states) = current_pointer_device_states(
                     &state.xcb_connection,
                     &state.pointer_device_states,
-                );
+                ) {
+                    state.pointer_device_states = pointer_device_states;
+                }
             }
             Event::XinputDeviceChanged(event) => {
                 let mut state = self.0.borrow_mut();
@@ -1288,8 +1316,7 @@ impl X11Client {
                     state.modifiers,
                     event.detail.into(),
                 ));
-                let mut ximc = state.ximc.take().unwrap();
-                let mut xim_handler = state.xim_handler.take().unwrap();
+                let (mut ximc, mut xim_handler) = state.take_xim()?;
                 drop(state);
                 xim_handler.window = event.event;
                 ximc.forward_event(
@@ -1298,10 +1325,10 @@ impl X11Client {
                     xim::ForwardEventFlag::empty(),
                     &event,
                 )
-                .unwrap();
+                .context("X11: Failed to forward XIM event")
+                .log_err();
                 let mut state = self.0.borrow_mut();
-                state.ximc = Some(ximc);
-                state.xim_handler = Some(xim_handler);
+                state.restore_xim(ximc, xim_handler);
                 drop(state);
             }
             event => {
@@ -1312,7 +1339,10 @@ impl X11Client {
     }
 
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
-        let window = self.get_window(window).unwrap();
+        let Some(window) = self.get_window(window) else {
+            log::error!("bug: Failed to get window for XIM commit");
+            return None;
+        };
         let mut state = self.0.borrow_mut();
         let keystroke = state.pre_key_char_down.take();
         state.composing = false;
@@ -1329,11 +1359,13 @@ impl X11Client {
     }
 
     fn xim_handle_preedit(&self, window: xproto::Window, text: String) -> Option<()> {
-        let window = self.get_window(window).unwrap();
+        let Some(window) = self.get_window(window) else {
+            log::error!("bug: Failed to get window for XIM preedit");
+            return None;
+        };
 
         let mut state = self.0.borrow_mut();
-        let mut ximc = state.ximc.take().unwrap();
-        let mut xim_handler = state.xim_handler.take().unwrap();
+        let (mut ximc, mut xim_handler) = state.take_xim()?;
         state.composing = !text.is_empty();
         drop(state);
         window.handle_ime_preedit(text);
@@ -1361,8 +1393,7 @@ impl X11Client {
                 .ok();
         }
         let mut state = self.0.borrow_mut();
-        state.ximc = Some(ximc);
-        state.xim_handler = Some(xim_handler);
+        state.restore_xim(ximc, xim_handler);
         drop(state);
         Some(())
     }
@@ -1415,15 +1446,13 @@ impl LinuxClient for X11Client {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
-
-        Some(Rc::new(
-            X11Display::new(
-                &state.xcb_connection,
-                state.scale_factor,
-                state.x_root_index,
-            )
-            .expect("There should always be a root index"),
-        ))
+        X11Display::new(
+            &state.xcb_connection,
+            state.scale_factor,
+            state.x_root_index,
+        )
+        .log_err()
+        .map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
@@ -1450,7 +1479,10 @@ impl LinuxClient for X11Client {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
-        let x_window = state.xcb_connection.generate_id().unwrap();
+        let x_window = state
+            .xcb_connection
+            .generate_id()
+            .context("X11: Failed to generate window ID")?;
 
         let window = X11Window::new(
             handle,
@@ -1466,16 +1498,17 @@ impl LinuxClient for X11Client {
             state.scale_factor,
             state.common.appearance,
         )?;
-        state
-            .xcb_connection
-            .change_property32(
+        check_reply(
+            || "Failed to set XdndAware property",
+            state.xcb_connection.change_property32(
                 xproto::PropMode::REPLACE,
                 x_window,
                 state.atoms.XdndAware,
                 state.atoms.XA_ATOM,
                 &[5],
-            )
-            .unwrap();
+            ),
+        )
+        .log_err();
 
         let window_ref = WindowRef {
             window: window.0.clone(),
@@ -1518,7 +1551,7 @@ impl LinuxClient for X11Client {
             )
             .anyhow()
             .and_then(|cookie| cookie.check().anyhow())
-            .context("setting cursor style")
+            .context("X11: Failed to set cursor style")
             .log_err();
     }
 
@@ -1541,7 +1574,7 @@ impl LinuxClient for X11Client {
                 clipboard::ClipboardKind::Primary,
                 clipboard::WaitConfig::None,
             )
-            .context("Failed to write to clipboard (primary)")
+            .context("X11 Failed to write to clipboard (primary)")
             .log_with_level(log::Level::Debug);
     }
 
@@ -1554,7 +1587,7 @@ impl LinuxClient for X11Client {
                 clipboard::ClipboardKind::Clipboard,
                 clipboard::WaitConfig::None,
             )
-            .context("Failed to write to clipboard (clipboard)")
+            .context("X11: Failed to write to clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
         state.clipboard_item.replace(item);
     }
@@ -1564,7 +1597,7 @@ impl LinuxClient for X11Client {
         return state
             .clipboard
             .get_any(clipboard::ClipboardKind::Primary)
-            .context("Failed to read from clipboard (primary)")
+            .context("X11: Failed to read from clipboard (primary)")
             .log_with_level(log::Level::Debug);
     }
 
@@ -1581,17 +1614,21 @@ impl LinuxClient for X11Client {
         return state
             .clipboard
             .get_any(clipboard::ClipboardKind::Clipboard)
-            .context("Failed to read from clipboard (clipboard)")
+            .context("X11: Failed to read from clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
     }
 
     fn run(&self) {
-        let mut event_loop = self
+        let Some(mut event_loop) = self
             .0
             .borrow_mut()
             .event_loop
             .take()
-            .expect("App is already running");
+            .context("X11Client::run called but it's already running")
+            .log_err()
+        else {
+            return;
+        };
 
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
     }
@@ -1627,7 +1664,7 @@ impl LinuxClient for X11Client {
         let window_ids = reply
             .value
             .chunks_exact(4)
-            .map(|chunk| u32::from_ne_bytes(chunk.try_into().unwrap()))
+            .filter_map(|chunk| chunk.try_into().ok().map(u32::from_ne_bytes))
             .collect::<Vec<xproto::Window>>();
 
         let mut handles = Vec::new();
@@ -1650,6 +1687,30 @@ impl LinuxClient for X11Client {
 }
 
 impl X11ClientState {
+    fn has_xim(&self) -> bool {
+        self.ximc.is_some() && self.xim_handler.is_some()
+    }
+
+    fn take_xim(&mut self) -> Option<(X11rbClient<Rc<XCBConnection>>, XimHandler)> {
+        let ximc = self
+            .ximc
+            .take()
+            .ok_or(anyhow!("bug: XIM connection not set"))
+            .log_err()?;
+        if let Some(xim_handler) = self.xim_handler.take() {
+            Some((ximc, xim_handler))
+        } else {
+            self.ximc = Some(ximc);
+            log::error!("bug: XIM handler not set");
+            None
+        }
+    }
+
+    fn restore_xim(&mut self, ximc: X11rbClient<Rc<XCBConnection>>, xim_handler: XimHandler) {
+        self.ximc = Some(ximc);
+        self.xim_handler = Some(xim_handler);
+    }
+
     fn update_refresh_loop(&mut self, x_window: xproto::Window) {
         let Some(window_ref) = self.windows.get_mut(&x_window) else {
             return;
@@ -1683,35 +1744,41 @@ impl X11ClientState {
                 });
             }
             (true, None) => {
-                let screen_resources = self
-                    .xcb_connection
-                    .randr_get_screen_resources_current(x_window)
-                    .unwrap()
-                    .reply()
-                    .expect("Could not find available screens");
+                let Some(screen_resources) = get_reply(
+                    || "Failed to get screen resources",
+                    self.xcb_connection
+                        .randr_get_screen_resources_current(x_window),
+                )
+                .log_err() else {
+                    return;
+                };
 
                 // Ideally this would be re-queried when the window changes screens, but there
                 // doesn't seem to be an efficient / straightforward way to do this. Should also be
                 // updated when screen configurations change.
-                let refresh_rate = mode_refresh_rate(
-                    screen_resources
-                        .crtcs
-                        .iter()
-                        .find_map(|crtc| {
-                            let crtc_info = self
-                                .xcb_connection
-                                .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                                .ok()?
-                                .reply()
-                                .ok()?;
+                let mode_info = screen_resources.crtcs.iter().find_map(|crtc| {
+                    let crtc_info = self
+                        .xcb_connection
+                        .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                        .ok()?
+                        .reply()
+                        .ok()?;
 
-                            screen_resources
-                                .modes
-                                .iter()
-                                .find(|m| m.id == crtc_info.mode)
-                        })
-                        .expect("Unable to find screen refresh rate"),
-                );
+                    screen_resources
+                        .modes
+                        .iter()
+                        .find(|m| m.id == crtc_info.mode)
+                });
+                let refresh_rate = match mode_info {
+                    Some(mode_info) => mode_refresh_rate(mode_info),
+                    None => {
+                        log::error!(
+                            "Failed to get screen mode info from xrandr, \
+                            defaulting to 60hz refresh rate."
+                        );
+                        Duration::from_micros(1_000_000 / 60)
+                    }
+                };
 
                 let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
                 let Some(window_ref) = self.windows.get_mut(&x_window) else {
@@ -1758,7 +1825,7 @@ impl X11ClientState {
                     calloop::timer::TimeoutAction::ToInstant(instant)
                 }
             })
-            .expect("Failed to initialize refresh timer")
+            .expect("Failed to initialize window refresh timer")
     }
 
     fn get_cursor_icon(&mut self, style: CursorStyle) -> Option<xproto::Cursor> {
@@ -1770,7 +1837,7 @@ impl X11ClientState {
         match style {
             CursorStyle::None => match create_invisible_cursor(&self.xcb_connection) {
                 Ok(loaded_cursor) => result = Ok(loaded_cursor),
-                Err(err) => result = Err(err.context("error while creating invisible cursor")),
+                Err(err) => result = Err(err.context("X11: error while creating invisible cursor")),
             },
             _ => 'outer: {
                 let mut errors = String::new();
@@ -1813,14 +1880,14 @@ impl X11ClientState {
                 {
                     Ok(default) => {
                         log_cursor_icon_warning(err.context(format!(
-                            "x11: error loading cursor icon, falling back on default icon '{}'",
+                            "X11: error loading cursor icon, falling back on default icon '{}'",
                             DEFAULT_CURSOR_ICON_NAME
                         )));
                         Some(default)
                     }
                     Err(default_err) => {
                         log_cursor_icon_warning(err.context(default_err).context(format!(
-                            "x11: error loading default cursor fallback '{}'",
+                            "X11: error loading default cursor fallback '{}'",
                             DEFAULT_CURSOR_ICON_NAME
                         )));
                         None
@@ -1843,7 +1910,7 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
 
     let millihertz = mode.dot_clock as u64 * 1_000 / (mode.htotal as u64 * mode.vtotal as u64);
     let micros = 1_000_000_000 / millihertz;
-    log::info!("Refreshing at {} micros", micros);
+    log::info!("Refreshing every {}ms", micros / 1_000);
     Duration::from_micros(micros)
 }
 
@@ -1854,66 +1921,63 @@ fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
 fn check_compositor_present(xcb_connection: &XCBConnection, root: u32) -> bool {
     // Method 1: Check for _NET_WM_CM_S{root}
     let atom_name = format!("_NET_WM_CM_S{}", root);
-    let atom = xcb_connection
-        .intern_atom(false, atom_name.as_bytes())
-        .unwrap()
-        .reply()
-        .map(|reply| reply.atom)
-        .unwrap_or(0);
-
-    let method1 = if atom != 0 {
-        xcb_connection
-            .get_selection_owner(atom)
-            .unwrap()
-            .reply()
+    let atom1 = get_reply(
+        || format!("Failed to intern {atom_name}"),
+        xcb_connection.intern_atom(false, atom_name.as_bytes()),
+    );
+    let method1 = match atom1.log_with_level(Level::Debug) {
+        Some(reply) if reply.atom != x11rb::NONE => {
+            let atom = reply.atom;
+            get_reply(
+                || format!("Failed to get {atom_name} owner"),
+                xcb_connection.get_selection_owner(atom),
+            )
             .map(|reply| reply.owner != 0)
+            .log_with_level(Level::Debug)
             .unwrap_or(false)
-    } else {
-        false
+        }
+        _ => false,
     };
 
     // Method 2: Check for _NET_WM_CM_OWNER
     let atom_name = "_NET_WM_CM_OWNER";
-    let atom = xcb_connection
-        .intern_atom(false, atom_name.as_bytes())
-        .unwrap()
-        .reply()
-        .map(|reply| reply.atom)
-        .unwrap_or(0);
-
-    let method2 = if atom != 0 {
-        xcb_connection
-            .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
-            .unwrap()
-            .reply()
+    let atom2 = get_reply(
+        || format!("Failed to intern {atom_name}"),
+        xcb_connection.intern_atom(false, atom_name.as_bytes()),
+    );
+    let method2 = match atom2.log_with_level(Level::Debug) {
+        Some(reply) if reply.atom != x11rb::NONE => {
+            let atom = reply.atom;
+            get_reply(
+                || format!("Failed to get {atom_name}"),
+                xcb_connection.get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1),
+            )
             .map(|reply| reply.value_len > 0)
             .unwrap_or(false)
-    } else {
-        false
+        }
+        _ => return false,
     };
 
     // Method 3: Check for _NET_SUPPORTING_WM_CHECK
     let atom_name = "_NET_SUPPORTING_WM_CHECK";
-    let atom = xcb_connection
-        .intern_atom(false, atom_name.as_bytes())
-        .unwrap()
-        .reply()
-        .map(|reply| reply.atom)
-        .unwrap_or(0);
-
-    let method3 = if atom != 0 {
-        xcb_connection
-            .get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1)
-            .unwrap()
-            .reply()
+    let atom3 = get_reply(
+        || format!("Failed to intern {atom_name}"),
+        xcb_connection.intern_atom(false, atom_name.as_bytes()),
+    );
+    let method3 = match atom3.log_with_level(Level::Debug) {
+        Some(reply) if reply.atom != x11rb::NONE => {
+            let atom = reply.atom;
+            get_reply(
+                || format!("Failed to get {atom_name}"),
+                xcb_connection.get_property(false, root, atom, xproto::AtomEnum::WINDOW, 0, 1),
+            )
             .map(|reply| reply.value_len > 0)
             .unwrap_or(false)
-    } else {
-        false
+        }
+        _ => return false,
     };
 
-    // TODO: Remove this
-    log::info!(
+    log::debug!(
         "Compositor detection: _NET_WM_CM_S?={}, _NET_WM_CM_OWNER={}, _NET_SUPPORTING_WM_CHECK={}",
         method1,
         method2,
@@ -1928,28 +1992,28 @@ fn check_gtk_frame_extents_supported(
     atoms: &XcbAtoms,
     root: xproto::Window,
 ) -> bool {
-    let supported_atoms = xcb_connection
-        .get_property(
+    let Some(supported_atoms) = get_reply(
+        || "Failed to get _NET_SUPPORTED",
+        xcb_connection.get_property(
             false,
             root,
             atoms._NET_SUPPORTED,
             xproto::AtomEnum::ATOM,
             0,
             1024,
-        )
-        .unwrap()
-        .reply()
-        .map(|reply| {
-            // Convert Vec<u8> to Vec<u32>
-            reply
-                .value
-                .chunks_exact(4)
-                .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                .collect::<Vec<u32>>()
-        })
-        .unwrap_or_default();
+        ),
+    )
+    .log_with_level(Level::Debug) else {
+        return false;
+    };
 
-    supported_atoms.contains(&atoms._GTK_FRAME_EXTENTS)
+    let supported_atom_ids: Vec<u32> = supported_atoms
+        .value
+        .chunks_exact(4)
+        .filter_map(|chunk| chunk.try_into().ok().map(u32::from_ne_bytes))
+        .collect();
+
+    supported_atom_ids.contains(&atoms._GTK_FRAME_EXTENTS)
 }
 
 fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
@@ -1966,17 +2030,19 @@ fn xdnd_get_supported_atom(
     supported_atoms: &XcbAtoms,
     target: xproto::Window,
 ) -> u32 {
-    let property = xcb_connection
-        .get_property(
+    if let Some(reply) = get_reply(
+        || "Failed to get XDnD supported atoms",
+        xcb_connection.get_property(
             false,
             target,
             supported_atoms.XdndTypeList,
             AtomEnum::ANY,
             0,
             1024,
-        )
-        .unwrap();
-    if let Ok(reply) = property.reply() {
+        ),
+    )
+    .log_with_level(Level::Warn)
+    {
         if let Some(atoms) = reply.value32() {
             for atom in atoms {
                 if xdnd_is_atom_supported(atom, &supported_atoms) {
@@ -2002,9 +2068,11 @@ fn xdnd_send_finished(
         sequence: 0,
         response_type: xproto::CLIENT_MESSAGE_EVENT,
     };
-    xcb_connection
-        .send_event(false, target, EventMask::default(), message)
-        .unwrap();
+    check_reply(
+        || "Failed to send XDnD finished event",
+        xcb_connection.send_event(false, target, EventMask::default(), message),
+    )
+    .log_err();
 }
 
 fn xdnd_send_status(
@@ -2022,22 +2090,24 @@ fn xdnd_send_status(
         sequence: 0,
         response_type: xproto::CLIENT_MESSAGE_EVENT,
     };
-    xcb_connection
-        .send_event(false, target, EventMask::default(), message)
-        .unwrap();
+    check_reply(
+        || "Failed to send XDnD status event",
+        xcb_connection.send_event(false, target, EventMask::default(), message),
+    )
+    .log_err();
 }
 
 /// Recomputes `pointer_device_states` by querying all pointer devices.
 /// When a device is present in `scroll_values_to_preserve`, its value for `ScrollAxisState.scroll_value` is used.
-fn get_new_pointer_device_states(
+fn current_pointer_device_states(
     xcb_connection: &XCBConnection,
     scroll_values_to_preserve: &BTreeMap<xinput::DeviceId, PointerDeviceState>,
-) -> BTreeMap<xinput::DeviceId, PointerDeviceState> {
-    let devices_query_result = xcb_connection
-        .xinput_xi_query_device(XINPUT_ALL_DEVICES)
-        .unwrap()
-        .reply()
-        .unwrap();
+) -> Option<BTreeMap<xinput::DeviceId, PointerDeviceState>> {
+    let devices_query_result = get_reply(
+        || "Failed to query XInput devices",
+        xcb_connection.xinput_xi_query_device(XINPUT_ALL_DEVICES),
+    )
+    .log_err()?;
 
     let mut pointer_device_states = BTreeMap::new();
     pointer_device_states.extend(
@@ -2080,7 +2150,7 @@ fn get_new_pointer_device_states(
     if pointer_device_states.is_empty() {
         log::error!("Found no xinput mouse pointers.");
     }
-    return pointer_device_states;
+    return Some(pointer_device_states);
 }
 
 /// Returns true if the device is a pointer device. Does not include pointer device groups.
