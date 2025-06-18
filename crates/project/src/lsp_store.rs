@@ -8147,9 +8147,11 @@ impl LspStore {
                 | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
-                        name: lsp_store
-                            .language_server_adapter_for_id(language_server_id)
-                            .map(|adapter| adapter.name()),
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
                         message: non_lsp,
                     });
                 }
@@ -9097,34 +9099,43 @@ impl LspStore {
     }
 
     pub async fn handle_stop_language_servers(
-        this: Entity<Self>,
+        lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::StopLanguageServers>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        this.update(&mut cx, |lsp_store, cx| {
-            let buffers =
-                lsp_store.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-            lsp_store.stop_language_servers_for_buffers(
-                buffers,
-                envelope
-                    .payload
-                    .also_servers
-                    .into_iter()
-                    .filter_map(|selector| {
-                        Some(match selector.selector? {
-                            proto::language_server_selector::Selector::ServerId(server_id) => {
-                                LanguageServerSelector::Id(LanguageServerId::from_proto(server_id))
-                            }
-                            proto::language_server_selector::Selector::Name(name) => {
-                                LanguageServerSelector::Name(LanguageServerName(
-                                    SharedString::from(name),
-                                ))
-                            }
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            if envelope.payload.all
+                && envelope.payload.also_servers.is_empty()
+                && envelope.payload.buffer_ids.is_empty()
+            {
+                lsp_store.stop_all_language_servers(cx);
+            } else {
+                let buffers =
+                    lsp_store.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
+                lsp_store.stop_language_servers_for_buffers(
+                    buffers,
+                    envelope
+                        .payload
+                        .also_servers
+                        .into_iter()
+                        .filter_map(|selector| {
+                            Some(match selector.selector? {
+                                proto::language_server_selector::Selector::ServerId(server_id) => {
+                                    LanguageServerSelector::Id(LanguageServerId::from_proto(
+                                        server_id,
+                                    ))
+                                }
+                                proto::language_server_selector::Selector::Name(name) => {
+                                    LanguageServerSelector::Name(LanguageServerName(
+                                        SharedString::from(name),
+                                    ))
+                                }
+                            })
                         })
-                    })
-                    .collect(),
-                cx,
-            );
+                        .collect(),
+                    cx,
+                );
+            }
         })?;
 
         Ok(proto::Ack {})

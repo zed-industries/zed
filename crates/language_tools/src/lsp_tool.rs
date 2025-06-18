@@ -206,11 +206,11 @@ impl LspTool {
 
     fn on_lsp_store_event(&mut self, e: &LspStoreEvent, _: &mut Window, cx: &mut Context<Self>) {
         match e {
-            project::LspStoreEvent::LanguageServerUpdate {
+            LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
-            } => match status_update.status {
+            } => match (&status_update).status {
                 Some(proto::status_update::Status::Binary(binary_status)) => {
                     let Some(name) = name.as_ref() else {
                         return;
@@ -259,7 +259,7 @@ impl LspTool {
                 }
                 None => {}
             },
-            project::LspStoreEvent::LanguageServerUpdate {
+            LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(update),
@@ -593,11 +593,6 @@ fn fill_servers(
 fn empty_context_menu(menu: ContextMenu, message: &'static str) -> ContextMenu {
     menu.item(ContextMenuEntry::new(message).disabled(true))
         .separator()
-        .item(
-            ContextMenuEntry::new("Restart All Servers")
-                .disabled(true)
-                .handler(|_, _| {}),
-        )
         .item(
             ContextMenuEntry::new("Stop All Servers")
                 .disabled(true)
