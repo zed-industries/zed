@@ -10,16 +10,18 @@ use std::{
     usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
+use text::{Point, Selection};
 
 use dap::{
     DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
 };
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::{Anchor, Editor, EditorElement, EditorStyle, scroll::Autoscroll};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, InteractiveText, KeyContext, PromptButton, PromptLevel, Render, StyledText,
-    Subscription, Task, TextStyle, UnderlineStyle, WeakEntity,
+    Action, Animation, AnimationExt as _, App, AppContext, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyContext, PromptButton, PromptLevel,
+    Render, Subscription, Task, TextStyle, Transformation, WeakEntity,
+    percentage,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -28,10 +30,12 @@ use settings::{Settings, initial_local_debug_tasks_content};
 use task::{DebugScenario, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, CheckboxWithLabel, Clickable, Context, ContextMenu, Disableable, DropdownMenu,
-    FluentBuilder, IconWithIndicator, Indicator, IntoElement, KeyBinding, ListItem,
-    ListItemSpacing, ParentElement, StyledExt, ToggleButton, ToggleState, Toggleable, Tooltip,
-    Window, div, prelude::*, px, relative, rems,
+    ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconButton, IconName, IconSize,
+    IconWithIndicator, Indicator, InteractiveElement, IntoElement, KeyBinding, Label,
+    LabelCommon as _, LabelSize, ListItem, ListItemSpacing, ParentElement, RenderOnce,
+    SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable,
+    Tooltip, Window, div, h_flex, relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -476,6 +480,135 @@ impl NewProcessModal {
         .detach();
     }
 
+    fn render_save_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let this_entity = cx.weak_entity().clone();
+
+        div().when_some(self.save_scenario_state.as_ref(), {
+                let this_entity = this_entity.clone();
+
+                move |this, save_state| match save_state {
+                    SaveScenarioState::Saved((saved_path, scenario_label)) => this.child(
+                        IconButton::new("new-session-modal-go-to-file", IconName::ArrowUpRight)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .on_click({
+                                let this_entity = this_entity.clone();
+                                let saved_path = saved_path.clone();
+                                let scenario_label = scenario_label.clone();
+                                move |_, window, cx| {
+                                    window
+                                        .spawn(cx, {
+                                            let this_entity = this_entity.clone();
+                                            let saved_path = saved_path.clone();
+                                            let scenario_label = scenario_label.clone();
+
+                                            async move |cx| {
+                                                let editor = this_entity
+                                                    .update_in(cx, |this, window, cx| {
+                                                        this.workspace.update(cx, |workspace, cx| {
+                                                            workspace.open_path(
+                                                                saved_path.clone(),
+                                                                None,
+                                                                true,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        })
+                                                    })??
+                                                    .await?;
+
+                                                cx.update(|window, cx| {
+                                                    if let Some(editor) = editor.act_as::<Editor>(cx) {
+                                                        editor.update(cx, |editor, cx| {
+                                                            let row = editor
+                                                                .text(cx)
+                                                                .lines()
+                                                                .enumerate()
+                                                                .find_map(|(row, text)| {
+                                                                    if text.contains(
+                                                                        scenario_label.as_ref(),
+                                                                    ) {
+                                                                        Some(row)
+                                                                    } else {
+                                                                        None
+                                                                    }
+                                                                })?;
+
+                                                            let buffer = editor.buffer().read(cx);
+                                                            let excerpt_id =
+                                                                *buffer.excerpt_ids().first()?;
+
+                                                            let snapshot = buffer
+                                                                .as_singleton()?
+                                                                .read(cx)
+                                                                .snapshot();
+
+                                                            let anchor = snapshot.anchor_before(
+                                                                Point::new(row as u32, 0),
+                                                            );
+
+                                                            let anchor = Anchor {
+                                                                buffer_id: anchor.buffer_id,
+                                                                excerpt_id,
+                                                                text_anchor: anchor,
+                                                                diff_base_anchor: None,
+                                                            };
+
+                                                            editor.change_selections(
+                                                                Some(Autoscroll::center()),
+                                                                window,
+                                                                cx,
+                                                                |selections| {
+                                                                    let id =
+                                                                        selections.new_selection_id();
+                                                                    selections.select_anchors(
+                                                                        vec![Selection {
+                                                                    id,
+                                                                    start: anchor,
+                                                                    end: anchor,
+                                                                    reversed: false,
+                                                                    goal: language::SelectionGoal::None
+                                                                }],
+                                                                    );
+                                                                },
+                                                            );
+
+                                                            Some(())
+                                                        });
+                                                    }
+                                                })?;
+
+                                                this_entity
+                                                    .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                    .ok();
+
+                                                anyhow::Ok(())
+                                            }
+                                        })
+                                        .detach();
+                                }
+                            }),
+                    ),
+                    SaveScenarioState::Saving => this.child(
+                        Icon::new(IconName::Spinner)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_animation(
+                                "Spinner",
+                                Animation::new(Duration::from_secs(3)).repeat(),
+                                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                            ),
+                    ),
+                    SaveScenarioState::Failed(error_msg) => this.child(
+                        IconButton::new("Failed Scenario Saved", IconName::X)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Error)
+                            .tooltip(ui::Tooltip::text(error_msg.clone())),
+                    ),
+                }
+            })
+    }
+
     fn adapter_drop_down_menu(
         &mut self,
         window: &mut Window,
@@ -810,38 +943,26 @@ impl Render for NewProcessModal {
                         container
                             .child(
                                 h_flex()
-                                    .text_ui_sm(cx)
-                                    .text_color(Color::Muted.color(cx))
                                     .child(
-                                        InteractiveText::new(
-                                            "open-debug-json",
-                                            StyledText::new(
-                                                "Open .zed/debug.json for advanced configuration.",
-                                            )
-                                            .with_highlights([(
-                                                5..20,
-                                                HighlightStyle {
-                                                    underline: Some(UnderlineStyle {
-                                                        thickness: px(1.0),
-                                                        color: None,
-                                                        wavy: false,
-                                                    }),
-                                                    ..Default::default()
-                                                },
-                                            )]),
+                                        Button::new(
+                                            "new-session-modal-back",
+                                            "Save to .zed/debug.json...",
                                         )
-                                        .on_click(
-                                            vec![5..20],
-                                            {
-                                                let this = cx.entity();
-                                                move |_, window, cx| {
-                                                    this.update(cx, |this, cx| {
-                                                        this.open_debug_json(window, cx);
-                                                    })
-                                                }
-                                            },
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.save_debug_scenario(window, cx);
+                                        }))
+                                        .disabled(
+                                            self.debugger.is_none()
+                                                || self
+                                                    .configure_mode
+                                                    .read(cx)
+                                                    .program
+                                                    .read(cx)
+                                                    .is_empty(cx)
+                                                || self.save_scenario_state.is_some(),
                                         ),
-                                    ),
+                                    )
+                                    .child(self.render_save_state(cx)),
                             )
                             .child(
                                 Button::new("debugger-spawn", "Start")
@@ -1450,7 +1571,10 @@ impl PickerDelegate for DebugDelegate {
                     directory_in_worktree: _,
                     id_base: _,
                 }) => return,
-                Some(TaskSourceKind::AbsPath { id_base: _, abs_path: _ }) => return,
+                Some(TaskSourceKind::AbsPath {
+                    id_base: _,
+                    abs_path: _,
+                }) => return,
                 // TODO: handle tasks from debug.json separately, just open the file and scroll to it
                 _ => {}
             }
