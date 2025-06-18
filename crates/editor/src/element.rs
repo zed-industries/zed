@@ -8506,26 +8506,29 @@ impl Element for EditorElement {
                             );
 
                             let line_ix = display_row.minus(start_row) as usize;
-                            let row_info = &row_infos[line_ix];
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-
-                            if let Some(layout) = self.layout_inline_blame(
-                                display_row,
-                                row_info,
-                                line_layout,
-                                crease_trailer_layout,
-                                em_width,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                &text_hitbox,
-                                window,
-                                cx,
+                            if let (Some(row_info), Some(line_layout), Some(crease_trailer)) = (
+                                row_infos.get(line_ix),
+                                line_layouts.get(line_ix),
+                                crease_trailers.get(line_ix),
                             ) {
-                                inline_blame_layout = Some(layout);
-                                // Blame overrides inline diagnostics
-                                inline_diagnostics.remove(&display_row);
+                                let crease_trailer_layout = crease_trailer.as_ref();
+                                if let Some(layout) = self.layout_inline_blame(
+                                    display_row,
+                                    row_info,
+                                    line_layout,
+                                    crease_trailer_layout,
+                                    em_width,
+                                    content_origin,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    &text_hitbox,
+                                    window,
+                                    cx,
+                                ) {
+                                    inline_blame_layout = Some(layout);
+                                    // Blame overrides inline diagnostics
+                                    inline_diagnostics.remove(&display_row);
+                                }
                             }
                         }
                     }
