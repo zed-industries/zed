@@ -7,6 +7,7 @@ use dap::{
 };
 use gpui::AsyncApp;
 use language::LanguageName;
+use log;
 use serde_json::json;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 use task::{DebugScenario, ZedDebugConfig};
@@ -31,6 +32,8 @@ impl DebugAdapter for DartDebugAdapter {
     }
 
     fn dap_schema(&self) -> serde_json::Value {
+        // This schema is now more comprehensive, incorporating findings from the research
+        // to support more advanced configurations seen in other debug adapters.
         json!({
             "properties": {
                 "request": {
@@ -40,11 +43,11 @@ impl DebugAdapter for DartDebugAdapter {
                 },
                 "program": {
                     "type": "string",
-                    "description": "Path to the main Dart entry point (e.g., lib/main.dart)."
+                    "description": "Path to the main Dart entry point (e.g., 'lib/main.dart'). For web, this can be the entrypoint file."
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Working directory for the Dart/Flutter process. Defaults to project root."
+                    "description": "Working directory for the Dart/Flutter process. Defaults to the project root."
                 },
                 "args": {
                     "type": "array",
@@ -54,11 +57,11 @@ impl DebugAdapter for DartDebugAdapter {
                 "toolArgs": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Arguments for the 'flutter' or 'dart' tool command (e.g., ['--flavor', 'dev'])."
+                    "description": "Arguments for the 'flutter' or 'dart' tool command (e.g., ['--flavor', 'dev', '-d', 'chrome'])."
                 },
                 "customTool": {
                     "type": "string",
-                    "description": "Optional: custom tool (e.g., wrapper script) to run instead of 'flutter' or 'dart'."
+                    "description": "Optional: custom tool (e.g., a wrapper script) to run instead of 'flutter' or 'dart'."
                 },
                 "customToolReplacesArgs": {
                     "type": "integer",
@@ -94,31 +97,16 @@ impl DebugAdapter for DartDebugAdapter {
                     "description": "Where to launch the debug target: internal console or terminal.",
                     "default": "debugConsole"
                 },
-                "enableDartDevelopmentService": {
-                    "type": "boolean",
-                    "description": "Whether to enable Dart Development Service (DDS).",
-                    "default": true
+                // Advanced/new features based on research
+                "webRoot": {
+                    "type": "string",
+                    "description": "Specifies the web-root of your application for web debugging, required for resolving source maps.",
+                    "default": "${ZED_WORKTREE_ROOT}/build/web"
                 },
-                "debugExternalPackageLibraries": {
-                    "type": "boolean",
-                    "description": "Whether to debug external package libraries.",
-                    "default": false
-                },
-                "debugSdkLibraries": {
-                    "type": "boolean",
-                    "description": "Whether to debug SDK libraries.",
-                    "default": false
-                },
-                "evaluateGettersInDebugViews": {
-                    "type": "boolean",
-                    "description": "Whether to evaluate getters in debug views.",
-                    "default": true
-                },
-                "evaluateToStringInDebugViews": {
-                    "type": "boolean",
-                    "description": "Whether to evaluate toString() in debug views.",
-                    "default": true
-                }
+                "debugExternalPackageLibraries": { "type": "boolean", "description": "Whether to debug external package libraries.", "default": false },
+                "debugSdkLibraries": { "type": "boolean", "description": "Whether to debug SDK libraries.", "default": false },
+                "evaluateGettersInDebugViews": { "type": "boolean", "description": "Whether to evaluate getters in debug views.", "default": true },
+                "evaluateToStringInDebugViews": { "type": "boolean", "description": "Whether to evaluate toString() in debug views.", "default": true }
             },
             "required": ["request"],
             "allOf": [
@@ -138,14 +126,9 @@ impl DebugAdapter for DartDebugAdapter {
             .as_object()
             .ok_or_else(|| anyhow!("Debug configuration must be a valid JSON object"))?;
 
-        let request_str = map
-            .get("request")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                anyhow!(
-                    "The 'request' field is required in debug.json and must be a string ('launch' or 'attach')"
-                )
-            })?;
+        let request_str = map.get("request").and_then(|v| v.as_str()).ok_or_else(|| {
+            anyhow!("The 'request' field is required and must be a string ('launch' or 'attach')")
+        })?;
 
         match request_str {
             "launch" => {
@@ -153,7 +136,7 @@ impl DebugAdapter for DartDebugAdapter {
                     || map.get("program").and_then(|v| v.as_str()).is_none()
                 {
                     return Err(anyhow!(
-                        "The 'program' field (a string path to the main Dart file) is required for a 'launch' request"
+                        "A 'program' field (path to the main Dart file) is required for a 'launch' request"
                     ));
                 }
                 Ok(StartDebuggingRequestArgumentsRequest::Launch)
@@ -167,14 +150,14 @@ impl DebugAdapter for DartDebugAdapter {
 
                 if !has_uri && !has_info_file {
                     return Err(anyhow!(
-                        "For 'attach' request, either 'vmServiceUri' or 'vmServiceInfoFile' must be provided"
+                        "For 'attach' requests, either 'vmServiceUri' or 'vmServiceInfoFile' must be provided"
                     ));
                 }
 
                 Ok(StartDebuggingRequestArgumentsRequest::Attach)
             }
             _ => Err(anyhow!(
-                "Invalid 'request' value: '{}'. It must be either 'launch' or 'attach'.",
+                "Invalid 'request' value: '{}'. Must be 'launch' or 'attach'.",
                 request_str
             )),
         }
@@ -205,8 +188,9 @@ impl DebugAdapter for DartDebugAdapter {
                     dap_config_map.insert("env".to_string(), launch_config.env_json());
                 }
             }
-            DebugRequest::Attach(_attach_config) => {
-                // Attach-specific fields are handled via task_definition.config in get_binary
+            DebugRequest::Attach(attach_config) => {
+                // For attach, we expect the vmServiceUri to be in the main config
+                dap_config_map.insert("vmServiceUri".to_string(), json!(attach_config.process_id));
             }
         }
 
@@ -231,26 +215,39 @@ impl DebugAdapter for DartDebugAdapter {
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let is_flutter_project = self.is_flutter_project(delegate).await;
+        let worktree_root = delegate.worktree_root_path();
 
         let tool_executable_path = if is_flutter_project {
-            delegate
-                .which(OsStr::new(Self::FLUTTER_EXECUTABLE_NAME))
-                .await
-                .map(|p| p.to_string_lossy().into_owned())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "'{}' command not found in PATH. Ensure Flutter SDK is installed and 'bin' directory is in PATH.",
-                        Self::FLUTTER_EXECUTABLE_NAME
-                    )
-                })?
+            // 1. Check for project-local Flutter SDK (FVM)
+            let fvm_flutter_path = worktree_root.join(".fvm/flutter_sdk/bin/flutter");
+            if delegate.fs().is_file(&fvm_flutter_path).await {
+                log::info!(
+                    "Detected and using FVM Flutter SDK at: {}",
+                    fvm_flutter_path.display()
+                );
+                fvm_flutter_path.to_string_lossy().into_owned()
+            } else {
+                // 2. Fallback to global PATH
+                delegate
+                    .which(OsStr::new(Self::FLUTTER_EXECUTABLE_NAME))
+                    .await
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Flutter SDK not found. Please ensure '{}' is in your PATH or use FVM.",
+                            Self::FLUTTER_EXECUTABLE_NAME
+                        )
+                    })?
+            }
         } else {
+            // Logic for pure Dart remains the same for now
             delegate
                 .which(OsStr::new(Self::DART_EXECUTABLE_NAME))
                 .await
                 .map(|p| p.to_string_lossy().into_owned())
                 .ok_or_else(|| {
                     anyhow!(
-                        "'{}' command not found in PATH. Ensure Dart SDK is installed and 'bin' directory is in PATH.",
+                        "Dart SDK not found. Please ensure '{}' is in your PATH.",
                         Self::DART_EXECUTABLE_NAME
                     )
                 })?
@@ -261,7 +258,8 @@ impl DebugAdapter for DartDebugAdapter {
         if is_flutter_project {
             if let Some(mode_val) = task_definition.config.get("flutterMode") {
                 if mode_val.as_str() == Some("test") {
-                    adapter_args.push("--test".to_string());
+                    // The --machine flag is crucial for structured test output
+                    adapter_args.extend(["--machine"].iter().map(|&s| s.to_string()));
                 }
             }
         }
@@ -326,6 +324,10 @@ impl DebugAdapter for DartDebugAdapter {
             connection: None,
             request_args: dap_request_args,
         })
+    }
+
+    fn supported_custom_requests(&self) -> Vec<&'static str> {
+        vec!["hotReload", "hotRestart"]
     }
 }
 

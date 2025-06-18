@@ -373,6 +373,12 @@ pub trait DebugAdapter: 'static + Send + Sync {
     fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
         None
     }
+
+    /// Returns a list of custom DAP request names that this adapter supports.
+    /// This allows the UI to dynamically show controls for features like Hot Reload.
+    fn supported_custom_requests(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -447,5 +453,9 @@ impl DebugAdapter for FakeAdapter {
                 configuration: task_definition.config.clone(),
             },
         })
+    }
+
+    fn supported_custom_requests(&self) -> Vec<&'static str> {
+        vec!["fakeCustomRequest"]
     }
 }
