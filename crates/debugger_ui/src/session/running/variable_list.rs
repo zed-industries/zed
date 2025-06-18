@@ -543,53 +543,29 @@ impl VariableList {
         }
     }
 
-    // todo!(debugger): Combine watcher context menu and variable context menu
-    // we can filter out the actions by using menu.when and passing in a boolean to the function
-    fn deploy_watcher_context_menu(
+    fn deploy_list_entry_context_menu(
         &mut self,
+        entry: ListEntry,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.action("Copy Name", CopyVariableName.boxed_clone())
-                .action("Copy Value", CopyVariableValue.boxed_clone())
-                // todo!(debugger): This should be an action alt-enter (To be inline with the console)
-                .action("Remove Watch", RemoveWatch.boxed_clone())
-                .context(self.focus_handle.clone())
-        });
-
-        cx.focus_view(&context_menu, window);
-        let subscription = cx.subscribe_in(
-            &context_menu,
-            window,
-            |this, _, _: &DismissEvent, window, cx| {
-                if this.open_context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
-                }) {
-                    cx.focus_self(window);
-                }
-                this.open_context_menu.take();
-                cx.notify();
-            },
-        );
-
-        self.open_context_menu = Some((context_menu, position, subscription));
-    }
-
-    fn deploy_variable_context_menu(
-        &mut self,
-        position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.action("Copy Name", CopyVariableName.boxed_clone())
-                .action("Copy Value", CopyVariableValue.boxed_clone())
-                .action("Edit Value", EditVariable.boxed_clone())
-                // todo!(debugger): This should be an action alt-enter (To be inline with the console)
-                .action("Watch Variable", AddWatch.boxed_clone())
-                .context(self.focus_handle.clone())
+            menu.when(entry.as_variable().is_some(), |menu| {
+                menu.action("Copy Name", CopyVariableName.boxed_clone())
+                    .action("Copy Value", CopyVariableValue.boxed_clone())
+                    .action("Edit Value", EditVariable.boxed_clone())
+                    // todo!(debugger): This should be an action alt-enter (To be inline with the console)
+                    .action("Watch Variable", AddWatch.boxed_clone())
+            })
+            .when(entry.as_watcher().is_some(), |menu| {
+                menu.action("Copy Name", CopyVariableName.boxed_clone())
+                    .action("Copy Value", CopyVariableValue.boxed_clone())
+                    .action("Edit Value", EditVariable.boxed_clone())
+                    // todo!(debugger): This should be an action alt-enter (To be inline with the console)
+                    .action("Remove Watch", RemoveWatch.boxed_clone())
+            })
+            .context(self.focus_handle.clone())
         });
 
         cx.focus_view(&context_menu, window);
@@ -989,9 +965,15 @@ impl VariableList {
                 })
                 .on_secondary_mouse_down(cx.listener({
                     let path = path.clone();
+                    let entry = entry.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.selection = Some(path.clone());
-                        this.deploy_watcher_context_menu(event.position, window, cx);
+                        this.deploy_list_entry_context_menu(
+                            entry.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        );
                         cx.stop_propagation();
                     }
                 }))
@@ -1204,9 +1186,15 @@ impl VariableList {
                 })
                 .on_secondary_mouse_down(cx.listener({
                     let path = path.clone();
+                    let entry = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.selection = Some(path.clone());
-                        this.deploy_variable_context_menu(event.position, window, cx);
+                        this.deploy_list_entry_context_menu(
+                            entry.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        );
                         cx.stop_propagation();
                     }
                 }))
