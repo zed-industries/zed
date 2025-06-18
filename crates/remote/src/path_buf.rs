@@ -8,6 +8,18 @@ pub enum PathStyle {
     Windows,
 }
 
+impl PathStyle {
+    #[cfg(target_os = "windows")]
+    pub const fn current() -> Self {
+        PathStyle::Windows
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub const fn current() -> Self {
+        PathStyle::Posix
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TargetPathBuf {
     inner: PathBuf,

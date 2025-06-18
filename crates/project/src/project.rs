@@ -1407,8 +1407,8 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
-        // TODO:
-        // Add proper path style
+        // todo(zjk)
+        // Set the proper path style based on the remote
         let worktree_store = cx.new(|_| {
             WorktreeStore::remote(
                 true,
