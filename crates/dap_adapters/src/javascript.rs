@@ -277,6 +277,16 @@ impl DebugAdapter for JsDebugAdapter {
                                     "description": "Use JavaScript source maps if they exist",
                                     "default": true
                                 },
+                                "pauseForSourceMap": {
+                                    "type": "boolean",
+                                    "description": "Wait for source maps to load before setting breakpoints.",
+                                    "default": true
+                                },
+                                "sourceMapRenames": {
+                                    "type": "boolean",
+                                    "description": "Whether to use the \"names\" mapping in sourcemaps.",
+                                    "default": true
+                                },
                                 "sourceMapPathOverrides": {
                                     "type": "object",
                                     "description": "Rewrites the locations of source files from what the sourcemap says to their locations on disk",
