@@ -529,9 +529,7 @@ impl OpenAiEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                "Response contained no choices"
-            )))];
+            return Vec::new();
         };
 
         let mut events = Vec::new();
