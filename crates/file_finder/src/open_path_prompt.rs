@@ -806,7 +806,7 @@ mod tests {
     use crate::open_path_prompt::get_dir_and_suffix;
 
     #[test]
-    fn test_get_dir_and_suffix() {
+    fn test_get_dir_and_suffix_with_windows_style() {
         let (dir, suffix) = get_dir_and_suffix("", PathStyle::Windows);
         assert_eq!(dir, "C:\\");
         assert_eq!(suffix, "");
@@ -834,6 +834,33 @@ mod tests {
         let (dir, suffix) =
             get_dir_and_suffix("C:\\Users\\Junkui\\Documents\\", PathStyle::Windows);
         assert_eq!(dir, "C:\\Users\\Junkui\\Documents\\");
+        assert_eq!(suffix, "");
+    }
+
+    #[test]
+    fn test_get_dir_and_suffix_with_posix_style() {
+        let (dir, suffix) = get_dir_and_suffix("", PathStyle::Posix);
+        assert_eq!(dir, "/");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("/", PathStyle::Posix);
+        assert_eq!(dir, "/");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("/Use", PathStyle::Posix);
+        assert_eq!(dir, "/");
+        assert_eq!(suffix, "Use");
+
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Docum", PathStyle::Posix);
+        assert_eq!(dir, "/Users/Junkui/");
+        assert_eq!(suffix, "Docum");
+
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents", PathStyle::Posix);
+        assert_eq!(dir, "/Users/Junkui/");
+        assert_eq!(suffix, "Documents");
+
+        let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents/", PathStyle::Posix);
+        assert_eq!(dir, "/Users/Junkui/Documents/");
         assert_eq!(suffix, "");
     }
 }
