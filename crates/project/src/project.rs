@@ -2424,11 +2424,14 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
-            self.open_buffer((worktree.read(cx).id(), relative_path), cx)
-        } else {
-            Task::ready(Err(anyhow!("no such path")))
-        }
+        let worktree_task = self.find_or_create_worktree(abs_path.as_ref(), false, cx);
+        cx.spawn(async move |this, cx| {
+            let (worktree, relative_path) = worktree_task.await?;
+            this.update(cx, |this, cx| {
+                this.open_buffer((worktree.read(cx).id(), relative_path), cx)
+            })?
+            .await
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]

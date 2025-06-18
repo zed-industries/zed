@@ -89,6 +89,9 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Pairs of file paths to diff. Can be specified multiple times.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    diff: Vec<String>,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -229,8 +232,16 @@ fn main() -> Result<()> {
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
+    let mut diff_paths = vec![];
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
+
+    for path in args.diff.chunks(2) {
+        diff_paths.push([
+            parse_path_with_position(&path[0])?,
+            parse_path_with_position(&path[1])?,
+        ]);
+    }
 
     for path in args.paths_with_position.iter() {
         if path.starts_with("zed://")
@@ -270,6 +281,7 @@ fn main() -> Result<()> {
             tx.send(CliRequest::Open {
                 paths,
                 urls,
+                diff_paths,
                 wait: args.wait,
                 open_new_workspace,
                 env,

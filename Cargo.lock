@@ -6176,6 +6176,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "watch",
  "windows 0.61.1",
  "workspace",
  "workspace-hack",

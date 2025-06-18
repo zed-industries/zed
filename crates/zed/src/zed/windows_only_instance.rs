@@ -23,7 +23,7 @@ use windows::{
     core::HSTRING,
 };
 
-use crate::{Args, OpenListener};
+use crate::{Args, OpenListener, RawOpenRequest};
 
 pub fn is_first_instance() -> bool {
     unsafe {
@@ -40,7 +40,14 @@ pub fn is_first_instance() -> bool {
 pub fn handle_single_instance(opener: OpenListener, args: &Args, is_first_instance: bool) -> bool {
     if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
-        std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
+        std::thread::spawn(move || {
+            with_pipe(|url| {
+                opener.open(RawOpenRequest {
+                    urls: vec![url],
+                    ..Default::default()
+                })
+            })
+        });
     } else if !args.foreground {
         // We are not the first instance, send args to the first instance
         send_args_to_instance(args).log_err();
@@ -109,6 +116,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     let request = {
         let mut paths = vec![];
         let mut urls = vec![];
+        let mut diff_paths = vec![];
         for path in args.paths_or_urls.iter() {
             match std::fs::canonicalize(&path) {
                 Ok(path) => paths.push(path.to_string_lossy().to_string()),
@@ -126,9 +134,22 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
                 }
             }
         }
+
+        for path in args.diff.chunks(2) {
+            let old = std::fs::canonicalize(&path[0]).log_err();
+            let new = std::fs::canonicalize(&path[1]).log_err();
+            if let Some((old, new)) = old.zip(new) {
+                diff_paths.push([
+                    old.to_string_lossy().to_string(),
+                    new.to_string_lossy().to_string(),
+                ]);
+            }
+        }
+
         CliRequest::Open {
             paths,
             urls,
+            diff_paths,
             wait: false,
             open_new_workspace: None,
             env: None,
