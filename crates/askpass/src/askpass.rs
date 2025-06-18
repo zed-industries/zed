@@ -59,7 +59,7 @@ impl AskPassSession {
         executor: &BackgroundExecutor,
         mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
-        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
+        use smol::net::unix::UnixListener;
         use util::{fs::make_file_executable, get_shell_safe_zed_path};
 
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
