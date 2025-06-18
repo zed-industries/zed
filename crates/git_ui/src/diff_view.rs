@@ -3,6 +3,7 @@
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
+use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, Task, Window,
@@ -12,6 +13,8 @@ use project::Project;
 use std::{
     any::{Any, TypeId},
     path::PathBuf,
+    pin::pin,
+    time::Duration,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
@@ -28,6 +31,8 @@ pub struct DiffView {
     buffer_changes_tx: watch::Sender<()>,
     _recalculate_diff_task: Task<Result<()>>,
 }
+
+const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl DiffView {
     pub fn open(
@@ -97,7 +102,9 @@ impl DiffView {
 
         for buffer in [&old_buffer, &new_buffer] {
             cx.subscribe(buffer, move |this, _, event, _| match event {
-                language::BufferEvent::Edited | language::BufferEvent::Reparsed => {
+                language::BufferEvent::Edited
+                | language::BufferEvent::LanguageChanged
+                | language::BufferEvent::Reparsed => {
                     this.buffer_changes_tx.send(()).ok();
                 }
                 _ => {}
@@ -112,6 +119,19 @@ impl DiffView {
             new_buffer,
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
                 while let Ok(_) = buffer_changes_rx.recv().await {
+                    loop {
+                        let mut timer = cx
+                            .background_executor()
+                            .timer(RECALCULATE_DIFF_DEBOUNCE)
+                            .fuse();
+                        let mut recv = pin!(buffer_changes_rx.recv().fuse());
+                        select_biased! {
+                            _ = timer => break,
+                            _ = recv => continue,
+                        }
+                    }
+
+                    log::trace!("start recalculating");
                     let (old_snapshot, new_snapshot) = this.update(cx, |this, cx| {
                         (
                             this.old_buffer.read(cx).snapshot(),
@@ -131,6 +151,7 @@ impl DiffView {
                     diff.update(cx, |diff, cx| {
                         diff.set_snapshot(diff_snapshot, &new_snapshot, cx)
                     })?;
+                    log::trace!("finish recalculating");
                 }
                 Ok(())
             }),
@@ -416,7 +437,7 @@ mod tests {
         .unwrap();
 
         // The diff now reflects the changes to the new file
-        cx.executor().run_until_parked();
+        cx.executor().advance_clock(RECALCULATE_DIFF_DEBOUNCE);
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
             &mut cx,
@@ -451,7 +472,7 @@ mod tests {
         .unwrap();
 
         // The diff now reflects the changes to the new file
-        cx.executor().run_until_parked();
+        cx.executor().advance_clock(RECALCULATE_DIFF_DEBOUNCE);
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
             &mut cx,
