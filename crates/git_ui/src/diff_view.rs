@@ -6,7 +6,7 @@ use editor::{Editor, EditorEvent, MultiBuffer};
 
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, Window,
+    FocusHandle, Focusable, IntoElement, Render, Task, Window,
 };
 use language::{Buffer, Capability, LanguageRegistry, LineEnding};
 use project::Project;
@@ -27,8 +27,6 @@ pub struct DiffView {
     multibuffer: Entity<MultiBuffer>,
 }
 
-const FILE_NAMESPACE: u32 = 1;
-
 impl DiffView {
     pub fn open(
         old: PathBuf,
@@ -36,40 +34,39 @@ impl DiffView {
         workspace: &Workspace,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Task<Result<Entity<Self>>> {
         let workspace = workspace.weak_handle();
-        window
-            .spawn(cx, async move |cx| {
-                let (project, language_registry, fs) = workspace.update(cx, |workspace, cx| {
-                    (
-                        workspace.project().clone(),
-                        workspace.project().read(cx).languages().clone(),
-                        workspace.app_state().fs.clone(),
-                    )
-                })?;
-                dbg!("a");
-                let old_text = fs.load(&old).await?;
-                let new_text = fs.load(&new).await?;
-                let buffer = cx.new(|cx| {
-                    let mut b = Buffer::local_normalized(old_text.into(), LineEnding::Unix, cx);
-                    b.set_capability(Capability::ReadOnly, cx);
-                    b
-                })?;
+        window.spawn(cx, async move |cx| {
+            let (project, language_registry, fs) = workspace.update(cx, |workspace, cx| {
+                (
+                    workspace.project().clone(),
+                    workspace.project().read(cx).languages().clone(),
+                    workspace.app_state().fs.clone(),
+                )
+            })?;
+            let old_text = fs.load(&old).await?;
+            let new_text = fs.load(&new).await?;
+            let buffer = cx.new(|cx| {
+                let mut b = Buffer::local_normalized(old_text.into(), LineEnding::Unix, cx);
+                b.set_capability(Capability::ReadOnly, cx);
+                b
+            })?;
 
-                let buffer_diff =
-                    build_buffer_diff(Some(new_text), &buffer, &language_registry, cx).await?;
+            let buffer_diff =
+                build_buffer_diff(Some(new_text), &buffer, &language_registry, cx).await?;
 
-                workspace.update_in(cx, |workspace, window, cx| {
-                    let diff_view = cx
-                        .new(|cx| DiffView::new(buffer, buffer_diff, project.clone(), window, cx));
+            workspace.update_in(cx, |workspace, window, cx| {
+                let diff_view =
+                    cx.new(|cx| DiffView::new(buffer, buffer_diff, project.clone(), window, cx));
 
-                    let pane = workspace.active_pane();
-                    pane.update(cx, |pane, cx| {
-                        pane.add_item(Box::new(diff_view), true, true, None, window, cx);
-                    })
-                })
+                let pane = workspace.active_pane();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
+                });
+
+                diff_view
             })
-            .detach_and_log_err(cx);
+        })
     }
 
     pub fn new(

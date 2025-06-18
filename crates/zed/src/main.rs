@@ -14,7 +14,6 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use git_ui::diff_view::DiffView;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
@@ -47,10 +46,10 @@ use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
-    OpenListener, OpenRequest, app_menus, build_window_options, derive_paths_with_position,
-    handle_cli_connection, handle_keymap_file_changes, handle_settings_changed,
-    handle_settings_file_changes, initialize_workspace, inline_completion_registry,
-    open_paths_with_positions,
+    OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
+    derive_paths_with_position, handle_cli_connection, handle_keymap_file_changes,
+    handle_settings_changed, handle_settings_file_changes, initialize_workspace,
+    inline_completion_registry, open_paths_with_positions,
 };
 
 #[cfg(feature = "mimalloc")]
@@ -176,6 +175,8 @@ pub fn main() {
     }
 
     let args = Args::parse();
+
+    dbg!(&args);
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
@@ -330,7 +331,12 @@ pub fn main() {
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
-        move |urls| open_listener.open_urls(urls)
+        move |urls| {
+            open_listener.open(RawOpenRequest {
+                urls,
+                diff_paths: Vec::new(),
+            })
+        }
     });
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
@@ -659,15 +665,21 @@ pub fn main() {
             .filter_map(|arg| parse_url_arg(arg, cx).log_err())
             .collect();
 
-        if !urls.is_empty() {
-            open_listener.open_urls(urls)
+        let diff_paths: Vec<[String; 2]> = args
+            .diff
+            .chunks(2)
+            .map(|chunk| [chunk[0].clone(), chunk[1].clone()])
+            .collect();
+
+        if !urls.is_empty() || !diff_paths.is_empty() {
+            open_listener.open(RawOpenRequest { urls, diff_paths })
         }
 
         match open_rx
             .try_next()
             .ok()
             .flatten()
-            .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
+            .and_then(|request| OpenRequest::parse(request, cx).log_err())
         {
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
@@ -734,13 +746,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     let mut task = None;
-    if !request.open_paths.is_empty() {
+    if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(async move |mut cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
+                &request.diff_paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,
@@ -879,62 +892,56 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    // if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-    //     for location in locations {
-    //         match location {
-    //             SerializedWorkspaceLocation::Local(location, _) => {
-    //                 let task = cx.update(|cx| {
-    //                     workspace::open_paths(
-    //                         location.paths().as_ref(),
-    //                         app_state.clone(),
-    //                         workspace::OpenOptions::default(),
-    //                         cx,
-    //                     )
-    //                 })?;
-    //                 task.await?;
-    //             }
-    //             SerializedWorkspaceLocation::Ssh(ssh) => {
-    //                 let connection_options = cx.update(|cx| {
-    //                     SshSettings::get_global(cx)
-    //                         .connection_options_for(ssh.host, ssh.port, ssh.user)
-    //                 })?;
-    //                 let app_state = app_state.clone();
-    //                 cx.spawn(async move |cx| {
-    //                     recent_projects::open_ssh_project(
-    //                         connection_options,
-    //                         ssh.paths.into_iter().map(PathBuf::from).collect(),
-    //                         app_state,
-    //                         workspace::OpenOptions::default(),
-    //                         cx,
-    //                     )
-    //                     .await
-    //                     .log_err();
-    //                 })
-    //                 .detach();
-    //             }
-    //         }
-    //     }
-    // } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-    //     cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
-    // } else {
-    cx.update(|cx| {
-        workspace::open_new(
-            Default::default(),
-            app_state,
-            cx,
-            |workspace, window, cx| {
-                DiffView::open(
-                    PathBuf::from("/Users/conrad/0/go/parallel/LICENSE.MIT"),
-                    PathBuf::from("/Users/conrad/0/go/automerge-go/LICENSE.MIT"),
-                    workspace,
-                    window,
-                    cx,
-                )
-            },
-        )
-    })?
-    .await?;
-    // }
+    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+        for location in locations {
+            match location {
+                SerializedWorkspaceLocation::Local(location, _) => {
+                    let task = cx.update(|cx| {
+                        workspace::open_paths(
+                            location.paths().as_ref(),
+                            app_state.clone(),
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                    })?;
+                    task.await?;
+                }
+                SerializedWorkspaceLocation::Ssh(ssh) => {
+                    let connection_options = cx.update(|cx| {
+                        SshSettings::get_global(cx)
+                            .connection_options_for(ssh.host, ssh.port, ssh.user)
+                    })?;
+                    let app_state = app_state.clone();
+                    cx.spawn(async move |cx| {
+                        recent_projects::open_ssh_project(
+                            connection_options,
+                            ssh.paths.into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                }
+            }
+        }
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
+    } else {
+        cx.update(|cx| {
+            workspace::open_new(
+                Default::default(),
+                app_state,
+                cx,
+                |workspace, window, cx| {
+                    Editor::new_file(workspace, &Default::default(), window, cx)
+                },
+            )
+        })?
+        .await?;
+    }
 
     Ok(())
 }
@@ -1033,6 +1040,10 @@ struct Args {
     ///
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
+
+    /// Pairs of file paths to diff. Can be specified multiple times.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    diff: Vec<String>,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location.
