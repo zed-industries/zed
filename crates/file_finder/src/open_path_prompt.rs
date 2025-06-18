@@ -193,7 +193,6 @@ impl OpenPathPrompt {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        println!("-> LOCAL: Opening path prompt");
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::current());
@@ -239,8 +238,6 @@ impl PickerDelegate for OpenPathDelegate {
         let lister = &self.lister;
         let (dir, suffix) = get_dir_and_suffix(&query, self.path_style);
 
-        println!("-> Updating matches for query: {query:?}, dir: {dir:?}, suffix: {suffix:?}");
-        println!("-> with path style: {:?}", self.path_style);
         let query = match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
@@ -783,6 +780,7 @@ fn path_candidates(
         .collect()
 }
 
+#[cfg(target_os = "windows")]
 fn get_dir_and_suffix(query: &str, path_style: PathStyle) -> (String, String) {
     let last_item = Path::new(query)
         .file_name()
@@ -800,12 +798,43 @@ fn get_dir_and_suffix(query: &str, path_style: PathStyle) -> (String, String) {
             }
         }
         PathStyle::Windows => {
-            if dir.is_empty() {
+            if dir.len() < 3 {
                 dir = "C:\\".to_string();
             }
         }
     }
     (dir, suffix)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_dir_and_suffix(query: &str, path_style: PathStyle) -> (String, String) {
+    match path_style {
+        PathStyle::Posix => {
+            let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
+                (query[..index].to_string(), query[index + 1..].to_string())
+            } else {
+                (query, String::new())
+            };
+            if !dir.ends_with('/') {
+                dir.push_str('/');
+            }
+            (dir, suffix)
+        }
+        PathStyle::Windows => {
+            let (mut dir, suffix) = if let Some(index) = query.rfind('\\') {
+                (query[..index].to_string(), query[index + 1..].to_string())
+            } else {
+                (query, String::new())
+            };
+            if dir.len() < 3 {
+                dir = "C:\\".to_string();
+            }
+            if !dir.ends_with('\\') {
+                dir.push_str('\\');
+            }
+            (dir, suffix)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -821,7 +850,7 @@ mod tests {
         assert_eq!(suffix, "");
 
         let (dir, suffix) = get_dir_and_suffix("C:", PathStyle::Windows);
-        assert_eq!(dir, "C:");
+        assert_eq!(dir, "C:\\");
         assert_eq!(suffix, "");
 
         let (dir, suffix) = get_dir_and_suffix("C:\\", PathStyle::Windows);
