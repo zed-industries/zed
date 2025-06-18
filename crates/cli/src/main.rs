@@ -240,7 +240,10 @@ fn main() -> Result<()> {
     let mut anonymous_fd_tmp_files = vec![];
 
     for path in args.diff.chunks(2) {
-        diff_paths.push([path[0].to_owned(), path[1].to_owned()]);
+        diff_paths.push([
+            parse_path_with_position(&path[0])?,
+            parse_path_with_position(&path[1])?,
+        ]);
     }
 
     for path in args.paths_with_position.iter() {
