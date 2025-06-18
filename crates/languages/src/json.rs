@@ -31,6 +31,8 @@ use std::{
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
+use crate::PackageJsonData;
+
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
 
@@ -62,17 +64,15 @@ impl ContextProvider for JsonTaskProvider {
                 .await
                 .ok()?;
 
-            let as_json = serde_json_lenient::Value::from_str(&contents.text).ok()?;
             let gutter_tasks = [
                 TaskTemplate {
                     label: "package script $ZED_CUSTOM_script".to_owned(),
                     command: "npm".to_owned(),
                     args: vec![
-                        "--prefix".into(),
-                        "$ZED_DIRNAME".into(),
                         "run".into(),
                         VariableName::Custom("script".into()).template_value(),
                     ],
+                    cwd: Some(VariableName::Dirname.template_value()),
                     tags: vec!["package-script".into()],
                     ..TaskTemplate::default()
                 },
@@ -88,27 +88,34 @@ impl ContextProvider for JsonTaskProvider {
                     ..TaskTemplate::default()
                 },
             ];
-            let tasks = as_json
-                .get("scripts")?
-                .as_object()?
-                .keys()
-                .map(|key| TaskTemplate {
-                    label: format!("run {key}"),
-                    command: "npm".to_owned(),
-                    args: vec![
-                        "--prefix".into(),
-                        "$ZED_DIRNAME".into(),
-                        "run".into(),
-                        key.into(),
-                    ],
-                    ..TaskTemplate::default()
-                })
-                .chain(gutter_tasks)
-                .collect();
-            Some(TaskTemplates(tasks))
+
+            let task_templates = serde_json_lenient::from_str::<
+                HashMap<String, serde_json_lenient::Value>,
+            >(&contents.text)
+            .ok()
+            .into_iter()
+            .flat_map(|package_json| {
+                let package_json = PackageJsonData::new(file.path.clone(), package_json);
+                let command = package_json.package_manager.unwrap_or("npm").to_owned();
+                package_json
+                    .scripts
+                    .into_iter()
+                    .map(move |(_, key)| TaskTemplate {
+                        label: format!("run {key}"),
+                        command: command.clone(),
+                        args: vec!["run".into(), key.into()],
+                        cwd: Some(VariableName::Dirname.template_value()),
+                        ..TaskTemplate::default()
+                    })
+            })
+            .chain(gutter_tasks)
+            .collect();
+
+            Some(TaskTemplates(task_templates))
         })
     }
 }
+
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
