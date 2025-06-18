@@ -1518,25 +1518,16 @@ impl Vim {
             return;
         }
 
-        let find_mode =
-            |cx: &mut Context<'_, Vim>| match VimSettings::get_global(cx).use_multiline_find {
-                UseMultilineFind::Never => FindRange::SingleLine,
-                UseMultilineFind::Always => FindRange::MultiLine,
-                UseMultilineFind::OnlyHelix => {
-                    if self.mode == Mode::HelixNormal {
-                        FindRange::MultiLine
-                    } else {
-                        FindRange::SingleLine
-                    }
-                }
-            };
-
         match self.active_operator() {
             Some(Operator::FindForward { before }) => {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
-                    mode: find_mode(cx),
+                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    },
                     smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
                 Vim::globals(cx).last_find = Some(find.clone());
@@ -1546,7 +1537,11 @@ impl Vim {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
-                    mode: find_mode(cx),
+                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    },
                     smartcase: VimSettings::get_global(cx).use_smartcase_find,
                 };
                 Vim::globals(cx).last_find = Some(find.clone());
@@ -1713,17 +1708,6 @@ pub enum UseSystemClipboard {
     /// Use system clipboard for yank operations.
     OnYank,
 }
-/// Controls if find can wrap lines.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UseMultilineFind {
-    // Don't wrap lines.
-    Never,
-    // Wrap lines
-    Always,
-    // Don't wrap lines, unless in helix mode.
-    OnlyHelix,
-}
 
 /// The settings for cursor shape.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -1751,7 +1735,7 @@ struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
-    pub use_multiline_find: UseMultilineFind,
+    pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
@@ -1763,7 +1747,7 @@ struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<UseMultilineFind>,
+    pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,

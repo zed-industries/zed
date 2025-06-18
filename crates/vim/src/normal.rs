@@ -805,7 +805,7 @@ mod test {
     use settings::SettingsStore;
 
     use crate::{
-        UseMultilineFind, VimSettings, motion,
+        VimSettings, motion,
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -1537,7 +1537,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_multiline_find = Some(UseMultilineFind::Always);
+                s.use_multiline_find = Some(true);
             });
         });
 
@@ -1579,7 +1579,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_multiline_find = Some(UseMultilineFind::Always);
+                s.use_multiline_find = Some(true);
             });
         });
 
