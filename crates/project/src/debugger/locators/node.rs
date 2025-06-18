@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::PathBuf};
+use std::borrow::Cow;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -32,34 +32,13 @@ impl DapLocator for NodeLocator {
             return None;
         }
 
-        let test_binary_base = match build_config.args.first()?.as_str() {
-            "jest" => Some("${ZED_CUSTOM_TYPESCRIPT_JEST_PACKAGE_PATH}".to_owned()),
-            "mocha" => Some("${ZED_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH}".to_owned()),
-            "vitest" => Some("${ZED_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH}".to_owned()),
-            "jasmine" => Some("${ZED_CUSTOM_TYPESCRIPT_JASMINE_PACKAGE_PATH}".to_owned()),
-            _ => None,
-        };
-
-        let (runtime_executable, args) = if let Some(test_binary_base) = test_binary_base {
-            (
-                PathBuf::from(test_binary_base)
-                    .join("node_modules")
-                    .join(".bin")
-                    .join(build_config.args.first()?.as_str())
-                    .to_string_lossy()
-                    .to_string(),
-                build_config.args[1..].iter().cloned().collect::<Vec<_>>(),
-            )
-        } else {
-            (build_config.command.clone(), build_config.args.clone())
-        };
-
         let config = serde_json::json!({
             "request": "launch",
             "type": "pwa-node",
-            "args": args,
+            "args": build_config.args.clone(),
             "cwd": build_config.cwd.clone(),
-            "runtimeExecutable": runtime_executable,
+            "runtimeExecutable": build_config.command.clone(),
+            "env": build_config.env.clone(),
             "runtimeArgs": ["--inspect-brk"],
             "console": "integratedTerminal",
         });

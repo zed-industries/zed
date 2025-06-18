@@ -165,6 +165,8 @@ impl PackageJsonData {
                 label: "jest file test".to_owned(),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "jest".to_owned(),
                     "--runInBand".to_owned(),
                     VariableName::File.template_value(),
@@ -176,6 +178,8 @@ impl PackageJsonData {
                 label: format!("jest test {}", VariableName::Symbol.template_value()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "jest".to_owned(),
                     "--runInBand".to_owned(),
                     "--testNamePattern".to_owned(),
@@ -200,6 +204,8 @@ impl PackageJsonData {
                 label: format!("{} file test", "vitest".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
                     "--poolOptions.forks.minForks=0".to_owned(),
@@ -217,6 +223,8 @@ impl PackageJsonData {
                 ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
                     "--poolOptions.forks.minForks=0".to_owned(),
@@ -242,7 +250,12 @@ impl PackageJsonData {
             task_templates.0.push(TaskTemplate {
                 label: format!("{} file test", "mocha".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["mocha".to_owned(), VariableName::File.template_value()],
+                args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
+                    "mocha".to_owned(),
+                    VariableName::File.template_value(),
+                ],
                 cwd: Some(TYPESCRIPT_MOCHA_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
@@ -254,6 +267,8 @@ impl PackageJsonData {
                 ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "mocha".to_owned(),
                     "--grep".to_owned(),
                     format!("\"{}\"", VariableName::Symbol.template_value()),
@@ -273,7 +288,12 @@ impl PackageJsonData {
             task_templates.0.push(TaskTemplate {
                 label: format!("{} file test", "jasmine".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["jasmine".to_owned(), VariableName::File.template_value()],
+                args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
+                    "jasmine".to_owned(),
+                    VariableName::File.template_value(),
+                ],
                 cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
@@ -285,6 +305,8 @@ impl PackageJsonData {
                 ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "jasmine".to_owned(),
                     format!("--filter={}", VariableName::Symbol.template_value()),
                     VariableName::File.template_value(),
