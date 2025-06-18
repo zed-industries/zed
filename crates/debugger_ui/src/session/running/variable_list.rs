@@ -5,8 +5,8 @@ use dap::{
 };
 use editor::Editor;
 use gpui::{
-    Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, FocusHandle,
-    Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
+    Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
+    FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
     TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -636,14 +636,18 @@ impl VariableList {
         let Some(selection) = self.selection.as_ref() else {
             return;
         };
+
         let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
             return;
         };
-        let Some(variable) = entry.as_variable() else {
-            return;
+
+        let variable_value = match &entry.dap_kind {
+            EntryKind::Watcher(watcher) => watcher.value.to_string(),
+            EntryKind::Variable(variable) => variable.value.clone(),
+            EntryKind::Scope(_) => return,
         };
 
-        let editor = Self::create_variable_editor(&variable.value, window, cx);
+        let editor = Self::create_variable_editor(&variable_value, window, cx);
         self.edited_path = Some((entry.path.clone(), editor));
 
         cx.notify();
@@ -834,6 +838,72 @@ impl VariableList {
         VariableColor { name, value }
     }
 
+    fn render_variable_value(
+        &self,
+        entry: &ListEntry,
+        variable_color: &VariableColor,
+        value: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if !value.is_empty() {
+            div()
+                .w_full()
+                .id(entry.item_value_id())
+                .map(|this| {
+                    if let Some((_, editor)) = self
+                        .edited_path
+                        .as_ref()
+                        .filter(|(path, _)| path == &entry.path)
+                    {
+                        this.child(div().size_full().px_2().child(editor.clone()))
+                    } else {
+                        this.text_color(cx.theme().colors().text_muted)
+                            .when(
+                                !self.disabled
+                                    && self
+                                        .session
+                                        .read(cx)
+                                        .capabilities()
+                                        .supports_set_variable
+                                        .unwrap_or_default(),
+                                |this| {
+                                    let path = entry.path.clone();
+                                    let variable_value = value.clone();
+                                    this.on_click(cx.listener(
+                                        move |this, click: &ClickEvent, window, cx| {
+                                            if click.down.click_count < 2 {
+                                                return;
+                                            }
+                                            let editor = Self::create_variable_editor(
+                                                &variable_value,
+                                                window,
+                                                cx,
+                                            );
+                                            this.edited_path = Some((path.clone(), editor));
+
+                                            cx.notify();
+                                        },
+                                    ))
+                                },
+                            )
+                            .child(
+                                Label::new(format!("=  {}", &value))
+                                    .single_line()
+                                    .truncate()
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .when_some(variable_color.value, |this, color| {
+                                        this.color(Color::from(color))
+                                    }),
+                            )
+                    }
+                })
+                .into_any_element()
+        } else {
+            Empty.into_any_element()
+        }
+    }
+
     // todo!(debugger): This function should never remove the first character of a string
     // it should also not iterate through all characters, we should  choose a spot in the middle
     // check the bounds and split the string there
@@ -845,42 +915,37 @@ impl VariableList {
         }
 
         // Reserve space for the ellipsis "..."
-        let ellipsis = "...";
-        let ellipsis_len = 3; // "..." is 3 characters
+        const ELLIPSIS: &str = "...";
+        const MIN_LENGTH: usize = 3;
 
-        if max_chars <= ellipsis_len {
-            return ellipsis.to_string();
+        if ELLIPSIS.len() + MIN_LENGTH > max_chars {
+            return s.chars().take(MIN_LENGTH).collect();
         }
 
-        let available_chars = max_chars - ellipsis_len;
+        let available_chars = max_chars - ELLIPSIS.len();
+
         let start_chars = available_chars / 2;
         let end_chars = available_chars - start_chars;
+        let skip_chars = char_count - end_chars;
 
-        // Find the byte position after start_chars characters
         let mut start_boundary = 0;
+        let mut end_boundary = s.len();
+
         for (i, (byte_idx, _)) in s.char_indices().enumerate() {
             if i == start_chars {
                 start_boundary = byte_idx;
-                break;
             }
-        }
 
-        // Find the byte position to keep end_chars characters from the end
-        let mut end_boundary = s.len();
-        let skip_chars = char_count - end_chars;
-        for (i, (byte_idx, _)) in s.char_indices().enumerate() {
             if i == skip_chars {
                 end_boundary = byte_idx;
-                break;
             }
         }
 
         if start_boundary >= end_boundary {
-            // If boundaries overlap, just use ellipsis
-            return ellipsis.to_string();
+            return s.chars().take(MIN_LENGTH).collect();
         }
 
-        format!("{}{}{}", &s[..start_boundary], ellipsis, &s[end_boundary..])
+        format!("{}{}{}", &s[..start_boundary], ELLIPSIS, &s[end_boundary..])
     }
 
     fn render_watcher(
@@ -983,32 +1048,20 @@ impl VariableList {
                         .text_ui_sm(cx)
                         .w_full()
                         .child(
-                            Label::new(Self::center_truncate_string(
-                                &watcher.expression,
+                            Label::new(&Self::center_truncate_string(
+                                &watcher.expression.to_string(),
                                 watcher_len,
                             ))
                             .when_some(variable_color.name, |this, color| {
                                 this.color(Color::from(color))
                             }),
                         )
-                        .when(!watcher.value.is_empty(), |this| {
-                            this.child(
-                                div()
-                                    .w_full()
-                                    .id(entry.item_value_id())
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child(
-                                        Label::new(format!("=  {}", &watcher.value))
-                                            .single_line()
-                                            .truncate()
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .when_some(variable_color.value, |this, color| {
-                                                this.color(Color::from(color))
-                                            }),
-                                    ),
-                            )
-                        }),
+                        .child(self.render_variable_value(
+                            &entry,
+                            &variable_color,
+                            watcher.value.to_string(),
+                            cx,
+                        )),
                 )
                 .end_slot(
                     IconButton::new(
@@ -1208,58 +1261,12 @@ impl VariableList {
                                 this.color(Color::from(color))
                             }),
                         )
-                        .when(!dap.value.is_empty(), |this| {
-                            this.child(div().w_full().id(variable.item_value_id()).map(|this| {
-                                if let Some((_, editor)) = self
-                                    .edited_path
-                                    .as_ref()
-                                    .filter(|(path, _)| path == &variable.path)
-                                {
-                                    this.child(div().size_full().px_2().child(editor.clone()))
-                                } else {
-                                    this.text_color(cx.theme().colors().text_muted)
-                                        .when(
-                                            !self.disabled
-                                                && self
-                                                    .session
-                                                    .read(cx)
-                                                    .capabilities()
-                                                    .supports_set_variable
-                                                    .unwrap_or_default(),
-                                            |this| {
-                                                let path = variable.path.clone();
-                                                let variable_value = dap.value.clone();
-                                                this.on_click(cx.listener(
-                                                    move |this, click: &ClickEvent, window, cx| {
-                                                        if click.down.click_count < 2 {
-                                                            return;
-                                                        }
-                                                        let editor = Self::create_variable_editor(
-                                                            &variable_value,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                        this.edited_path =
-                                                            Some((path.clone(), editor));
-
-                                                        cx.notify();
-                                                    },
-                                                ))
-                                            },
-                                        )
-                                        .child(
-                                            Label::new(format!("=  {}", &dap.value))
-                                                .single_line()
-                                                .truncate()
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .when_some(variable_color.value, |this, color| {
-                                                    this.color(Color::from(color))
-                                                }),
-                                        )
-                                }
-                            }))
-                        }),
+                        .child(self.render_variable_value(
+                            &variable,
+                            &variable_color,
+                            dap.value.clone(),
+                            cx,
+                        )),
                 ),
             )
             .into_any()
