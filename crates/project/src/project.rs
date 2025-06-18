@@ -79,7 +79,7 @@ use language::{
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
-    LanguageServerId, LanguageServerName, MessageActionItem,
+    LanguageServerId, LanguageServerName, LanguageServerSelector, MessageActionItem,
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
@@ -2499,7 +2499,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, false, cx)
+            lsp_store.register_buffer_with_language_servers(&buffer, Vec::new(), false, cx)
         })
     }
 
@@ -3144,18 +3144,18 @@ impl Project {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        only_restart_rervers: Vec<LanguageServerId>,
+        only_restart_servers: Vec<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_rervers, cx)
+            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_servers, cx)
         })
     }
 
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        also_restart_servers: Vec<LanguageServerId>,
+        also_restart_servers: Vec<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {

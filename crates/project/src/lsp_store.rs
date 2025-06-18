@@ -59,9 +59,9 @@ use lsp::{
     DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
     FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
     LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
-    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, SymbolKind,
-    TextEdit, WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
-    notification::DidRenameFiles,
+    LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType, OneOf,
+    RenameFilesParams, SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
+    WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -4097,6 +4097,7 @@ impl LspStore {
     pub(crate) fn register_buffer_with_language_servers(
         &mut self,
         buffer: &Entity<Buffer>,
+        only_restart_servers: Vec<LanguageServerSelector>,
         ignore_refcounts: bool,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
@@ -4147,6 +4148,26 @@ impl LspStore {
                     .request(proto::RegisterBufferWithLanguageServers {
                         project_id: upstream_project_id,
                         buffer_id,
+                        only_servers: only_restart_servers
+                            .into_iter()
+                            .map(|selector| {
+                                let selector = match selector {
+                                    LanguageServerSelector::Id(language_server_id) => {
+                                        proto::language_server_selector::Selector::ServerId(
+                                            language_server_id.to_proto(),
+                                        )
+                                    }
+                                    LanguageServerSelector::Name(language_server_name) => {
+                                        proto::language_server_selector::Selector::Name(
+                                            language_server_name.to_string(),
+                                        )
+                                    }
+                                };
+                                proto::LanguageServerSelector {
+                                    selector: Some(selector),
+                                }
+                            })
+                            .collect(),
                     })
                     .await
             })
@@ -7870,6 +7891,7 @@ impl LspStore {
                 return upstream_client.send(proto::RegisterBufferWithLanguageServers {
                     project_id: upstream_project_id,
                     buffer_id: buffer_id.to_proto(),
+                    only_servers: envelope.payload.only_servers,
                 });
             }
 
@@ -7877,7 +7899,28 @@ impl LspStore {
                 anyhow::bail!("buffer is not open");
             };
 
-            let handle = this.register_buffer_with_language_servers(&buffer, false, cx);
+            let handle = this.register_buffer_with_language_servers(
+                &buffer,
+                envelope
+                    .payload
+                    .only_servers
+                    .into_iter()
+                    .filter_map(|selector| {
+                        Some(match selector.selector? {
+                            proto::language_server_selector::Selector::ServerId(server_id) => {
+                                LanguageServerSelector::Id(LanguageServerId::from_proto(server_id))
+                            }
+                            proto::language_server_selector::Selector::Name(name) => {
+                                LanguageServerSelector::Name(LanguageServerName(
+                                    SharedString::from(name),
+                                ))
+                            }
+                        })
+                    })
+                    .collect(),
+                false,
+                cx,
+            );
             this.buffer_store().update(cx, |buffer_store, _| {
                 buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
             });
@@ -9031,9 +9074,20 @@ impl LspStore {
                 buffers,
                 envelope
                     .payload
-                    .server_ids
+                    .only_servers
                     .into_iter()
-                    .map(LanguageServerId::from_proto)
+                    .filter_map(|selector| {
+                        Some(match selector.selector? {
+                            proto::language_server_selector::Selector::ServerId(server_id) => {
+                                LanguageServerSelector::Id(LanguageServerId::from_proto(server_id))
+                            }
+                            proto::language_server_selector::Selector::Name(name) => {
+                                LanguageServerSelector::Name(LanguageServerName(
+                                    SharedString::from(name),
+                                ))
+                            }
+                        })
+                    })
                     .collect(),
                 cx,
             );
@@ -9054,9 +9108,20 @@ impl LspStore {
                 buffers,
                 envelope
                     .payload
-                    .server_ids
+                    .also_servers
                     .into_iter()
-                    .map(LanguageServerId::from_proto)
+                    .filter_map(|selector| {
+                        Some(match selector.selector? {
+                            proto::language_server_selector::Selector::ServerId(server_id) => {
+                                LanguageServerSelector::Id(LanguageServerId::from_proto(server_id))
+                            }
+                            proto::language_server_selector::Selector::Name(name) => {
+                                LanguageServerSelector::Name(LanguageServerName(
+                                    SharedString::from(name),
+                                ))
+                            }
+                        })
+                    })
                     .collect(),
                 cx,
             );
@@ -9520,7 +9585,7 @@ impl LspStore {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        only_restart_rervers: Vec<LanguageServerId>,
+        only_restart_servers: Vec<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -9530,23 +9595,44 @@ impl LspStore {
                     .into_iter()
                     .map(|b| b.read(cx).remote_id().to_proto())
                     .collect(),
-                server_ids: only_restart_rervers
+                only_servers: only_restart_servers
                     .into_iter()
-                    .map(LanguageServerId::to_proto)
+                    .map(|selector| {
+                        let selector = match selector {
+                            LanguageServerSelector::Id(language_server_id) => {
+                                proto::language_server_selector::Selector::ServerId(
+                                    language_server_id.to_proto(),
+                                )
+                            }
+                            LanguageServerSelector::Name(language_server_name) => {
+                                proto::language_server_selector::Selector::Name(
+                                    language_server_name.to_string(),
+                                )
+                            }
+                        };
+                        proto::LanguageServerSelector {
+                            selector: Some(selector),
+                        }
+                    })
                     .collect(),
             });
             cx.background_spawn(request).detach_and_log_err(cx);
         } else {
-            let stop_task = if only_restart_rervers.is_empty() {
+            let stop_task = if only_restart_servers.is_empty() {
                 self.stop_local_language_servers_for_buffers(&buffers, Vec::new(), cx)
             } else {
-                self.stop_local_language_servers_for_buffers(&[], only_restart_rervers, cx)
+                self.stop_local_language_servers_for_buffers(&[], only_restart_servers.clone(), cx)
             };
             cx.spawn(async move |this, cx| {
                 stop_task.await;
                 this.update(cx, |this, cx| {
                     for buffer in buffers {
-                        this.register_buffer_with_language_servers(&buffer, true, cx);
+                        this.register_buffer_with_language_servers(
+                            &buffer,
+                            only_restart_servers.clone(),
+                            true,
+                            cx,
+                        );
                     }
                 })
                 .ok()
@@ -9558,7 +9644,7 @@ impl LspStore {
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        also_restart_servers: Vec<LanguageServerId>,
+        also_restart_servers: Vec<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -9568,9 +9654,25 @@ impl LspStore {
                     .into_iter()
                     .map(|b| b.read(cx).remote_id().to_proto())
                     .collect(),
-                server_ids: also_restart_servers
+                also_servers: also_restart_servers
                     .into_iter()
-                    .map(LanguageServerId::to_proto)
+                    .map(|selector| {
+                        let selector = match selector {
+                            LanguageServerSelector::Id(language_server_id) => {
+                                proto::language_server_selector::Selector::ServerId(
+                                    language_server_id.to_proto(),
+                                )
+                            }
+                            LanguageServerSelector::Name(language_server_name) => {
+                                proto::language_server_selector::Selector::Name(
+                                    language_server_name.to_string(),
+                                )
+                            }
+                        };
+                        proto::LanguageServerSelector {
+                            selector: Some(selector),
+                        }
+                    })
                     .collect(),
             });
             cx.background_spawn(request).detach_and_log_err(cx);
@@ -9583,21 +9685,48 @@ impl LspStore {
     fn stop_local_language_servers_for_buffers(
         &mut self,
         buffers: &[Entity<Buffer>],
-        also_restart_servers: Vec<LanguageServerId>,
+        also_restart_servers: Vec<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let Some(local) = self.as_local_mut() else {
             return Task::ready(());
         };
-        let language_servers_to_stop = buffers
-            .iter()
-            .flat_map(|buffer| {
-                buffer.update(cx, |buffer, cx| {
-                    local.language_server_ids_for_buffer(buffer, cx)
-                })
+        let mut language_server_names_to_stop = BTreeSet::default();
+        let mut language_servers_to_stop = also_restart_servers
+            .into_iter()
+            .flat_map(|selector| match selector {
+                LanguageServerSelector::Id(id) => Some(id),
+                LanguageServerSelector::Name(name) => {
+                    language_server_names_to_stop.insert(name);
+                    None
+                }
             })
-            .chain(also_restart_servers)
             .collect::<BTreeSet<_>>();
+
+        let mut covered_worktrees = HashSet::default();
+        for buffer in buffers {
+            buffer.update(cx, |buffer, cx| {
+                language_servers_to_stop.extend(local.language_server_ids_for_buffer(buffer, cx));
+                if let Some(worktree_id) = buffer.file().map(|f| f.worktree_id(cx)) {
+                    if covered_worktrees.insert(worktree_id) {
+                        language_servers_to_stop.extend(
+                            language_server_names_to_stop
+                                .clone()
+                                .into_iter()
+                                .flat_map(|name| {
+                                    local
+                                        .language_server_ids
+                                        .get(&(worktree_id, name))
+                                        .into_iter()
+                                        .flatten()
+                                        .copied()
+                                }),
+                        );
+                    }
+                }
+            });
+        }
+
         local.lsp_tree.update(cx, |this, _| {
             this.remove_nodes(&language_servers_to_stop);
         });

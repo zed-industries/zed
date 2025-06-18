@@ -624,6 +624,7 @@ message ApplyCodeActionKindResponse {
 message RegisterBufferWithLanguageServers {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+    repeated LanguageServerSelector only_servers = 3;
 }
 
 enum FormatTrigger {
@@ -761,16 +762,23 @@ message MultiLspQuery {
 
 message AllLanguageServers {}
 
+message LanguageServerSelector {
+    oneof selector {
+        uint64 server_id = 1;
+        string name = 2;
+    }
+}
+
 message RestartLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
-    repeated uint64 server_ids = 3;
+    repeated LanguageServerSelector only_servers = 3;
 }
 
 message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
-    repeated uint64 server_ids = 3;
+    repeated LanguageServerSelector also_servers = 3;
 }
 
 message MultiLspQueryResponse {

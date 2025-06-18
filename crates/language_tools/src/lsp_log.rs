@@ -9,8 +9,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    IoKind, LanguageServer, LanguageServerName, MessageType, SetTraceParams, TraceValue,
-    notification::SetTrace,
+    IoKind, LanguageServer, LanguageServerName, LanguageServerSelector, MessageType,
+    SetTraceParams, TraceValue, notification::SetTrace,
 };
 use project::{Project, WorktreeId, search::SearchQuery};
 use std::{any::TypeId, borrow::Cow, sync::Arc};
@@ -540,10 +540,20 @@ impl LogStore {
         Some(())
     }
 
+    pub fn has_server_logs(&self, server: &LanguageServerSelector) -> bool {
+        match server {
+            LanguageServerSelector::Id(id) => self.language_servers.contains_key(id),
+            LanguageServerSelector::Name(name) => self
+                .language_servers
+                .iter()
+                .any(|(_, state)| state.name.as_ref() == Some(name)),
+        }
+    }
+
     pub fn open_server_log(
         &mut self,
         workspace: WeakEntity<Workspace>,
-        server_id: LanguageServerId,
+        server: LanguageServerSelector,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -554,15 +564,32 @@ impl LogStore {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
+                    let tool_log_store = log_store.clone();
                     let log_view = get_or_create_tool(
                         workspace,
                         SplitDirection::Right,
                         window,
                         cx,
-                        move |window, cx| LspLogView::new(project, log_store, window, cx),
+                        move |window, cx| LspLogView::new(project, tool_log_store, window, cx),
                     );
                     log_view.update(cx, |log_view, cx| {
-                        log_view.show_logs_for_server(server_id, window, cx);
+                        let server_id = match server {
+                            LanguageServerSelector::Id(id) => Some(id),
+                            LanguageServerSelector::Name(name) => {
+                                log_store.read(cx).language_servers.iter().find_map(
+                                    |(id, state)| {
+                                        if state.name.as_ref() == Some(&name) {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                )
+                            }
+                        };
+                        if let Some(server_id) = server_id {
+                            log_view.show_logs_for_server(server_id, window, cx);
+                        }
                     });
                 })
                 .ok();
@@ -573,7 +600,7 @@ impl LogStore {
     pub fn open_server_trace(
         &mut self,
         workspace: WeakEntity<Workspace>,
-        server_id: LanguageServerId,
+        server: LanguageServerSelector,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -584,15 +611,32 @@ impl LogStore {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
+                    let tool_log_store = log_store.clone();
                     let log_view = get_or_create_tool(
                         workspace,
                         SplitDirection::Right,
                         window,
                         cx,
-                        move |window, cx| LspLogView::new(project, log_store, window, cx),
+                        move |window, cx| LspLogView::new(project, tool_log_store, window, cx),
                     );
                     log_view.update(cx, |log_view, cx| {
-                        log_view.show_rpc_trace_for_server(server_id, window, cx);
+                        let server_id = match server {
+                            LanguageServerSelector::Id(id) => Some(id),
+                            LanguageServerSelector::Name(name) => {
+                                log_store.read(cx).language_servers.iter().find_map(
+                                    |(id, state)| {
+                                        if state.name.as_ref() == Some(&name) {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                )
+                            }
+                        };
+                        if let Some(server_id) = server_id {
+                            log_view.show_rpc_trace_for_server(server_id, window, cx);
+                        }
                     });
                 })
                 .ok();
