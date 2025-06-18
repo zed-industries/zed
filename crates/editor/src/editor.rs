@@ -196,7 +196,7 @@ pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope};
 use theme::{
-    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings,
+    ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
     observe_buffer_font_size_adjustment,
 };
 use ui::{
@@ -696,7 +696,7 @@ impl EditorActionId {
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
+type BackgroundHighlight = (fn(&Theme) -> Hsla, Arc<[Range<Anchor>]>);
 type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
 #[derive(Default)]
@@ -996,7 +996,7 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
-    background_highlights: TreeMap<TypeId, BackgroundHighlight>,
+    background_highlights: TreeMap<HighlightKey, BackgroundHighlight>,
     gutter_highlights: TreeMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
@@ -6071,7 +6071,7 @@ impl Editor {
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
-                    |theme| theme.editor_highlighted_line_background,
+                    |theme| theme.colors().editor_highlighted_line_background,
                     cx,
                 );
             });
@@ -6432,12 +6432,12 @@ impl Editor {
 
                     this.highlight_background::<DocumentHighlightRead>(
                         &read_ranges,
-                        |theme| theme.editor_document_highlight_read_background,
+                        |theme| theme.colors().editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
                         &write_ranges,
-                        |theme| theme.editor_document_highlight_write_background,
+                        |theme| theme.colors().editor_document_highlight_write_background,
                         cx,
                     );
                     cx.notify();
@@ -6539,7 +6539,7 @@ impl Editor {
                     if !match_ranges.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &match_ranges,
-                            |theme| theme.editor_document_highlight_bracket_background,
+                            |theme| theme.colors().editor_document_highlight_bracket_background,
                             cx,
                         )
                     }
@@ -15277,7 +15277,7 @@ impl Editor {
                     }
                     editor.highlight_background::<Self>(
                         &ranges,
-                        |theme| theme.editor_highlighted_line_background,
+                        |theme| theme.colors().editor_highlighted_line_background,
                         cx,
                     );
                 }
@@ -18408,7 +18408,7 @@ impl Editor {
     pub fn set_search_within_ranges(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         self.highlight_background::<SearchWithinRange>(
             ranges,
-            |colors| colors.editor_document_highlight_read_background,
+            |colors| colors.colors().editor_document_highlight_read_background,
             cx,
         )
     }
@@ -18424,11 +18424,28 @@ impl Editor {
     pub fn highlight_background<T: 'static>(
         &mut self,
         ranges: &[Range<Anchor>],
-        color_fetcher: fn(&ThemeColors) -> Hsla,
+        color_fetcher: fn(&Theme) -> Hsla,
         cx: &mut Context<Self>,
     ) {
-        self.background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
+        self.background_highlights.insert(
+            HighlightKey::Type(TypeId::of::<T>()),
+            (color_fetcher, Arc::from(ranges)),
+        );
+        self.scrollbar_marker_state.dirty = true;
+        cx.notify();
+    }
+
+    pub fn highlight_background_key<T: 'static>(
+        &mut self,
+        key: usize,
+        ranges: &[Range<Anchor>],
+        color_fetcher: fn(&Theme) -> Hsla,
+        cx: &mut Context<Self>,
+    ) {
+        self.background_highlights.insert(
+            HighlightKey::TypePlus(TypeId::of::<T>(), key),
+            (color_fetcher, Arc::from(ranges)),
+        );
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
@@ -18437,7 +18454,9 @@ impl Editor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<BackgroundHighlight> {
-        let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
+        let text_highlights = self
+            .background_highlights
+            .remove(&HighlightKey::Type(TypeId::of::<T>()))?;
         if !text_highlights.1.is_empty() {
             self.scrollbar_marker_state.dirty = true;
             cx.notify();
@@ -18524,6 +18543,30 @@ impl Editor {
     }
 
     #[cfg(feature = "test-support")]
+    pub fn all_text_highlights(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(HighlightStyle, Vec<Range<DisplayPoint>>)> {
+        let snapshot = self.snapshot(window, cx);
+        self.display_map.update(cx, |display_map, _| {
+            display_map
+                .all_text_highlights()
+                .map(|highlight| {
+                    let (style, ranges) = highlight.as_ref();
+                    (
+                        *style,
+                        ranges
+                            .iter()
+                            .map(|range| range.clone().to_display_points(&snapshot))
+                            .collect(),
+                    )
+                })
+                .collect()
+        })
+    }
+
+    #[cfg(feature = "test-support")]
     pub fn all_text_background_highlights(
         &self,
         window: &mut Window,
@@ -18533,8 +18576,7 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        let theme = cx.theme().colors();
-        self.background_highlights_in_range(start..end, &snapshot, theme)
+        self.background_highlights_in_range(start..end, &snapshot, cx.theme())
     }
 
     #[cfg(feature = "test-support")]
@@ -18543,7 +18585,9 @@ impl Editor {
 
         let highlights = self
             .background_highlights
-            .get(&TypeId::of::<items::BufferSearchHighlights>());
+            .get(&HighlightKey::Type(TypeId::of::<
+                items::BufferSearchHighlights,
+            >()));
 
         if let Some((_color, ranges)) = highlights {
             ranges
@@ -18562,11 +18606,11 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = &'a Range<Anchor>> {
         let read_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightRead>())
+            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightRead>()))
             .map(|h| &h.1);
         let write_highlights = self
             .background_highlights
-            .get(&TypeId::of::<DocumentHighlightWrite>())
+            .get(&HighlightKey::Type(TypeId::of::<DocumentHighlightWrite>()))
             .map(|h| &h.1);
         let left_position = position.bias_left(buffer);
         let right_position = position.bias_right(buffer);
@@ -18593,7 +18637,7 @@ impl Editor {
 
     pub fn has_background_highlights<T: 'static>(&self) -> bool {
         self.background_highlights
-            .get(&TypeId::of::<T>())
+            .get(&HighlightKey::Type(TypeId::of::<T>()))
             .map_or(false, |(_, highlights)| !highlights.is_empty())
     }
 
@@ -18601,7 +18645,7 @@ impl Editor {
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-        theme: &ThemeColors,
+        theme: &Theme,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let mut results = Vec::new();
         for (color_fetcher, ranges) in self.background_highlights.values() {
@@ -18642,7 +18686,10 @@ impl Editor {
         count: usize,
     ) -> Vec<RangeInclusive<DisplayPoint>> {
         let mut results = Vec::new();
-        let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
+        let Some((_, ranges)) = self
+            .background_highlights
+            .get(&HighlightKey::Type(TypeId::of::<T>()))
+        else {
             return vec![];
         };
 
@@ -18779,6 +18826,23 @@ impl Editor {
             .collect()
     }
 
+    pub fn highlight_text_key<T: 'static>(
+        &mut self,
+        key: usize,
+        ranges: Vec<Range<Anchor>>,
+        style: HighlightStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.display_map.update(cx, |map, _| {
+            map.highlight_text(
+                HighlightKey::TypePlus(TypeId::of::<T>(), key),
+                ranges,
+                style,
+            );
+        });
+        cx.notify();
+    }
+
     pub fn highlight_text<T: 'static>(
         &mut self,
         ranges: Vec<Range<Anchor>>,
@@ -18786,7 +18850,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.display_map.update(cx, |map, _| {
-            map.highlight_text(TypeId::of::<T>(), ranges, style)
+            map.highlight_text(HighlightKey::Type(TypeId::of::<T>()), ranges, style)
         });
         cx.notify();
     }
