@@ -535,6 +535,15 @@ fn into_copilot_chat(
                     messages.push(ChatMessage::User {
                         content: content_parts.into(),
                     });
+                } else if message
+                    .content
+                    .iter()
+                    .any(|c| matches!(c, MessageContent::ToolResult(_)))
+                {
+                    // Final message must be from User
+                    messages.push(ChatMessage::User {
+                        content: "(tool)".to_string().into(),
+                    });
                 }
             }
             Role::Assistant => {
