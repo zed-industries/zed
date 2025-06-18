@@ -60,7 +60,6 @@ impl DapLocator for NodeLocator {
             "args": args,
             "cwd": build_config.cwd.clone(),
             "runtimeExecutable": runtime_executable,
-            // FIXME
             "runtimeArgs": ["--inspect-brk"],
             "console": "integratedTerminal",
         });
