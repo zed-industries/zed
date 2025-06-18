@@ -154,55 +154,6 @@ async fn test_sort_snippet(cx: &mut TestAppContext) {
     assert_eq!(matches[0].string, "println!(…)");
 }
 
-// #[gpui::test]
-// async fn test_sort_matches_for_python_init(cx: &mut TestAppContext) {
-//     // Case 1: "__in"
-//     let completions = vec![
-//         CompletionBuilder::function("__init__", "05.0003.__init__"),
-//         CompletionBuilder::function("__init__", "05.0003"),
-//         CompletionBuilder::function("__instancecheck__", "05.0005.__instancecheck__"),
-//         CompletionBuilder::function("__init_subclass__", "05.0004.__init_subclass__"),
-//         CompletionBuilder::function("__instancecheck__", "05.0005"),
-//         CompletionBuilder::function("__init_subclass__", "05.0004"),
-//     ];
-//     let matches = filter_and_sort_matches("__in", &completions, SnippetSortOrder::Top, cx).await;
-//     assert_eq!(matches[0], "__init__");
-//     assert_eq!(matches[1], "__init__");
-
-//     // Case 2: "__ini"
-//     let completions = vec![
-//         CompletionBuilder::function("__init__", "05.0004.__init__"),
-//         CompletionBuilder::function("__init__", "05.0004"),
-//         CompletionBuilder::function("__init_subclass__", "05.0003.__init_subclass__"),
-//         CompletionBuilder::function("__init_subclass__", "05.0003"),
-//     ];
-//     let matches = sort_matches("__ini", &completions, SnippetSortOrder::Top, cx).await;
-//     assert_eq!(matches[0], "__init__");
-//     assert_eq!(matches[1], "__init__");
-
-//     // Case 3: "__init"
-//     let completions = vec![
-//         CompletionBuilder::function("__init__", "05.0000.__init__"),
-//         CompletionBuilder::function("__init__", "05.0000"),
-//         CompletionBuilder::function("__init_subclass__", "05.0001.__init_subclass__"),
-//         CompletionBuilder::function("__init_subclass__", "05.0001"),
-//     ];
-//     let matches = filter_and_sort_matches("__init", &completions, SnippetSortOrder::Top, cx).await;
-//     assert_eq!(matches[0], "__init__");
-//     assert_eq!(matches[1], "__init__");
-
-//     // Case 4: "__init_"
-//     let completions = vec![
-//         CompletionBuilder::function("__init__", "11.9999.__init__"),
-//         CompletionBuilder::function("__init__", "11.9999"),
-//         CompletionBuilder::function("__init_subclass__", "05.0000.__init_subclass__"),
-//         CompletionBuilder::function("__init_subclass__", "05.0000"),
-//     ];
-//     let matches = filter_and_sort_matches("__init_", &completions, SnippetSortOrder::Top, cx).await;
-//     // assert_eq!(matches[0], "__init__");
-//     // assert_eq!(matches[1], "__init__");
-// }
-
 #[gpui::test]
 async fn test_sort_exact(cx: &mut TestAppContext) {
     // sort_text takes over if no exact match
