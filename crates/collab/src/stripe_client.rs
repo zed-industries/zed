@@ -27,6 +27,11 @@ pub struct CreateCustomerParams<'a> {
     pub email: Option<&'a str>,
 }
 
+#[derive(Debug)]
+pub struct UpdateCustomerParams<'a> {
+    pub email: Option<&'a str>,
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripeSubscriptionId(pub Arc<str>);
 
@@ -192,6 +197,12 @@ pub trait StripeClient: Send + Sync {
     async fn get_customer(&self, customer_id: &StripeCustomerId) -> Result<StripeCustomer>;
 
     async fn create_customer(&self, params: CreateCustomerParams<'_>) -> Result<StripeCustomer>;
+
+    async fn update_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+        params: UpdateCustomerParams<'_>,
+    ) -> Result<StripeCustomer>;
 
     async fn list_subscriptions_for_customer(
         &self,

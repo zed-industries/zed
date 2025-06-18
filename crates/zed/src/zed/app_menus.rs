@@ -215,7 +215,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Start Debugger", debugger_ui::Start),
                 MenuItem::separator(),
                 MenuItem::action("Edit tasks.json...", crate::zed::OpenProjectTasks),
-                MenuItem::action("Edit debug.json...", crate::zed::OpenProjectDebugTasks),
+                MenuItem::action("Edit debug.json...", zed_actions::OpenProjectDebugTasks),
                 MenuItem::separator(),
                 MenuItem::action("Continue", debugger_ui::Continue),
                 MenuItem::action("Step Over", debugger_ui::StepOver),

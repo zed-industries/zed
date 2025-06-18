@@ -5,14 +5,15 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use context_server::{ContextServer, ContextServerId};
+use context_server::{ContextServer, ContextServerCommand, ContextServerId};
+use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
 use crate::{
-    project_settings::{ContextServerConfiguration, ProjectSettings},
+    project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 
@@ -77,6 +78,50 @@ impl ContextServerState {
             ContextServerState::Starting { configuration, .. } => configuration.clone(),
             ContextServerState::Running { configuration, .. } => configuration.clone(),
             ContextServerState::Stopped { configuration, .. } => configuration.clone(),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub enum ContextServerConfiguration {
+    Custom {
+        command: ContextServerCommand,
+    },
+    Extension {
+        command: ContextServerCommand,
+        settings: serde_json::Value,
+    },
+}
+
+impl ContextServerConfiguration {
+    pub fn command(&self) -> &ContextServerCommand {
+        match self {
+            ContextServerConfiguration::Custom { command } => command,
+            ContextServerConfiguration::Extension { command, .. } => command,
+        }
+    }
+
+    pub async fn from_settings(
+        settings: ContextServerSettings,
+        id: ContextServerId,
+        registry: Entity<ContextServerDescriptorRegistry>,
+        worktree_store: Entity<WorktreeStore>,
+        cx: &AsyncApp,
+    ) -> Option<Self> {
+        match settings {
+            ContextServerSettings::Custom { command } => {
+                Some(ContextServerConfiguration::Custom { command })
+            }
+            ContextServerSettings::Extension { settings } => {
+                let descriptor = cx
+                    .update(|cx| registry.read(cx).context_server_descriptor(&id.0))
+                    .ok()
+                    .flatten()?;
+
+                let command = descriptor.command(worktree_store, cx).await.log_err()?;
+
+                Some(ContextServerConfiguration::Extension { command, settings })
+            }
         }
     }
 }
@@ -207,29 +252,37 @@ impl ContextServerStore {
             .collect()
     }
 
-    pub fn start_server(
-        &mut self,
-        server: Arc<ContextServer>,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        let location = self
-            .worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| settings::SettingsLocation {
-                worktree_id: worktree.read(cx).id(),
-                path: Path::new(""),
-            });
-        let settings = ProjectSettings::get(location, cx);
-        let configuration = settings
-            .context_servers
-            .get(&server.id().0)
-            .context("Failed to load context server configuration from settings")?
-            .clone();
+    pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let this = this.upgrade().context("Context server store dropped")?;
+            let settings = this
+                .update(cx, |this, cx| {
+                    this.context_server_settings(cx)
+                        .get(&server.id().0)
+                        .cloned()
+                })
+                .ok()
+                .flatten()
+                .context("Failed to get context server settings")?;
 
-        self.run_server(server, Arc::new(configuration), cx);
-        Ok(())
+            let (registry, worktree_store) = this.update(cx, |this, _| {
+                (this.registry.clone(), this.worktree_store.clone())
+            })?;
+            let configuration = ContextServerConfiguration::from_settings(
+                settings,
+                server.id(),
+                registry,
+                worktree_store,
+                cx,
+            )
+            .await
+            .context("Failed to create context server configuration")?;
+
+            this.update(cx, |this, cx| {
+                this.run_server(server, Arc::new(configuration), cx)
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn stop_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
@@ -349,11 +402,6 @@ impl ContextServerStore {
         Ok(())
     }
 
-    fn is_configuration_valid(&self, configuration: &ContextServerConfiguration) -> bool {
-        // Command must be some when we are running in stdio mode.
-        self.context_server_factory.as_ref().is_some() || configuration.command.is_some()
-    }
-
     fn create_context_server(
         &self,
         id: ContextServerId,
@@ -362,12 +410,27 @@ impl ContextServerStore {
         if let Some(factory) = self.context_server_factory.as_ref() {
             Ok(factory(id, configuration))
         } else {
-            let command = configuration
-                .command
-                .clone()
-                .context("Missing command to run context server")?;
-            Ok(Arc::new(ContextServer::stdio(id, command)))
+            Ok(Arc::new(ContextServer::stdio(
+                id,
+                configuration.command().clone(),
+            )))
         }
+    }
+
+    fn context_server_settings<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> &'a HashMap<Arc<str>, ContextServerSettings> {
+        let location = self
+            .worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| settings::SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path: Path::new(""),
+            });
+        &ProjectSettings::get(location, cx).context_servers
     }
 
     fn update_server_state(
@@ -407,43 +470,39 @@ impl ContextServerStore {
     }
 
     async fn maintain_servers(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
-        let mut desired_servers = HashMap::default();
-
-        let (registry, worktree_store) = this.update(cx, |this, cx| {
-            let location = this
-                .worktree_store
-                .read(cx)
-                .visible_worktrees(cx)
-                .next()
-                .map(|worktree| settings::SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path: Path::new(""),
-                });
-            let settings = ProjectSettings::get(location, cx);
-            desired_servers = settings.context_servers.clone();
-
-            (this.registry.clone(), this.worktree_store.clone())
+        let (mut configured_servers, registry, worktree_store) = this.update(cx, |this, cx| {
+            (
+                this.context_server_settings(cx).clone(),
+                this.registry.clone(),
+                this.worktree_store.clone(),
+            )
         })?;
 
-        for (id, descriptor) in
+        for (id, _) in
             registry.read_with(cx, |registry, _| registry.context_server_descriptors())?
         {
-            let config = desired_servers.entry(id.clone()).or_default();
-            if config.command.is_none() {
-                if let Some(extension_command) = descriptor
-                    .command(worktree_store.clone(), &cx)
-                    .await
-                    .log_err()
-                {
-                    config.command = Some(extension_command);
-                }
-            }
+            configured_servers
+                .entry(id)
+                .or_insert(ContextServerSettings::Extension {
+                    settings: serde_json::json!({}),
+                });
         }
 
-        this.update(cx, |this, _| {
-            // Filter out configurations without commands, the user uninstalled an extension.
-            desired_servers.retain(|_, configuration| this.is_configuration_valid(configuration));
-        })?;
+        let configured_servers = join_all(configured_servers.into_iter().map(|(id, settings)| {
+            let id = ContextServerId(id);
+            ContextServerConfiguration::from_settings(
+                settings,
+                id.clone(),
+                registry.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+            .map(|config| (id, config))
+        }))
+        .await
+        .into_iter()
+        .filter_map(|(id, config)| config.map(|config| (id, config)))
+        .collect::<HashMap<_, _>>();
 
         let mut servers_to_start = Vec::new();
         let mut servers_to_remove = HashSet::default();
@@ -452,16 +511,13 @@ impl ContextServerStore {
         this.update(cx, |this, _cx| {
             for server_id in this.servers.keys() {
                 // All servers that are not in desired_servers should be removed from the store.
-                // E.g. this can happen if the user removed a server from the configuration,
-                // or the user uninstalled an extension.
-                if !desired_servers.contains_key(&server_id.0) {
+                // This can happen if the user removed a server from the context server settings.
+                if !configured_servers.contains_key(&server_id) {
                     servers_to_remove.insert(server_id.clone());
                 }
             }
 
-            for (id, config) in desired_servers {
-                let id = ContextServerId(id.clone());
-
+            for (id, config) in configured_servers {
                 let existing_config = this.servers.get(&id).map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) {
                     let config = Arc::new(config);
@@ -478,27 +534,28 @@ impl ContextServerStore {
             }
         })?;
 
-        for id in servers_to_stop {
-            this.update(cx, |this, cx| this.stop_server(&id, cx).ok())?;
-        }
-
-        for id in servers_to_remove {
-            this.update(cx, |this, cx| this.remove_server(&id, cx).ok())?;
-        }
-
-        for (server, config) in servers_to_start {
-            this.update(cx, |this, cx| this.run_server(server, config, cx))
-                .log_err();
-        }
-
-        Ok(())
+        this.update(cx, |this, cx| {
+            for id in servers_to_stop {
+                this.stop_server(&id, cx)?;
+            }
+            for id in servers_to_remove {
+                this.remove_server(&id, cx)?;
+            }
+            for (server, config) in servers_to_start {
+                this.run_server(server, config, cx);
+            }
+            anyhow::Ok(())
+        })?
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FakeFs, Project, project_settings::ProjectSettings};
+    use crate::{
+        FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
+        project_settings::ProjectSettings,
+    };
     use context_server::test::create_fake_transport;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use serde_json::json;
@@ -514,8 +571,8 @@ mod tests {
             cx,
             json!({"code.rs": ""}),
             vec![
-                (SERVER_1_ID.into(), ContextServerConfiguration::default()),
-                (SERVER_2_ID.into(), ContextServerConfiguration::default()),
+                (SERVER_1_ID.into(), dummy_server_settings()),
+                (SERVER_2_ID.into(), dummy_server_settings()),
             ],
         )
         .await;
@@ -537,9 +594,7 @@ mod tests {
             Arc::new(create_fake_transport(SERVER_2_ID, cx.executor())),
         ));
 
-        store
-            .update(cx, |store, cx| store.start_server(server_1, cx))
-            .unwrap();
+        store.update(cx, |store, cx| store.start_server(server_1, cx));
 
         cx.run_until_parked();
 
@@ -551,9 +606,7 @@ mod tests {
             assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
         });
 
-        store
-            .update(cx, |store, cx| store.start_server(server_2.clone(), cx))
-            .unwrap();
+        store.update(cx, |store, cx| store.start_server(server_2.clone(), cx));
 
         cx.run_until_parked();
 
@@ -593,8 +646,8 @@ mod tests {
             cx,
             json!({"code.rs": ""}),
             vec![
-                (SERVER_1_ID.into(), ContextServerConfiguration::default()),
-                (SERVER_2_ID.into(), ContextServerConfiguration::default()),
+                (SERVER_1_ID.into(), dummy_server_settings()),
+                (SERVER_2_ID.into(), dummy_server_settings()),
             ],
         )
         .await;
@@ -628,15 +681,11 @@ mod tests {
             cx,
         );
 
-        store
-            .update(cx, |store, cx| store.start_server(server_1, cx))
-            .unwrap();
+        store.update(cx, |store, cx| store.start_server(server_1, cx));
 
         cx.run_until_parked();
 
-        store
-            .update(cx, |store, cx| store.start_server(server_2.clone(), cx))
-            .unwrap();
+        store.update(cx, |store, cx| store.start_server(server_2.clone(), cx));
 
         cx.run_until_parked();
 
@@ -652,7 +701,7 @@ mod tests {
         let (_fs, project) = setup_context_server_test(
             cx,
             json!({"code.rs": ""}),
-            vec![(SERVER_1_ID.into(), ContextServerConfiguration::default())],
+            vec![(SERVER_1_ID.into(), dummy_server_settings())],
         )
         .await;
 
@@ -684,21 +733,11 @@ mod tests {
             cx,
         );
 
-        store
-            .update(cx, |store, cx| {
-                store.start_server(server_with_same_id_1.clone(), cx)
-            })
-            .unwrap();
-        store
-            .update(cx, |store, cx| {
-                store.start_server(server_with_same_id_2.clone(), cx)
-            })
-            .unwrap();
-        cx.update(|cx| {
-            assert_eq!(
-                store.read(cx).status_for_server(&server_id),
-                Some(ContextServerStatus::Starting)
-            );
+        store.update(cx, |store, cx| {
+            store.start_server(server_with_same_id_1.clone(), cx)
+        });
+        store.update(cx, |store, cx| {
+            store.start_server(server_with_same_id_2.clone(), cx)
         });
 
         cx.run_until_parked();
@@ -719,23 +758,28 @@ mod tests {
         let server_1_id = ContextServerId(SERVER_1_ID.into());
         let server_2_id = ContextServerId(SERVER_2_ID.into());
 
+        let fake_descriptor_1 = Arc::new(FakeContextServerDescriptor::new(SERVER_1_ID));
+
         let (_fs, project) = setup_context_server_test(
             cx,
             json!({"code.rs": ""}),
             vec![(
                 SERVER_1_ID.into(),
-                ContextServerConfiguration {
-                    command: None,
-                    settings: Some(json!({
+                ContextServerSettings::Extension {
+                    settings: json!({
                         "somevalue": true
-                    })),
+                    }),
                 },
             )],
         )
         .await;
 
         let executor = cx.executor();
-        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let registry = cx.new(|_| {
+            let mut registry = ContextServerDescriptorRegistry::new();
+            registry.register_context_server_descriptor(SERVER_1_ID.into(), fake_descriptor_1);
+            registry
+        });
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
                 Box::new(move |id, _| {
@@ -777,11 +821,10 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerConfiguration {
-                        command: None,
-                        settings: Some(json!({
+                    ContextServerSettings::Extension {
+                        settings: json!({
                             "somevalue": false
-                        })),
+                        }),
                     },
                 )],
                 cx,
@@ -796,11 +839,10 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerConfiguration {
-                        command: None,
-                        settings: Some(json!({
+                    ContextServerSettings::Extension {
+                        settings: json!({
                             "somevalue": false
-                        })),
+                        }),
                     },
                 )],
                 cx,
@@ -823,20 +865,58 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        ContextServerConfiguration {
-                            command: None,
-                            settings: Some(json!({
+                        ContextServerSettings::Extension {
+                            settings: json!({
                                 "somevalue": false
-                            })),
+                            }),
                         },
                     ),
                     (
                         server_2_id.0.clone(),
-                        ContextServerConfiguration {
-                            command: None,
-                            settings: Some(json!({
-                                "somevalue": true
-                            })),
+                        ContextServerSettings::Custom {
+                            command: ContextServerCommand {
+                                path: "somebinary".to_string(),
+                                args: vec!["arg".to_string()],
+                                env: None,
+                            },
+                        },
+                    ),
+                ],
+                cx,
+            );
+
+            cx.run_until_parked();
+        }
+
+        // Ensure that mcp-2 is restarted once the args have changed
+        {
+            let _server_events = assert_server_events(
+                &store,
+                vec![
+                    (server_2_id.clone(), ContextServerStatus::Stopped),
+                    (server_2_id.clone(), ContextServerStatus::Starting),
+                    (server_2_id.clone(), ContextServerStatus::Running),
+                ],
+                cx,
+            );
+            set_context_server_configuration(
+                vec![
+                    (
+                        server_1_id.0.clone(),
+                        ContextServerSettings::Extension {
+                            settings: json!({
+                                "somevalue": false
+                            }),
+                        },
+                    ),
+                    (
+                        server_2_id.0.clone(),
+                        ContextServerSettings::Custom {
+                            command: ContextServerCommand {
+                                path: "somebinary".to_string(),
+                                args: vec!["anotherArg".to_string()],
+                                env: None,
+                            },
                         },
                     ),
                 ],
@@ -856,11 +936,10 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerConfiguration {
-                        command: None,
-                        settings: Some(json!({
+                    ContextServerSettings::Extension {
+                        settings: json!({
                             "somevalue": false
-                        })),
+                        }),
                     },
                 )],
                 cx,
@@ -875,7 +954,7 @@ mod tests {
     }
 
     fn set_context_server_configuration(
-        context_servers: Vec<(Arc<str>, ContextServerConfiguration)>,
+        context_servers: Vec<(Arc<str>, ContextServerSettings)>,
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
@@ -906,6 +985,16 @@ mod tests {
                 Expected to receive {} context server store events, but received {} events",
                 self.expected_event_count, actual_event_count
             );
+        }
+    }
+
+    fn dummy_server_settings() -> ContextServerSettings {
+        ContextServerSettings::Custom {
+            command: ContextServerCommand {
+                path: "somebinary".to_string(),
+                args: vec!["arg".to_string()],
+                env: None,
+            },
         }
     }
 
@@ -953,7 +1042,7 @@ mod tests {
     async fn setup_context_server_test(
         cx: &mut TestAppContext,
         files: serde_json::Value,
-        context_server_configurations: Vec<(Arc<str>, ContextServerConfiguration)>,
+        context_server_configurations: Vec<(Arc<str>, ContextServerSettings)>,
     ) -> (Arc<FakeFs>, Entity<Project>) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -971,5 +1060,37 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
         (fs, project)
+    }
+
+    struct FakeContextServerDescriptor {
+        path: String,
+    }
+
+    impl FakeContextServerDescriptor {
+        fn new(path: impl Into<String>) -> Self {
+            Self { path: path.into() }
+        }
+    }
+
+    impl ContextServerDescriptor for FakeContextServerDescriptor {
+        fn command(
+            &self,
+            _worktree_store: Entity<WorktreeStore>,
+            _cx: &AsyncApp,
+        ) -> Task<Result<ContextServerCommand>> {
+            Task::ready(Ok(ContextServerCommand {
+                path: self.path.clone(),
+                args: vec!["arg1".to_string(), "arg2".to_string()],
+                env: None,
+            }))
+        }
+
+        fn configuration(
+            &self,
+            _worktree_store: Entity<WorktreeStore>,
+            _cx: &AsyncApp,
+        ) -> Task<Result<Option<::extension::ContextServerConfiguration>>> {
+            Task::ready(Ok(None))
+        }
     }
 }

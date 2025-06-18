@@ -20,16 +20,15 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
-    image_cache, point, px, retain_all,
+    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -86,7 +85,6 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
-        OpenProjectDebugTasks,
         OpenTasks,
         OpenDebugTasks,
         ResetDatabase,
@@ -481,6 +479,7 @@ fn initialize_panels(
             workspace_handle.clone(),
             cx.clone(),
         );
+        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         let (
             project_panel,
@@ -490,6 +489,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -498,6 +498,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         )?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
@@ -508,20 +509,7 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-            cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |_, window, cx| {
-                cx.spawn_in(
-                    window,
-                    async move |workspace: gpui::WeakEntity<Workspace>,
-                                cx: &mut AsyncWindowContext| {
-                        let debug_panel = DebugPanel::load(workspace.clone(), cx).await?;
-                        workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.add_panel(debug_panel, window, cx);
-                        })?;
-                        anyhow::Ok(())
-                    },
-                )
-                .detach()
-            });
+            workspace.add_panel(debug_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
@@ -582,7 +570,10 @@ fn register_actions(
             window.toggle_fullscreen();
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
-            OpenListener::global(cx).open_urls(vec![action.url.clone()])
+            OpenListener::global(cx).open(RawOpenRequest {
+                urls: vec![action.url.clone()],
+                ..Default::default()
+            })
         })
         .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, window, cx| {
@@ -1512,7 +1503,7 @@ fn open_project_tasks_file(
 
 fn open_project_debug_tasks_file(
     workspace: &mut Workspace,
-    _: &OpenProjectDebugTasks,
+    _: &zed_actions::OpenProjectDebugTasks,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -4293,7 +4284,12 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(app_state.fs.clone(), app_state.client.http_client(), cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client(),
+                copilot::copilot_chat::CopilotChatConfiguration::default(),
+                cx,
+            );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
             language_models::init(

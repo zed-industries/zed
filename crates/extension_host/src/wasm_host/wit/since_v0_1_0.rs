@@ -7,6 +7,7 @@ use async_tar::Archive;
 use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
+use gpui::BackgroundExecutor;
 use language::LanguageName;
 use language::{BinaryStatus, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
@@ -15,8 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::archive::extract_zip;
-use util::maybe;
+use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
 use super::latest;
@@ -48,9 +48,9 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
-pub fn linker() -> &'static Linker<WasmState> {
+pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
 }
 
 impl From<Command> for latest::Command {
@@ -557,22 +557,13 @@ impl ExtensionImports for WasmState {
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
-        #[allow(unused)]
         let path = self
             .host
             .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
 
-        #[cfg(unix)]
-        {
-            use std::fs::{self, Permissions};
-            use std::os::unix::fs::PermissionsExt;
-
-            return fs::set_permissions(&path, Permissions::from_mode(0o755))
-                .with_context(|| format!("setting permissions for path {path:?}"))
-                .to_wasmtime_result();
-        }
-
-        #[cfg(not(unix))]
-        Ok(Ok(()))
+        make_file_executable(&path)
+            .await
+            .with_context(|| format!("setting permissions for path {path:?}"))
+            .to_wasmtime_result()
     }
 }

@@ -81,9 +81,9 @@ impl SelectionsCollection {
         count
     }
 
-    /// The non-pending, non-overlapping selections. There could still be a pending
-    /// selection that overlaps these if the mouse is being dragged, etc. Returned as
-    /// selections over Anchors.
+    /// The non-pending, non-overlapping selections. There could be a pending selection that
+    /// overlaps these if the mouse is being dragged, etc. This could also be empty if there is a
+    /// pending selection. Returned as selections over Anchors.
     pub fn disjoint_anchors(&self) -> Arc<[Selection<Anchor>]> {
         self.disjoint.clone()
     }
@@ -92,6 +92,20 @@ impl SelectionsCollection {
         // Mapping the Arc slice would borrow it, whereas indexing captures it.
         let disjoint = self.disjoint_anchors();
         (0..disjoint.len()).map(move |ix| disjoint[ix].range())
+    }
+
+    /// Non-overlapping selections using anchors, including the pending selection.
+    pub fn all_anchors(&self, cx: &mut App) -> Arc<[Selection<Anchor>]> {
+        if self.pending.is_none() {
+            self.disjoint_anchors()
+        } else {
+            let all_offset_selections = self.all::<usize>(cx);
+            let buffer = self.buffer(cx);
+            all_offset_selections
+                .into_iter()
+                .map(|selection| selection_to_anchor_selection(selection, &buffer))
+                .collect()
+        }
     }
 
     pub fn pending_anchor(&self) -> Option<Selection<Anchor>> {
@@ -534,21 +548,11 @@ impl<'a> MutableSelectionsCollection<'a> {
             }
         }
 
-        self.collection.disjoint = Arc::from_iter(selections.into_iter().map(|selection| {
-            let end_bias = if selection.end > selection.start {
-                Bias::Left
-            } else {
-                Bias::Right
-            };
-            Selection {
-                id: selection.id,
-                start: buffer.anchor_after(selection.start),
-                end: buffer.anchor_at(selection.end, end_bias),
-                reversed: selection.reversed,
-                goal: selection.goal,
-            }
-        }));
-
+        self.collection.disjoint = Arc::from_iter(
+            selections
+                .into_iter()
+                .map(|selection| selection_to_anchor_selection(selection, &buffer)),
+        );
         self.collection.pending = None;
         self.selections_changed = true;
     }
@@ -659,6 +663,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
         self.select(selections);
     }
+
     pub fn reverse_selections(&mut self) {
         let map = &self.display_map();
         let mut new_selections: Vec<Selection<Point>> = Vec::new();
@@ -876,6 +881,27 @@ impl Deref for MutableSelectionsCollection<'_> {
 impl DerefMut for MutableSelectionsCollection<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.collection
+    }
+}
+
+fn selection_to_anchor_selection<T>(
+    selection: Selection<T>,
+    buffer: &MultiBufferSnapshot,
+) -> Selection<Anchor>
+where
+    T: ToOffset + Ord,
+{
+    let end_bias = if selection.end > selection.start {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+    Selection {
+        id: selection.id,
+        start: buffer.anchor_after(selection.start),
+        end: buffer.anchor_at(selection.end, end_bias),
+        reversed: selection.reversed,
+        goal: selection.goal,
     }
 }
 

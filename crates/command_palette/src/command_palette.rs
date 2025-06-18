@@ -327,6 +327,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         &candidates,
                         &query,
                         true,
+                        true,
                         10000,
                         &Default::default(),
                         executor,

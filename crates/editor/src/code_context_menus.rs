@@ -260,7 +260,7 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
             .collect();
 
         let completions_menu = Self {
@@ -979,7 +979,8 @@ impl CompletionsMenu {
                     &match_candidates,
                     &query,
                     query.chars().any(|c| c.is_uppercase()),
-                    100,
+                    false,
+                    1000,
                     &cancel_filter,
                     background_executor,
                 )
@@ -1055,27 +1056,18 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_capitalize: Reverse<usize>,
+                sort_exact: Reverse<i32>,
                 sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
-                sort_kind: usize,
-                sort_fuzzy_bracket: Reverse<usize>,
-                sort_text: Option<&'a str>,
                 sort_score: Reverse<OrderedFloat<f64>>,
+                sort_text: Option<&'a str>,
+                sort_kind: usize,
                 sort_label: &'a str,
             },
             OtherMatch {
                 sort_score: Reverse<OrderedFloat<f64>>,
             },
         }
-
-        // Our goal here is to intelligently sort completion suggestions. We want to
-        // balance the raw fuzzy match score with hints from the language server
-
-        // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
-        // The remaining matches are partitioned into two groups at 3/5 of the max_score.
-        let max_score = matches.iter().map(|mat| mat.score).fold(0.0, f64::max);
-        let fuzzy_bracket_threshold = max_score * (3.0 / 5.0);
 
         let query_start_lower = query
             .as_ref()
@@ -1117,34 +1109,25 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_fuzzy_bracket = Reverse(if score >= fuzzy_bracket_threshold {
-                    1
-                } else {
-                    0
-                });
                 let sort_snippet = match snippet_sort_order {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
-                let sort_capitalize = Reverse(
-                    query
-                        .as_ref()
-                        .and_then(|q| q.chars().next())
-                        .zip(string_match.string.chars().next())
-                        .map(|(q_char, s_char)| if q_char == s_char { 1 } else { 0 })
-                        .unwrap_or(0),
-                );
                 let sort_positions = string_match.positions.clone();
+                let sort_exact = Reverse(if Some(completion.filter_text()) == query {
+                    1
+                } else {
+                    0
+                });
 
                 MatchTier::WordStartMatch {
-                    sort_capitalize,
+                    sort_exact,
                     sort_positions,
                     sort_snippet,
-                    sort_kind,
-                    sort_fuzzy_bracket,
-                    sort_text,
                     sort_score,
+                    sort_text,
+                    sort_kind,
                     sort_label,
                 }
             }

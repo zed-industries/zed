@@ -88,9 +88,9 @@ pub enum BedrockAuthMethod {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u64>,
     pub default_temperature: Option<f32>,
     pub mode: Option<ModelMode>,
 }
@@ -503,11 +503,11 @@ impl LanguageModel for BedrockModel {
         format!("bedrock/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens())
     }
 
@@ -515,7 +515,7 @@ impl LanguageModel for BedrockModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         get_bedrock_tokens(request, cx)
     }
 
@@ -583,7 +583,7 @@ pub fn into_bedrock(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u32,
+    max_output_tokens: u64,
     mode: BedrockModelMode,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
@@ -747,7 +747,7 @@ pub fn into_bedrock(
 pub fn get_bedrock_tokens(
     request: LanguageModelRequest,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_executor()
         .spawn(async move {
             let messages = request.messages;
@@ -799,7 +799,7 @@ pub fn get_bedrock_tokens(
             // Tiktoken doesn't yet support these models, so we manually use the
             // same tokenizer as GPT-4.
             tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| tokens + tokens_from_images)
+                .map(|tokens| (tokens + tokens_from_images) as u64)
         })
         .boxed()
 }
@@ -947,9 +947,9 @@ pub fn map_to_language_model_completion_events(
                                             let completion_event =
                                                 LanguageModelCompletionEvent::UsageUpdate(
                                                     TokenUsage {
-                                                        input_tokens: metadata.input_tokens as u32,
+                                                        input_tokens: metadata.input_tokens as u64,
                                                         output_tokens: metadata.output_tokens
-                                                            as u32,
+                                                            as u64,
                                                         cache_creation_input_tokens: default(),
                                                         cache_read_input_tokens: default(),
                                                     },

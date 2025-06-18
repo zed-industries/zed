@@ -1,6 +1,5 @@
 use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
-use json::json_task_context;
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
@@ -11,6 +10,8 @@ use std::{str, sync::Arc};
 use util::{ResultExt, asset_str};
 
 pub use language::*;
+
+use crate::json::JsonTaskProvider;
 
 mod bash;
 mod c;
@@ -78,7 +79,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let eslint_adapter = Arc::new(typescript::EsLintLspAdapter::new(node.clone()));
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
-    let json_context_provider = Arc::new(json_task_context());
+    let json_context_provider = Arc::new(JsonTaskProvider);
     let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());

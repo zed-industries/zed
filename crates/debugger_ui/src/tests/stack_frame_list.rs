@@ -718,7 +718,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
                 stack_frame_list.entries()
             );
 
-            stack_frame_list.expand_collapsed_entry(1);
+            stack_frame_list.expand_collapsed_entry(1, cx);
 
             assert_eq!(
                 &vec![
@@ -735,7 +735,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
                 stack_frame_list.entries()
             );
 
-            stack_frame_list.expand_collapsed_entry(4);
+            stack_frame_list.expand_collapsed_entry(4, cx);
 
             assert_eq!(
                 &vec![

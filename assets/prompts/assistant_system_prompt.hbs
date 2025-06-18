@@ -27,11 +27,11 @@ If you are unsure how to fulfill the user's request, gather more information wit
 If appropriate, use tool calls to explore the current project, which contains the following root directories:
 
 {{#each worktrees}}
-- `{{root_name}}`
+- `{{abs_path}}`
 {{/each}}
 
 - Bias towards not asking the user for help if you can find the answer yourself.
-- When providing paths to tools, the path should always begin with a path that starts with a project root directory listed above.
+- When providing paths to tools, the path should always start with the name of a project root directory listed above.
 - Before you read or edit a file, you must first find the full path. DO NOT ever guess a file path!
 {{# if (has_tool 'grep') }}
 - When looking for symbols in the project, prefer the `grep` tool.

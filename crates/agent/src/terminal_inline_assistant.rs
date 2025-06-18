@@ -167,9 +167,6 @@ impl TerminalInlineAssistant {
             PromptEditorEvent::CancelRequested => {
                 self.finish_assist(assist_id, true, false, window, cx);
             }
-            PromptEditorEvent::DismissRequested => {
-                self.dismiss_assist(assist_id, window, cx);
-            }
             PromptEditorEvent::Resized { height_in_lines } => {
                 self.insert_prompt_editor_into_terminal(assist_id, *height_in_lines, window, cx);
             }

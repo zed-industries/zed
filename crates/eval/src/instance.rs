@@ -367,7 +367,13 @@ impl ExampleInstance {
                 });
             })?;
 
-            let mut example_cx = ExampleContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
+            let mut example_cx = ExampleContext::new(
+                meta.clone(),
+                this.log_prefix.clone(),
+                thread.clone(),
+                model.clone(),
+                cx.clone(),
+            );
             let result = this.thread.conversation(&mut example_cx).await;
 
             if let Err(err) = result {

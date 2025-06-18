@@ -13,6 +13,8 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 | Claude Opus 4     | Anthropic | ❌        | 120k           | $0.20            | N/A               |
 | Claude Opus 4     | Anthropic | ✅        | 200k           | N/A              | $0.25             |
 
+> Note: Because of the 5x token cost for [Opus relative to Sonnet](https://www.anthropic.com/pricing#api), each Opus prompt consumes 5 prompts against your billing meter
+
 ## Usage {#usage}
 
 The models above can be used with the prompts included in your plan. For models not marked with [“Burn Mode”](#burn-mode), each prompt is counted against the monthly limit of your plan.

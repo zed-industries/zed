@@ -8,9 +8,9 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry, LanguageServerStatusUpdate};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -163,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
+                        debug_locators: Default::default(),
                     }),
                     dev: false,
                 },
@@ -193,6 +194,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
+                        debug_locators: Default::default(),
                     }),
                     dev: false,
                 },
@@ -368,6 +370,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 snippets: None,
                 capabilities: Vec::new(),
                 debug_adapters: Default::default(),
+                debug_locators: Default::default(),
             }),
             dev: false,
         },
@@ -717,9 +720,18 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
         ],
         [
-            (SharedString::new("gleam"), BinaryStatus::CheckingForUpdate),
-            (SharedString::new("gleam"), BinaryStatus::Downloading),
-            (SharedString::new("gleam"), BinaryStatus::None)
+            (
+                LanguageServerName::new_static("gleam"),
+                LanguageServerStatusUpdate::Binary(BinaryStatus::CheckingForUpdate)
+            ),
+            (
+                LanguageServerName::new_static("gleam"),
+                LanguageServerStatusUpdate::Binary(BinaryStatus::Downloading)
+            ),
+            (
+                LanguageServerName::new_static("gleam"),
+                LanguageServerStatusUpdate::Binary(BinaryStatus::None)
+            )
         ]
     );
 

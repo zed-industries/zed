@@ -77,11 +77,6 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct DebuggerFeatureFlag {}
-impl FeatureFlag for DebuggerFeatureFlag {
-    const NAME: &'static str = "debugger";
-}
-
 pub struct ThreadAutoCaptureFeatureFlag {}
 impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
     const NAME: &'static str = "thread-auto-capture";

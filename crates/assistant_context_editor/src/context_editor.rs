@@ -3121,12 +3121,12 @@ fn invoked_slash_command_fold_placeholder(
 
 enum TokenState {
     NoTokensLeft {
-        max_token_count: usize,
-        token_count: usize,
+        max_token_count: u64,
+        token_count: u64,
     },
     HasMoreTokens {
-        max_token_count: usize,
-        token_count: usize,
+        max_token_count: u64,
+        token_count: u64,
         over_warn_threshold: bool,
     },
 }
@@ -3139,9 +3139,7 @@ fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenStat
         .model;
     let token_count = context.read(cx).token_count()?;
     let max_token_count = model.max_token_count();
-
-    let remaining_tokens = max_token_count as isize - token_count as isize;
-    let token_state = if remaining_tokens <= 0 {
+    let token_state = if max_token_count.saturating_sub(token_count) == 0 {
         TokenState::NoTokensLeft {
             max_token_count,
             token_count,
@@ -3182,7 +3180,7 @@ fn size_for_image(data: &RenderImage, max_size: Size<Pixels>) -> Size<Pixels> {
     }
 }
 
-pub fn humanize_token_count(count: usize) -> String {
+pub fn humanize_token_count(count: u64) -> String {
     match count {
         0..=999 => count.to_string(),
         1000..=9999 => {

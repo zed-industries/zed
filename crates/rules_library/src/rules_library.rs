@@ -154,7 +154,7 @@ pub struct RulesLibrary {
 struct RuleEditor {
     title_editor: Entity<Editor>,
     body_editor: Entity<Editor>,
-    token_count: Option<usize>,
+    token_count: Option<u64>,
     pending_token_count: Task<Option<()>>,
     next_title_and_body_to_save: Option<(String, Rope)>,
     pending_save: Option<Task<Option<()>>>,

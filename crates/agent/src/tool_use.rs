@@ -427,7 +427,7 @@ impl ToolUseState {
 
                 // Protect from overly large output
                 let tool_output_limit = configured_model
-                    .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
+                    .map(|model| model.model.max_token_count() as usize * BYTES_PER_TOKEN_ESTIMATE)
                     .unwrap_or(usize::MAX);
 
                 let content = match tool_result {

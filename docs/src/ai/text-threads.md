@@ -47,7 +47,7 @@ A typical workflow might involve making edits and adjustments throughout the con
 6. Add additional context to your original message.
 7. Submit the message with {#kb assistant::Assist}.
 
-Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new chats to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
+Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new chat to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
 
 > **Note**: The act of editing past messages is often referred to as "Rewriting History" in the context of the language models.
 

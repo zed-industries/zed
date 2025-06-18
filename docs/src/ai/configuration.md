@@ -216,6 +216,8 @@ You can use GitHub Copilot Chat with the Zed assistant by choosing it via the mo
 
 Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
 
+> **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
+
 ### Google AI {#google-ai}
 
 > ✅ Supports tool use

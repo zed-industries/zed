@@ -15,7 +15,7 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct AnthropicModelCacheConfiguration {
-    pub min_total_token: usize,
+    pub min_total_token: u64,
     pub should_speculate: bool,
     pub max_cache_anchors: usize,
 }
@@ -68,14 +68,14 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        max_tokens: usize,
+        max_tokens: u64,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
         /// Override this model with a different Anthropic model for tool calls.
         tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
-        max_output_tokens: Option<u32>,
+        max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
         #[serde(default)]
         extra_beta_headers: Vec<String>,
@@ -211,7 +211,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
@@ -228,7 +228,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> u32 {
+    pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
@@ -693,7 +693,7 @@ pub enum StringOrContents {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u32,
+    pub max_tokens: u64,
     pub messages: Vec<Message>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
@@ -730,13 +730,13 @@ pub struct Metadata {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Usage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_tokens: Option<u32>,
+    pub input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_tokens: Option<u32>,
+    pub output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_creation_input_tokens: Option<u32>,
+    pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_read_input_tokens: Option<u32>,
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -846,7 +846,7 @@ impl ApiError {
         matches!(self.error_type.as_str(), "rate_limit_error")
     }
 
-    pub fn match_window_exceeded(&self) -> Option<usize> {
+    pub fn match_window_exceeded(&self) -> Option<u64> {
         let Some(ApiErrorCode::InvalidRequestError) = self.code() else {
             return None;
         };
@@ -855,12 +855,12 @@ impl ApiError {
     }
 }
 
-pub fn parse_prompt_too_long(message: &str) -> Option<usize> {
+pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
     message
         .strip_prefix("prompt is too long: ")?
         .split_once(" tokens")?
         .0
-        .parse::<usize>()
+        .parse()
         .ok()
 }
 

@@ -224,6 +224,7 @@ impl ThreadHistory {
                     &candidates,
                     &query,
                     false,
+                    true,
                     MAX_MATCHES,
                     &Default::default(),
                     executor,

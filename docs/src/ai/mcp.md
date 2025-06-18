@@ -41,12 +41,12 @@ You can connect them by adding their commands directly to your `settings.json`, 
 {
   "context_servers": {
     "some-context-server": {
+      "source": "custom",
       "command": {
         "path": "some-command",
         "args": ["arg-1", "arg-2"],
         "env": {}
-      },
-      "settings": {}
+      }
     }
   }
 }

@@ -95,7 +95,7 @@ pub fn match_fixed_path_set(
     let query = query.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case);
+    let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
 
     let mut results = Vec::new();
     matcher.match_candidates(
@@ -153,7 +153,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
                     let mut matcher =
-                        Matcher::new(query, lowercase_query, query_char_bag, smart_case);
+                        Matcher::new(query, lowercase_query, query_char_bag, smart_case, true);
 
                     let mut tree_start = 0;
                     for candidate_set in candidate_sets {

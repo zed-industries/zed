@@ -14,7 +14,7 @@ use crate::stripe_client::{
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripeMeterId,
     StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem,
-    StripeSubscriptionItemId, UpdateSubscriptionParams,
+    StripeSubscriptionItemId, UpdateCustomerParams, UpdateSubscriptionParams,
 };
 
 #[derive(Debug, Clone)]
@@ -93,6 +93,22 @@ impl StripeClient for FakeStripeClient {
             .insert(customer.id.clone(), customer.clone());
 
         Ok(customer)
+    }
+
+    async fn update_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+        params: UpdateCustomerParams<'_>,
+    ) -> Result<StripeCustomer> {
+        let mut customers = self.customers.lock();
+        if let Some(customer) = customers.get_mut(customer_id) {
+            if let Some(email) = params.email {
+                customer.email = Some(email.to_string());
+            }
+            Ok(customer.clone())
+        } else {
+            Err(anyhow!("no customer found for {customer_id:?}"))
+        }
     }
 
     async fn list_subscriptions_for_customer(

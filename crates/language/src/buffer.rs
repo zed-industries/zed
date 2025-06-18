@@ -4268,6 +4268,11 @@ impl BufferSnapshot {
         self.non_text_state_update_count
     }
 
+    /// An integer version that changes when the buffer's syntax changes.
+    pub fn syntax_update_count(&self) -> usize {
+        self.syntax.update_count()
+    }
+
     /// Returns a snapshot of underlying file.
     pub fn file(&self) -> Option<&Arc<dyn File>> {
         self.file.as_ref()

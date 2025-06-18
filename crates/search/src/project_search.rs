@@ -164,7 +164,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn is_contains_uppercase(str: &str) -> bool {
+fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
@@ -767,7 +767,7 @@ impl ProjectSearchView {
                         let query = this.search_query_text(cx);
                         if !query.is_empty()
                             && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                                != is_contains_uppercase(&query)
+                                != contains_uppercase(&query)
                         {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
@@ -1323,7 +1323,7 @@ impl ProjectSearchView {
         if EditorSettings::get_global(cx).use_smartcase_search
             && !query.is_empty()
             && self.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                != is_contains_uppercase(query)
+                != contains_uppercase(query)
         {
             self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
         }
@@ -1377,7 +1377,7 @@ impl ProjectSearchView {
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |theme| theme.search_match_background,
+                    |theme| theme.colors().search_match_background,
                     cx,
                 );
             });

@@ -58,6 +58,7 @@ ui.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 zed_llm_client.workspace = true
+language.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

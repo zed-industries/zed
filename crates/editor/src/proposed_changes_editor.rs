@@ -522,12 +522,4 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     ) -> Option<Task<anyhow::Result<project::ProjectTransaction>>> {
         None
     }
-
-    fn pull_diagnostics_for_buffer(
-        &self,
-        _: Entity<Buffer>,
-        _: &mut App,
-    ) -> Task<anyhow::Result<()>> {
-        Task::ready(Ok(()))
-    }
 }
