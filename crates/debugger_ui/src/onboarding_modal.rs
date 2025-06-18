@@ -89,25 +89,17 @@ impl Render for DebuggerOnboardingModal {
             .child(
                 div()
                     .absolute()
-                    .top_0()
-                    .right(px(-1.0))
-                    .w(px(441.))
-                    .h(px(240.))
-                    .child(
-                        Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(240.))
-                            .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.05))),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
                     .top(px(-8.0))
                     .right_0()
                     .w(px(400.))
                     .h(px(92.))
                     .child(
-                        Vector::new(VectorName::DebuggerGrid, rems_from_px(400.), rems_from_px(92.))
-                            .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
+                        Vector::new(
+                            VectorName::DebuggerGrid,
+                            rems_from_px(400.),
+                            rems_from_px(92.),
+                        )
+                        .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
                     ),
             )
             .child(

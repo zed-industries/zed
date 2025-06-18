@@ -338,7 +338,7 @@ impl TitleBar {
             OnboardingBanner::new(
                 "Debugger Onboarding",
                 IconName::Debug,
-                "Debugger",
+                "The Debugger",
                 None,
                 zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
                 cx,
