@@ -1916,7 +1916,7 @@ impl EditorElement {
             .and_then(|refinement| refinement.font_size)
             .unwrap_or(MINIMAP_FONT_SIZE);
         let minimap_em_width =
-            px(em_width.0 * minimap_font_size.to_pixels(rem_size).0 / font_size.0);
+            em_width * (minimap_font_size.to_pixels(rem_size) / font_size);
 
         let minimap_width = (editor_width_plus_right_margin * MinimapLayout::MINIMAP_WIDTH_PCT)
             .min(minimap_em_width * minimap_settings.max_columns);
