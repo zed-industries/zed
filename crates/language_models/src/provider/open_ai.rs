@@ -802,16 +802,18 @@ impl ConfigurationView {
                         ),
                     ));
                 } else {
-                    settings.openai.as_mut().map(|openai| match openai {
-                        OpenAiSettingsContent::Versioned(versioned) => match versioned {
-                            VersionedOpenAiSettingsContent::V1(v1) => {
-                                v1.api_url = Some(api_url.clone());
+                    if let Some(openai) = settings.openai.as_mut() {
+                        match openai {
+                            OpenAiSettingsContent::Versioned(versioned) => match versioned {
+                                VersionedOpenAiSettingsContent::V1(v1) => {
+                                    v1.api_url = Some(api_url.clone());
+                                }
+                            },
+                            OpenAiSettingsContent::Legacy(legacy) => {
+                                legacy.api_url = Some(api_url.clone());
                             }
-                        },
-                        OpenAiSettingsContent::Legacy(legacy) => {
-                            legacy.api_url = Some(api_url.clone());
                         }
-                    });
+                    }
                 }
             });
         }
