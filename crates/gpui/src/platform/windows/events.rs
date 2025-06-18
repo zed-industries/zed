@@ -884,7 +884,7 @@ fn handle_hit_test_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.is_movable {
+    if !state_ptr.is_movable || state_ptr.state.borrow().is_fullscreen() {
         return None;
     }
 
