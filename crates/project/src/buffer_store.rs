@@ -39,6 +39,7 @@ pub struct BufferStore {
     path_to_buffer_id: HashMap<ProjectPath, BufferId>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+    non_searchable_buffers: HashSet<BufferId>,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -726,6 +727,7 @@ impl BufferStore {
             path_to_buffer_id: Default::default(),
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
+            non_searchable_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -750,6 +752,7 @@ impl BufferStore {
             path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
+            non_searchable_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -1059,7 +1062,9 @@ impl BufferStore {
         let mut unnamed_buffers = Vec::new();
         for handle in self.buffers() {
             let buffer = handle.read(cx);
-            if let Some(entry_id) = buffer.entry_id(cx) {
+            if self.non_searchable_buffers.contains(&buffer.remote_id()) {
+                continue;
+            } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
                 limit = limit.saturating_sub(1);
@@ -1664,6 +1669,10 @@ impl BufferStore {
                 .push(language::proto::serialize_transaction(&transaction));
         }
         serialized_transaction
+    }
+
+    pub(crate) fn mark_buffer_as_non_searchable(&mut self, buffer_id: BufferId) {
+        self.non_searchable_buffers.insert(buffer_id);
     }
 }
 

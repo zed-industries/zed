@@ -3,14 +3,13 @@ use gpui::HighlightStyle;
 use language::Chunk;
 use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
 use std::{
-    any::TypeId,
     cmp,
     iter::{self, Peekable},
     ops::Range,
     vec,
 };
 
-use crate::display_map::TextHighlights;
+use crate::display_map::{HighlightKey, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -19,7 +18,7 @@ pub struct CustomHighlightsChunks<'a> {
     multibuffer_snapshot: &'a MultiBufferSnapshot,
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
-    active_highlights: BTreeMap<(TypeId, usize), HighlightStyle>,
+    active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
 }
 
@@ -27,7 +26,7 @@ pub struct CustomHighlightsChunks<'a> {
 struct HighlightEndpoint {
     offset: usize,
     is_start: bool,
-    tag: (TypeId, usize),
+    tag: HighlightKey,
     style: HighlightStyle,
 }
 
@@ -74,7 +73,10 @@ fn create_highlight_endpoints(
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
         for (&tag, text_highlights) in text_highlights.iter() {
-            let start_ix = match text_highlights.binary_search_by(|(probe, _)| {
+            let style = text_highlights.0;
+            let ranges = &text_highlights.1;
+
+            let start_ix = match ranges.binary_search_by(|probe| {
                 let cmp = probe.end.cmp(&start, &buffer);
                 if cmp.is_gt() {
                     cmp::Ordering::Greater
@@ -85,7 +87,7 @@ fn create_highlight_endpoints(
                 Ok(i) | Err(i) => i,
             };
 
-            for (ix, (range, style)) in text_highlights[start_ix..].iter().enumerate() {
+            for range in &ranges[start_ix..] {
                 if range.start.cmp(&end, &buffer).is_ge() {
                     break;
                 }
@@ -93,14 +95,14 @@ fn create_highlight_endpoints(
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.start.to_offset(&buffer),
                     is_start: true,
-                    tag: (tag, ix),
-                    style: *style,
+                    tag,
+                    style,
                 });
                 highlight_endpoints.push(HighlightEndpoint {
                     offset: range.end.to_offset(&buffer),
                     is_start: false,
-                    tag: (tag, ix),
-                    style: *style,
+                    tag,
+                    style,
                 });
             }
         }

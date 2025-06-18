@@ -22,8 +22,8 @@ use indoc::indoc;
 use language::{
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
-    Override, Point,
+    DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
+    LanguageName, Override, Point,
     language_settings::{
         AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
         LanguageSettingsContent, LspInsertMode, PrettierSettings,
@@ -19392,10 +19392,8 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
         editor.highlight_text::<TestHighlight>(
-            vec![(
-                highlight_range.clone(),
-                HighlightStyle::color(Hsla::green()),
-            )],
+            vec![highlight_range.clone()],
+            HighlightStyle::color(Hsla::green()),
             cx,
         );
         editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));
@@ -20336,7 +20334,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |c| c.colors().editor_document_highlight_read_background,
+            |theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });
@@ -20414,7 +20412,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |c| c.colors().editor_document_highlight_read_background,
+            |theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });

@@ -40,9 +40,9 @@ pub struct OpenRouterSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
 }
@@ -331,11 +331,11 @@ impl LanguageModel for OpenRouterLanguageModel {
         format!("openrouter/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -355,7 +355,7 @@ impl LanguageModel for OpenRouterLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_open_router_tokens(request, self.model.clone(), cx)
     }
 
@@ -386,7 +386,7 @@ impl LanguageModel for OpenRouterLanguageModel {
 pub fn into_open_router(
     request: LanguageModelRequest,
     model: &Model,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> open_router::Request {
     let mut messages = Vec::new();
     for message in request.messages {
@@ -640,7 +640,7 @@ pub fn count_open_router_tokens(
     request: LanguageModelRequest,
     _model: open_router::Model,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request
             .messages
@@ -657,7 +657,7 @@ pub fn count_open_router_tokens(
             })
             .collect::<Vec<_>>();
 
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
+        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
     })
     .boxed()
 }

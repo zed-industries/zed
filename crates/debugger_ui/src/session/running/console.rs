@@ -6,9 +6,7 @@ use alacritty_terminal::vte::ansi;
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
-use editor::{
-    BackgroundHighlight, Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId,
-};
+use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render, Subscription, Task,
@@ -34,8 +32,6 @@ pub struct Console {
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
     update_output_task: Task<()>,
-    ansi_handler: ConsoleHandler,
-    ansi_processor: ansi::Processor<ansi::StdSyncHandler>,
     focus_handle: FocusHandle,
 }
 
@@ -106,8 +102,6 @@ impl Console {
             stack_frame_list,
             update_output_task: Task::ready(()),
             last_token: OutputToken(0),
-            ansi_handler: Default::default(),
-            ansi_processor: Default::default(),
             focus_handle,
         }
     }
@@ -143,187 +137,194 @@ impl Console {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut to_insert = String::default();
-        for event in events {
-            use std::fmt::Write;
-
-            _ = write!(to_insert, "{}\n", event.output.trim_end());
-        }
-
-        let len = self.ansi_handler.pos;
-        self.ansi_processor
-            .advance(&mut self.ansi_handler, to_insert.as_bytes());
-        let output = std::mem::take(&mut self.ansi_handler.output);
-        let mut spans = std::mem::take(&mut self.ansi_handler.spans);
-        let mut background_spans = std::mem::take(&mut self.ansi_handler.background_spans);
-        if self.ansi_handler.current_range_start < len + output.len() {
-            spans.push((
-                self.ansi_handler.current_range_start..len + output.len(),
-                self.ansi_handler.current_color,
-            ));
-            self.ansi_handler.current_range_start = len + output.len();
-        }
-        if self.ansi_handler.current_background_range_start < len + output.len() {
-            background_spans.push((
-                self.ansi_handler.current_background_range_start..len + output.len(),
-                self.ansi_handler.current_background_color,
-            ));
-            self.ansi_handler.current_background_range_start = len + output.len();
-        }
-
         self.console.update(cx, |console, cx| {
-            struct ConsoleAnsiHighlight;
-
             console.set_read_only(false);
-            console.move_to_end(&editor::actions::MoveToEnd, window, cx);
-            console.insert(&output, window, cx);
-            let buffer = console.buffer().read(cx).snapshot(cx);
 
-            let mut highlights = console
-                .remove_text_highlights::<ConsoleAnsiHighlight>(cx)
-                .unwrap_or_default();
-            for (range, color) in spans {
-                let Some(color) = color else { continue };
-                let start = range.start + len;
-                let range = start..range.end + len;
-                let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
-                let style = HighlightStyle {
-                    color: Some(terminal_view::terminal_element::convert_color(
-                        &color,
-                        cx.theme(),
-                    )),
-                    ..Default::default()
-                };
-                highlights.push((range, style));
+            for event in events {
+                let to_insert = format!("{}\n", event.output.trim_end());
+
+                let mut ansi_handler = ConsoleHandler::default();
+                let mut ansi_processor = ansi::Processor::<ansi::StdSyncHandler>::default();
+
+                let len = console.buffer().read(cx).len(cx);
+                ansi_processor.advance(&mut ansi_handler, to_insert.as_bytes());
+                let output = std::mem::take(&mut ansi_handler.output);
+                let mut spans = std::mem::take(&mut ansi_handler.spans);
+                let mut background_spans = std::mem::take(&mut ansi_handler.background_spans);
+                if ansi_handler.current_range_start < output.len() {
+                    spans.push((
+                        ansi_handler.current_range_start..output.len(),
+                        ansi_handler.current_color,
+                    ));
+                }
+                if ansi_handler.current_background_range_start < output.len() {
+                    background_spans.push((
+                        ansi_handler.current_background_range_start..output.len(),
+                        ansi_handler.current_background_color,
+                    ));
+                }
+                console.move_to_end(&editor::actions::MoveToEnd, window, cx);
+                console.insert(&output, window, cx);
+                let buffer = console.buffer().read(cx).snapshot(cx);
+
+                struct ConsoleAnsiHighlight;
+
+                for (range, color) in spans {
+                    let Some(color) = color else { continue };
+                    let start_offset = len + range.start;
+                    let range = start_offset..len + range.end;
+                    let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+                    let style = HighlightStyle {
+                        color: Some(terminal_view::terminal_element::convert_color(
+                            &color,
+                            cx.theme(),
+                        )),
+                        ..Default::default()
+                    };
+                    console.highlight_text_key::<ConsoleAnsiHighlight>(
+                        start_offset,
+                        vec![range],
+                        style,
+                        cx,
+                    );
+                }
+
+                for (range, color) in background_spans {
+                    let Some(color) = color else { continue };
+                    let start_offset = len + range.start;
+                    let range = start_offset..len + range.end;
+                    let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+
+                    let color_fetcher: fn(&Theme) -> Hsla = match color {
+                        // Named and theme defined colors
+                        ansi::Color::Named(n) => match n {
+                            ansi::NamedColor::Black => |theme| theme.colors().terminal_ansi_black,
+                            ansi::NamedColor::Red => |theme| theme.colors().terminal_ansi_red,
+                            ansi::NamedColor::Green => |theme| theme.colors().terminal_ansi_green,
+                            ansi::NamedColor::Yellow => |theme| theme.colors().terminal_ansi_yellow,
+                            ansi::NamedColor::Blue => |theme| theme.colors().terminal_ansi_blue,
+                            ansi::NamedColor::Magenta => {
+                                |theme| theme.colors().terminal_ansi_magenta
+                            }
+                            ansi::NamedColor::Cyan => |theme| theme.colors().terminal_ansi_cyan,
+                            ansi::NamedColor::White => |theme| theme.colors().terminal_ansi_white,
+                            ansi::NamedColor::BrightBlack => {
+                                |theme| theme.colors().terminal_ansi_bright_black
+                            }
+                            ansi::NamedColor::BrightRed => {
+                                |theme| theme.colors().terminal_ansi_bright_red
+                            }
+                            ansi::NamedColor::BrightGreen => {
+                                |theme| theme.colors().terminal_ansi_bright_green
+                            }
+                            ansi::NamedColor::BrightYellow => {
+                                |theme| theme.colors().terminal_ansi_bright_yellow
+                            }
+                            ansi::NamedColor::BrightBlue => {
+                                |theme| theme.colors().terminal_ansi_bright_blue
+                            }
+                            ansi::NamedColor::BrightMagenta => {
+                                |theme| theme.colors().terminal_ansi_bright_magenta
+                            }
+                            ansi::NamedColor::BrightCyan => {
+                                |theme| theme.colors().terminal_ansi_bright_cyan
+                            }
+                            ansi::NamedColor::BrightWhite => {
+                                |theme| theme.colors().terminal_ansi_bright_white
+                            }
+                            ansi::NamedColor::Foreground => {
+                                |theme| theme.colors().terminal_foreground
+                            }
+                            ansi::NamedColor::Background => {
+                                |theme| theme.colors().terminal_background
+                            }
+                            ansi::NamedColor::Cursor => |theme| theme.players().local().cursor,
+                            ansi::NamedColor::DimBlack => {
+                                |theme| theme.colors().terminal_ansi_dim_black
+                            }
+                            ansi::NamedColor::DimRed => {
+                                |theme| theme.colors().terminal_ansi_dim_red
+                            }
+                            ansi::NamedColor::DimGreen => {
+                                |theme| theme.colors().terminal_ansi_dim_green
+                            }
+                            ansi::NamedColor::DimYellow => {
+                                |theme| theme.colors().terminal_ansi_dim_yellow
+                            }
+                            ansi::NamedColor::DimBlue => {
+                                |theme| theme.colors().terminal_ansi_dim_blue
+                            }
+                            ansi::NamedColor::DimMagenta => {
+                                |theme| theme.colors().terminal_ansi_dim_magenta
+                            }
+                            ansi::NamedColor::DimCyan => {
+                                |theme| theme.colors().terminal_ansi_dim_cyan
+                            }
+                            ansi::NamedColor::DimWhite => {
+                                |theme| theme.colors().terminal_ansi_dim_white
+                            }
+                            ansi::NamedColor::BrightForeground => {
+                                |theme| theme.colors().terminal_bright_foreground
+                            }
+                            ansi::NamedColor::DimForeground => {
+                                |theme| theme.colors().terminal_dim_foreground
+                            }
+                        },
+                        // 'True' colors
+                        ansi::Color::Spec(_) => |theme| theme.colors().editor_background,
+                        // 8 bit, indexed colors
+                        ansi::Color::Indexed(i) => {
+                            match i {
+                                // 0-15 are the same as the named colors above
+                                0 => |theme| theme.colors().terminal_ansi_black,
+                                1 => |theme| theme.colors().terminal_ansi_red,
+                                2 => |theme| theme.colors().terminal_ansi_green,
+                                3 => |theme| theme.colors().terminal_ansi_yellow,
+                                4 => |theme| theme.colors().terminal_ansi_blue,
+                                5 => |theme| theme.colors().terminal_ansi_magenta,
+                                6 => |theme| theme.colors().terminal_ansi_cyan,
+                                7 => |theme| theme.colors().terminal_ansi_white,
+                                8 => |theme| theme.colors().terminal_ansi_bright_black,
+                                9 => |theme| theme.colors().terminal_ansi_bright_red,
+                                10 => |theme| theme.colors().terminal_ansi_bright_green,
+                                11 => |theme| theme.colors().terminal_ansi_bright_yellow,
+                                12 => |theme| theme.colors().terminal_ansi_bright_blue,
+                                13 => |theme| theme.colors().terminal_ansi_bright_magenta,
+                                14 => |theme| theme.colors().terminal_ansi_bright_cyan,
+                                15 => |theme| theme.colors().terminal_ansi_bright_white,
+                                // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
+                                // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
+                                // 16..=231 => {
+                                //     let (r, g, b) = rgb_for_index(index as u8);
+                                //     rgba_color(
+                                //         if r == 0 { 0 } else { r * 40 + 55 },
+                                //         if g == 0 { 0 } else { g * 40 + 55 },
+                                //         if b == 0 { 0 } else { b * 40 + 55 },
+                                //     )
+                                // }
+                                // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
+                                // 232..=255 => {
+                                //     let i = index as u8 - 232; // Align index to 0..24
+                                //     let value = i * 10 + 8;
+                                //     rgba_color(value, value, value)
+                                // }
+                                // For compatibility with the alacritty::Colors interface
+                                // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+                                _ => |_| gpui::black(),
+                            }
+                        }
+                    };
+
+                    console.highlight_background_key::<ConsoleAnsiHighlight>(
+                        start_offset,
+                        &[range],
+                        color_fetcher,
+                        cx,
+                    );
+                }
             }
-            console.highlight_text::<ConsoleAnsiHighlight>(highlights, cx);
-
-            let mut background_highlights = console
-                .clear_background_highlights::<ConsoleAnsiHighlight>(cx)
-                .unwrap_or_default();
-            for (range, color) in background_spans {
-                let Some(color) = color else { continue };
-                let start = range.start + len;
-                let range = start..range.end + len;
-                let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
-
-                let color_fetcher: fn(&Theme) -> Hsla = match color {
-                    // Named and theme defined colors
-                    ansi::Color::Named(n) => match n {
-                        ansi::NamedColor::Black => |theme| theme.colors().terminal_ansi_black,
-                        ansi::NamedColor::Red => |theme| theme.colors().terminal_ansi_red,
-                        ansi::NamedColor::Green => |theme| theme.colors().terminal_ansi_green,
-                        ansi::NamedColor::Yellow => |theme| theme.colors().terminal_ansi_yellow,
-                        ansi::NamedColor::Blue => |theme| theme.colors().terminal_ansi_blue,
-                        ansi::NamedColor::Magenta => |theme| theme.colors().terminal_ansi_magenta,
-                        ansi::NamedColor::Cyan => |theme| theme.colors().terminal_ansi_cyan,
-                        ansi::NamedColor::White => |theme| theme.colors().terminal_ansi_white,
-                        ansi::NamedColor::BrightBlack => {
-                            |theme| theme.colors().terminal_ansi_bright_black
-                        }
-                        ansi::NamedColor::BrightRed => {
-                            |theme| theme.colors().terminal_ansi_bright_red
-                        }
-                        ansi::NamedColor::BrightGreen => {
-                            |theme| theme.colors().terminal_ansi_bright_green
-                        }
-                        ansi::NamedColor::BrightYellow => {
-                            |theme| theme.colors().terminal_ansi_bright_yellow
-                        }
-                        ansi::NamedColor::BrightBlue => {
-                            |theme| theme.colors().terminal_ansi_bright_blue
-                        }
-                        ansi::NamedColor::BrightMagenta => {
-                            |theme| theme.colors().terminal_ansi_bright_magenta
-                        }
-                        ansi::NamedColor::BrightCyan => {
-                            |theme| theme.colors().terminal_ansi_bright_cyan
-                        }
-                        ansi::NamedColor::BrightWhite => {
-                            |theme| theme.colors().terminal_ansi_bright_white
-                        }
-                        ansi::NamedColor::Foreground => |theme| theme.colors().terminal_foreground,
-                        ansi::NamedColor::Background => |theme| theme.colors().terminal_background,
-                        ansi::NamedColor::Cursor => |theme| theme.players().local().cursor,
-                        ansi::NamedColor::DimBlack => {
-                            |theme| theme.colors().terminal_ansi_dim_black
-                        }
-                        ansi::NamedColor::DimRed => |theme| theme.colors().terminal_ansi_dim_red,
-                        ansi::NamedColor::DimGreen => {
-                            |theme| theme.colors().terminal_ansi_dim_green
-                        }
-                        ansi::NamedColor::DimYellow => {
-                            |theme| theme.colors().terminal_ansi_dim_yellow
-                        }
-                        ansi::NamedColor::DimBlue => |theme| theme.colors().terminal_ansi_dim_blue,
-                        ansi::NamedColor::DimMagenta => {
-                            |theme| theme.colors().terminal_ansi_dim_magenta
-                        }
-                        ansi::NamedColor::DimCyan => |theme| theme.colors().terminal_ansi_dim_cyan,
-                        ansi::NamedColor::DimWhite => {
-                            |theme| theme.colors().terminal_ansi_dim_white
-                        }
-                        ansi::NamedColor::BrightForeground => {
-                            |theme| theme.colors().terminal_bright_foreground
-                        }
-                        ansi::NamedColor::DimForeground => {
-                            |theme| theme.colors().terminal_dim_foreground
-                        }
-                    },
-                    // 'True' colors
-                    ansi::Color::Spec(_) => |theme| theme.colors().editor_background,
-                    // 8 bit, indexed colors
-                    ansi::Color::Indexed(i) => {
-                        match i {
-                            // 0-15 are the same as the named colors above
-                            0 => |theme| theme.colors().terminal_ansi_black,
-                            1 => |theme| theme.colors().terminal_ansi_red,
-                            2 => |theme| theme.colors().terminal_ansi_green,
-                            3 => |theme| theme.colors().terminal_ansi_yellow,
-                            4 => |theme| theme.colors().terminal_ansi_blue,
-                            5 => |theme| theme.colors().terminal_ansi_magenta,
-                            6 => |theme| theme.colors().terminal_ansi_cyan,
-                            7 => |theme| theme.colors().terminal_ansi_white,
-                            8 => |theme| theme.colors().terminal_ansi_bright_black,
-                            9 => |theme| theme.colors().terminal_ansi_bright_red,
-                            10 => |theme| theme.colors().terminal_ansi_bright_green,
-                            11 => |theme| theme.colors().terminal_ansi_bright_yellow,
-                            12 => |theme| theme.colors().terminal_ansi_bright_blue,
-                            13 => |theme| theme.colors().terminal_ansi_bright_magenta,
-                            14 => |theme| theme.colors().terminal_ansi_bright_cyan,
-                            15 => |theme| theme.colors().terminal_ansi_bright_white,
-                            // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
-                            // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
-                            // 16..=231 => {
-                            //     let (r, g, b) = rgb_for_index(index as u8);
-                            //     rgba_color(
-                            //         if r == 0 { 0 } else { r * 40 + 55 },
-                            //         if g == 0 { 0 } else { g * 40 + 55 },
-                            //         if b == 0 { 0 } else { b * 40 + 55 },
-                            //     )
-                            // }
-                            // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
-                            // 232..=255 => {
-                            //     let i = index as u8 - 232; // Align index to 0..24
-                            //     let value = i * 10 + 8;
-                            //     rgba_color(value, value, value)
-                            // }
-                            // For compatibility with the alacritty::Colors interface
-                            // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
-                            _ => |_| gpui::black(),
-                        }
-                    }
-                };
-
-                background_highlights.push(BackgroundHighlight {
-                    range,
-                    color_fetcher,
-                });
-            }
-            console.highlight_background_ranges::<ConsoleAnsiHighlight>(background_highlights, cx);
 
             console.set_read_only(true);
-
             cx.notify();
         });
     }
@@ -671,7 +672,7 @@ impl ConsoleHandler {
 impl ansi::Handler for ConsoleHandler {
     fn input(&mut self, c: char) {
         self.output.push(c);
-        self.pos += 1;
+        self.pos += c.len_utf8();
     }
 
     fn linefeed(&mut self) {

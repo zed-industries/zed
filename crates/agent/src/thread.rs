@@ -272,8 +272,8 @@ impl DetailedSummaryState {
 
 #[derive(Default, Debug)]
 pub struct TotalTokenUsage {
-    pub total: usize,
-    pub max: usize,
+    pub total: u64,
+    pub max: u64,
 }
 
 impl TotalTokenUsage {
@@ -299,7 +299,7 @@ impl TotalTokenUsage {
         }
     }
 
-    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+    pub fn add(&self, tokens: u64) -> TotalTokenUsage {
         TotalTokenUsage {
             total: self.total + tokens,
             max: self.max,
@@ -396,7 +396,7 @@ pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
     /// Token count including last message
-    token_count: usize,
+    token_count: u64,
 }
 
 impl Thread {
@@ -2769,7 +2769,7 @@ impl Thread {
             .unwrap_or_default();
 
         TotalTokenUsage {
-            total: token_usage.total_tokens() as usize,
+            total: token_usage.total_tokens(),
             max,
         }
     }
@@ -2791,7 +2791,7 @@ impl Thread {
         let total = self
             .token_usage_at_last_message()
             .unwrap_or_default()
-            .total_tokens() as usize;
+            .total_tokens();
 
         Some(TotalTokenUsage { total, max })
     }

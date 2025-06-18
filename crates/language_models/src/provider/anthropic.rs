@@ -51,12 +51,12 @@ pub struct AvailableModel {
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
     /// The model's context window size.
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
     pub tool_override: Option<String>,
     /// Configuration of Anthropic's caching API.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u64>,
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
@@ -321,7 +321,7 @@ pub struct AnthropicModel {
 pub fn count_anthropic_tokens(
     request: LanguageModelRequest,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request.messages;
         let mut tokens_from_images = 0;
@@ -377,7 +377,7 @@ pub fn count_anthropic_tokens(
         // Tiktoken doesn't yet support these models, so we manually use the
         // same tokenizer as GPT-4.
         tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-            .map(|tokens| tokens + tokens_from_images)
+            .map(|tokens| (tokens + tokens_from_images) as u64)
     })
     .boxed()
 }
@@ -461,11 +461,11 @@ impl LanguageModel for AnthropicModel {
         self.state.read(cx).api_key.clone()
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens())
     }
 
@@ -473,7 +473,7 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_anthropic_tokens(request, cx)
     }
 
@@ -522,7 +522,7 @@ pub fn into_anthropic(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u32,
+    max_output_tokens: u64,
     mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();

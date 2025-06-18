@@ -36,7 +36,7 @@ pub(crate) struct BreakpointList {
     worktree_store: Entity<WorktreeStore>,
     scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
-    session: Entity<Session>,
+    session: Option<Entity<Session>>,
     hide_scrollbar_task: Option<Task<()>>,
     show_scrollbar: bool,
     focus_handle: FocusHandle,
@@ -51,8 +51,8 @@ impl Focusable for BreakpointList {
 }
 
 impl BreakpointList {
-    pub(super) fn new(
-        session: Entity<Session>,
+    pub(crate) fn new(
+        session: Option<Entity<Session>>,
         workspace: WeakEntity<Workspace>,
         project: &Entity<Project>,
         cx: &mut App,
@@ -64,21 +64,18 @@ impl BreakpointList {
         let scroll_handle = UniformListScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
-        cx.new(|_| {
-            Self {
-                breakpoint_store,
-                worktree_store,
-                scrollbar_state,
-                // list_state,
-                breakpoints: Default::default(),
-                hide_scrollbar_task: None,
-                show_scrollbar: false,
-                workspace,
-                session,
-                focus_handle,
-                scroll_handle,
-                selected_ix: None,
-            }
+        cx.new(|_| Self {
+            breakpoint_store,
+            worktree_store,
+            scrollbar_state,
+            breakpoints: Default::default(),
+            hide_scrollbar_task: None,
+            show_scrollbar: false,
+            workspace,
+            session,
+            focus_handle,
+            scroll_handle,
+            selected_ix: None,
         })
     }
 
@@ -229,10 +226,12 @@ impl BreakpointList {
                 self.edit_line_breakpoint(path, row, BreakpointEditAction::InvertState, cx);
             }
             BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
-                let id = exception_breakpoint.id.clone();
-                self.session.update(cx, |session, cx| {
-                    session.toggle_exception_breakpoint(&id, cx);
-                });
+                if let Some(session) = &self.session {
+                    let id = exception_breakpoint.id.clone();
+                    session.update(cx, |session, cx| {
+                        session.toggle_exception_breakpoint(&id, cx);
+                    });
+                }
             }
         }
         cx.notify();
@@ -385,8 +384,8 @@ impl Render for BreakpointList {
                 })
             })
         });
-        let exception_breakpoints =
-            self.session
+        let exception_breakpoints = self.session.as_ref().into_iter().flat_map(|session| {
+            session
                 .read(cx)
                 .exception_breakpoints()
                 .map(|(data, is_enabled)| BreakpointEntry {
@@ -396,7 +395,8 @@ impl Render for BreakpointList {
                         is_enabled: *is_enabled,
                     }),
                     weak: weak.clone(),
-                });
+                })
+        });
         self.breakpoints
             .extend(breakpoints.chain(exception_breakpoints));
         v_flex()
@@ -639,10 +639,12 @@ impl ExceptionBreakpoint {
                     let list = list.clone();
                     move |_, _, cx| {
                         list.update(cx, |this, cx| {
-                            this.session.update(cx, |this, cx| {
-                                this.toggle_exception_breakpoint(&id, cx);
-                            });
-                            cx.notify();
+                            if let Some(session) = &this.session {
+                                session.update(cx, |this, cx| {
+                                    this.toggle_exception_breakpoint(&id, cx);
+                                });
+                                cx.notify();
+                            }
                         })
                         .ok();
                     }

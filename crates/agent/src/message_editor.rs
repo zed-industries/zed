@@ -76,7 +76,7 @@ pub struct MessageEditor {
     profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
-    last_estimated_token_count: Option<usize>,
+    last_estimated_token_count: Option<u64>,
     update_token_count_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -1335,7 +1335,7 @@ impl MessageEditor {
         )
     }
 
-    pub fn last_estimated_token_count(&self) -> Option<usize> {
+    pub fn last_estimated_token_count(&self) -> Option<u64> {
         self.last_estimated_token_count
     }
 

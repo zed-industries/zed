@@ -18,7 +18,7 @@ use extension::{
 };
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
-use gpui::SharedString;
+use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
@@ -30,7 +30,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
-use util::{archive::extract_zip, maybe};
+use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
@@ -59,9 +59,9 @@ pub type ExtensionProject = Arc<dyn ProjectDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
-pub fn linker() -> &'static Linker<WasmState> {
+pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
 }
 
 impl From<Range> for std::ops::Range<usize> {
@@ -1086,22 +1086,13 @@ impl ExtensionImports for WasmState {
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
-        #[allow(unused)]
         let path = self
             .host
             .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
 
-        #[cfg(unix)]
-        {
-            use std::fs::{self, Permissions};
-            use std::os::unix::fs::PermissionsExt;
-
-            return fs::set_permissions(&path, Permissions::from_mode(0o755))
-                .with_context(|| format!("setting permissions for path {path:?}"))
-                .to_wasmtime_result();
-        }
-
-        #[cfg(not(unix))]
-        Ok(Ok(()))
+        make_file_executable(&path)
+            .await
+            .with_context(|| format!("setting permissions for path {path:?}"))
+            .to_wasmtime_result()
     }
 }

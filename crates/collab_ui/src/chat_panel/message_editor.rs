@@ -193,10 +193,10 @@ impl MessageEditor {
             let highlights = editor.text_highlights::<Self>(cx);
             let text = editor.text(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let mentions = if let Some(ranges) = highlights {
+            let mentions = if let Some((_, ranges)) = highlights {
                 ranges
                     .iter()
-                    .map(|(range, _)| range.to_offset(&snapshot))
+                    .map(|range| range.to_offset(&snapshot))
                     .zip(self.mentions.iter().copied())
                     .collect()
             } else {
@@ -483,19 +483,20 @@ impl MessageEditor {
                             let end = multi_buffer.anchor_after(range.end);
 
                             mentioned_user_ids.push(user.id);
-                            anchor_ranges.push((
-                                start..end,
-                                HighlightStyle {
-                                    font_weight: Some(FontWeight::BOLD),
-                                    ..Default::default()
-                                },
-                            ));
+                            anchor_ranges.push(start..end);
                         }
                     }
                 }
 
                 editor.clear_highlights::<Self>(cx);
-                editor.highlight_text::<Self>(anchor_ranges, cx)
+                editor.highlight_text::<Self>(
+                    anchor_ranges,
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    },
+                    cx,
+                )
             });
 
             this.mentions = mentioned_user_ids;
