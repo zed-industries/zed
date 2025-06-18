@@ -1813,8 +1813,7 @@ impl SshRemoteConnection {
         let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
         if let Some(build_remote_server) = build_remote_server {
-            let ret = self.build_local(build_remote_server, delegate, cx).await;
-            let src_path = ret?;
+            let src_path = self.build_local(build_remote_server, delegate, cx).await?;
             let tmp_path = RemotePathBuf::new(
                 paths::remote_server_dir_relative().join(format!(
                     "download-{}-{}",
@@ -1823,22 +1822,19 @@ impl SshRemoteConnection {
                 )),
                 self.ssh_path_style,
             );
-            let ret = self
-                .upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
-                .await;
-            ret?;
-            let ret = self
-                .extract_server_binary(&dst_path, &tmp_path, delegate, cx)
-                .await;
-            ret?;
+            self.upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
+                .await?;
+            self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
+                .await?;
             return Ok(dst_path);
         }
 
-        let ret = self
+        if self
             .socket
             .run_command(&dst_path.to_string(), &["version"])
-            .await;
-        if ret.is_ok() {
+            .await
+            .is_ok()
+        {
             return Ok(dst_path);
         }
 
@@ -2145,6 +2141,7 @@ impl SshRemoteConnection {
             );
             log::info!("building remote server binary from source for {}", &triple);
 
+            // On Windows, the binding needs to be set to the canonical path
             #[cfg(target_os = "windows")]
             let src = smol::fs::canonicalize("./target")
                 .await?
@@ -2169,7 +2166,7 @@ impl SshRemoteConnection {
                     ])
                     .env(
                         "CROSS_CONTAINER_OPTS",
-                        &format!("--mount type=bind,src={},dst=/app/target", src),
+                        format!("--mount type=bind,src={},dst=/app/target", src),
                     ),
             )
             .await?;
@@ -2228,6 +2225,7 @@ impl SshRemoteConnection {
             }
             #[cfg(target_os = "windows")]
             {
+                // On Windows, we use 7z to compress the binary
                 let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
                 if smol::fs::metadata(&gz_path).await.is_ok() {
                     smol::fs::remove_file(&gz_path).await?;

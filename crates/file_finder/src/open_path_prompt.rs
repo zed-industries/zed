@@ -21,11 +21,6 @@ use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
 
-// #[cfg(target_os = "windows")]
-// const PROMPT_ROOT: &str = "C:\\";
-// #[cfg(not(target_os = "windows"))]
-// const PROMPT_ROOT: &str = "/";
-
 #[derive(Debug)]
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
