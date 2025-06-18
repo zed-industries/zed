@@ -71,17 +71,6 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::linux::{
-    LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
-    wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
-        cursor::Cursor,
-        serial::{SerialKind, SerialTracker},
-        window::WaylandWindow,
-    },
-    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-};
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
@@ -91,9 +80,25 @@ use crate::{
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
     ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
+use crate::{
+    SharedString,
+    platform::linux::{
+        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
+        reveal_path_internal,
+        wayland::{
+            clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
+            cursor::Cursor,
+            serial::{SerialKind, SerialTracker},
+            window::WaylandWindow,
+        },
+        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+    },
+};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
+
+const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
 
 #[derive(Clone)]
 pub struct Globals {
@@ -205,6 +210,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
+    keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
     drag: DragState,
@@ -334,6 +340,35 @@ impl WaylandClientStatePtr {
             bounds.size.height.0 as i32,
         );
         text_input.commit();
+    }
+
+    pub fn handle_keyboard_layout_change(&self) {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let changed = if let Some(keymap_state) = &state.keymap_state {
+            let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
+            let keymap = keymap_state.get_keymap();
+            let layout_name = keymap.layout_get_name(layout_idx);
+            let changed = layout_name != state.keyboard_layout.name();
+            if changed {
+                state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
+            }
+            changed
+        } else {
+            let changed = &UNKNOWN_KEYBOARD_LAYOUT_NAME != state.keyboard_layout.name();
+            if changed {
+                state.keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
+            }
+            changed
+        };
+        if changed {
+            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                drop(state);
+                callback();
+                state = client.borrow_mut();
+                state.common.callbacks.keyboard_layout_change = Some(callback);
+            }
+        }
     }
 
     pub fn drop_window(&self, surface_id: &ObjectId) {
@@ -503,7 +538,7 @@ impl WaylandClient {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme.as_str());
+                            client.cursor.set_theme(theme);
                         }
                     }
                     XDPEvent::CursorSize(size) => {
@@ -534,6 +569,7 @@ impl WaylandClient {
             in_progress_outputs,
             windows: HashMap::default(),
             common,
+            keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
             drag: DragState {
@@ -592,17 +628,7 @@ impl WaylandClient {
 
 impl LinuxClient for WaylandClient {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
-        let state = self.0.borrow();
-        let id = if let Some(keymap_state) = &state.keymap_state {
-            let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
-            keymap_state
-                .get_keymap()
-                .layout_get_name(layout_idx)
-                .to_string()
-        } else {
-            "unknown".to_string()
-        };
-        Box::new(LinuxKeyboardLayout::new(id))
+        Box::new(self.0.borrow().keyboard_layout.clone())
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -706,7 +732,7 @@ impl LinuxClient for WaylandClient {
                 let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
+                    .set_icon(&wl_pointer, serial, style.to_icon_names(), scale);
             }
         }
     }
@@ -1183,13 +1209,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
+                drop(state);
 
-                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
-                    drop(state);
-                    callback();
-                    state = client.borrow_mut();
-                    state.common.callbacks.keyboard_layout_change = Some(callback);
-                }
+                this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -1234,27 +1256,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keymap_state = state.keymap_state.as_mut().unwrap();
                 state.capslock = Capslock::from_xkb(keymap_state);
 
-                if group != old_layout {
-                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
-                    {
-                        drop(state);
-                        callback();
-                        state = client.borrow_mut();
-                        state.common.callbacks.keyboard_layout_change = Some(callback);
-                    }
-                }
-
-                let Some(focused_window) = focused_window else {
-                    return;
-                };
-
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
                     capslock: state.capslock,
                 });
-
                 drop(state);
-                focused_window.handle_input(input);
+
+                if let Some(focused_window) = focused_window {
+                    focused_window.handle_input(input);
+                }
+
+                if group != old_layout {
+                    this.handle_keyboard_layout_change();
+                }
             }
             wl_keyboard::Event::Key {
                 serial,
@@ -1379,6 +1393,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
         }
     }
 }
+
 impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -1520,9 +1535,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
                             let scale = window.primary_output_scale();
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
+                            state.cursor.set_icon(
+                                &wl_pointer,
+                                serial,
+                                style.to_icon_names(),
+                                scale,
+                            );
                         }
                     }
                     drop(state);

@@ -11,7 +11,7 @@ use assistant_slash_commands::FileCommandMetadata;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use fs::{Fs, RemoveOptions};
+use fs::{Fs, RenameOptions};
 use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
@@ -452,6 +452,10 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     SummaryGenerated,
+    PathChanged {
+        old_path: Option<Arc<Path>>,
+        new_path: Arc<Path>,
+    },
     StreamedCompletion,
     StartedThoughtProcess(Range<language::Anchor>),
     EndedThoughtProcess(language::Anchor),
@@ -674,7 +678,7 @@ pub struct AssistantContext {
     summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    token_count: Option<usize>,
+    token_count: Option<u64>,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
     pending_cache_warming_task: Task<Option<()>>,
@@ -1246,7 +1250,7 @@ impl AssistantContext {
         }
     }
 
-    pub fn token_count(&self) -> Option<usize> {
+    pub fn token_count(&self) -> Option<u64> {
         self.token_count
     }
 
@@ -2894,22 +2898,34 @@ impl AssistantContext {
                 }
 
                 fs.create_dir(contexts_dir().as_ref()).await?;
-                fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
-                    .await?;
-                if let Some(old_path) = old_path {
+
+                // rename before write ensures that only one file exists
+                if let Some(old_path) = old_path.as_ref() {
                     if new_path.as_path() != old_path.as_ref() {
-                        fs.remove_file(
+                        fs.rename(
                             &old_path,
-                            RemoveOptions {
-                                recursive: false,
-                                ignore_if_not_exists: true,
+                            &new_path,
+                            RenameOptions {
+                                overwrite: true,
+                                ignore_if_exists: true,
                             },
                         )
                         .await?;
                     }
                 }
 
-                this.update(cx, |this, _| this.path = Some(new_path.into()))?;
+                // update path before write in case it fails
+                this.update(cx, {
+                    let new_path: Arc<Path> = new_path.clone().into();
+                    move |this, cx| {
+                        this.path = Some(new_path.clone());
+                        cx.emit(ContextEvent::PathChanged { old_path, new_path });
+                    }
+                })
+                .ok();
+
+                fs.atomic_write(new_path, serde_json::to_string(&context).unwrap())
+                    .await?;
             }
 
             Ok(())
@@ -3277,7 +3293,7 @@ impl SavedContextV0_1_0 {
 
 #[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
-    pub title: String,
+    pub title: SharedString,
     pub path: Arc<Path>,
     pub mtime: chrono::DateTime<chrono::Local>,
 }

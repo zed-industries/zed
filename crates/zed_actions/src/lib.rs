@@ -53,6 +53,7 @@ pub enum ExtensionCategoryFilter {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
@@ -348,4 +349,11 @@ pub mod outline {
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
 
-actions!(debugger, [ToggleEnableBreakpoint, UnsetBreakpoint]);
+actions!(
+    debugger,
+    [
+        ToggleEnableBreakpoint,
+        UnsetBreakpoint,
+        OpenProjectDebugTasks,
+    ]
+);

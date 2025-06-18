@@ -759,7 +759,12 @@ impl LanguageServer {
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
-                        ..Default::default()
+                        version_support: Some(true),
+                        data_support: Some(true),
+                        tag_support: Some(TagSupport {
+                            value_set: vec![DiagnosticTag::UNNECESSARY, DiagnosticTag::DEPRECATED],
+                        }),
+                        code_description_support: Some(true),
                     }),
                     formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
@@ -799,6 +804,9 @@ impl LanguageServer {
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
+                    color_provider: Some(DocumentColorClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({

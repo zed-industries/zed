@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
@@ -29,7 +29,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, KeyPressEvent,
+        ConnectionExt as _, EventMask, KeyPressEvent, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -52,7 +52,8 @@ use crate::platform::{
     LinuxCommon, PlatformWindow,
     blade::BladeContext,
     linux::{
-        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+        DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
+        log_cursor_icon_warning, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -79,7 +80,10 @@ pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
-    refresh_event_token: RegistrationToken,
+    refresh_state: Option<RefreshState>,
+    expose_event_received: bool,
+    last_visibility: Visibility,
+    is_mapped: bool,
 }
 
 impl WindowRef {
@@ -94,6 +98,16 @@ impl Deref for WindowRef {
     fn deref(&self) -> &Self::Target {
         &self.window
     }
+}
+
+enum RefreshState {
+    Hidden {
+        refresh_rate: Duration,
+    },
+    PeriodicRefresh {
+        refresh_rate: Duration,
+        event_loop_token: RegistrationToken,
+    },
 }
 
 #[derive(Debug)]
@@ -186,6 +200,7 @@ pub struct X11ClientState {
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
     previous_xkb_state: XKBStateNotiy,
+    keyboard_layout: LinuxKeyboardLayout,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
@@ -201,7 +216,7 @@ pub struct X11ClientState {
     pub(crate) pre_key_char_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
-    pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
+    pub(crate) cursor_cache: HashMap<CursorStyle, Option<xproto::Cursor>>,
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
@@ -224,7 +239,14 @@ impl X11ClientStatePtr {
         let mut state = client.0.borrow_mut();
 
         if let Some(window_ref) = state.windows.remove(&x_window) {
-            state.loop_handle.remove(window_ref.refresh_event_token);
+            match window_ref.refresh_state {
+                Some(RefreshState::PeriodicRefresh {
+                    event_loop_token, ..
+                }) => {
+                    state.loop_handle.remove(event_loop_token);
+                }
+                _ => {}
+            }
         }
         if state.mouse_focused_window == Some(x_window) {
             state.mouse_focused_window = None;
@@ -353,13 +375,21 @@ impl X11Client {
         let events = xkb::EventType::STATE_NOTIFY
             | xkb::EventType::MAP_NOTIFY
             | xkb::EventType::NEW_KEYBOARD_NOTIFY;
+        let map_notify_parts = xkb::MapPart::KEY_TYPES
+            | xkb::MapPart::KEY_SYMS
+            | xkb::MapPart::MODIFIER_MAP
+            | xkb::MapPart::EXPLICIT_COMPONENTS
+            | xkb::MapPart::KEY_ACTIONS
+            | xkb::MapPart::KEY_BEHAVIORS
+            | xkb::MapPart::VIRTUAL_MODS
+            | xkb::MapPart::VIRTUAL_MOD_MAP;
         xcb_connection
             .xkb_select_events(
                 xkb::ID::USE_CORE_KBD.into(),
                 0u8.into(),
                 events,
-                0u8.into(),
-                0u8.into(),
+                map_notify_parts,
+                map_notify_parts,
                 &xkb::SelectEventsAux::new(),
             )
             .unwrap();
@@ -377,17 +407,22 @@ impl X11Client {
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
         let compose_state = get_xkb_compose_state(&xkb_context);
-        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
+        let layout_idx = xkb_state.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        let layout_name = xkb_state
+            .get_keymap()
+            .layout_get_name(layout_idx)
+            .to_string();
+        let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
 
+        let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
         let scale_factor = resource_database
             .get_value("Xft.dpi", "Xft.dpi")
             .ok()
             .flatten()
             .map(|dpi: f32| dpi / 96.0)
             .unwrap_or(1.0);
-
         let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
             .unwrap()
             .reply()
@@ -467,6 +502,7 @@ impl X11Client {
             keyboard_focused_window: None,
             xkb: xkb_state,
             previous_xkb_state: XKBStateNotiy::default(),
+            keyboard_layout,
             ximc,
             xim_handler,
 
@@ -498,6 +534,10 @@ impl X11Client {
             let mut last_key_release = None;
             let mut last_key_press: Option<KeyPressEvent> = None;
 
+            // event handlers for new keyboard / remapping refresh the state without using event
+            // details, this deduplicates them.
+            let mut last_keymap_change_event: Option<Event> = None;
+
             loop {
                 match xcb_connection.poll_for_event() {
                     Ok(Some(event)) => {
@@ -506,9 +546,29 @@ impl X11Client {
                                 windows_to_refresh.insert(expose_event.window);
                             }
                             Event::KeyRelease(_) => {
+                                if let Some(last_keymap_change_event) =
+                                    last_keymap_change_event.take()
+                                {
+                                    if let Some(last_key_release) = last_key_release.take() {
+                                        events.push(last_key_release);
+                                    }
+                                    last_key_press = None;
+                                    events.push(last_keymap_change_event);
+                                }
+
                                 last_key_release = Some(event);
                             }
                             Event::KeyPress(key_press) => {
+                                if let Some(last_keymap_change_event) =
+                                    last_keymap_change_event.take()
+                                {
+                                    if let Some(last_key_release) = last_key_release.take() {
+                                        events.push(last_key_release);
+                                    }
+                                    last_key_press = None;
+                                    events.push(last_keymap_change_event);
+                                }
+
                                 if let Some(last_press) = last_key_press.as_ref() {
                                     if last_press.detail == key_press.detail {
                                         continue;
@@ -529,6 +589,12 @@ impl X11Client {
                                 events.push(Event::KeyPress(key_press));
                                 last_key_press = Some(key_press);
                             }
+                            Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
+                                if let Some(release_event) = last_key_release.take() {
+                                    events.push(release_event);
+                                }
+                                last_keymap_change_event = Some(event);
+                            }
                             _ => {
                                 if let Some(release_event) = last_key_release.take() {
                                     events.push(release_event);
@@ -538,10 +604,6 @@ impl X11Client {
                         }
                     }
                     Ok(None) => {
-                        // Add any remaining stored KeyRelease event
-                        if let Some(release_event) = last_key_release.take() {
-                            events.push(release_event);
-                        }
                         break;
                     }
                     Err(e) => {
@@ -551,15 +613,21 @@ impl X11Client {
                 }
             }
 
+            if let Some(release_event) = last_key_release.take() {
+                events.push(release_event);
+            }
+            if let Some(keymap_change_event) = last_keymap_change_event.take() {
+                events.push(keymap_change_event);
+            }
+
             if events.is_empty() && windows_to_refresh.is_empty() {
                 break;
             }
 
             for window in windows_to_refresh.into_iter() {
-                if let Some(window) = self.get_window(window) {
-                    window.refresh(RequestFrameOptions {
-                        require_presentation: true,
-                    });
+                let mut state = self.0.borrow_mut();
+                if let Some(window) = state.windows.get_mut(&window) {
+                    window.expose_event_received = true;
                 }
             }
 
@@ -667,6 +735,27 @@ impl X11Client {
 
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
+            Event::UnmapNotify(event) => {
+                let mut state = self.0.borrow_mut();
+                if let Some(window_ref) = state.windows.get_mut(&event.window) {
+                    window_ref.is_mapped = false;
+                }
+                state.update_refresh_loop(event.window);
+            }
+            Event::MapNotify(event) => {
+                let mut state = self.0.borrow_mut();
+                if let Some(window_ref) = state.windows.get_mut(&event.window) {
+                    window_ref.is_mapped = true;
+                }
+                state.update_refresh_loop(event.window);
+            }
+            Event::VisibilityNotify(event) => {
+                let mut state = self.0.borrow_mut();
+                if let Some(window_ref) = state.windows.get_mut(&event.window) {
+                    window_ref.last_visibility = event.state;
+                }
+                state.update_refresh_loop(event.window);
+            }
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
@@ -832,7 +921,7 @@ impl X11Client {
                 self.reset_ime();
                 window.handle_ime_delete();
             }
-            Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
+            Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
                 let mut state = self.0.borrow_mut();
                 let xkb_state = {
                     let xkb_keymap = xkbc::x11::keymap_new_from_device(
@@ -856,6 +945,8 @@ impl X11Client {
                     locked_layout,
                 };
                 state.xkb = xkb_state;
+                drop(state);
+                self.handle_keyboard_layout_change();
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
@@ -874,16 +965,6 @@ impl X11Client {
                     latched_layout: event.latched_group as u32,
                     locked_layout: event.locked_group.into(),
                 };
-
-                if new_layout != old_layout {
-                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
-                    {
-                        drop(state);
-                        callback();
-                        state = self.0.borrow_mut();
-                        state.common.callbacks.keyboard_layout_change = Some(callback);
-                    }
-                }
 
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 let capslock = Capslock::from_xkb(&state.xkb);
@@ -906,6 +987,10 @@ impl X11Client {
                             capslock,
                         },
                     ));
+                }
+
+                if new_layout != old_layout {
+                    self.handle_keyboard_layout_change();
                 }
             }
             Event::KeyPress(event) => {
@@ -1295,6 +1380,22 @@ impl X11Client {
         drop(state);
         Some(())
     }
+
+    fn handle_keyboard_layout_change(&self) {
+        let mut state = self.0.borrow_mut();
+        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        let keymap = state.xkb.get_keymap();
+        let layout_name = keymap.layout_get_name(layout_idx);
+        if layout_name != state.keyboard_layout.name() {
+            state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
+            if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                drop(state);
+                callback();
+                state = self.0.borrow_mut();
+                state.common.callbacks.keyboard_layout_change = Some(callback);
+            }
+        }
+    }
 }
 
 impl LinuxClient for X11Client {
@@ -1308,14 +1409,7 @@ impl LinuxClient for X11Client {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
-        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-        Box::new(LinuxKeyboardLayout::new(
-            state
-                .xkb
-                .get_keymap()
-                .layout_get_name(layout_idx)
-                .to_string(),
-        ))
+        Box::new(state.keyboard_layout.clone())
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -1397,61 +1491,12 @@ impl LinuxClient for X11Client {
             )
             .unwrap();
 
-        let screen_resources = state
-            .xcb_connection
-            .randr_get_screen_resources(x_window)
-            .unwrap()
-            .reply()
-            .expect("Could not find available screens");
-
-        let mode = screen_resources
-            .crtcs
-            .iter()
-            .find_map(|crtc| {
-                let crtc_info = state
-                    .xcb_connection
-                    .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
-                    .ok()?
-                    .reply()
-                    .ok()?;
-
-                screen_resources
-                    .modes
-                    .iter()
-                    .find(|m| m.id == crtc_info.mode)
-            })
-            .expect("Unable to find screen refresh rate");
-
-        let refresh_event_token = state
-            .loop_handle
-            .insert_source(calloop::timer::Timer::immediate(), {
-                let refresh_duration = mode_refresh_rate(mode);
-                move |mut instant, (), client| {
-                    let xcb_connection = {
-                        let state = client.0.borrow_mut();
-                        let xcb_connection = state.xcb_connection.clone();
-                        if let Some(window) = state.windows.get(&x_window) {
-                            let window = window.window.clone();
-                            drop(state);
-                            window.refresh(Default::default());
-                        }
-                        xcb_connection
-                    };
-                    client.process_x11_events(&xcb_connection).log_err();
-
-                    // Take into account that some frames have been skipped
-                    let now = Instant::now();
-                    while instant < now {
-                        instant += refresh_duration;
-                    }
-                    calloop::timer::TimeoutAction::ToInstant(instant)
-                }
-            })
-            .expect("Failed to initialize refresh timer");
-
         let window_ref = WindowRef {
             window: window.0.clone(),
-            refresh_event_token,
+            refresh_state: None,
+            expose_event_received: false,
+            last_visibility: Visibility::UNOBSCURED,
+            is_mapped: false,
         };
 
         state.windows.insert(x_window, window_ref);
@@ -1471,22 +1516,8 @@ impl LinuxClient for X11Client {
             return;
         }
 
-        let cursor = match state.cursor_cache.get(&style) {
-            Some(cursor) => *cursor,
-            None => {
-                let Some(cursor) = (match style {
-                    CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
-                    _ => state
-                        .cursor_handle
-                        .load_cursor(&state.xcb_connection, style.to_icon_name())
-                        .log_err(),
-                }) else {
-                    return;
-                };
-
-                state.cursor_cache.insert(style, cursor);
-                cursor
-            }
+        let Some(cursor) = state.get_cursor_icon(style) else {
+            return;
         };
 
         state.cursor_styles.insert(focused_window, style);
@@ -1629,6 +1660,191 @@ impl LinuxClient for X11Client {
         }
 
         Some(handles)
+    }
+}
+
+impl X11ClientState {
+    fn update_refresh_loop(&mut self, x_window: xproto::Window) {
+        let Some(window_ref) = self.windows.get_mut(&x_window) else {
+            return;
+        };
+        let is_visible = window_ref.is_mapped
+            && !matches!(window_ref.last_visibility, Visibility::FULLY_OBSCURED);
+        match (is_visible, window_ref.refresh_state.take()) {
+            (false, refresh_state @ Some(RefreshState::Hidden { .. }))
+            | (false, refresh_state @ None)
+            | (true, refresh_state @ Some(RefreshState::PeriodicRefresh { .. })) => {
+                window_ref.refresh_state = refresh_state;
+            }
+            (
+                false,
+                Some(RefreshState::PeriodicRefresh {
+                    refresh_rate,
+                    event_loop_token,
+                }),
+            ) => {
+                self.loop_handle.remove(event_loop_token);
+                window_ref.refresh_state = Some(RefreshState::Hidden { refresh_rate });
+            }
+            (true, Some(RefreshState::Hidden { refresh_rate })) => {
+                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
+                let Some(window_ref) = self.windows.get_mut(&x_window) else {
+                    return;
+                };
+                window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
+                    refresh_rate,
+                    event_loop_token,
+                });
+            }
+            (true, None) => {
+                let screen_resources = self
+                    .xcb_connection
+                    .randr_get_screen_resources_current(x_window)
+                    .unwrap()
+                    .reply()
+                    .expect("Could not find available screens");
+
+                // Ideally this would be re-queried when the window changes screens, but there
+                // doesn't seem to be an efficient / straightforward way to do this. Should also be
+                // updated when screen configurations change.
+                let refresh_rate = mode_refresh_rate(
+                    screen_resources
+                        .crtcs
+                        .iter()
+                        .find_map(|crtc| {
+                            let crtc_info = self
+                                .xcb_connection
+                                .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
+                                .ok()?
+                                .reply()
+                                .ok()?;
+
+                            screen_resources
+                                .modes
+                                .iter()
+                                .find(|m| m.id == crtc_info.mode)
+                        })
+                        .expect("Unable to find screen refresh rate"),
+                );
+
+                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
+                let Some(window_ref) = self.windows.get_mut(&x_window) else {
+                    return;
+                };
+                window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
+                    refresh_rate,
+                    event_loop_token,
+                });
+            }
+        }
+    }
+
+    #[must_use]
+    fn start_refresh_loop(
+        &self,
+        x_window: xproto::Window,
+        refresh_rate: Duration,
+    ) -> RegistrationToken {
+        self.loop_handle
+            .insert_source(calloop::timer::Timer::immediate(), {
+                move |mut instant, (), client| {
+                    let xcb_connection = {
+                        let mut state = client.0.borrow_mut();
+                        let xcb_connection = state.xcb_connection.clone();
+                        if let Some(window) = state.windows.get_mut(&x_window) {
+                            let expose_event_received = window.expose_event_received;
+                            window.expose_event_received = false;
+                            let window = window.window.clone();
+                            drop(state);
+                            window.refresh(RequestFrameOptions {
+                                require_presentation: expose_event_received,
+                            });
+                        }
+                        xcb_connection
+                    };
+                    client.process_x11_events(&xcb_connection).log_err();
+
+                    // Take into account that some frames have been skipped
+                    let now = Instant::now();
+                    while instant < now {
+                        instant += refresh_rate;
+                    }
+                    calloop::timer::TimeoutAction::ToInstant(instant)
+                }
+            })
+            .expect("Failed to initialize refresh timer")
+    }
+
+    fn get_cursor_icon(&mut self, style: CursorStyle) -> Option<xproto::Cursor> {
+        if let Some(cursor) = self.cursor_cache.get(&style) {
+            return *cursor;
+        }
+
+        let mut result;
+        match style {
+            CursorStyle::None => match create_invisible_cursor(&self.xcb_connection) {
+                Ok(loaded_cursor) => result = Ok(loaded_cursor),
+                Err(err) => result = Err(err.context("error while creating invisible cursor")),
+            },
+            _ => 'outer: {
+                let mut errors = String::new();
+                let cursor_icon_names = style.to_icon_names();
+                for cursor_icon_name in cursor_icon_names {
+                    match self
+                        .cursor_handle
+                        .load_cursor(&self.xcb_connection, cursor_icon_name)
+                    {
+                        Ok(loaded_cursor) => {
+                            if loaded_cursor != x11rb::NONE {
+                                result = Ok(loaded_cursor);
+                                break 'outer;
+                            }
+                        }
+                        Err(err) => {
+                            errors.push_str(&err.to_string());
+                            errors.push('\n');
+                        }
+                    }
+                }
+                if errors.is_empty() {
+                    result = Err(anyhow!(
+                        "errors while loading cursor icons {:?}:\n{}",
+                        cursor_icon_names,
+                        errors
+                    ));
+                } else {
+                    result = Err(anyhow!("did not find cursor icons {:?}", cursor_icon_names));
+                }
+            }
+        };
+
+        let cursor = match result {
+            Ok(cursor) => Some(cursor),
+            Err(err) => {
+                match self
+                    .cursor_handle
+                    .load_cursor(&self.xcb_connection, DEFAULT_CURSOR_ICON_NAME)
+                {
+                    Ok(default) => {
+                        log_cursor_icon_warning(err.context(format!(
+                            "x11: error loading cursor icon, falling back on default icon '{}'",
+                            DEFAULT_CURSOR_ICON_NAME
+                        )));
+                        Some(default)
+                    }
+                    Err(default_err) => {
+                        log_cursor_icon_warning(err.context(default_err).context(format!(
+                            "x11: error loading default cursor fallback '{}'",
+                            DEFAULT_CURSOR_ICON_NAME
+                        )));
+                        None
+                    }
+                }
+            }
+        };
+
+        self.cursor_cache.insert(style, cursor);
+        cursor
     }
 }
 

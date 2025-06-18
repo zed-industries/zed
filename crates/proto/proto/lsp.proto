@@ -666,6 +666,51 @@ message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
 }
 
+message GetDocumentColor {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+
+}
+
+message GetDocumentColorResponse {
+    repeated ColorInformation colors = 1;
+    repeated VectorClockEntry version = 2;
+
+}
+
+message ColorInformation {
+    PointUtf16 lsp_range_start = 1;
+    PointUtf16 lsp_range_end = 2;
+    float red = 3;
+    float green = 4;
+    float blue = 5;
+    float alpha = 6;
+}
+
+message GetColorPresentation {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    ColorInformation color = 3;
+    uint64 server_id = 4;
+}
+
+message GetColorPresentationResponse {
+    repeated ColorPresentation presentations = 1;
+}
+
+message ColorPresentation {
+    string label = 1;
+    optional TextEdit text_edit = 2;
+    repeated TextEdit additional_text_edits = 3;
+}
+
+message TextEdit {
+    string new_text = 1;
+    PointUtf16 lsp_range_start = 2;
+    PointUtf16 lsp_range_end = 3;
+}
+
 message MultiLspQuery {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -679,6 +724,7 @@ message MultiLspQuery {
         GetSignatureHelp get_signature_help = 7;
         GetCodeLens get_code_lens = 8;
         GetDocumentDiagnostics get_document_diagnostics = 9;
+        GetDocumentColor get_document_color = 10;
     }
 }
 
@@ -705,7 +751,9 @@ message LspResponse {
         GetSignatureHelpResponse get_signature_help_response = 3;
         GetCodeLensResponse get_code_lens_response = 4;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
+        GetDocumentColorResponse get_document_color_response = 6;
     }
+    uint64 server_id = 7;
 }
 
 message LanguageServerIdForName {
@@ -806,4 +854,5 @@ message PulledDiagnostics {
 
 message PullWorkspaceDiagnostics {
     uint64 project_id = 1;
+    uint64 server_id = 2;
 }

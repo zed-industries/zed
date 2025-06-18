@@ -49,6 +49,23 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
+    pub drag_and_drop_selection: bool,
+    pub lsp_document_colors: DocumentColorsRenderMode,
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentColorsRenderMode {
+    /// Do not query and render document colors.
+    None,
+    /// Render document colors as inlay hints near the color text.
+    #[default]
+    Inlay,
+    /// Draw a border around the color text.
+    Border,
+    /// Draw a background behind the color text.
+    Background,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -129,6 +146,7 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
+    pub display_in: DisplayIn,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
@@ -137,6 +155,11 @@ pub struct Minimap {
 impl Minimap {
     pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
+    }
+
+    #[inline]
+    pub fn on_active_editor(&self) -> bool {
+        self.display_in == DisplayIn::ActiveEditor
     }
 
     pub fn with_show_override(self) -> Self {
@@ -149,6 +172,7 @@ impl Minimap {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
+    pub min_line_number_digits: usize,
     pub line_numbers: bool,
     pub runnables: bool,
     pub breakpoints: bool,
@@ -185,6 +209,19 @@ pub enum ShowMinimap {
     /// Never show the minimap.
     #[default]
     Never,
+}
+
+/// Where to show the minimap in the editor.
+///
+/// Default: all_editors
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayIn {
+    /// Show on all open editors.
+    AllEditors,
+    /// Show the minimap on the active editor only.
+    #[default]
+    ActiveEditor,
 }
 
 /// When to show the minimap thumb.
@@ -422,7 +459,7 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
-    /// The key to use for adding multiple cursors
+    /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
     /// Default: alt
     pub multi_cursor_modifier: Option<MultiCursorModifier>,
@@ -495,6 +532,16 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub inline_code_actions: Option<bool>,
+
+    /// Whether to allow drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    pub drag_and_drop_selection: Option<bool>,
+
+    /// How to render LSP `textDocument/documentColor` colors in the editor.
+    ///
+    /// Default: [`DocumentColorsRenderMode::Inlay`]
+    pub lsp_document_colors: Option<DocumentColorsRenderMode>,
 }
 
 // Toolbar related settings
@@ -566,6 +613,11 @@ pub struct MinimapContent {
     /// Default: never
     pub show: Option<ShowMinimap>,
 
+    /// Where to show the minimap in the editor.
+    ///
+    /// Default: [`DisplayIn::ActiveEditor`]
+    pub display_in: Option<DisplayIn>,
+
     /// When to show the minimap thumb.
     ///
     /// Default: always
@@ -603,6 +655,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
+    /// Minimum number of characters to reserve space for in the gutter.
+    ///
+    /// Default: 4
+    pub min_line_number_digits: Option<usize>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true

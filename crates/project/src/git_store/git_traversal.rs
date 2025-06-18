@@ -211,7 +211,7 @@ pub struct GitEntry {
 }
 
 impl GitEntry {
-    pub fn to_ref(&self) -> GitEntryRef {
+    pub fn to_ref(&self) -> GitEntryRef<'_> {
         GitEntryRef {
             entry: &self.entry,
             git_summary: self.git_summary,

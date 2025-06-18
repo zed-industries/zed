@@ -63,10 +63,11 @@
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
+- [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)
-- [Context Server Extensions](./extensions/context-servers.md)
+- [MCP Server Extensions](./extensions/mcp-extensions.md)
 
 # Language Support
 
@@ -147,6 +148,7 @@
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
+  - [FreeBSD](./development/freebsd.md)
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
 - [Release Process](./development/releases.md)

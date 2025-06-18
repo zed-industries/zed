@@ -64,6 +64,7 @@ pub fn init(cx: &mut App) {
                             ExtensionProvides::IndexedDocsProviders
                         }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
+                        ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
                     });
 
                     let existing = workspace
@@ -175,6 +176,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::SlashCommands => "Slash Commands",
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
+        ExtensionProvides::DebugAdapters => "Debug Adapters",
     }
 }
 
@@ -554,13 +556,15 @@ impl ExtensionsPage {
                     )
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
                             .justify_between()
                             .child(
                                 Button::new(
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
                                 )
+                                .color(Color::Accent)
+                                .disabled(matches!(status, ExtensionStatus::Upgrading))
                                 .on_click({
                                     let extension_id = extension.id.clone();
                                     move |_, _, cx| {
@@ -568,12 +572,12 @@ impl ExtensionsPage {
                                             store.rebuild_dev_extension(extension_id.clone(), cx)
                                         });
                                     }
-                                })
-                                .color(Color::Accent)
-                                .disabled(matches!(status, ExtensionStatus::Upgrading)),
+                                }),
                             )
                             .child(
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
                                         let extension_id = extension.id.clone();
                                         move |_, _, cx| {
@@ -581,9 +585,7 @@ impl ExtensionsPage {
                                                 store.uninstall_extension(extension_id.clone(), cx)
                                             });
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Removing)),
+                                    }),
                             )
                             .when(can_configure, |this| {
                                 this.child(
@@ -591,8 +593,8 @@ impl ExtensionsPage {
                                         SharedString::from(format!("configure-{}", extension.id)),
                                         "Configure",
                                     )
-
-
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Installing))
                                     .on_click({
                                         let manifest = Arc::new(extension.clone());
                                         move |_, _, cx| {
@@ -609,9 +611,7 @@ impl ExtensionsPage {
                                                 });
                                             }
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Installing)),
+                                    }),
                                 )
                             }),
                     ),
@@ -1479,18 +1479,12 @@ impl Render for ExtensionsPage {
                             return this.py_4().child(self.render_empty_state(cx));
                         }
 
-                        let extensions_page = cx.entity().clone();
                         let scroll_handle = self.list.clone();
                         this.child(
-                            uniform_list(
-                                extensions_page,
-                                "entries",
-                                count,
-                                Self::render_extensions,
-                            )
-                            .flex_grow()
-                            .pb_4()
-                            .track_scroll(scroll_handle),
+                            uniform_list("entries", count, cx.processor(Self::render_extensions))
+                                .flex_grow()
+                                .pb_4()
+                                .track_scroll(scroll_handle),
                         )
                         .child(
                             div()
