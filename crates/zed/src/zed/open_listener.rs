@@ -296,7 +296,7 @@ pub async fn handle_cli_connection(
                 env,
                 user_data_dir: _,
             } => {
-                if !urls.is_empty() {
+                if !urls.is_empty() || !diff_paths.is_empty() {
                     cx.update(|cx| {
                         match OpenRequest::parse(RawOpenRequest { urls, diff_paths }, cx) {
                             Ok(open_request) => {
