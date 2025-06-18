@@ -437,7 +437,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
-You can add a custom OpenAI API URL either via the UI or by editing the your `settings.json`.
+You can add a custom API URL for OpenAI either via the UI or by editing the your `settings.json`.
 Here are a few model examples you can plug in by using this feature:
 
 #### X.ai Grok
