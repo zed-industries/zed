@@ -99,6 +99,14 @@ impl JsDebugAdapter {
             configuration
                 .entry("console")
                 .or_insert("externalTerminal".into());
+
+            configuration.entry("sourceMaps").or_insert(true.into());
+            configuration
+                .entry("pauseForSourceMap")
+                .or_insert(true.into());
+            configuration
+                .entry("sourceMapRenames")
+                .or_insert(true.into());
         }
 
         Ok(DebugAdapterBinary {
@@ -267,6 +275,16 @@ impl DebugAdapter for JsDebugAdapter {
                                 "sourceMaps": {
                                     "type": "boolean",
                                     "description": "Use JavaScript source maps if they exist",
+                                    "default": true
+                                },
+                                "pauseForSourceMap": {
+                                    "type": "boolean",
+                                    "description": "Wait for source maps to load before setting breakpoints.",
+                                    "default": true
+                                },
+                                "sourceMapRenames": {
+                                    "type": "boolean",
+                                    "description": "Whether to use the \"names\" mapping in sourcemaps.",
                                     "default": true
                                 },
                                 "sourceMapPathOverrides": {
