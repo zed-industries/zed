@@ -1,9 +1,9 @@
 use crate::{Vim, state::Mode};
 use editor::{Bias, Editor, scroll::Autoscroll};
 use gpui::{Action, Context, Window, actions};
-use helix_mode_setting::HelixModeSetting;
 use language::SelectionGoal;
 use settings::Settings;
+use vim_mode_setting::HelixModeSetting;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);
 

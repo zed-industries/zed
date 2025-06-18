@@ -7399,16 +7399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "helix_mode_setting"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
- "settings",
- "workspace-hack",
-]
-
-[[package]]
 name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17275,7 +17265,6 @@ dependencies = [
  "futures 0.3.31",
  "git_ui",
  "gpui",
- "helix_mode_setting",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -19780,7 +19769,6 @@ dependencies = [
  "go_to_line",
  "gpui",
  "gpui_tokio",
- "helix_mode_setting",
  "http_client",
  "image_viewer",
  "indoc",

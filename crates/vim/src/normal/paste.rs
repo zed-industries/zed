@@ -1,11 +1,11 @@
 use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
 use gpui::{Context, Window, impl_actions};
-use helix_mode_setting::HelixModeSetting;
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::cmp;
+use vim_mode_setting::HelixModeSetting;
 
 use crate::{
     Vim,

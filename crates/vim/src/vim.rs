@@ -29,7 +29,6 @@ use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
     Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
 };
-use helix_mode_setting::HelixModeSetting;
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -45,6 +44,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -190,7 +190,6 @@ impl_actions!(
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
     vim_mode_setting::init(cx);
-    helix_mode_setting::init(cx);
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
