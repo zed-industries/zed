@@ -187,7 +187,7 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg(target_os = "windows")]
+#[cfg_attr(not(target_os = "windows"), ignore)]
 async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -242,6 +242,96 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
     assert_eq!(confirm_completion(query, 0, &picker, cx), "C:\\root/dir1\\");
+
+    let query = "C:\\root\\d";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+    assert_eq!(
+        confirm_completion(query, 0, &picker, cx),
+        "C:\\root\\dir1\\"
+    );
+}
+
+#[gpui::test]
+#[cfg_attr(not(target_os = "windows"), ignore)]
+async fn test_open_path_prompt_on_windows_with_remote(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "a": "A",
+                "dir1": {},
+                "dir2": {}
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::Posix, cx);
+
+    // Support both forward and backward slashes.
+    let query = "/root/";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["a", "dir1", "dir2"]
+    );
+    assert_eq!(confirm_completion(query, 0, &picker, cx), "/root/a");
+
+    // Confirm completion for the query "/root/d", selecting the second candidate "dir2", since it's a directory, it should add a trailing slash.
+    let query = "/root/d";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+    assert_eq!(confirm_completion(query, 1, &picker, cx), "/root/dir2/");
+
+    let query = "/root/d";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+    assert_eq!(confirm_completion(query, 0, &picker, cx), "/root/dir1/");
+}
+
+#[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
+async fn test_open_path_prompt_on_unix_with_remote(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "C:\\root",
+            json!({
+                "a": "A",
+                "dir1": {},
+                "dir2": {}
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["C:\\root".as_ref()], cx).await;
+
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::Windows, cx);
+
+    // Support both forward and backward slashes.
+    let query = "C:\\root\\";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["a", "dir1", "dir2"]
+    );
+    assert_eq!(confirm_completion(query, 0, &picker, cx), "C:\\root\\a");
+
+    // Confirm completion for the query "C:\\root\\d", selecting the second candidate "dir2", since it's a directory, it should add a trailing slash.
+    let query = "C:\\root\\d";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+    assert_eq!(
+        confirm_completion(query, 1, &picker, cx),
+        "C:\\root\\dir2\\"
+    );
 
     let query = "C:\\root\\d";
     insert_query(query, &picker, cx).await;
