@@ -361,6 +361,7 @@ mod tests {
     use settings::{Settings, SettingsStore};
     use std::path::PathBuf;
     use unindent::unindent;
+    use util::path;
     use workspace::Workspace;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -381,7 +382,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            path!("/test"),
             serde_json::json!({
                 "old_file.txt": "old line 1\nline 2\nold line 3\nline 4\n",
                 "new_file.txt": "new line 1\nline 2\nnew line 3\nline 4\n"
@@ -397,8 +398,8 @@ mod tests {
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
                 DiffView::open(
-                    PathBuf::from("/test/old_file.txt"),
-                    PathBuf::from("/test/new_file.txt"),
+                    PathBuf::from(path!("/test/old_file.txt")),
+                    PathBuf::from(path!("/test/new_file.txt")),
                     workspace,
                     window,
                     cx,
@@ -425,7 +426,7 @@ mod tests {
 
         // Modify the new file on disk
         fs.save(
-            &PathBuf::from("/test/new_file.txt"),
+            path!("/test/new_file.txt").as_ref(),
             &unindent(
                 "
                 new line 1
@@ -461,7 +462,7 @@ mod tests {
 
         // Modify the old file on disk
         fs.save(
-            &PathBuf::from("/test/old_file.txt"),
+            path!("/test/old_file.txt").as_ref(),
             &unindent(
                 "
                 new line 1
