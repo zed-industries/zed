@@ -18,6 +18,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+remote_path.workspace = true
 prost.workspace = true
 serde.workspace = true
 workspace-hack.workspace = true

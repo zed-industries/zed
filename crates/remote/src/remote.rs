@@ -1,5 +1,4 @@
 pub mod json_log;
-pub mod path_buf;
 pub mod protocol;
 pub mod proxy;
 pub mod ssh_session;

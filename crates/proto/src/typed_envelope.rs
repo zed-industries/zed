@@ -1,5 +1,6 @@
 use crate::{Envelope, PeerId};
 use anyhow::{Context as _, Result};
+use remote_path::RemotePathBuf;
 use serde::Serialize;
 use std::{
     any::{Any, TypeId},
@@ -166,6 +167,26 @@ impl ToProto for &Path {
     #[cfg(not(target_os = "windows"))]
     fn to_proto(self) -> String {
         self.to_string_lossy().to_string()
+    }
+}
+
+impl ToProto for RemotePathBuf {
+    #[cfg(target_os = "windows")]
+    fn to_proto(self) -> String {
+        use remote_path::PathStyle;
+
+        match self.path_style() {
+            PathStyle::Posix => self.to_string(),
+            PathStyle::Windows => self.as_path().to_proto(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.as_path().to_proto(),
+            PathStyle::Windows => self.to_string(),
+        }
     }
 }
 

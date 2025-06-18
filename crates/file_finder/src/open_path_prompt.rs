@@ -184,6 +184,7 @@ impl OpenPathPrompt {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        println!("-> LOCAL: Opening path prompt");
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path);
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
@@ -233,12 +234,13 @@ impl PickerDelegate for OpenPathDelegate {
         let (mut dir, suffix) = if let Some(dir) = query.strip_suffix(last_item.as_ref()) {
             (dir.to_string(), last_item.into_owned())
         } else {
-            (query, String::new())
+            (query.clone(), String::new())
         };
         if dir == "" {
             dir = PROMPT_ROOT.to_string();
         }
 
+        println!("-> Updating matches for query: {query:?}, dir: {dir:?}, suffix: {suffix:?}");
         let query = match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
