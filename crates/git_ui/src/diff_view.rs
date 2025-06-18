@@ -3,7 +3,6 @@
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
-
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, Task, Window,
@@ -23,8 +22,8 @@ use workspace::{
 
 pub struct DiffView {
     editor: Entity<Editor>,
-    old_buffer: Entity<Buffer>,
-    multibuffer: Entity<MultiBuffer>,
+    buffer_changes_tx: watch::Sender<()>,
+    _recalculate_diff_task: Task<Result<()>>,
 }
 
 impl DiffView {
@@ -78,8 +77,8 @@ impl DiffView {
         cx: &mut Context<Self>,
     ) -> Self {
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::singleton(new_buffer, cx);
-            multibuffer.add_diff(diff, cx);
+            let mut multibuffer = MultiBuffer::singleton(new_buffer.clone(), cx);
+            multibuffer.add_diff(diff.clone(), cx);
             multibuffer
         });
         let editor = cx.new(|cx| {
@@ -91,10 +90,41 @@ impl DiffView {
             editor
         });
 
+        let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
+
+        for buffer in [&old_buffer, &new_buffer] {
+            cx.subscribe(buffer, move |this, _, event, _| match event {
+                language::BufferEvent::Edited | language::BufferEvent::Reparsed => {
+                    this.buffer_changes_tx.send(()).ok();
+                }
+                _ => {}
+            })
+            .detach();
+        }
+
         Self {
             editor,
-            old_buffer,
-            multibuffer,
+            buffer_changes_tx,
+            _recalculate_diff_task: cx.spawn(async move |_this, cx| {
+                while let Ok(_) = buffer_changes_rx.recv().await {
+                    let old_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                    let new_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                    let diff_snapshot = cx
+                        .update(|cx| {
+                            BufferDiffSnapshot::new_with_base_buffer(
+                                new_snapshot.text.clone(),
+                                Some(old_snapshot.text().into()),
+                                old_snapshot,
+                                cx,
+                            )
+                        })?
+                        .await;
+                    diff.update(cx, |diff, cx| {
+                        diff.set_snapshot(diff_snapshot, &new_snapshot, cx)
+                    })?;
+                }
+                Ok(())
+            }),
         }
     }
 }
@@ -246,5 +276,148 @@ impl Item for DiffView {
 impl Render for DiffView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::test::editor_test_context::assert_state_with_diff;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Fs, Project};
+    use settings::{Settings, SettingsStore};
+    use std::path::PathBuf;
+    use unindent::unindent;
+    use workspace::Workspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            editor::init_settings(cx);
+            theme::ThemeSettings::register(cx)
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diff_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/test",
+            serde_json::json!({
+                "old_file.txt": "old line 1\nline 2\nold line 3\nline 4\n",
+                "new_file.txt": "new line 1\nline 2\nnew line 3\nline 4\n"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                DiffView::open(
+                    PathBuf::from("/test/old_file.txt"),
+                    PathBuf::from("/test/new_file.txt"),
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Verify initial diff
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
+            &mut cx,
+            &unindent(
+                "
+                - old line 1
+                + ˇnew line 1
+                  line 2
+                - old line 3
+                + new line 3
+                  line 4
+                ",
+            ),
+        );
+
+        // Modify the new file on disk
+        fs.save(
+            &PathBuf::from("/test/new_file.txt"),
+            &unindent(
+                "
+                new line 1
+                line 2
+                new line 3
+                line 4
+                new line 5
+                ",
+            )
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        // The diff now reflects the changes to the new file
+        cx.executor().run_until_parked();
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
+            &mut cx,
+            &unindent(
+                "
+                - old line 1
+                + ˇnew line 1
+                  line 2
+                - old line 3
+                + new line 3
+                  line 4
+                + new line 5
+                ",
+            ),
+        );
+
+        // Modify the old file on disk
+        fs.save(
+            &PathBuf::from("/test/old_file.txt"),
+            &unindent(
+                "
+                new line 1
+                line 2
+                old line 3
+                line 4
+                ",
+            )
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        // The diff now reflects the changes to the new file
+        cx.executor().run_until_parked();
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
+            &mut cx,
+            &unindent(
+                "
+                  ˇnew line 1
+                  line 2
+                - old line 3
+                + new line 3
+                  line 4
+                + new line 5
+                ",
+            ),
+        );
     }
 }
