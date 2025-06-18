@@ -358,6 +358,7 @@ impl PickerDelegate for TasksModalDelegate {
                 &candidates,
                 &query,
                 true,
+                true,
                 1000,
                 &Default::default(),
                 cx.background_executor().clone(),

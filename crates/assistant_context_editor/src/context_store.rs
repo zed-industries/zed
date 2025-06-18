@@ -745,6 +745,7 @@ impl ContextStore {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     executor,

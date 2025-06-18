@@ -570,7 +570,10 @@ fn register_actions(
             window.toggle_fullscreen();
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
-            OpenListener::global(cx).open_urls(vec![action.url.clone()])
+            OpenListener::global(cx).open(RawOpenRequest {
+                urls: vec![action.url.clone()],
+                ..Default::default()
+            })
         })
         .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, window, cx| {
