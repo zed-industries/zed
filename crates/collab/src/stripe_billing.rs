@@ -11,8 +11,9 @@ use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
-    RealStripeClient, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
-    StripeClient, StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
+    RealStripeClient, StripeBillingAddressCollection, StripeCheckoutSessionMode,
+    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
     StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripeSubscription,
@@ -245,6 +246,7 @@ impl StripeBilling {
             quantity: Some(1),
         }]);
         params.success_url = Some(success_url);
+        params.billing_address_collection = Some(StripeBillingAddressCollection::Required);
 
         let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
@@ -298,6 +300,7 @@ impl StripeBilling {
             quantity: Some(1),
         }]);
         params.success_url = Some(success_url);
+        params.billing_address_collection = Some(StripeBillingAddressCollection::Required);
 
         let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
