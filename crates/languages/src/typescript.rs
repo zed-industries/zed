@@ -164,8 +164,12 @@ impl PackageJsonData {
             task_templates.0.push(TaskTemplate {
                 label: "jest file test".to_owned(),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["jest".to_owned(), VariableName::Filename.template_value()],
-                cwd: Some(VariableName::Dirname.template_value()),
+                args: vec![
+                    "jest".to_owned(),
+                    "--runInBand".to_owned(),
+                    VariableName::File.template_value(),
+                ],
+                cwd: Some(TYPESCRIPT_JEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -173,19 +177,20 @@ impl PackageJsonData {
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
                     "jest".to_owned(),
+                    "--runInBand".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
                         TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value()
                     ),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_JEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -197,9 +202,11 @@ impl PackageJsonData {
                 args: vec![
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    VariableName::Filename.template_value(),
+                    "--poolOptions.forks.minForks=0".to_owned(),
+                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    VariableName::File.template_value(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -212,19 +219,21 @@ impl PackageJsonData {
                 args: vec![
                     "vitest".to_owned(),
                     "run".to_owned(),
+                    "--poolOptions.forks.minForks=0".to_owned(),
+                    "--poolOptions.forks.maxForks=1".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
                         TYPESCRIPT_VITEST_TEST_NAME_VARIABLE.template_value()
                     ),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -233,8 +242,8 @@ impl PackageJsonData {
             task_templates.0.push(TaskTemplate {
                 label: format!("{} file test", "mocha".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["mocha".to_owned(), VariableName::Filename.template_value()],
-                cwd: Some(VariableName::Dirname.template_value()),
+                args: vec!["mocha".to_owned(), VariableName::File.template_value()],
+                cwd: Some(TYPESCRIPT_MOCHA_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -248,14 +257,14 @@ impl PackageJsonData {
                     "mocha".to_owned(),
                     "--grep".to_owned(),
                     format!("\"{}\"", VariableName::Symbol.template_value()),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_MOCHA_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -264,11 +273,8 @@ impl PackageJsonData {
             task_templates.0.push(TaskTemplate {
                 label: format!("{} file test", "jasmine".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec![
-                    "jasmine".to_owned(),
-                    VariableName::Filename.template_value(),
-                ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                args: vec!["jasmine".to_owned(), VariableName::File.template_value()],
+                cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -281,15 +287,14 @@ impl PackageJsonData {
                 args: vec![
                     "jasmine".to_owned(),
                     format!("--filter={}", VariableName::Symbol.template_value()),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
-                    "jasmine-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
