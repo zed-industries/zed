@@ -30,7 +30,7 @@ impl DebugAdapter for DartDebugAdapter {
         Some(LanguageName::new("Dart"))
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
@@ -130,7 +130,7 @@ impl DebugAdapter for DartDebugAdapter {
         })
     }
 
-    fn validate_config(
+    async fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -141,7 +141,11 @@ impl DebugAdapter for DartDebugAdapter {
         let request_str = map
             .get("request")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("The 'request' field is required in debug.json and must be a string ('launch' or 'attach')"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "The 'request' field is required in debug.json and must be a string ('launch' or 'attach')"
+                )
+            })?;
 
         match request_str {
             "launch" => {
@@ -176,7 +180,7 @@ impl DebugAdapter for DartDebugAdapter {
         }
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut dap_config_map = serde_json::Map::new();
 
         dap_config_map.insert(
@@ -292,7 +296,7 @@ impl DebugAdapter for DartDebugAdapter {
         }
 
         let dap_request_args = StartDebuggingRequestArguments {
-            request: self.validate_config(&task_definition.config)?,
+            request: self.request_kind(&task_definition.config).await?,
             configuration: task_definition.config.clone(),
         };
 
@@ -315,7 +319,7 @@ impl DebugAdapter for DartDebugAdapter {
         }
 
         Ok(DebugAdapterBinary {
-            command: executable,
+            command: Some(executable),
             arguments: adapter_args,
             cwd,
             envs,
