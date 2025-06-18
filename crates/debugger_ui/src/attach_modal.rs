@@ -206,8 +206,7 @@ impl PickerDelegate for AttachModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        // TODO: use secondary confirm to save to debug.json like with new_process
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate = self
             .matches
             .get(self.selected_index())
@@ -230,6 +229,18 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
+        if secondary {
+            let Some(id) = worktree_id else { return };
+            let debug_panel = self.debug_panel.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                debug_panel
+                    .update_in(cx, |debug_panel, window, cx| {
+                        debug_panel.save_scenario(&debug_scenario, id, window, cx)
+                    })?
+                    .await?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         let Some(adapter) = cx.read_global::<DapRegistry, _>(|registry, _| {
             registry.adapter(&self.definition.adapter)
         }) else {

@@ -888,27 +888,56 @@ impl Render for NewProcessModal {
                             ),
                     ),
                     NewProcessMode::Attach => el.child(
-                        container
-                            .child(div().child(self.adapter_drop_down_menu(window, cx)))
-                            .child(
-                                Button::new("debugger-spawn", "Start")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_new_session(window, cx)
-                                    }))
-                                    .disabled(
-                                        self.debugger.is_none()
-                                            || self
-                                                .attach_mode
-                                                .read(cx)
-                                                .attach_picker
-                                                .read(cx)
-                                                .picker
-                                                .read(cx)
-                                                .delegate
-                                                .match_count()
-                                                == 0,
-                                    ),
+                        container.child(
+                                let action = menu::SecondaryConfirm.boxed_clone();
+                                KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                                    Button::new("edit-debug-task", "Edit in debug.json")
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(keybind)
+                                        .on_click(move |_, window, cx| {
+                                            window.dispatch_action(action.boxed_clone(), cx)
+                                        })
+                                })
+                                // Button::new("edit-attach-task", "Edit in debug.json")
+                                //     .on_click(cx.listener(|this, _, window, cx| {
+                                //         this.save_debug_scenario(window, cx)
+                                //     }))
+                                //     .disabled(
+                                //         self.debugger.is_none()
+                                //             || self
+                                //                 .attach_mode
+                                //                 .read(cx)
+                                //                 .attach_picker
+                                //                 .read(cx)
+                                //                 .picker
+                                //                 .read(cx)
+                                //                 .delegate
+                                //                 .match_count()
+                                //                 == 0,
+                                //     ),
                             ),
+                            hflex()
+                                .child(div().child(self.adapter_drop_down_menu(window, cx)))
+                                .child(
+                                    Button::new("debugger-spawn", "Start")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.start_new_session(window, cx)
+                                        }))
+                                        .disabled(
+                                            self.debugger.is_none()
+                                                || self
+                                                    .attach_mode
+                                                    .read(cx)
+                                                    .attach_picker
+                                                    .read(cx)
+                                                    .picker
+                                                    .read(cx)
+                                                    .delegate
+                                                    .match_count()
+                                                    == 0,
+                                        ),
+                                ),
+                        ),
                     ),
                     NewProcessMode::Debug => el,
                     NewProcessMode::Task => el,
