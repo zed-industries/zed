@@ -1,9 +1,8 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
+use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
 use std::{
-    any::TypeId,
     cmp,
     iter::{self, Peekable},
     ops::Range,
