@@ -202,7 +202,7 @@ impl Item for DiffView {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::GitBranch).color(Color::Muted))
+        Some(Icon::new(IconName::Diff).color(Color::Muted))
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
@@ -242,7 +242,7 @@ impl Item for DiffView {
                 )
             })
             .unwrap_or_else(|| "untitled".into());
-        format!("Diff: {old_filename} | {new_filename}").into() // todo!()
+        format!("{old_filename} ↔ {new_filename}").into()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<ui::SharedString> {
@@ -258,7 +258,7 @@ impl Item for DiffView {
             .file()
             .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".into());
-        Some(format!("Diff: {old_path} | {new_path}").into())
+        Some(format!("{old_path} ↔ {new_path}").into())
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
