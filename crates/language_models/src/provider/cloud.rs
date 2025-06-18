@@ -860,7 +860,7 @@ impl LanguageModel for CloudLanguageModel {
                                 if let Some(tokens) = parse_prompt_too_long(&api_err.body) {
                                     return anyhow!(
                                         LanguageModelKnownError::ContextWindowLimitExceeded {
-                                            tokens
+                                            tokens: Some(tokens)
                                         }
                                     );
                                 }

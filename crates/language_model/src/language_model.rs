@@ -421,8 +421,8 @@ pub trait LanguageModel: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum LanguageModelKnownError {
-    #[error("Context window limit exceeded ({tokens})")]
-    ContextWindowLimitExceeded { tokens: u64 },
+    #[error("Context window limit exceeded")]
+    ContextWindowLimitExceeded { tokens: Option<u64> },
     #[error("Language model provider's API is currently overloaded")]
     Overloaded,
     #[error("Language model provider's API encountered an internal server error")]

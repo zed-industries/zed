@@ -396,7 +396,7 @@ pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
     /// Token count including last message
-    token_count: u64,
+    token_count: Option<u64>,
 }
 
 impl Thread {
@@ -1570,7 +1570,7 @@ impl Thread {
                                         anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
                                     }
                                     LanguageModelCompletionError::PromptTooLarge => {
-                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens: todo!() }); // TODO Anthropic doesn't always give us this
+                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens: None }); // TODO try to parse the tokens out of the message, but it's ok if we don't find it
                                     }
                                     LanguageModelCompletionError::ApiReadResponseError(io_error) => {
                                         anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
@@ -1578,8 +1578,9 @@ impl Thread {
                                     LanguageModelCompletionError::UnknownResponseFormat(error) => {
                                         anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
                                     }
-                                    LanguageModelCompletionError::HttpResponseError { status, body } => {
-                                        let todo = todo!(); // TODO depending on status code, generate a different LanguageModelKnownError
+                                    LanguageModelCompletionError::HttpResponseError { .. } => {
+                                        // TODO: In the future, generate different LanguageModelKnownError based on status code
+                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
                                     }
                                     LanguageModelCompletionError::DeserializeResponse(error) => {
                                         anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
@@ -1851,6 +1852,18 @@ impl Thread {
                                 project.set_agent_location(None, cx);
                             });
 
+                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<Thread>) {
+                                let error_message = error
+                                    .chain()
+                                    .map(|err| err.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                    header: "Error interacting with language model".into(),
+                                    message: SharedString::from(error_message.clone()),
+                                }));
+                            }
+
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
                             } else if let Some(error) =
@@ -1870,31 +1883,27 @@ impl Thread {
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelKnownError::RateLimiteExceeded { retry_after } => {
-                                        let todo = todo!(); // TODO report the error to the user, wait retry_after, and then etc.
+                                    LanguageModelKnownError::RateLimiteExceeded { .. } => {
+                                        // In the future we will report the error to the user, wait retry_after, and then retry.
+                                        emit_generic_error(error, cx);
                                     }
                                     LanguageModelKnownError::Overloaded => {
-                                        let todo = todo!(); // TODO wait and then retry up to N times
+                                        // In the future we will wait and then retry, up to N times.
+                                        emit_generic_error(error, cx);
                                     }
                                     LanguageModelKnownError::ApiInternalServerError => {
-                                        let todo = todo!(); // TODO retry request, but only once
+                                        // In the future we will retry the request, but only once.
+                                        emit_generic_error(error, cx);
                                     }
-                                    LanguageModelKnownError::ReadResponseError(error) => todo!(), // TODO attempt to re-roll response, but only once
-                                    LanguageModelKnownError::DeserializeResponse(error) => todo!(), // TODO attempt to re-roll response, but only once
+                                    LanguageModelKnownError::ReadResponseError(_) |
+                                    LanguageModelKnownError::DeserializeResponse(_) |
                                     LanguageModelKnownError::UnknownResponseFormat(_) => {
-                                        let todo = todo!(); // TODO attempt to re-roll response, but only once
+                                        // In the future we will attempt to re-roll response, but only once
+                                        emit_generic_error(error, cx);
                                     }
                                 }
                             } else {
-                                let error_message = error
-                                    .chain()
-                                    .map(|err| err.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Error interacting with language model".into(),
-                                    message: SharedString::from(error_message.clone()),
-                                }));
+                                emit_generic_error(error, cx);
                             }
 
                             thread.cancel_last_completion(window, cx);
