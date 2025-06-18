@@ -207,41 +207,6 @@ async fn test_sort_positions(cx: &mut TestAppContext) {
     assert_eq!(matches[0].string, "rounded-full");
 }
 
-// #[gpui::test]
-// async fn test_sort_matches_for_special_characters(cx: &mut TestAppContext) {
-//     // Case 1: "-"
-//     let completions_case1 = vec![
-//         CompletionBuilder::snippet("do .. end", "0001"),
-//         CompletionBuilder::keyword("and", "0002"),
-//         CompletionBuilder::keyword("break", "0003"),
-//         CompletionBuilder::keyword("else", "0004"),
-//         CompletionBuilder::snippet("elseif .. then", "0005"),
-//         CompletionBuilder::keyword("end", "0006"),
-//         CompletionBuilder::keyword("false", "0007"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("-", &completions_case1, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "do .. end");
-//     assert_eq!(matches[1], "and");
-//     assert_eq!(matches[2], "else");
-
-//     // Case 2: "--"
-//     let completions_case2 = vec![
-//         CompletionBuilder::snippet("#region", "0001"),
-//         CompletionBuilder::snippet("#endregion", "0002"),
-//     ];
-//     let matches =
-//         filter_and_sort_matches("--", &completions_case2, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "#region");
-//     assert_eq!(matches[1], "#endregion");
-
-//     // Case 3: "---"
-//     let completions_case3 = vec![CompletionBuilder::snippet("@param;@return", "0001")];
-//     let matches =
-//         filter_and_sort_matches("---", &completions_case3, SnippetSortOrder::default(), cx).await;
-//     assert_eq!(matches[0], "@param;@return");
-// }
-
 async fn test_for_each_prefix<F>(
     target: &str,
     completions: &Vec<Completion>,
@@ -275,10 +240,6 @@ impl CompletionBuilder {
 
     fn variable(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
         Self::new(label, filter_text, sort_text, CompletionItemKind::VARIABLE)
-    }
-
-    fn keyword(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {
-        Self::new(label, filter_text, sort_text, CompletionItemKind::KEYWORD)
     }
 
     fn snippet(label: &str, filter_text: Option<&str>, sort_text: &str) -> Completion {

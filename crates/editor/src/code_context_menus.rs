@@ -969,6 +969,7 @@ impl CompletionsMenu {
         query: Arc<String>,
         cx: &Context<Editor>,
     ) -> Task<Vec<StringMatch>> {
+        println!("dsfs");
         let matches_task = cx.background_spawn({
             let query = query.clone();
             let match_candidates = self.match_candidates.clone();
