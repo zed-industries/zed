@@ -246,6 +246,7 @@ impl PickerDelegate for OpenPathDelegate {
         }
 
         println!("-> Updating matches for query: {query:?}, dir: {dir:?}, suffix: {suffix:?}");
+        println!("-> with path style: {:?}", self.path_style);
         let query = match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
@@ -775,4 +776,68 @@ fn path_candidates(parent_path: &String, mut children: Vec<DirectoryItem>) -> Ve
             is_dir: item.is_dir,
         })
         .collect()
+}
+
+fn get_dir_and_suffix(query: &str, path_style: PathStyle) -> (String, String) {
+    let last_item = Path::new(&query)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+    let (mut dir, suffix) = if let Some(dir) = query.strip_suffix(last_item.as_ref()) {
+        (dir.to_string(), last_item.into_owned())
+    } else {
+        (query.to_string(), String::new())
+    };
+    match path_style {
+        PathStyle::Posix => {
+            if dir.is_empty() {
+                dir = "/".to_string();
+            }
+        }
+        PathStyle::Windows => {
+            if dir.is_empty() {
+                dir = "C:\\".to_string();
+            }
+        }
+    }
+    (dir, suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use remote_path::PathStyle;
+
+    use crate::open_path_prompt::get_dir_and_suffix;
+
+    #[test]
+    fn test_get_dir_and_suffix() {
+        let (dir, suffix) = get_dir_and_suffix("", PathStyle::Windows);
+        assert_eq!(dir, "C:\\");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("C:", PathStyle::Windows);
+        assert_eq!(dir, "C:");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\", PathStyle::Windows);
+        assert_eq!(dir, "C:\\");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\Use", PathStyle::Windows);
+        assert_eq!(dir, "C:\\");
+        assert_eq!(suffix, "Use");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\Users\\Junkui\\Docum", PathStyle::Windows);
+        assert_eq!(dir, "C:\\Users\\Junkui\\");
+        assert_eq!(suffix, "Docum");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\Users\\Junkui\\Documents", PathStyle::Windows);
+        assert_eq!(dir, "C:\\Users\\Junkui\\");
+        assert_eq!(suffix, "Documents");
+
+        let (dir, suffix) =
+            get_dir_and_suffix("C:\\Users\\Junkui\\Documents\\", PathStyle::Windows);
+        assert_eq!(dir, "C:\\Users\\Junkui\\Documents\\");
+        assert_eq!(suffix, "");
+    }
 }
