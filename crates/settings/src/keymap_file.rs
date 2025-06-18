@@ -18,7 +18,7 @@ use util::{
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
 };
 
-use crate::{SettingsAssets, settings_store::parse_json_with_comments};
+use crate::{SettingsAssets, parse_json_with_comments};
 
 pub trait KeyBindingValidator: Send + Sync {
     fn action_type_id(&self) -> TypeId;
