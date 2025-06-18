@@ -99,6 +99,14 @@ impl JsDebugAdapter {
             configuration
                 .entry("console")
                 .or_insert("externalTerminal".into());
+
+            configuration.entry("sourceMaps").or_insert(true.into());
+            configuration
+                .entry("pauseForSourceMap")
+                .or_insert(true.into());
+            configuration
+                .entry("sourceMapRenames")
+                .or_insert(true.into());
         }
 
         Ok(DebugAdapterBinary {
