@@ -1142,7 +1142,9 @@ async fn register_session_inner(
         let debug_session = DebugSession::running(
             this.project.clone(),
             this.workspace.clone(),
-            parent_session.map(|p| p.read(cx).running_state().read(cx).debug_terminal.clone()),
+            parent_session
+                .as_ref()
+                .map(|p| p.read(cx).running_state().read(cx).debug_terminal.clone()),
             session,
             serialized_layout,
             this.position(window, cx).axis(),
@@ -1157,8 +1159,14 @@ async fn register_session_inner(
             |_, _, cx| cx.notify(),
         )
         .detach();
-
-        this.sessions.push(debug_session.clone());
+        let insert_position = this
+            .sessions
+            .iter()
+            .position(|session| Some(session) == parent_session.as_ref())
+            .map(|position| position + 1)
+            .unwrap_or(this.sessions.len());
+        // Maintain topological sort order of sessions
+        this.sessions.insert(insert_position, debug_session.clone());
 
         debug_session
     })?;
