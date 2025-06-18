@@ -6,8 +6,6 @@ use std::{
 use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ExtensionManifest;
-use extension_host::ExtensionStore;
 use gpui::{
     Animation, AnimationExt as _, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle,
@@ -200,18 +198,6 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     )
 }
 
-fn resolve_extension_for_context_server(
-    id: &ContextServerId,
-    cx: &App,
-) -> Option<(Arc<str>, Arc<ExtensionManifest>)> {
-    ExtensionStore::global(cx)
-        .read(cx)
-        .installed_extensions()
-        .iter()
-        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
-        .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
-}
-
 fn resolve_context_server_extension(
     id: ContextServerId,
     worktree_store: Entity<WorktreeStore>,
@@ -223,7 +209,7 @@ fn resolve_context_server_extension(
         return Task::ready(None);
     };
 
-    let extension = resolve_extension_for_context_server(&id, cx);
+    let extension = crate::agent_configuration::resolve_extension_for_context_server(&id, cx);
     cx.spawn(async move |cx| {
         let installation = descriptor
             .configuration(worktree_store, cx)

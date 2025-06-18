@@ -838,7 +838,11 @@ impl ExtensionStore {
         self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
     }
 
-    pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+    pub fn uninstall_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
@@ -846,7 +850,7 @@ impl ExtensionStore {
         let extension_manifest = self.extension_manifest_for_id(&extension_id).cloned();
 
         match self.outstanding_operations.entry(extension_id.clone()) {
-            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Occupied(_) => return Task::ready(Ok(())),
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
@@ -894,7 +898,6 @@ impl ExtensionStore {
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx)
     }
 
     pub fn install_dev_extension(
@@ -1147,6 +1150,7 @@ impl ExtensionStore {
             }
 
             for (server_id, _) in extension.manifest.context_servers.iter() {
+                dbg!("Unregistering context server with ", server_id);
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
             for (adapter, _) in extension.manifest.debug_adapters.iter() {

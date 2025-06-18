@@ -8,10 +8,12 @@ use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;
+use extension::ExtensionManifest;
+use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyView, App, Corner, Entity, EventEmitter, FocusHandle,
-    Focusable, ScrollHandle, Subscription, Transformation, WeakEntity, percentage,
+    Focusable, ScrollHandle, Subscription, Task, Transformation, WeakEntity, percentage,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
@@ -560,6 +562,7 @@ impl AgentConfiguration {
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
                 let language_registry = self.language_registry.clone();
+                let context_server_store = self.context_server_store.clone();
                 let workspace = self.workspace.clone();
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -582,13 +585,49 @@ impl AgentConfiguration {
                         .entry("Delete", None, {
                             let fs = fs.clone();
                             let context_server_id = context_server_id.clone();
+                            let context_server_store = context_server_store.clone();
                             move |_, cx| {
-                                update_settings_file::<ProjectSettings>(fs.clone(), cx, {
+                                let is_provided_by_extension = context_server_store
+                                    .read(cx)
+                                    .configuration_for_server(&context_server_id)
+                                    .as_ref()
+                                    .map(|config| {
+                                        matches!(
+                                            config.as_ref(),
+                                            ContextServerConfiguration::Extension { .. }
+                                        )
+                                    })
+                                    .unwrap_or(false);
+
+                                let uninstall_extension_task = if is_provided_by_extension {
+                                    uninstall_context_server_extension(&context_server_id, cx)
+                                } else {
+                                    Task::ready(Ok(()))
+                                };
+
+                                cx.spawn({
+                                    let fs = fs.clone();
                                     let context_server_id = context_server_id.clone();
-                                    move |settings, _| {
-                                        settings.context_servers.remove(&context_server_id.0);
+                                    async move |cx| {
+                                        uninstall_extension_task.await?;
+                                        cx.update(|cx| {
+                                            update_settings_file::<ProjectSettings>(
+                                                fs.clone(),
+                                                cx,
+                                                {
+                                                    let context_server_id =
+                                                        context_server_id.clone();
+                                                    move |settings, _| {
+                                                        settings
+                                                            .context_servers
+                                                            .remove(&context_server_id.0);
+                                                    }
+                                                },
+                                            )
+                                        })
                                     }
-                                });
+                                })
+                                .detach_and_log_err(cx);
                             }
                         })
                     }))
@@ -805,4 +844,40 @@ impl Render for AgentConfiguration {
                     .children(Scrollbar::vertical(self.scrollbar_state.clone())),
             )
     }
+}
+
+fn uninstall_context_server_extension(
+    id: &ContextServerId,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let Some((id, manifest)) = resolve_extension_for_context_server(id, cx) else {
+        dbg!("Could not find extension");
+        return Task::ready(Ok(()));
+    };
+    let only_provides_context_server = manifest.context_servers.len() == 1
+        && manifest.themes.is_empty()
+        && manifest.icon_themes.is_empty()
+        && manifest.languages.is_empty()
+        && manifest.grammars.is_empty()
+        && manifest.language_servers.is_empty()
+        && manifest.slash_commands.is_empty()
+        && manifest.indexed_docs_providers.is_empty()
+        && manifest.snippets.is_none()
+        && manifest.debug_locators.is_empty();
+    if !only_provides_context_server {
+        return Task::ready(Ok(()));
+    }
+    ExtensionStore::global(cx).update(cx, |store, cx| store.uninstall_extension(id, cx))
+}
+
+pub(crate) fn resolve_extension_for_context_server(
+    id: &ContextServerId,
+    cx: &App,
+) -> Option<(Arc<str>, Arc<ExtensionManifest>)> {
+    ExtensionStore::global(cx)
+        .read(cx)
+        .installed_extensions()
+        .iter()
+        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
+        .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
 }
