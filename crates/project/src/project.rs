@@ -28,6 +28,7 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+use remote_path::PathStyle;
 pub mod search_history;
 mod yarn;
 
@@ -1414,7 +1415,7 @@ impl Project {
                 true,
                 client.clone().into(),
                 response.payload.project_id,
-                remote::path_buf::PathStyle::Posix,
+                PathStyle::Posix,
             )
         })?;
         let buffer_store = cx.new(|cx| {

@@ -45,7 +45,8 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::{SshRemoteClient, path_buf::RemotePathBuf};
+use remote::SshRemoteClient;
+use remote_path::RemotePathBuf;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;

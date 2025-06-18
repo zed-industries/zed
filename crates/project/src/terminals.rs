@@ -4,10 +4,8 @@ use collections::HashMap;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
-use remote::{
-    path_buf::{PathStyle, RemotePathBuf},
-    ssh_session::SshArgs,
-};
+use remote::ssh_session::SshArgs;
+use remote_path::{PathStyle, RemotePathBuf};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{

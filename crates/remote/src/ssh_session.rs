@@ -1,6 +1,5 @@
 use crate::{
     json_log::LogRecord,
-    path_buf::{PathStyle, RemotePathBuf},
     protocol::{
         MESSAGE_LEN_SIZE, MessageId, message_len_from_buffer, read_message_with_len, write_message,
     },
@@ -26,6 +25,7 @@ use itertools::Itertools;
 use parking_lot::Mutex;
 
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use remote_path::{PathStyle, RemotePathBuf};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
@@ -2571,9 +2571,8 @@ mod fake {
     };
     use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
+    use remote_path::{PathStyle, RemotePathBuf};
     use rpc::proto::Envelope;
-
-    use crate::path_buf::{PathStyle, RemotePathBuf};
 
     use super::{
         ChannelClient, RemoteConnection, SshArgs, SshClientDelegate, SshConnectionOptions,

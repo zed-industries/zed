@@ -16,7 +16,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
 use postage::oneshot;
-use remote::path_buf::{PathStyle, RemotePathBuf};
+use remote_path::{PathStyle, RemotePathBuf};
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto},
