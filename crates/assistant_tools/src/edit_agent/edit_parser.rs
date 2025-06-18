@@ -75,7 +75,7 @@ impl FromStr for EditFormat {
 impl EditFormat {
     /// Return an optimal edit format for the language model
     pub fn from_model(model: Arc<dyn LanguageModel>) -> anyhow::Result<Self> {
-        if model.provider_id().0 == "google" {
+        if model.provider_id().0 == "google" || model.id().0.to_lowercase().contains("gemini") {
             Ok(EditFormat::DiffFenced)
         } else {
             Ok(EditFormat::XmlTags)

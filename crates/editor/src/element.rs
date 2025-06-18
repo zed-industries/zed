@@ -12,12 +12,13 @@ use crate::{
     ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightedChunk,
-        ToDisplayPoint,
+        Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightKey,
+        HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, MinimapThumb, MinimapThumbBorder,
-        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
+        CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, MinimapThumb,
+        MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
+        ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -31,7 +32,6 @@ use crate::{
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use file_icons::FileIcons;
 use git::{
     Oid,
@@ -566,12 +566,10 @@ impl EditorElement {
         register_action(editor, window, Editor::insert_uuid_v4);
         register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
-        if cx.has_flag::<DebuggerFeatureFlag>() {
-            register_action(editor, window, Editor::toggle_breakpoint);
-            register_action(editor, window, Editor::edit_log_breakpoint);
-            register_action(editor, window, Editor::enable_breakpoint);
-            register_action(editor, window, Editor::disable_breakpoint);
-        }
+        register_action(editor, window, Editor::toggle_breakpoint);
+        register_action(editor, window, Editor::edit_log_breakpoint);
+        register_action(editor, window, Editor::enable_breakpoint);
+        register_action(editor, window, Editor::disable_breakpoint);
     }
 
     fn register_key_listeners(&self, window: &mut Window, _: &mut App, layout: &EditorLayout) {
@@ -1776,6 +1774,19 @@ impl EditorElement {
         let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
+
+        if minimap_settings.on_active_editor() {
+            let active_editor = self.editor.read(cx).workspace().and_then(|ws| {
+                ws.read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|i| i.act_as::<Editor>(cx))
+            });
+            if active_editor.is_some_and(|e| e != self.editor) {
+                return None;
+            }
+        }
 
         if !snapshot.mode.is_full()
             || minimap_width.is_zero()
@@ -5663,6 +5674,7 @@ impl EditorElement {
 
                 self.paint_lines_background(layout, window, cx);
                 let invisible_display_ranges = self.paint_highlights(layout, window);
+                self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
@@ -5690,6 +5702,7 @@ impl EditorElement {
             for (range, color) in &layout.highlighted_ranges {
                 self.paint_highlighted_range(
                     range.clone(),
+                    true,
                     *color,
                     Pixels::ZERO,
                     line_end_overshoot,
@@ -5704,6 +5717,7 @@ impl EditorElement {
                 for selection in selections.iter() {
                     self.paint_highlighted_range(
                         selection.range.clone(),
+                        true,
                         player_color.selection,
                         corner_radius,
                         corner_radius * 2.,
@@ -5779,6 +5793,7 @@ impl EditorElement {
             for range in layout.redacted_ranges.iter() {
                 self.paint_highlighted_range(
                     range.clone(),
+                    true,
                     redaction_color.into(),
                     Pixels::ZERO,
                     line_end_overshoot,
@@ -5787,6 +5802,48 @@ impl EditorElement {
                 );
             }
         });
+    }
+
+    fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window) {
+        let Some((colors_render_mode, image_colors)) = &layout.document_colors else {
+            return;
+        };
+        if image_colors.is_empty()
+            || colors_render_mode == &DocumentColorsRenderMode::None
+            || colors_render_mode == &DocumentColorsRenderMode::Inlay
+        {
+            return;
+        }
+
+        let line_end_overshoot = layout.line_end_overshoot();
+
+        for (range, color) in image_colors {
+            match colors_render_mode {
+                DocumentColorsRenderMode::Inlay | DocumentColorsRenderMode::None => return,
+                DocumentColorsRenderMode::Background => {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        true,
+                        *color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        window,
+                    );
+                }
+                DocumentColorsRenderMode::Border => {
+                    self.paint_highlighted_range(
+                        range.clone(),
+                        false,
+                        *color,
+                        Pixels::ZERO,
+                        line_end_overshoot,
+                        layout,
+                        window,
+                    );
+                }
+            }
+        }
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
@@ -6109,13 +6166,15 @@ impl EditorElement {
                                 background_highlights.iter()
                             {
                                 let is_search_highlights = *background_highlight_id
-                                    == TypeId::of::<BufferSearchHighlights>();
+                                    == HighlightKey::Type(TypeId::of::<BufferSearchHighlights>());
                                 let is_text_highlights = *background_highlight_id
-                                    == TypeId::of::<SelectedTextHighlight>();
+                                    == HighlightKey::Type(TypeId::of::<SelectedTextHighlight>());
                                 let is_symbol_occurrences = *background_highlight_id
-                                    == TypeId::of::<DocumentHighlightRead>()
+                                    == HighlightKey::Type(TypeId::of::<DocumentHighlightRead>())
                                     || *background_highlight_id
-                                        == TypeId::of::<DocumentHighlightWrite>();
+                                        == HighlightKey::Type(
+                                            TypeId::of::<DocumentHighlightWrite>(),
+                                        );
                                 if (is_search_highlights && scrollbar_settings.search_results)
                                     || (is_text_highlights && scrollbar_settings.selected_text)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
@@ -6223,6 +6282,7 @@ impl EditorElement {
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
+        fill: bool,
         color: Hsla,
         corner_radius: Pixels,
         line_end_overshoot: Pixels,
@@ -6273,7 +6333,7 @@ impl EditorElement {
                     .collect(),
             };
 
-            highlighted_range.paint(layout.position_map.text_hitbox.bounds, window);
+            highlighted_range.paint(fill, layout.position_map.text_hitbox.bounds, window);
         }
     }
 
@@ -8033,7 +8093,7 @@ impl Element for EditorElement {
                             editor.read(cx).background_highlights_in_range(
                                 start_anchor..end_anchor,
                                 &snapshot.display_snapshot,
-                                cx.theme().colors(),
+                                cx.theme(),
                             )
                         })
                         .unwrap_or_default();
@@ -8044,6 +8104,12 @@ impl Element for EditorElement {
                             cx,
                         );
 
+                    let document_colors = self
+                        .editor
+                        .read(cx)
+                        .colors
+                        .as_ref()
+                        .map(|colors| colors.editor_display_highlights(&snapshot));
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
@@ -8102,11 +8168,9 @@ impl Element for EditorElement {
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
-                    if cx.has_flag::<DebuggerFeatureFlag>() {
-                        for (display_row, (_, bp, state)) in &breakpoint_rows {
-                            if bp.is_enabled() && state.is_none_or(|s| s.verified) {
-                                active_rows.entry(*display_row).or_default().breakpoint = true;
-                            }
+                    for (display_row, (_, bp, state)) in &breakpoint_rows {
+                        if bp.is_enabled() && state.is_none_or(|s| s.verified) {
+                            active_rows.entry(*display_row).or_default().breakpoint = true;
                         }
                     }
 
@@ -8127,30 +8191,27 @@ impl Element for EditorElement {
                     // We add the gutter breakpoint indicator to breakpoint_rows after painting
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
-                    if cx.has_flag::<DebuggerFeatureFlag>() {
-                        self.editor.update(cx, |editor, _| {
-                            if let Some(phantom_breakpoint) = &mut editor
-                                .gutter_breakpoint_indicator
-                                .0
-                                .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
-                            {
-                                // Is there a non-phantom breakpoint on this line?
-                                phantom_breakpoint.collides_with_existing_breakpoint = true;
-                                breakpoint_rows
-                                    .entry(phantom_breakpoint.display_row)
-                                    .or_insert_with(|| {
-                                        let position = snapshot.display_point_to_anchor(
-                                            DisplayPoint::new(phantom_breakpoint.display_row, 0),
-                                            Bias::Right,
-                                        );
-                                        let breakpoint = Breakpoint::new_standard();
-                                        phantom_breakpoint.collides_with_existing_breakpoint =
-                                            false;
-                                        (position, breakpoint, None)
-                                    });
-                            }
-                        })
-                    }
+                    self.editor.update(cx, |editor, _| {
+                        if let Some(phantom_breakpoint) = &mut editor
+                            .gutter_breakpoint_indicator
+                            .0
+                            .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
+                        {
+                            // Is there a non-phantom breakpoint on this line?
+                            phantom_breakpoint.collides_with_existing_breakpoint = true;
+                            breakpoint_rows
+                                .entry(phantom_breakpoint.display_row)
+                                .or_insert_with(|| {
+                                    let position = snapshot.display_point_to_anchor(
+                                        DisplayPoint::new(phantom_breakpoint.display_row, 0),
+                                        Bias::Right,
+                                    );
+                                    let breakpoint = Breakpoint::new_standard();
+                                    phantom_breakpoint.collides_with_existing_breakpoint = false;
+                                    (position, breakpoint, None)
+                                });
+                        }
+                    });
 
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
@@ -8619,7 +8680,7 @@ impl Element for EditorElement {
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
-                    let breakpoints = if cx.has_flag::<DebuggerFeatureFlag>() && show_breakpoints {
+                    let breakpoints = if show_breakpoints {
                         self.layout_breakpoints(
                             line_height,
                             start_row..end_row,
@@ -8634,7 +8695,7 @@ impl Element for EditorElement {
                             cx,
                         )
                     } else {
-                        vec![]
+                        Vec::new()
                     };
 
                     self.layout_signature_help(
@@ -8791,6 +8852,7 @@ impl Element for EditorElement {
                         highlighted_ranges,
                         highlighted_gutter_ranges,
                         redacted_ranges,
+                        document_colors,
                         line_elements,
                         line_numbers,
                         blamed_display_rows,
@@ -8996,6 +9058,7 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
+    document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
 }
 
 impl EditorLayout {
@@ -9718,17 +9781,18 @@ pub struct HighlightedRangeLine {
 }
 
 impl HighlightedRange {
-    pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
+    pub fn paint(&self, fill: bool, bounds: Bounds<Pixels>, window: &mut Window) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
-            self.paint_lines(self.start_y, &self.lines[0..1], bounds, window);
+            self.paint_lines(self.start_y, &self.lines[0..1], fill, bounds, window);
             self.paint_lines(
                 self.start_y + self.line_height,
                 &self.lines[1..],
+                fill,
                 bounds,
                 window,
             );
         } else {
-            self.paint_lines(self.start_y, &self.lines, bounds, window);
+            self.paint_lines(self.start_y, &self.lines, fill, bounds, window);
         }
     }
 
@@ -9736,6 +9800,7 @@ impl HighlightedRange {
         &self,
         start_y: Pixels,
         lines: &[HighlightedRangeLine],
+        fill: bool,
         _bounds: Bounds<Pixels>,
         window: &mut Window,
     ) {
@@ -9762,7 +9827,11 @@ impl HighlightedRange {
         };
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-        let mut builder = gpui::PathBuilder::fill();
+        let mut builder = if fill {
+            gpui::PathBuilder::fill()
+        } else {
+            gpui::PathBuilder::stroke(px(1.))
+        };
         builder.move_to(first_top_right - top_curve_width);
         builder.curve_to(first_top_right + curve_height, first_top_right);
 

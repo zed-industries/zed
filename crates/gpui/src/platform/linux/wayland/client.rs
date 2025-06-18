@@ -73,7 +73,7 @@ use super::{
 
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
-    AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
@@ -217,6 +217,7 @@ pub(crate) struct WaylandClientState {
     click: ClickState,
     repeat: KeyRepeat,
     pub modifiers: Modifiers,
+    pub capslock: Capslock,
     axis_source: AxisSource,
     pub mouse_location: Option<Point<Pixels>>,
     continuous_scroll_delta: Option<Point<Pixels>>,
@@ -537,7 +538,7 @@ impl WaylandClient {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme.as_str());
+                            client.cursor.set_theme(theme);
                         }
                     }
                     XDPEvent::CursorSize(size) => {
@@ -595,6 +596,7 @@ impl WaylandClient {
                 function: false,
                 platform: false,
             },
+            capslock: Capslock { on: false },
             scroll_event_received: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
@@ -730,7 +732,7 @@ impl LinuxClient for WaylandClient {
                 let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
+                    .set_icon(&wl_pointer, serial, style.to_icon_names(), scale);
             }
         }
     }
@@ -1251,13 +1253,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+                let keymap_state = state.keymap_state.as_mut().unwrap();
+                state.capslock = Capslock::from_xkb(keymap_state);
+
+                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers: state.modifiers,
+                    capslock: state.capslock,
+                });
+                drop(state);
 
                 if let Some(focused_window) = focused_window {
-                    let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                        modifiers: state.modifiers,
-                    });
-
-                    drop(state);
                     focused_window.handle_input(input);
                 }
 
@@ -1530,9 +1535,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
                             let scale = window.primary_output_scale();
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
+                            state.cursor.set_icon(
+                                &wl_pointer,
+                                serial,
+                                style.to_icon_names(),
+                                scale,
+                            );
                         }
                     }
                     drop(state);

@@ -261,7 +261,7 @@ impl Vim {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange>(
                 &ranges,
-                |theme| theme.editor_document_highlight_read_background,
+                |theme| theme.colors().editor_document_highlight_read_background,
                 cx,
             );
         }

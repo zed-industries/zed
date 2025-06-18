@@ -17,6 +17,7 @@ pub struct Matcher<'a> {
     lowercase_query: &'a [char],
     query_char_bag: CharBag,
     smart_case: bool,
+    penalize_length: bool,
     min_score: f64,
     match_positions: Vec<usize>,
     last_positions: Vec<usize>,
@@ -35,6 +36,7 @@ impl<'a> Matcher<'a> {
         lowercase_query: &'a [char],
         query_char_bag: CharBag,
         smart_case: bool,
+        penalize_length: bool,
     ) -> Self {
         Self {
             query,
@@ -46,6 +48,7 @@ impl<'a> Matcher<'a> {
             score_matrix: Vec::new(),
             best_position_matrix: Vec::new(),
             smart_case,
+            penalize_length,
         }
     }
 
@@ -294,7 +297,7 @@ impl<'a> Matcher<'a> {
                 let mut multiplier = char_score;
 
                 // Scale the score based on how deep within the path we found the match.
-                if query_idx == 0 {
+                if self.penalize_length && query_idx == 0 {
                     multiplier /= ((prefix.len() + path.len()) - last_slash) as f64;
                 }
 
@@ -355,18 +358,18 @@ mod tests {
     #[test]
     fn test_get_last_positions() {
         let mut query: &[char] = &['d', 'c'];
-        let mut matcher = Matcher::new(query, query, query.into(), false);
+        let mut matcher = Matcher::new(query, query, query.into(), false, true);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
         assert!(!result);
 
         query = &['c', 'd'];
-        let mut matcher = Matcher::new(query, query, query.into(), false);
+        let mut matcher = Matcher::new(query, query, query.into(), false, true);
         let result = matcher.find_last_positions(&['a', 'b', 'c'], &['b', 'd', 'e', 'f']);
         assert!(result);
         assert_eq!(matcher.last_positions, vec![2, 4]);
 
         query = &['z', '/', 'z', 'f'];
-        let mut matcher = Matcher::new(query, query, query.into(), false);
+        let mut matcher = Matcher::new(query, query, query.into(), false, true);
         let result = matcher.find_last_positions(&['z', 'e', 'd', '/'], &['z', 'e', 'd', '/', 'f']);
         assert!(result);
         assert_eq!(matcher.last_positions, vec![0, 3, 4, 8]);
@@ -613,7 +616,7 @@ mod tests {
             });
         }
 
-        let mut matcher = Matcher::new(&query, &lowercase_query, query_chars, smart_case);
+        let mut matcher = Matcher::new(&query, &lowercase_query, query_chars, smart_case, true);
 
         let cancel_flag = AtomicBool::new(false);
         let mut results = Vec::new();

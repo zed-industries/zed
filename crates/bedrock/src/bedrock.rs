@@ -152,7 +152,7 @@ pub enum Thinking {
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u32,
+    pub max_tokens: u64,
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,

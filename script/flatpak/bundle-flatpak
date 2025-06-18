@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 shopt -s extglob
 
-script/bundle-linux
+script/bundle-linux --flatpak
 archive_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
 archive=$(ls "target/release" | grep -E ${archive_match})
 channel=$(<crates/zed/RELEASE_CHANNEL)

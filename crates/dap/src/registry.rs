@@ -50,18 +50,21 @@ impl DapRegistry {
         let name = adapter.name();
         let _previous_value = self.0.write().adapters.insert(name, adapter);
     }
+    pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
+        self.0.write().locators.insert(locator.name(), locator);
+    }
+
+    pub fn remove_adapter(&self, name: &str) {
+        self.0.write().adapters.remove(name);
+    }
+
+    pub fn remove_locator(&self, locator: &str) {
+        self.0.write().locators.remove(locator);
+    }
 
     pub fn adapter_language(&self, adapter_name: &str) -> Option<LanguageName> {
         self.adapter(adapter_name)
             .and_then(|adapter| adapter.adapter_language_name())
-    }
-
-    pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
-        let _previous_value = self.0.write().locators.insert(locator.name(), locator);
-        debug_assert!(
-            _previous_value.is_none(),
-            "Attempted to insert a new debug locator when one is already registered"
-        );
     }
 
     pub async fn adapters_schema(&self) -> task::AdapterSchemas {

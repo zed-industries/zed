@@ -3815,6 +3815,7 @@ impl OutlinePanel {
                 &generation_state.match_candidates,
                 &query,
                 true,
+                true,
                 usize::MAX,
                 &AtomicBool::default(),
                 cx.background_executor().clone(),
