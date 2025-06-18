@@ -17,6 +17,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::ProjectSettings,
@@ -586,6 +587,7 @@ impl AgentConfiguration {
                             let fs = fs.clone();
                             let context_server_id = context_server_id.clone();
                             let context_server_store = context_server_store.clone();
+                            let workspace = workspace.clone();
                             move |_, cx| {
                                 let is_provided_by_extension = context_server_store
                                     .read(cx)
@@ -599,10 +601,24 @@ impl AgentConfiguration {
                                     })
                                     .unwrap_or(false);
 
-                                let uninstall_extension_task = if is_provided_by_extension {
-                                    uninstall_context_server_extension(&context_server_id, cx)
-                                } else {
-                                    Task::ready(Ok(()))
+                                let uninstall_extension_task = match (
+                                    is_provided_by_extension,
+                                    resolve_extension_for_context_server(&context_server_id, cx),
+                                ) {
+                                    (true, Some((id, manifest))) => {
+                                        if extension_only_provides_context_server(manifest.as_ref())
+                                        {
+                                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                                store.uninstall_extension(id, cx)
+                                            })
+                                        } else {
+                                            workspace.update(cx, |workspace, cx| {
+                                                show_unable_to_uninstall_extension_with_context_server(workspace, context_server_id.clone(), cx);
+                                            }).log_err();
+                                            Task::ready(Ok(()))
+                                        }
+                                    }
+                                    _ => Task::ready(Ok(())),
                                 };
 
                                 cx.spawn({
@@ -846,14 +862,8 @@ impl Render for AgentConfiguration {
     }
 }
 
-fn uninstall_context_server_extension(
-    id: &ContextServerId,
-    cx: &mut App,
-) -> Task<anyhow::Result<()>> {
-    let Some((id, manifest)) = resolve_extension_for_context_server(id, cx) else {
-        return Task::ready(Ok(()));
-    };
-    let only_provides_context_server = manifest.context_servers.len() == 1
+fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool {
+    manifest.context_servers.len() == 1
         && manifest.themes.is_empty()
         && manifest.icon_themes.is_empty()
         && manifest.languages.is_empty()
@@ -862,11 +872,7 @@ fn uninstall_context_server_extension(
         && manifest.slash_commands.is_empty()
         && manifest.indexed_docs_providers.is_empty()
         && manifest.snippets.is_none()
-        && manifest.debug_locators.is_empty();
-    if !only_provides_context_server {
-        return Task::ready(Ok(()));
-    }
-    ExtensionStore::global(cx).update(cx, |store, cx| store.uninstall_extension(id, cx))
+        && manifest.debug_locators.is_empty()
 }
 
 pub(crate) fn resolve_extension_for_context_server(
@@ -879,4 +885,27 @@ pub(crate) fn resolve_extension_for_context_server(
         .iter()
         .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
         .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
+}
+
+// This notification appears when trying to delete
+// an MCP server extension that not only provides
+// the server, but other things, too, like language servers and more.
+fn show_unable_to_uninstall_extension_with_context_server(
+    workspace: &mut Workspace,
+    id: ContextServerId,
+    cx: &mut App,
+) {
+    let status_toast = StatusToast::new(
+        format!(
+            "Unable to uninstall the {} extension, as it provides more than just the MCP server.",
+            id.0
+        ),
+        cx,
+        |this, _cx| {
+            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
+                .action("Dismiss", |_, _| {})
+        },
+    );
+
+    workspace.toggle_status_toast(status_toast, cx);
 }
