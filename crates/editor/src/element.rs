@@ -16,9 +16,9 @@ use crate::{
         HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, MinimapThumb,
-        MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
-        ShowScrollbar,
+        CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
+        MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
+        ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
