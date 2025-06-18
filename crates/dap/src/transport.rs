@@ -5,7 +5,10 @@ use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
 };
-use futures::{AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _, channel::oneshot, select};
+use futures::{
+    AsyncBufRead, AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _, channel::oneshot,
+    select,
+};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use proto::ErrorExt;
@@ -13,11 +16,12 @@ use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
     channel::{Receiver, Sender, unbounded},
-    io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader, ReadLineFuture},
     net::{TcpListener, TcpStream},
 };
 use std::{
     collections::HashMap,
+    io::Stdout,
     net::{Ipv4Addr, SocketAddrV4},
     process::Stdio,
     sync::Arc,
@@ -298,8 +302,11 @@ impl TransportDelegate {
     {
         let mut recv_buffer = String::new();
         let mut reader = BufReader::new(server_stdout);
+        let mut count = 0;
 
         let result = loop {
+            dbg!("Reading from server", count);
+            count += 1;
             match Self::receive_server_message(&mut reader, &mut recv_buffer, log_handlers.as_ref())
                 .await
             {
@@ -358,44 +365,71 @@ impl TransportDelegate {
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
         let mut content_length = None;
+        dbg!("<<<<<<<<< receive server message loop");
         loop {
             buffer.truncate(0);
 
-            match reader.read_line(buffer).await {
-                Ok(0) => return ConnectionResult::ConnectionReset,
-                Ok(_) => {}
-                Err(e) => return ConnectionResult::Result(Err(e.into())),
+            struct Dummy<'a, T: Unpin> {
+                inner: ReadLineFuture<'a, T>,
+            }
+
+            impl<'a, T: Unpin + AsyncBufRead> Future for Dummy<'a, T> {
+                type Output = Result<usize, std::io::Error>;
+
+                fn poll(
+                    mut self: std::pin::Pin<&mut Self>,
+                    cx: &mut std::task::Context<'_>,
+                ) -> std::task::Poll<Self::Output> {
+                    dbg!("Polling buffer");
+                    unsafe { std::pin::Pin::new_unchecked(&mut self.inner).poll(cx) }
+                }
+            }
+
+            dbg!("Reading buffer line");
+            dbg!(String::from_utf8(reader.buffer().to_owned())).ok();
+
+            let dummy = Dummy {
+                inner: reader.read_line(buffer),
             };
 
+            match dummy.await {
+                Ok(0) => return dbg!(ConnectionResult::ConnectionReset),
+                Ok(_) => {}
+                Err(e) => return dbg!(ConnectionResult::Result(Err(e.into()))),
+            };
+            dbg!("after read line");
+
             if buffer == "\r\n" {
+                dbg!("Ending loop early");
                 break;
             }
 
             if let Some(("Content-Length", value)) = buffer.trim().split_once(": ") {
                 match value.parse().context("invalid content length") {
                     Ok(length) => content_length = Some(length),
-                    Err(e) => return ConnectionResult::Result(Err(e)),
+                    Err(e) => return dbg!(ConnectionResult::Result(Err(e))),
                 }
             }
         }
 
         let content_length = match content_length.context("missing content length") {
             Ok(length) => length,
-            Err(e) => return ConnectionResult::Result(Err(e)),
+            Err(e) => return dbg!(ConnectionResult::Result(Err(e))),
         };
 
         let mut content = vec![0; content_length];
+        dbg!("Reading content");
         if let Err(e) = reader
             .read_exact(&mut content)
             .await
             .with_context(|| "reading after a loop")
         {
-            return ConnectionResult::Result(Err(e));
+            return dbg!(ConnectionResult::Result(Err(e)));
         }
 
         let message_str = match std::str::from_utf8(&content).context("invalid utf8 from server") {
             Ok(str) => str,
-            Err(e) => return ConnectionResult::Result(Err(e)),
+            Err(e) => return dbg!(ConnectionResult::Result(Err(e))),
         };
 
         let message =
@@ -408,13 +442,17 @@ impl TransportDelegate {
                 _ => None,
             };
 
+            dbg!("Locking log handlers");
             for (kind, log_handler) in log_handlers.lock().iter_mut() {
+                dbg!("log handler");
                 if matches!(kind, LogKind::Rpc) {
                     log_handler(IoKind::StdOut, command, message_str);
                 }
+                dbg!("after log handler");
             }
         }
 
+        dbg!("RESULT", &message);
         ConnectionResult::Result(message)
     }
 

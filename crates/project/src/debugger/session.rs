@@ -836,6 +836,7 @@ impl Session {
         let background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
             let mut initialized_tx = Some(initialized_tx);
             while let Some(message) = message_rx.next().await {
+                dbg!(&message);
                 if let Message::Event(event) = message {
                     if let Events::Initialized(_) = *event {
                         if let Some(tx) = initialized_tx.take() {
@@ -1809,6 +1810,10 @@ impl Session {
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        if self.is_session_terminated {
+            return Task::ready(());
+        }
+
         self.is_session_terminated = true;
         self.thread_states.exit_all_threads();
         cx.notify();
