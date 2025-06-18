@@ -433,24 +433,12 @@ You must provide the model's Context Window in the `max_tokens` parameter; this 
 OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
 Custom models will be listed in the model dropdown in the Agent Panel.
 
-### OpenRouter {#openrouter}
-
-> ✅ Supports tool use
-
-OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
-
-1. Visit [OpenRouter](https://openrouter.ai) and create an account
-2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys)
-3. Open the settings view (`agent: open configuration`) and go to the OpenRouter section
-4. Enter your OpenRouter API key
-
-The OpenRouter API key will be saved in your keychain.
-
-Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
-
 ### OpenAI API Compatible {#openai-api-compatible}
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
+
+You can add a custom API URL for OpenAI either via the UI or by editing the your `settings.json`.
+Here are a few model examples you can plug in by using this feature:
 
 #### X.ai Grok
 
@@ -471,6 +459,35 @@ Example configuration for using X.ai Grok with Zed:
     },
   }
 ```
+
+#### Vercel's v0
+
+To use Vercel's v0 models with Zed, ensure you have created a [v0 API key first](https://v0.dev/chat/settings/keys).
+Once that's done, insert that into the OpenAI API key section, and add this API endpoint:
+
+```json
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.v0.dev/v1",
+      "version": "1"
+    },
+  }
+```
+
+### OpenRouter {#openrouter}
+
+> ✅ Supports tool use
+
+OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
+
+1. Visit [OpenRouter](https://openrouter.ai) and create an account
+2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys)
+3. Open the settings view (`agent: open configuration`) and go to the OpenRouter section
+4. Enter your OpenRouter API key
+
+The OpenRouter API key will be saved in your keychain.
+
+Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
 ## Advanced Configuration {#advanced-configuration}
 
