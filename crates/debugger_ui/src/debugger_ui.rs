@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use dap::debugger_settings::DebuggerSettings;
-use debugger_panel::{DebugPanel, ToggleFocus};
+use debugger_panel::DebugPanel;
 use editor::Editor;
 use gpui::{App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
@@ -13,6 +13,7 @@ use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
+use zed_actions::ToggleFocus;
 
 pub mod attach_modal;
 pub mod debugger_panel;

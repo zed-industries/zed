@@ -19,7 +19,7 @@ use dap::{DapRegistry, StartDebuggingRequestArguments};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
-    WeakEntity, actions, anchored, deferred,
+    WeakEntity, anchored, deferred,
 };
 
 use itertools::Itertools as _;
@@ -39,6 +39,7 @@ use workspace::{
     Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
+use zed_actions::ToggleFocus;
 
 pub enum DebugPanelEvent {
     Exited(SessionId),
@@ -56,8 +57,6 @@ pub enum DebugPanelEvent {
     ClientShutdown(SessionId),
     CapabilitiesChanged(SessionId),
 }
-
-actions!(debug_panel, [ToggleFocus]);
 
 pub struct DebugPanel {
     size: Pixels,

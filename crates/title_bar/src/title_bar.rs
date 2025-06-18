@@ -336,11 +336,11 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Agentic Onboarding",
-                IconName::ZedAssistant,
-                "Agentic Editing",
+                "Debugger Onboarding",
+                IconName::Debug,
+                "Debugger",
                 None,
-                zed_actions::agent::OpenOnboardingModal.boxed_clone(),
+                zed_actions::ToggleFocus.boxed_clone(),
                 cx,
             )
         });

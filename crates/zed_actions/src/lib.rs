@@ -349,6 +349,7 @@ pub mod outline {
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
 
+actions!(debug_panel, [ToggleFocus]);
 actions!(
     debugger,
     [
