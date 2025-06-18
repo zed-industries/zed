@@ -206,13 +206,13 @@ pub(crate) struct LogMenuItem {
 
 actions!(dev, [OpenLanguageServerLogs]);
 
-pub(super) struct GlobalLogStore(pub Entity<LogStore>);
+pub(super) struct GlobalLogStore(pub WeakEntity<LogStore>);
 
 impl Global for GlobalLogStore {}
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
-    cx.set_global(GlobalLogStore(log_store.clone()));
+    cx.set_global(GlobalLogStore(log_store.downgrade()));
 
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();

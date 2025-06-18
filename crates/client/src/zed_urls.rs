@@ -17,8 +17,3 @@ fn server_url(cx: &App) -> &str {
 pub fn account_url(cx: &App) -> String {
     format!("{server_url}/account", server_url = server_url(cx))
 }
-
-/// Returns the URL to the language documentation page on zed.dev.
-pub fn language_docs_url(cx: &App) -> String {
-    format!("{server_url}/docs/languages", server_url = server_url(cx))
-}

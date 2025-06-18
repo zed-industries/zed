@@ -358,7 +358,7 @@ impl LspTool {
 
         let workspace = self.workspace.clone();
         let lsp_store = self.lsp_store.clone();
-        let lsp_logs = cx.global::<GlobalLogStore>().0.downgrade();
+        let lsp_logs = cx.global::<GlobalLogStore>().0.clone();
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             if active_editor.is_none() {
                 return empty_context_menu(

@@ -1065,71 +1065,14 @@ impl LocalLspStore {
         clangd_ext::register_notifications(this, language_server, adapter);
     }
 
-    fn shutdown_language_servers(
+    fn shutdown_language_servers_on_quit(
         &mut self,
-        cx: &mut Context<LspStore>,
+        _: &mut Context<LspStore>,
     ) -> impl Future<Output = ()> + use<> {
         let shutdown_futures = self
             .language_servers
             .drain()
-            .map(|(server_id, server_state)| {
-                let server_name = match &server_state {
-                    LanguageServerState::Starting { .. } => None,
-                    LanguageServerState::Running { adapter, .. } => Some(adapter.name()),
-                };
-                cx.emit(LspStoreEvent::LanguageServerUpdate {
-                    language_server_id: server_id,
-                    name: server_name.clone(),
-                    message: proto::update_language_server::Variant::StatusUpdate(
-                        proto::StatusUpdate {
-                            message: None,
-                            status: proto::status_update::Status::Stopping as i32,
-                        },
-                    ),
-                });
-                cx.spawn(async move |lsp_store, cx| {
-                    match Self::shutdown_server(server_state).await {
-                        Ok(()) => {
-                            lsp_store
-                                .update(cx, |_, cx| {
-                                    cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                        language_server_id: server_id,
-                                        name: server_name,
-                                        message:
-                                            proto::update_language_server::Variant::StatusUpdate(
-                                                proto::StatusUpdate {
-                                                    message: None,
-                                                    status: proto::status_update::Status::Stopped
-                                                        as i32,
-                                                },
-                                            ),
-                                    });
-                                })
-                                .ok();
-                        }
-                        Err(e) => {
-                            lsp_store
-                                .update(cx, |_, cx| {
-                                    cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                        language_server_id: server_id,
-                                        name: server_name,
-                                        message:
-                                            proto::update_language_server::Variant::StatusUpdate(
-                                                proto::StatusUpdate {
-                                                    message: Some(format!(
-                                                        "Server {server_id} failed to stop: {e:#}"
-                                                    )),
-                                                    status: proto::status_update::Status::Error
-                                                        as i32,
-                                                },
-                                            ),
-                                    })
-                                })
-                                .ok();
-                        }
-                    }
-                })
-            })
+            .map(|(_, server_state)| Self::shutdown_server(server_state))
             .collect::<Vec<_>>();
 
         async move {
@@ -3848,7 +3791,9 @@ impl LspStore {
                 next_diagnostic_group_id: Default::default(),
                 diagnostics: Default::default(),
                 _subscription: cx.on_app_quit(|this, cx| {
-                    this.as_local_mut().unwrap().shutdown_language_servers(cx)
+                    this.as_local_mut()
+                        .unwrap()
+                        .shutdown_language_servers_on_quit(cx)
                 }),
                 lsp_tree: LanguageServerTree::new(manifest_tree, languages.clone(), cx),
                 registered_buffers: HashMap::default(),
@@ -8329,7 +8274,6 @@ impl LspStore {
         }
 
         cx.emit(LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id });
-
         cx.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id,
             name: self
