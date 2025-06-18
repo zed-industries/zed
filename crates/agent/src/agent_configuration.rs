@@ -851,7 +851,6 @@ fn uninstall_context_server_extension(
     cx: &mut App,
 ) -> Task<anyhow::Result<()>> {
     let Some((id, manifest)) = resolve_extension_for_context_server(id, cx) else {
-        dbg!("Could not find extension");
         return Task::ready(Ok(()));
     };
     let only_provides_context_server = manifest.context_servers.len() == 1
