@@ -9497,6 +9497,7 @@ struct MinimapLayout {
 
 impl MinimapLayout {
     const DEFAULT_MINIMAP_WIDTH: Pixels = Pixels::ZERO;
+    /// The minimap width as a percentage of the editor width.
     const MINIMAP_WIDTH_PCT: f32 = 0.15;
     /// Calculates the scroll top offset the minimap editor has to have based on the
     /// current scroll progress.
