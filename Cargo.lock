@@ -9008,6 +9008,7 @@ dependencies = [
  "tiktoken-rs",
  "tokio",
  "ui",
+ "ui_input",
  "util",
  "workspace-hack",
  "zed_llm_client",
