@@ -6,7 +6,7 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_panel::AgentPanel;
 
-macro_rules! agent_onboarding_event {
+macro_rules! debugger_onboarding_event {
     ($name:expr) => {
         telemetry::event!($name, source = "Debugger Onboarding");
     };
@@ -36,14 +36,14 @@ impl DebuggerOnboardingModal {
 
         cx.emit(DismissEvent);
 
-        agent_onboarding_event!("Open Panel Clicked");
+        debugger_onboarding_event!("Open Panel Clicked");
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("http://zed.dev/blog/fastest-ai-code-editor");
+        cx.open_url("http://zed.dev/blog/debugger");
         cx.notify();
 
-        agent_onboarding_event!("Blog Link Clicked");
+        debugger_onboarding_event!("Blog Link Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -80,7 +80,7 @@ impl Render for DebuggerOnboardingModal {
             .overflow_hidden()
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
-                agent_onboarding_event!("Canceled", trigger = "Action");
+                debugger_onboarding_event!("Canceled", trigger = "Action");
                 cx.emit(DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
@@ -136,12 +136,12 @@ impl Render for DebuggerOnboardingModal {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Headline::new("Agentic Editing in Zed").size(HeadlineSize::Large)),
+                    .child(Headline::new("Zed's Debugger").size(HeadlineSize::Large)),
             )
             .child(h_flex().absolute().top_2().right_2().child(
                 IconButton::new("cancel", IconName::X).on_click(cx.listener(
                     |_, _: &ClickEvent, _window, cx| {
-                        agent_onboarding_event!("Cancelled", trigger = "X click");
+                        debugger_onboarding_event!("Cancelled", trigger = "X click");
                         cx.emit(DismissEvent);
                     },
                 )),
