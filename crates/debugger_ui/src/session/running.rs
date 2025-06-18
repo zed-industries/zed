@@ -639,8 +639,19 @@ impl RunningState {
         });
 
         let breakpoint_list = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
+        let dap_store = project.read(cx).dap_store().downgrade();
 
         let _subscriptions = vec![
+            cx.on_app_quit(move |this, cx| {
+                let shutdown = dap_store.update(cx, |dap_store, cx| dap_store.on_app_quit(cx));
+                let terminal = this.debug_terminal.clone();
+                async move {
+                    if let Ok(shutdown) = shutdown {
+                        shutdown.await
+                    }
+                    drop(terminal)
+                }
+            }),
             cx.observe(&module_list, |_, _, cx| cx.notify()),
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {

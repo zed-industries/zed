@@ -780,7 +780,7 @@ impl Session {
                 BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             })
             .detach();
-            cx.on_app_quit(Self::on_app_quit).detach();
+            // cx.on_app_quit(Self::on_app_quit).detach();
 
             let this = Self {
                 mode: Mode::Building,
@@ -1808,16 +1808,6 @@ impl Session {
         }
     }
 
-    fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let debug_adapter = self.adapter_client();
-
-        cx.background_spawn(async move {
-            if let Some(client) = debug_adapter {
-                client.shutdown().await.log_err();
-            }
-        })
-    }
-
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
         self.is_session_terminated = true;
         self.thread_states.exit_all_threads();
@@ -1849,14 +1839,8 @@ impl Session {
 
         cx.emit(SessionStateEvent::Shutdown);
 
-        let debug_client = self.adapter_client();
-
-        cx.background_spawn(async move {
-            let _ = task.await;
-
-            if let Some(client) = debug_client {
-                client.shutdown().await.log_err();
-            }
+        cx.spawn(async move |_, _| {
+            task.await;
         })
     }
 

@@ -93,10 +93,16 @@ async fn start(
 
 pub(crate) struct TransportDelegate {
     log_handlers: LogHandlers,
-    pending_requests: Requests,
+    pub(crate) pending_requests: Requests,
     pub(crate) transport: Mutex<Box<dyn Transport>>,
-    server_tx: smol::lock::Mutex<Option<Sender<Message>>>,
+    pub(crate) server_tx: smol::lock::Mutex<Option<Sender<Message>>>,
     tasks: Mutex<Vec<Task<()>>>,
+}
+
+impl Drop for TransportDelegate {
+    fn drop(&mut self) {
+        self.transport.lock().kill()
+    }
 }
 
 impl TransportDelegate {
@@ -412,21 +418,6 @@ impl TransportDelegate {
         ConnectionResult::Result(message)
     }
 
-    pub async fn shutdown(&self) -> Result<()> {
-        log::debug!("Start shutdown client");
-
-        if let Some(server_tx) = self.server_tx.lock().await.take().as_ref() {
-            server_tx.close();
-        }
-
-        self.pending_requests.lock().clear();
-        self.transport.lock().kill();
-
-        log::debug!("Shutdown client completed");
-
-        anyhow::Ok(())
-    }
-
     pub fn has_adapter_logs(&self) -> bool {
         self.transport.lock().has_adapter_logs()
     }
@@ -613,13 +604,13 @@ impl Transport for TcpTransport {
 impl Drop for TcpTransport {
     fn drop(&mut self) {
         if let Some(mut p) = self.process.lock().take() {
-            p.kill();
+            p.kill()
         }
     }
 }
 
 pub struct StdioTransport {
-    process: Mutex<Child>,
+    process: Mutex<Option<Child>>,
     _stderr_task: Option<Task<()>>,
 }
 
@@ -660,7 +651,7 @@ impl StdioTransport {
             ))
         });
 
-        let process = Mutex::new(process);
+        let process = Mutex::new(Some(process));
 
         Ok(Self {
             process,
@@ -675,7 +666,9 @@ impl Transport for StdioTransport {
     }
 
     fn kill(&self) {
-        self.process.lock().kill()
+        if let Some(process) = &mut *self.process.lock() {
+            process.kill();
+        }
     }
 
     fn connect(
@@ -686,8 +679,9 @@ impl Transport for StdioTransport {
             Box<dyn AsyncRead + Unpin + Send + 'static>,
         )>,
     > {
-        let mut process = self.process.lock();
         let result = util::maybe!({
+            let mut guard = self.process.lock();
+            let process = guard.as_mut().context("oops")?;
             Ok((
                 Box::new(process.stdin.take().context("Cannot reconnect")?) as _,
                 Box::new(process.stdout.take().context("Cannot reconnect")?) as _,
@@ -703,7 +697,9 @@ impl Transport for StdioTransport {
 
 impl Drop for StdioTransport {
     fn drop(&mut self) {
-        self.process.get_mut().kill();
+        if let Some(process) = &mut *self.process.lock() {
+            process.kill();
+        }
     }
 }
 

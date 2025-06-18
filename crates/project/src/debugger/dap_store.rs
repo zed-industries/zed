@@ -176,6 +176,41 @@ impl DapStore {
         }
     }
 
+    pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let sessions = std::mem::take(&mut self.sessions);
+        let clients = sessions
+            .into_values()
+            .filter_map(|session| {
+                Some((
+                    session.read(cx).capabilities.supports_terminate_request,
+                    session.read(cx).adapter_client()?,
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        cx.background_spawn(async move {
+            for (supports_terminate, client) in clients {
+                if supports_terminate.unwrap_or(false) {
+                    client
+                        .request::<dap::requests::Terminate>(dap::TerminateArguments {
+                            restart: Some(false),
+                        })
+                        .await
+                        .ok();
+                } else {
+                    client
+                        .request::<dap::requests::Disconnect>(dap::DisconnectArguments {
+                            restart: Some(false),
+                            terminate_debuggee: Some(true),
+                            suspend_debuggee: Some(false),
+                        })
+                        .await
+                        .ok();
+                }
+            }
+        })
+    }
+
     pub fn get_debug_adapter_binary(
         &mut self,
         definition: DebugTaskDefinition,

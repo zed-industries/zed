@@ -1755,3 +1755,60 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         );
     });
 }
+
+#[gpui::test]
+async fn test_debug_adapters_shutdown_on_app_quit(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let disconnect_request_received = Arc::new(AtomicBool::new(false));
+    let disconnect_clone = disconnect_request_received.clone();
+
+    let disconnect_clone_for_handler = disconnect_clone.clone();
+    client.on_request::<Disconnect, _>(move |_, _| {
+        disconnect_clone_for_handler.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+
+    executor.run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _, cx| {
+            let panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            panel.read_with(cx, |panel, _| {
+                assert!(
+                    !panel.sessions().is_empty(),
+                    "Debug session should be active"
+                );
+            });
+        })
+        .unwrap();
+
+    cx.update(|_, cx| cx.defer(|cx| cx.shutdown()));
+
+    executor.run_until_parked();
+
+    assert!(
+        disconnect_request_received.load(Ordering::SeqCst),
+        "Disconnect request should have been sent to the adapter on app shutdown"
+    );
+}

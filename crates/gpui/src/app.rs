@@ -52,7 +52,7 @@ mod entity_map;
 mod test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
-pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(10000);
 
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
