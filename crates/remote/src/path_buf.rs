@@ -21,12 +21,12 @@ impl PathStyle {
 }
 
 #[derive(Debug, Clone)]
-pub struct TargetPathBuf {
+pub struct RemotePathBuf {
     inner: PathBuf,
     style: PathStyle,
 }
 
-impl TargetPathBuf {
+impl RemotePathBuf {
     pub fn new(path: PathBuf, style: PathStyle) -> Self {
         Self { inner: path, style }
     }
@@ -35,7 +35,16 @@ impl TargetPathBuf {
         self.style
     }
 
-    pub fn to_target(self) -> PathBuf {
+    pub fn parent(&self) -> Option<RemotePathBuf> {
+        self.inner
+            .parent()
+            .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl RemotePathBuf {
+    pub fn to_target(&self) -> PathBuf {
         match self.style {
             PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/").into(),
             PathStyle::Windows => self.inner,
@@ -48,19 +57,22 @@ impl TargetPathBuf {
             PathStyle::Windows => self.inner.to_string_lossy().into(),
         }
     }
-
-    pub fn parent(&self) -> Option<TargetPathBuf> {
-        self.inner
-            .parent()
-            .map(|p| TargetPathBuf::new(p.to_path_buf(), self.style))
-    }
 }
 
-impl ToProto for TargetPathBuf {
+impl ToProto for RemotePathBuf {
+    #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
         match self.style {
             PathStyle::Posix => self.to_string(),
             PathStyle::Windows => self.inner.to_proto(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        match self.style {
+            PathStyle::Posix => self.inner.to_proto(),
+            PathStyle::Windows => self.to_string(),
         }
     }
 }

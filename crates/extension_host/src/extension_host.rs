@@ -45,7 +45,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::{SshRemoteClient, path_buf::TargetPathBuf};
+use remote::{SshRemoteClient, path_buf::RemotePathBuf};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -1683,7 +1683,7 @@ impl ExtensionStore {
                 )
             })?
             .await?;
-            let dest_dir = TargetPathBuf::new(
+            let dest_dir = RemotePathBuf::new(
                 PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id),
                 path_style,
             );

@@ -16,7 +16,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
 use postage::oneshot;
-use remote::path_buf::{PathStyle, TargetPathBuf};
+use remote::path_buf::{PathStyle, RemotePathBuf};
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto},
@@ -226,7 +226,7 @@ impl WorktreeStore {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
                         let abs_path =
-                            TargetPathBuf::new(abs_path.as_path().to_path_buf(), *path_style);
+                            RemotePathBuf::new(abs_path.as_path().to_path_buf(), *path_style);
                         self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
                     }
                 }
@@ -253,7 +253,7 @@ impl WorktreeStore {
     fn create_ssh_worktree(
         &mut self,
         client: AnyProtoClient,
-        abs_path: TargetPathBuf,
+        abs_path: RemotePathBuf,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
@@ -273,7 +273,7 @@ impl WorktreeStore {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Dropped worktree store")?;
 
-            let path = TargetPathBuf::new(abs_path.into(), path_style);
+            let path = RemotePathBuf::new(abs_path.into(), path_style);
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,

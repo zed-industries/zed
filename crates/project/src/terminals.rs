@@ -5,7 +5,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEnt
 use itertools::Itertools;
 use language::LanguageName;
 use remote::{
-    path_buf::{PathStyle, TargetPathBuf},
+    path_buf::{PathStyle, RemotePathBuf},
     ssh_session::SshArgs,
 };
 use settings::{Settings, SettingsLocation};
@@ -596,13 +596,13 @@ pub fn wrap_for_ssh(
     }
     if let Some(venv_directory) = venv_directory {
         if let Ok(str) = shlex::try_quote(venv_directory.to_string_lossy().as_ref()) {
-            let path = TargetPathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
+            let path = RemotePathBuf::new(PathBuf::from(str.to_string()), path_style).to_string();
             env_changes.push_str(&format!("PATH={}:$PATH ", path));
         }
     }
 
     let commands = if let Some(path) = path {
-        let path = TargetPathBuf::new(path.to_path_buf(), path_style).to_string();
+        let path = RemotePathBuf::new(path.to_path_buf(), path_style).to_string();
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace ith with something that works
         let tilde_prefix = "~/";

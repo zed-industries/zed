@@ -1,6 +1,6 @@
 use crate::{
     json_log::LogRecord,
-    path_buf::{PathStyle, TargetPathBuf},
+    path_buf::{PathStyle, RemotePathBuf},
     protocol::{
         MESSAGE_LEN_SIZE, MessageId, message_len_from_buffer, read_message_with_len, write_message,
     },
@@ -1174,7 +1174,7 @@ impl SshRemoteClient {
     pub fn upload_directory(
         &self,
         src_path: PathBuf,
-        dest_path: TargetPathBuf,
+        dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
         let state = self.state.lock();
@@ -1393,7 +1393,7 @@ trait RemoteConnection: Send + Sync {
     fn upload_directory(
         &self,
         src_path: PathBuf,
-        dest_path: TargetPathBuf,
+        dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
@@ -1411,7 +1411,7 @@ trait RemoteConnection: Send + Sync {
 struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<Child>>,
-    remote_binary_path: Option<TargetPathBuf>,
+    remote_binary_path: Option<RemotePathBuf>,
     ssh_platform: SshPlatform,
     ssh_path_style: PathStyle,
     _temp_dir: TempDir,
@@ -1443,7 +1443,7 @@ impl RemoteConnection for SshRemoteConnection {
     fn upload_directory(
         &self,
         src_path: PathBuf,
-        dest_path: TargetPathBuf,
+        dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
         let mut command = util::command::new_smol_command("scp");
@@ -1791,7 +1791,7 @@ impl SshRemoteConnection {
         version: SemanticVersion,
         commit: Option<AppCommitSha>,
         cx: &mut AsyncApp,
-    ) -> Result<TargetPathBuf> {
+    ) -> Result<RemotePathBuf> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
                 let commit = commit.map(|s| s.full()).unwrap_or_default();
@@ -1805,7 +1805,7 @@ impl SshRemoteConnection {
             release_channel.dev_name(),
             version_str
         );
-        let dst_path = TargetPathBuf::new(
+        let dst_path = RemotePathBuf::new(
             paths::remote_server_dir_relative().join(binary_name),
             self.ssh_path_style,
         );
@@ -1815,7 +1815,7 @@ impl SshRemoteConnection {
         if let Some(build_remote_server) = build_remote_server {
             let ret = self.build_local(build_remote_server, delegate, cx).await;
             let src_path = ret?;
-            let tmp_path = TargetPathBuf::new(
+            let tmp_path = RemotePathBuf::new(
                 paths::remote_server_dir_relative().join(format!(
                     "download-{}-{}",
                     std::process::id(),
@@ -1853,7 +1853,7 @@ impl SshRemoteConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })??;
 
-        let tmp_path_gz = TargetPathBuf::new(
+        let tmp_path_gz = RemotePathBuf::new(
             PathBuf::from(format!(
                 "{}-download-{}.gz",
                 dst_path.to_string(),
@@ -1899,7 +1899,7 @@ impl SshRemoteConnection {
         &self,
         url: &str,
         body: &str,
-        tmp_path_gz: &TargetPathBuf,
+        tmp_path_gz: &RemotePathBuf,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -1977,7 +1977,7 @@ impl SshRemoteConnection {
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        tmp_path_gz: &TargetPathBuf,
+        tmp_path_gz: &RemotePathBuf,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -2012,8 +2012,8 @@ impl SshRemoteConnection {
 
     async fn extract_server_binary(
         &self,
-        dst_path: &TargetPathBuf,
-        tmp_path: &TargetPathBuf,
+        dst_path: &RemotePathBuf,
+        tmp_path: &RemotePathBuf,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -2038,7 +2038,7 @@ impl SshRemoteConnection {
         Ok(())
     }
 
-    async fn upload_file(&self, src_path: &Path, dest_path: &TargetPathBuf) -> Result<()> {
+    async fn upload_file(&self, src_path: &Path, dest_path: &RemotePathBuf) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
         let mut command = util::command::new_smol_command("scp");
         let output = self
@@ -2573,7 +2573,7 @@ mod fake {
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
-    use crate::path_buf::{PathStyle, TargetPathBuf};
+    use crate::path_buf::{PathStyle, RemotePathBuf};
 
     use super::{
         ChannelClient, RemoteConnection, SshArgs, SshClientDelegate, SshConnectionOptions,
@@ -2623,7 +2623,7 @@ mod fake {
         fn upload_directory(
             &self,
             _src_path: PathBuf,
-            _dest_path: TargetPathBuf,
+            _dest_path: RemotePathBuf,
             _cx: &App,
         ) -> Task<Result<()>> {
             unreachable!()
