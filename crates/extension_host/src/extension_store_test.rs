@@ -720,8 +720,13 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
             status_updates.next().await.unwrap(),
             status_updates.next().await.unwrap(),
+            status_updates.next().await.unwrap(),
         ],
         [
+            (
+                LanguageServerName::new_static("gleam"),
+                BinaryStatus::Starting
+            ),
             (
                 LanguageServerName::new_static("gleam"),
                 BinaryStatus::CheckingForUpdate

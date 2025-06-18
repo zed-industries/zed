@@ -1724,6 +1724,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
+        Event::LanguageServerRemoved(LanguageServerId(0))
+    );
+    assert_eq!(
+        events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(1),
             fake_server.server.name(),
