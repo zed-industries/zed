@@ -214,6 +214,7 @@ fn search(
                         &entry_candidates,
                         &query,
                         false,
+                        true,
                         100,
                         &Arc::new(AtomicBool::default()),
                         executor,

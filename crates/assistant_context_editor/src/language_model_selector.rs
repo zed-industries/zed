@@ -310,6 +310,7 @@ impl ModelMatcher {
             &self.candidates,
             &query,
             false,
+            true,
             100,
             &Default::default(),
             self.bg_executor.clone(),

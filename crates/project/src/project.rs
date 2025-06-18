@@ -5303,6 +5303,16 @@ impl ProjectItem for Buffer {
 }
 
 impl Completion {
+    pub fn filter_text(&self) -> &str {
+        match &self.source {
+            CompletionSource::Lsp { lsp_completion, .. } => lsp_completion
+                .filter_text
+                .as_deref()
+                .unwrap_or_else(|| self.label.filter_text()),
+            _ => self.label.filter_text(),
+        }
+    }
+
     pub fn kind(&self) -> Option<CompletionItemKind> {
         self.source
             // `lsp::CompletionListItemDefaults` has no `kind` field
@@ -5319,17 +5329,18 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        const DEFAULT_KIND_KEY: usize = 3;
+        const DEFAULT_KIND_KEY: usize = 4;
         let kind_key = self
             .kind()
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
                 lsp::CompletionItemKind::CONSTANT => Some(2),
+                lsp::CompletionItemKind::PROPERTY => Some(3),
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);
-        (kind_key, &self.label.text[self.label.filter_range.clone()])
+        (kind_key, &self.label.filter_text())
     }
 
     /// Whether this completion is a snippet.
