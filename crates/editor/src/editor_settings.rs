@@ -1,3 +1,5 @@
+use core::num;
+
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
@@ -133,7 +135,7 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
-    pub max_columns: f32,
+    pub max_width_columns: num::NonZeroU32,
 }
 
 impl Minimap {
@@ -591,8 +593,8 @@ pub struct MinimapContent {
 
     /// Maximum number of columns to display in the minimap.
     ///
-    /// Default: 80.0
-    pub max_columns: Option<f32>,
+    /// Default: 80
+    pub max_width_columns: Option<num::NonZeroU32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis

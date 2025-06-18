@@ -428,7 +428,7 @@
     // 3. "gutter" or "none" to not highlight the current line in the minimap.
     "current_line_highlight": null,
     // Maximum number of columns to display in the minimap.
-    "max_columns": 80.0
+    "max_width_columns": 80
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
