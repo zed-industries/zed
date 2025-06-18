@@ -1373,7 +1373,6 @@ fn get_entry_color(cx: &Context<VariableList>) -> EntryColors {
     }
 }
 
-// todo!(debugger) fix this test
 #[cfg(test)]
 mod tests {
     use super::*;
