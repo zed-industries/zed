@@ -213,7 +213,10 @@ impl LspTool {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let active_editor = self.active_editor.as_ref().map(|ae| ae.editor.clone());
+        let active_editor = self
+            .active_editor
+            .as_ref()
+            .map(|editor| editor.editor.clone());
         let editor_buffers = self
             .active_editor
             .as_ref()
@@ -273,6 +276,7 @@ impl LspTool {
                     "No active editor - open a file to manage language servers",
                 );
             } else if buffer_servers.is_empty() && other_servers.is_empty() {
+                // TODO kb need to allow to restart something on this case, if there are associated language servers
                 return empty_context_menu(menu, "No language servers are currently running");
             }
 
@@ -306,6 +310,9 @@ impl LspTool {
                             move |window, cx| {
                                 active_editor
                                     .update(cx, |editor, cx| {
+                                        // TODO kb use a different action as it's not only restarting the buffer-related servers
+                                        // TODO kb same for the stopping
+                                        // TODO kb menu does not refresh any statuses on clicks
                                         editor.restart_language_server(
                                             &RestartLanguageServer,
                                             window,
@@ -457,6 +464,7 @@ fn fill_servers(
                                         })
                                 )
                         )
+                        .cursor_default()
                         .into_any_element()
                 }
             },

@@ -37,19 +37,26 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
             let name = name.clone();
             move |params, cx| {
                 let message = params.message;
-                let log_message =
-                    format!("Language server {name} (id {server_id}) status update: {message:?}");
+                let log_message = message.as_ref().map(|message| {
+                    format!("Language server {name} (id {server_id}) status update: {message}")
+                });
                 let status = match &params.health {
                     ServerHealth::Ok => {
-                        log::info!("{log_message}");
+                        if let Some(log_message) = log_message {
+                            log::info!("{log_message}");
+                        }
                         proto::ServerHealth::Ok
                     }
                     ServerHealth::Warning => {
-                        log::warn!("{log_message}");
+                        if let Some(log_message) = log_message {
+                            log::warn!("{log_message}");
+                        }
                         proto::ServerHealth::Warning
                     }
                     ServerHealth::Error => {
-                        log::error!("{log_message}");
+                        if let Some(log_message) = log_message {
+                            log::error!("{log_message}");
+                        }
                         proto::ServerHealth::Error
                     }
                 };
