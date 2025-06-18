@@ -14,6 +14,7 @@ use std::{
     path::PathBuf,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
+use util::paths::PathExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
@@ -22,6 +23,8 @@ use workspace::{
 
 pub struct DiffView {
     editor: Entity<Editor>,
+    old_buffer: Entity<Buffer>,
+    new_buffer: Entity<Buffer>,
     buffer_changes_tx: watch::Sender<()>,
     _recalculate_diff_task: Task<Result<()>>,
 }
@@ -105,10 +108,16 @@ impl DiffView {
         Self {
             editor,
             buffer_changes_tx,
-            _recalculate_diff_task: cx.spawn(async move |_this, cx| {
+            old_buffer,
+            new_buffer,
+            _recalculate_diff_task: cx.spawn(async move |this, cx| {
                 while let Ok(_) = buffer_changes_rx.recv().await {
-                    let old_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                    let new_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                    let (old_snapshot, new_snapshot) = this.update(cx, |this, cx| {
+                        (
+                            this.old_buffer.read(cx).snapshot(),
+                            this.new_buffer.read(cx).snapshot(),
+                        )
+                    })?;
                     let diff_snapshot = cx
                         .update(|cx| {
                             BufferDiffSnapshot::new_with_base_buffer(
@@ -181,11 +190,49 @@ impl Item for DiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        "Diff".into() // todo!()
+        let old_filename = self
+            .old_buffer
+            .read(cx)
+            .file()
+            .and_then(|file| {
+                Some(
+                    file.full_path(cx)
+                        .file_name()?
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            })
+            .unwrap_or_else(|| "untitled".into());
+        let new_filename = self
+            .new_buffer
+            .read(cx)
+            .file()
+            .and_then(|file| {
+                Some(
+                    file.full_path(cx)
+                        .file_name()?
+                        .to_string_lossy()
+                        .to_string(),
+                )
+            })
+            .unwrap_or_else(|| "untitled".into());
+        format!("Diff: {old_filename} | {new_filename}").into() // todo!()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<ui::SharedString> {
-        Some("Diff".into()) // todo!()
+        let old_path = self
+            .old_buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".into());
+        let new_path = self
+            .new_buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".into());
+        Some(format!("Diff: {old_path} | {new_path}").into())
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
