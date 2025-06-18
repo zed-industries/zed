@@ -904,19 +904,16 @@ impl VariableList {
         }
     }
 
-    // todo!(debugger): This function should never remove the first character of a string
-    // it should also not iterate through all characters, we should  choose a spot in the middle
-    // check the bounds and split the string there
-    // finially, consider the ellipsis size when splitting (if a string is shorter than the ellipsis don't split!!)
-    fn center_truncate_string(s: &str, max_chars: usize) -> String {
+    fn center_truncate_string(s: &str, mut max_chars: usize) -> String {
+        const ELLIPSIS: &str = "...";
+        const MIN_LENGTH: usize = 3;
+
+        max_chars = max_chars.max(MIN_LENGTH);
+
         let char_count = s.chars().count();
         if char_count <= max_chars {
             return s.to_string();
         }
-
-        // Reserve space for the ellipsis "..."
-        const ELLIPSIS: &str = "...";
-        const MIN_LENGTH: usize = 3;
 
         if ELLIPSIS.len() + MIN_LENGTH > max_chars {
             return s.chars().take(MIN_LENGTH).collect();
@@ -933,7 +930,7 @@ impl VariableList {
 
         for (i, (byte_idx, _)) in s.char_indices().enumerate() {
             if i == start_chars {
-                start_boundary = byte_idx;
+                start_boundary = byte_idx.max(MIN_LENGTH);
             }
 
             if i == skip_chars {
