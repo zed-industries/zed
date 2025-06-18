@@ -50,6 +50,22 @@ pub struct EditorSettings {
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: bool,
+    pub lsp_document_colors: DocumentColorsRenderMode,
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentColorsRenderMode {
+    /// Do not query and render document colors.
+    None,
+    /// Render document colors as inlay hints near the color text.
+    #[default]
+    Inlay,
+    /// Draw a border around the color text.
+    Border,
+    /// Draw a background behind the color text.
+    Background,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -130,6 +146,7 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
+    pub display_in: DisplayIn,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
@@ -138,6 +155,11 @@ pub struct Minimap {
 impl Minimap {
     pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
+    }
+
+    #[inline]
+    pub fn on_active_editor(&self) -> bool {
+        self.display_in == DisplayIn::ActiveEditor
     }
 
     pub fn with_show_override(self) -> Self {
@@ -187,6 +209,19 @@ pub enum ShowMinimap {
     /// Never show the minimap.
     #[default]
     Never,
+}
+
+/// Where to show the minimap in the editor.
+///
+/// Default: all_editors
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayIn {
+    /// Show on all open editors.
+    AllEditors,
+    /// Show the minimap on the active editor only.
+    #[default]
+    ActiveEditor,
 }
 
 /// When to show the minimap thumb.
@@ -502,6 +537,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop_selection: Option<bool>,
+
+    /// How to render LSP `textDocument/documentColor` colors in the editor.
+    ///
+    /// Default: [`DocumentColorsRenderMode::Inlay`]
+    pub lsp_document_colors: Option<DocumentColorsRenderMode>,
 }
 
 // Toolbar related settings
@@ -572,6 +612,11 @@ pub struct MinimapContent {
     ///
     /// Default: never
     pub show: Option<ShowMinimap>,
+
+    /// Where to show the minimap in the editor.
+    ///
+    /// Default: [`DisplayIn::ActiveEditor`]
+    pub display_in: Option<DisplayIn>,
 
     /// When to show the minimap thumb.
     ///

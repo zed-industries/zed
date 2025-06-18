@@ -99,10 +99,10 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        max_tokens: usize,
+        max_tokens: u64,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        max_output_tokens: Option<u32>,
+        max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
     },
 }
@@ -309,7 +309,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Claude3_5SonnetV2
             | Self::Claude3Opus
@@ -328,7 +328,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> u32 {
+    pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
             Self::Claude3_7Sonnet

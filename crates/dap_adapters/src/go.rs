@@ -343,7 +343,7 @@ impl DebugAdapter for GoDebugAdapter {
                         },
                         {
                             "type": "object",
-                            "required": ["processId", "mode"],
+                            "required": ["mode"],
                             "properties": attach_properties
                         }
                     ]

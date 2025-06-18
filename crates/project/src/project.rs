@@ -768,6 +768,21 @@ pub struct DirectoryItem {
     pub is_dir: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentColor {
+    pub lsp_range: lsp::Range,
+    pub color: lsp::Color,
+    pub resolved: bool,
+    pub color_presentations: Vec<ColorPresentation>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorPresentation {
+    pub label: String,
+    pub text_edit: Option<lsp::TextEdit>,
+    pub additional_text_edits: Vec<lsp::TextEdit>,
+}
+
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Entity<Project>),
@@ -3721,16 +3736,6 @@ impl Project {
         })
     }
 
-    pub fn document_diagnostics(
-        &mut self,
-        buffer_handle: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.pull_diagnostics(buffer_handle, cx)
-        })
-    }
-
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,
@@ -5062,6 +5067,12 @@ impl Project {
 
     pub fn agent_location(&self) -> Option<AgentLocation> {
         self.agent_location.clone()
+    }
+
+    pub fn mark_buffer_as_non_searchable(&self, buffer_id: BufferId, cx: &mut Context<Project>) {
+        self.buffer_store.update(cx, |buffer_store, _| {
+            buffer_store.mark_buffer_as_non_searchable(buffer_id)
+        });
     }
 }
 

@@ -26,7 +26,6 @@ test-support = [
 ]
 
 [dependencies]
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -35,7 +34,6 @@ dap.workspace = true
 dap_adapters = { workspace = true, optional = true }
 db.workspace = true
 editor.workspace = true
-feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -52,7 +50,7 @@ project.workspace = true
 rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# serde_json_lenient.workspace = true
+serde_json_lenient.workspace = true
 settings.workspace = true
 shlex.workspace = true
 sysinfo.workspace = true
@@ -60,6 +58,8 @@ task.workspace = true
 tasks_ui.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
+tree-sitter.workspace = true
+tree-sitter-json.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
