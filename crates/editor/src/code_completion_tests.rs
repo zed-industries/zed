@@ -298,6 +298,7 @@ async fn filter_and_sort_matches(
         &candidates,
         query,
         query.chars().any(|c| c.is_uppercase()),
+        false,
         100,
         &cancel_flag,
         background_executor,

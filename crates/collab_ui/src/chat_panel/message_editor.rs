@@ -293,6 +293,7 @@ impl MessageEditor {
             candidates,
             query,
             true,
+            true,
             LIMIT,
             &Default::default(),
             cx.background_executor().clone(),

@@ -969,13 +969,9 @@ impl CompletionsMenu {
         query: Arc<String>,
         cx: &Context<Editor>,
     ) -> Task<Vec<StringMatch>> {
-        println!("dsfs");
         let matches_task = cx.background_spawn({
             let query = query.clone();
             let match_candidates = self.match_candidates.clone();
-
-            // dbg!(&query, &match_candidates);
-
             let cancel_filter = self.cancel_filter.clone();
             let background_executor = cx.background_executor().clone();
             async move {
@@ -983,6 +979,7 @@ impl CompletionsMenu {
                     &match_candidates,
                     &query,
                     query.chars().any(|c| c.is_uppercase()),
+                    false,
                     100,
                     &cancel_filter,
                     background_executor,
@@ -992,15 +989,10 @@ impl CompletionsMenu {
         });
 
         let completions = self.completions.clone();
-
-        dbg!(&completions);
-
         let sort_completions = self.sort_completions;
         let snippet_sort_order = self.snippet_sort_order;
         cx.foreground_executor().spawn(async move {
             let mut matches = matches_task.await;
-
-            dbg!(&matches);
 
             if sort_completions {
                 matches = Self::sort_string_matches(

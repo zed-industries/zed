@@ -1263,6 +1263,7 @@ impl PickerDelegate for DebugDelegate {
                 &candidates,
                 &query,
                 true,
+                true,
                 1000,
                 &Default::default(),
                 cx.background_executor().clone(),
