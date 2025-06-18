@@ -550,19 +550,28 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let supports_set_variable = self
+            .session
+            .read(cx)
+            .capabilities()
+            .supports_set_variable
+            .unwrap_or_default();
+
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.when(entry.as_variable().is_some(), |menu| {
                 menu.action("Copy Name", CopyVariableName.boxed_clone())
                     .action("Copy Value", CopyVariableValue.boxed_clone())
-                    .action("Edit Value", EditVariable.boxed_clone())
-                    // todo!(debugger): This should be an action alt-enter (To be inline with the console)
+                    .when(supports_set_variable, |menu| {
+                        menu.action("Edit Value", EditVariable.boxed_clone())
+                    })
                     .action("Watch Variable", AddWatch.boxed_clone())
             })
             .when(entry.as_watcher().is_some(), |menu| {
                 menu.action("Copy Name", CopyVariableName.boxed_clone())
                     .action("Copy Value", CopyVariableValue.boxed_clone())
-                    .action("Edit Value", EditVariable.boxed_clone())
-                    // todo!(debugger): This should be an action alt-enter (To be inline with the console)
+                    .when(supports_set_variable, |menu| {
+                        menu.action("Edit Value", EditVariable.boxed_clone())
+                    })
                     .action("Remove Watch", RemoveWatch.boxed_clone())
             })
             .context(self.focus_handle.clone())
@@ -980,7 +989,6 @@ impl VariableList {
 
         let weak = cx.weak_entity();
         let focus_handle = self.focus_handle.clone();
-        // todo!(debugger): We should include a variable's indent in this calculation and the x button next to it
         let watcher_len = (self.list_handle.content_size().width.0 / 12.0).floor() - 3.0;
         let watcher_len = watcher_len as usize;
 
