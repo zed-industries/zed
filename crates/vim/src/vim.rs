@@ -68,12 +68,14 @@ struct PushObject {
 #[serde(deny_unknown_fields)]
 struct PushFindForward {
     before: bool,
+    multiline: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct PushFindBackward {
     after: bool,
+    multiline: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -506,6 +508,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindForward {
                         before: action.before,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -516,6 +519,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindBackward {
                         after: action.after,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -1519,11 +1523,11 @@ impl Vim {
         }
 
         match self.active_operator() {
-            Some(Operator::FindForward { before }) => {
+            Some(Operator::FindForward { before, multiline }) => {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1533,11 +1537,11 @@ impl Vim {
                 Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, window, cx)
             }
-            Some(Operator::FindBackward { after }) => {
+            Some(Operator::FindBackward { after, multiline }) => {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
