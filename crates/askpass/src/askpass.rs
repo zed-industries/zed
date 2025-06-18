@@ -8,10 +8,7 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-#[cfg(unix)]
-use smol::net::unix::UnixListener;
-#[cfg(unix)]
-use util::{ResultExt as _, fs::make_file_executable, get_shell_safe_zed_path};
+use util::ResultExt as _;
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -63,6 +60,7 @@ impl AskPassSession {
         mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
+        use util::{fs::make_file_executable, get_shell_safe_zed_path};
 
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
