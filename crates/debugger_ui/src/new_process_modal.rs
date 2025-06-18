@@ -1,3 +1,4 @@
+use anyhow::bail;
 use collections::{FxHashMap, HashMap};
 use language::LanguageRegistry;
 use paths::local_debug_file_relative_path;
@@ -5,6 +6,7 @@ use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
     usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
@@ -38,11 +40,12 @@ use workspace::{ModalView, Workspace, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
-// enum SaveScenarioState {
-//     Saving,
-//     Saved((ProjectPath, SharedString)),
-//     Failed(SharedString),
-// }
+#[allow(unused)]
+enum SaveScenarioState {
+    Saving,
+    Saved((ProjectPath, SharedString)),
+    Failed(SharedString),
+}
 
 pub(super) struct NewProcessModal {
     workspace: WeakEntity<Workspace>,
@@ -53,7 +56,7 @@ pub(super) struct NewProcessModal {
     configure_mode: Entity<ConfigureMode>,
     task_mode: TaskMode,
     debugger: Option<DebugAdapterName>,
-    // save_scenario_state: Option<SaveScenarioState>,
+    save_scenario_state: Option<SaveScenarioState>,
     _subscriptions: [Subscription; 3],
 }
 
@@ -264,7 +267,7 @@ impl NewProcessModal {
                         mode,
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
-                        // save_scenario_state: None,
+                        save_scenario_state: None,
                         _subscriptions,
                     }
                 });
@@ -307,16 +310,16 @@ impl NewProcessModal {
         }
     }
 
-    fn debug_scenario(&self, debugger: &str, cx: &App) -> Option<DebugScenario> {
+    fn debug_scenario(&self, debugger: &str, cx: &App) -> Task<Option<DebugScenario>> {
         let request = match self.mode {
-            NewProcessMode::Launch => Some(DebugRequest::Launch(
-                self.configure_mode.read(cx).debug_request(cx),
-            )),
-            NewProcessMode::Attach => Some(DebugRequest::Attach(
-                self.attach_mode.read(cx).debug_request(),
-            )),
-            _ => None,
-        }?;
+            NewProcessMode::Launch => {
+                DebugRequest::Launch(self.configure_mode.read(cx).debug_request(cx))
+            }
+            NewProcessMode::Attach => {
+                DebugRequest::Attach(self.attach_mode.read(cx).debug_request())
+            }
+            _ => return Task::ready(None),
+        };
         let label = suggested_label(&request, debugger);
 
         let stop_on_entry = if let NewProcessMode::Launch = &self.mode {
@@ -328,13 +331,15 @@ impl NewProcessModal {
         let session_scenario = ZedDebugConfig {
             adapter: debugger.to_owned().into(),
             label,
-            request: request,
+            request,
             stop_on_entry,
         };
 
-        cx.global::<DapRegistry>()
-            .adapter(&session_scenario.adapter)
-            .and_then(|adapter| adapter.config_from_zed_format(session_scenario).ok())
+        let adapter = cx
+            .global::<DapRegistry>()
+            .adapter(&session_scenario.adapter);
+
+        cx.spawn(async move |_| adapter?.config_from_zed_format(session_scenario).await.ok())
     }
 
     fn start_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -349,19 +354,13 @@ impl NewProcessModal {
             return;
         }
 
-        // TODO: Restore once we have proper, comment preserving edits
-        // if let NewProcessMode::Launch = &self.mode {
-        //     if self.launch_mode.read(cx).save_to_debug_json.selected() {
-        //         self.save_debug_scenario(window, cx);
-        //     }
-        // }
+        if let NewProcessMode::Launch = &self.mode {
+            if self.configure_mode.read(cx).save_to_debug_json.selected() {
+                self.save_debug_scenario(window, cx);
+            }
+        }
 
-        let Some(debugger) = self.debugger.as_ref() else {
-            return;
-        };
-
-        let Some(config) = self.debug_scenario(debugger, cx) else {
-            log::error!("debug config not found in mode: {}", self.mode);
+        let Some(debugger) = self.debugger.clone() else {
             return;
         };
 
@@ -369,11 +368,20 @@ impl NewProcessModal {
         let Some(task_contexts) = self.task_contexts(cx) else {
             return;
         };
-        send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
+
         let task_context = task_contexts.active_context().cloned().unwrap_or_default();
         let worktree_id = task_contexts.worktree();
+        let mode = self.mode;
         cx.spawn_in(window, async move |this, cx| {
+            let Some(config) = this
+                .update(cx, |this, cx| this.debug_scenario(&debugger, cx))?
+                .await
+            else {
+                bail!("debug config not found in mode: {mode}");
+            };
+
             debug_panel.update_in(cx, |debug_panel, window, cx| {
+                send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
                 debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
             })?;
             this.update(cx, |_, cx| {
@@ -411,47 +419,64 @@ impl NewProcessModal {
         self.debug_picker.read(cx).delegate.task_contexts.clone()
     }
 
-    // fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-    //     let Some((save_scenario, scenario_label)) = self
-    //         .debugger
-    //         .as_ref()
-    //         .and_then(|debugger| self.debug_scenario(&debugger, cx))
-    //         .zip(self.task_contexts(cx).and_then(|tcx| tcx.worktree()))
-    //         .and_then(|(scenario, worktree_id)| {
-    //             self.debug_panel
-    //                 .update(cx, |panel, cx| {
-    //                     panel.save_scenario(&scenario, worktree_id, window, cx)
-    //                 })
-    //                 .ok()
-    //                 .zip(Some(scenario.label.clone()))
-    //         })
-    //     else {
-    //         return;
-    //     };
+    fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let task_contents = self.task_contexts(cx);
+        let Some(adapter) = self.debugger.as_ref() else {
+            return;
+        };
+        let scenario = self.debug_scenario(&adapter, cx);
 
-    //     self.save_scenario_state = Some(SaveScenarioState::Saving);
+        self.save_scenario_state = Some(SaveScenarioState::Saving);
 
-    //     cx.spawn(async move |this, cx| {
-    //         let res = save_scenario.await;
+        cx.spawn_in(window, async move |this, cx| {
+            let Some((scenario, worktree_id)) = scenario
+                .await
+                .zip(task_contents.and_then(|tcx| tcx.worktree()))
+            else {
+                this.update(cx, |this, _| {
+                    this.save_scenario_state = Some(SaveScenarioState::Failed(
+                        "Couldn't get scenario or task contents".into(),
+                    ))
+                })
+                .ok();
+                return;
+            };
 
-    //         this.update(cx, |this, _| match res {
-    //             Ok(saved_file) => {
-    //                 this.save_scenario_state =
-    //                     Some(SaveScenarioState::Saved((saved_file, scenario_label)))
-    //             }
-    //             Err(error) => {
-    //                 this.save_scenario_state =
-    //                     Some(SaveScenarioState::Failed(error.to_string().into()))
-    //             }
-    //         })
-    //         .ok();
+            let Some(save_scenario) = this
+                .update_in(cx, |this, window, cx| {
+                    this.debug_panel
+                        .update(cx, |panel, cx| {
+                            panel.save_scenario(&scenario, worktree_id, window, cx)
+                        })
+                        .ok()
+                })
+                .ok()
+                .flatten()
+            else {
+                return;
+            };
+            let res = save_scenario.await;
 
-    //         cx.background_executor().timer(Duration::from_secs(3)).await;
-    //         this.update(cx, |this, _| this.save_scenario_state.take())
-    //             .ok();
-    //     })
-    //     .detach();
-    // }
+            this.update(cx, |this, _| match res {
+                Ok(saved_file) => {
+                    this.save_scenario_state = Some(SaveScenarioState::Saved((
+                        saved_file,
+                        scenario.label.clone(),
+                    )))
+                }
+                Err(error) => {
+                    this.save_scenario_state =
+                        Some(SaveScenarioState::Failed(error.to_string().into()))
+                }
+            })
+            .ok();
+
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+            this.update(cx, |this, _| this.save_scenario_state.take())
+                .ok();
+        })
+        .detach();
+    }
 
     fn adapter_drop_down_menu(
         &mut self,
@@ -586,7 +611,7 @@ impl NewProcessModal {
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) enum NewProcessMode {
     Task,
     Launch,
@@ -896,7 +921,7 @@ pub(super) struct ConfigureMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
     stop_on_entry: ToggleState,
-    // save_to_debug_json: ToggleState,
+    save_to_debug_json: ToggleState,
 }
 
 impl ConfigureMode {
@@ -915,7 +940,7 @@ impl ConfigureMode {
             program,
             cwd,
             stop_on_entry: ToggleState::Unselected,
-            // save_to_debug_json: ToggleState::Unselected,
+            save_to_debug_json: ToggleState::Unselected,
         })
     }
 
@@ -1021,27 +1046,25 @@ impl ConfigureMode {
                 )
                 .checkbox_position(ui::IconPosition::End),
             )
-        // TODO: restore once we have proper, comment preserving
-        // file edits.
-        // .child(
-        //     CheckboxWithLabel::new(
-        //         "debugger-save-to-debug-json",
-        //         Label::new("Save to debug.json")
-        //             .size(ui::LabelSize::Small)
-        //             .color(Color::Muted),
-        //         self.save_to_debug_json,
-        //         {
-        //             let this = cx.weak_entity();
-        //             move |state, _, cx| {
-        //                 this.update(cx, |this, _| {
-        //                     this.save_to_debug_json = *state;
-        //                 })
-        //                 .ok();
-        //             }
-        //         },
-        //     )
-        //     .checkbox_position(ui::IconPosition::End),
-        // )
+            .child(
+                CheckboxWithLabel::new(
+                    "debugger-save-to-debug-json",
+                    Label::new("Save to debug.json")
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Muted),
+                    self.save_to_debug_json,
+                    {
+                        let this = cx.weak_entity();
+                        move |state, _, cx| {
+                            this.update(cx, |this, _| {
+                                this.save_to_debug_json = *state;
+                            })
+                            .ok();
+                        }
+                    },
+                )
+                .checkbox_position(ui::IconPosition::End),
+            )
     }
 }
 

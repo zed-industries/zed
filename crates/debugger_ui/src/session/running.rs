@@ -816,10 +816,13 @@ impl RunningState {
             Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
-            let request_type = dap_registry
+            let request_type = match dap_registry
                 .adapter(&adapter)
-                .with_context(|| format!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.request_kind(&config));
+                .with_context(|| format!("{}: is not a valid adapter name", &adapter)) {
+                    Ok(adapter) => adapter.request_kind(&config).await,
+                    Err(e) => Err(e)
+                };
+
 
             let config_is_valid = request_type.is_ok();
 
@@ -958,8 +961,8 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                    .map(|adapter| adapter.config_from_zed_format(zed_config))??;
+                    .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
+.await?;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
@@ -1012,7 +1015,8 @@ impl RunningState {
             None
         };
 
-        let mut envs: HashMap<String, String> = Default::default();
+        let mut envs: HashMap<String, String> =
+            self.session.read(cx).task_context().project_env.clone();
         if let Some(Value::Object(env)) = &request.env {
             for (key, value) in env {
                 let value_str = match (key.as_str(), value) {

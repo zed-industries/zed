@@ -41,7 +41,7 @@ fn eval_extract_handle_command_output() {
     // ----------------------------|----------
     // claude-3.7-sonnet           |  0.99 (2025-06-14)
     // claude-sonnet-4             |  0.97 (2025-06-14)
-    // gemini-2.5-pro-06-05        |  0.77 (2025-05-22)
+    // gemini-2.5-pro-06-05        |  0.98 (2025-06-16)
     // gemini-2.5-flash            |  0.11 (2025-05-22)
     // gpt-4.1                     |  1.00 (2025-05-22)
 
@@ -59,7 +59,7 @@ fn eval_extract_handle_command_output() {
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
         100,
-        0.7, // Taking the lower bar for Gemini
+        0.95,
         0.05,
         EvalInput::from_conversation(
             vec![
@@ -116,7 +116,7 @@ fn eval_delete_run_git_blame() {
     // ----------------------------|----------
     // claude-3.7-sonnet           | 1.0  (2025-06-14)
     // claude-sonnet-4             | 0.96 (2025-06-14)
-    // gemini-2.5-pro-06-05        |
+    // gemini-2.5-pro-06-05        | 1.0  (2025-06-16)
     // gemini-2.5-flash            |
     // gpt-4.1                     |
     let input_file_path = "root/blame.rs";
@@ -241,7 +241,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     //
     //  claude-3.7-sonnet              |  0.96 (2025-06-14)
     //  claude-sonnet-4                |  0.11 (2025-06-14)
-    //  gemini-2.5-pro-preview-03-25   |  0.99 (2025-05-22)
+    //  gemini-2.5-pro-preview-latest  |  0.99 (2025-06-16)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/lib.rs";
@@ -366,7 +366,7 @@ fn eval_disable_cursor_blinking() {
     //
     //  claude-3.7-sonnet              |  0.99 (2025-06-14)
     //  claude-sonnet-4                |  0.85 (2025-06-14)
-    //  gemini-2.5-pro-preview-03-25   |  1.0  (2025-05-22)
+    //  gemini-2.5-pro-preview-latest  |  0.97 (2025-06-16)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/editor.rs";
@@ -453,12 +453,11 @@ fn eval_from_pixels_constructor() {
     // (e.g., at the beginning of the file), yet the evaluation may still
     // rate it highly.
     //
-    //  Model                          | Pass rate
-    // ============================================
-    //
-    //  claude-4.0-sonnet              |  0.99
-    //  claude-3.7-sonnet              |  0.88
-    //  gemini-2.5-pro-preview-03-25   |  0.96
+    //  Model                          | Date        | Pass rate
+    // =========================================================
+    //  claude-4.0-sonnet              | 2025-06-14  | 0.99
+    //  claude-3.7-sonnet              | 2025-06-14  | 0.88
+    //  gemini-2.5-pro-preview-06-05   | 2025-06-16  | 0.98
     //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
@@ -1498,8 +1497,16 @@ impl EditAgentTest {
             .await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
+        let edit_format = EditFormat::from_env(agent_model.clone()).unwrap();
+
         Self {
-            agent: EditAgent::new(agent_model, project.clone(), action_log, Templates::new()),
+            agent: EditAgent::new(
+                agent_model,
+                project.clone(),
+                action_log,
+                Templates::new(),
+                edit_format,
+            ),
             project,
             judge_model,
         }

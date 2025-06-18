@@ -2041,7 +2041,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.6.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "ash",
  "ash-window",
@@ -2074,7 +2074,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2084,7 +2084,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.2.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2822,6 +2822,7 @@ dependencies = [
  "collections",
  "credentials_provider",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
@@ -4241,6 +4242,7 @@ dependencies = [
  "gpui",
  "serde_json",
  "task",
+ "util",
  "workspace-hack",
 ]
 
@@ -4266,6 +4268,7 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "client",
  "collections",
@@ -4275,7 +4278,6 @@ dependencies = [
  "db",
  "debugger_tools",
  "editor",
- "feature_flags",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -4292,6 +4294,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "shlex",
  "sysinfo",
@@ -4299,6 +4302,8 @@ dependencies = [
  "tasks_ui",
  "terminal_view",
  "theme",
+ "tree-sitter",
+ "tree-sitter-json",
  "ui",
  "unindent",
  "util",
@@ -4743,7 +4748,6 @@ dependencies = [
  "dap",
  "db",
  "emojis",
- "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -8942,6 +8946,7 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "log",
  "parking_lot",
  "proto",
  "schemars",
@@ -8977,6 +8982,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "language",
  "language_model",
  "lmstudio",
  "log",
@@ -13217,6 +13223,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "debug_adapter_extension",
+ "editor",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -13255,6 +13262,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "workspace",
  "worktree",
  "zlog",
 ]
@@ -15472,6 +15480,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "util",
  "workspace-hack",
 ]
 
@@ -19986,7 +19995,6 @@ dependencies = [
  "extension",
  "extension_host",
  "extensions_ui",
- "feature_flags",
  "feedback",
  "file_finder",
  "fs",

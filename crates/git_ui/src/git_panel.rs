@@ -475,7 +475,7 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::Updated { full_scan },
+                        RepositoryEvent::Updated { full_scan, .. },
                         true,
                     ) => {
                         this.schedule_update(*full_scan, window, cx);

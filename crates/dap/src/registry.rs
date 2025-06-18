@@ -14,7 +14,7 @@ use crate::{
 };
 use std::{collections::BTreeMap, sync::Arc};
 
-/// Given a user build configuration, locator creates a fill-in debug target ([DebugRequest]) on behalf of the user.
+/// Given a user build configuration, locator creates a fill-in debug target ([DebugScenario]) on behalf of the user.
 #[async_trait]
 pub trait DapLocator: Send + Sync {
     fn name(&self) -> SharedString;
@@ -50,30 +50,32 @@ impl DapRegistry {
         let name = adapter.name();
         let _previous_value = self.0.write().adapters.insert(name, adapter);
     }
+    pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
+        self.0.write().locators.insert(locator.name(), locator);
+    }
+
+    pub fn remove_adapter(&self, name: &str) {
+        self.0.write().adapters.remove(name);
+    }
+
+    pub fn remove_locator(&self, locator: &str) {
+        self.0.write().locators.remove(locator);
+    }
 
     pub fn adapter_language(&self, adapter_name: &str) -> Option<LanguageName> {
         self.adapter(adapter_name)
             .and_then(|adapter| adapter.adapter_language_name())
     }
 
-    pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
-        let _previous_value = self.0.write().locators.insert(locator.name(), locator);
-        debug_assert!(
-            _previous_value.is_none(),
-            "Attempted to insert a new debug locator when one is already registered"
-        );
-    }
-
     pub async fn adapters_schema(&self) -> task::AdapterSchemas {
         let mut schemas = AdapterSchemas(vec![]);
 
-        // Clone to avoid holding lock over await points
         let adapters = self.0.read().adapters.clone();
 
         for (name, adapter) in adapters.into_iter() {
             schemas.0.push(AdapterSchema {
                 adapter: name.into(),
-                schema: adapter.dap_schema().await,
+                schema: adapter.dap_schema(),
             });
         }
 

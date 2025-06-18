@@ -15,7 +15,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     context_server_store::{ContextServerStatus, ContextServerStore},
-    project_settings::{ContextServerConfiguration, ProjectSettings},
+    project_settings::{ContextServerSettings, ProjectSettings},
 };
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
@@ -175,8 +175,9 @@ impl ConfigureContextServerModal {
         let settings_changed = ProjectSettings::get_global(cx)
             .context_servers
             .get(&id.0)
-            .map_or(true, |config| {
-                config.settings.as_ref() != Some(&settings_value)
+            .map_or(true, |settings| match settings {
+                ContextServerSettings::Custom { .. } => false,
+                ContextServerSettings::Extension { settings } => settings != &settings_value,
             });
 
         let is_running = self.context_server_store.read(cx).status_for_server(&id)
@@ -221,17 +222,12 @@ impl ConfigureContextServerModal {
         update_settings_file::<ProjectSettings>(workspace.read(cx).app_state().fs.clone(), cx, {
             let id = id.clone();
             |settings, _| {
-                if let Some(server_config) = settings.context_servers.get_mut(&id.0) {
-                    server_config.settings = Some(settings_value);
-                } else {
-                    settings.context_servers.insert(
-                        id.0,
-                        ContextServerConfiguration {
-                            settings: Some(settings_value),
-                            ..Default::default()
-                        },
-                    );
-                }
+                settings.context_servers.insert(
+                    id.0,
+                    ContextServerSettings::Extension {
+                        settings: settings_value,
+                    },
+                );
             }
         });
     }

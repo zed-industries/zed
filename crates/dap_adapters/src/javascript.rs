@@ -96,6 +96,9 @@ impl JsDebugAdapter {
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
 
             configuration.entry("type").and_modify(normalize_task_type);
+            configuration
+                .entry("console")
+                .or_insert("externalTerminal".into());
         }
 
         Ok(DebugAdapterBinary {
@@ -124,7 +127,7 @@ impl JsDebugAdapter {
             }),
             request_args: StartDebuggingRequestArguments {
                 configuration,
-                request: self.request_kind(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config).await?,
             },
         })
     }
@@ -136,7 +139,7 @@ impl DebugAdapter for JsDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = json!({
             "type": "pwa-node",
             "request": match zed_scenario.request {
@@ -182,7 +185,7 @@ impl DebugAdapter for JsDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "oneOf": [
                 {
