@@ -462,7 +462,7 @@ Example configuration for using X.ai Grok with Zed:
 
 #### Vercel's v0
 
-To use v0 with Zed, ensure you have created a [v0 API key first](https://v0.dev/chat/settings/keys).
+To use Vercel's v0 models with Zed, ensure you have created a [v0 API key first](https://v0.dev/chat/settings/keys).
 Once that's done, insert that into the OpenAI API key section, and add this API endpoint:
 
 ```json
