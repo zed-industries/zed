@@ -360,8 +360,13 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity().clone();
 
+        let mut initial_mode = VimSettings::get_global(cx).default_mode;
+        if initial_mode == Mode::Normal && HelixModeSetting::get_global(cx).0 {
+            initial_mode = Mode::HelixNormal;
+        }
+
         cx.new(|cx| Vim {
-            mode: VimSettings::get_global(cx).default_mode,
+            mode: initial_mode,
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,

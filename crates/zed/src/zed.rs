@@ -1221,7 +1221,7 @@ pub fn handle_keymap_file_changes(
     cx: &mut App,
 ) {
     BaseKeymap::register(cx);
-    VimModeSetting::register(cx);
+    vim_mode_setting::init(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
