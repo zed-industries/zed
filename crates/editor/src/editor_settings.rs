@@ -1,4 +1,5 @@
 use core::num;
+use std::num::NonZeroU32;
 
 use gpui::App;
 use language::CursorShape;
@@ -862,7 +863,8 @@ impl Settings for EditorSettings {
         let mut minimap = MinimapContent::default();
         let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
         let autohide = vscode.read_bool("editor.minimap.autohide");
-        let max_width_columns = vscode.read_u32("editor.minimap.maxColumn").unwrap_or(80);
+        let mut max_width_columns: Option<u32> = None;
+        vscode.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
         if minimap_enabled {
             if let Some(false) = autohide {
                 minimap.show = Some(ShowMinimap::Always);
@@ -872,8 +874,8 @@ impl Settings for EditorSettings {
         } else {
             minimap.show = Some(ShowMinimap::Never);
         }
-        if max_width_columns != 0 {
-            minimap.max_width_columns = max_width_columns;
+        if let Some(max_width_columns) = max_width_columns {
+            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
         }
 
         vscode.enum_setting(
