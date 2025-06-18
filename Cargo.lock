@@ -4258,6 +4258,7 @@ dependencies = [
  "sysinfo",
  "task",
  "tasks_ui",
+ "telemetry",
  "terminal_view",
  "theme",
  "tree-sitter",
