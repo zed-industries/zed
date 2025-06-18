@@ -42,9 +42,8 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageServerStatusUpdate, LanguageToolchainStore, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, ServerHealth, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -382,10 +381,8 @@ impl LocalLspStore {
             pending_workspace_folders,
         };
 
-        self.languages.update_lsp_status(
-            adapter.name(),
-            LanguageServerStatusUpdate::Binary(BinaryStatus::Starting),
-        );
+        self.languages
+            .update_lsp_binary_status(adapter.name(), BinaryStatus::Starting);
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids
@@ -3731,7 +3728,7 @@ impl LspStore {
         }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
-        subscribe_to_lsp_statuses(&languages, cx);
+        subscribe_to_binary_statuses(&languages, cx).detach();
 
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
@@ -3820,7 +3817,7 @@ impl LspStore {
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
-        subscribe_to_lsp_statuses(&languages, cx);
+        subscribe_to_binary_statuses(&languages, cx).detach();
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(fs, receiver, cx), sender)
@@ -9495,20 +9492,17 @@ impl LspStore {
 
         if let Some(name) = name {
             log::info!("stopping language server {name}");
-            self.languages.update_lsp_status(
-                name.clone(),
-                LanguageServerStatusUpdate::Binary(BinaryStatus::Stopping),
-            );
+            self.languages
+                .update_lsp_binary_status(name.clone(), BinaryStatus::Stopping);
             cx.notify();
 
             return cx.spawn(async move |lsp_store, cx| {
                 Self::shutdown_language_server(server_state, name.clone(), cx).await;
                 lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.languages.update_lsp_status(
-                            name,
-                            LanguageServerStatusUpdate::Binary(BinaryStatus::Stopped),
-                        );
+                        lsp_store
+                            .languages
+                            .update_lsp_binary_status(name, BinaryStatus::Stopped);
                         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
                         cx.notify();
                     })
@@ -9841,10 +9835,9 @@ impl LspStore {
                 simulate_disk_based_diagnostics_completion: None,
             },
         );
-        local.languages.update_lsp_status(
-            adapter.name(),
-            LanguageServerStatusUpdate::Binary(BinaryStatus::None),
-        );
+        local
+            .languages
+            .update_lsp_binary_status(adapter.name(), BinaryStatus::None);
         if let Some(file_ops_caps) = language_server
             .capabilities()
             .workspace
@@ -10490,53 +10483,41 @@ impl LspStore {
     }
 }
 
-fn subscribe_to_lsp_statuses(languages: &Arc<LanguageRegistry>, cx: &mut Context<'_, LspStore>) {
-    let mut server_statuses = languages.language_server_statuses();
+fn subscribe_to_binary_statuses(
+    languages: &Arc<LanguageRegistry>,
+    cx: &mut Context<'_, LspStore>,
+) -> Task<()> {
+    let mut server_statuses = languages.language_server_binary_statuses();
     cx.spawn(async move |lsp_store, cx| {
-        while let Some((server_name, status)) = server_statuses.next().await {
+        while let Some((server_name, binary_status)) = server_statuses.next().await {
             if lsp_store
-                .update(cx, |lsp_store, cx| {
-                    let (message, status) = match status {
-                        LanguageServerStatusUpdate::Binary(binary_status) => {
-                            let mut message = None;
-                            let binary_status = match binary_status {
-                                BinaryStatus::None => proto::ServerBinaryStatus::None,
-                                BinaryStatus::CheckingForUpdate => {
-                                    proto::ServerBinaryStatus::CheckingForUpdate
-                                }
-                                BinaryStatus::Downloading => proto::ServerBinaryStatus::Downloading,
-                                BinaryStatus::Starting => proto::ServerBinaryStatus::Starting,
-                                BinaryStatus::Stopping => proto::ServerBinaryStatus::Stopping,
-                                BinaryStatus::Stopped => proto::ServerBinaryStatus::Stopped,
-                                BinaryStatus::Failed { error } => {
-                                    message = Some(error);
-                                    proto::ServerBinaryStatus::Failed
-                                }
-                            };
-                            (
-                                message,
-                                proto::status_update::Status::Binary(binary_status as i32),
-                            )
+                .update(cx, |_, cx| {
+                    let mut message = None;
+                    let binary_status = match binary_status {
+                        BinaryStatus::None => proto::ServerBinaryStatus::None,
+                        BinaryStatus::CheckingForUpdate => {
+                            proto::ServerBinaryStatus::CheckingForUpdate
                         }
-                        LanguageServerStatusUpdate::Health(health, message) => {
-                            let health = match health {
-                                ServerHealth::Ok => proto::ServerHealth::Ok,
-                                ServerHealth::Warning => proto::ServerHealth::Warning,
-                                ServerHealth::Error => proto::ServerHealth::Error,
-                            };
-                            (
-                                message.map(|shared_string| shared_string.to_string()),
-                                proto::status_update::Status::Health(health as i32),
-                            )
+                        BinaryStatus::Downloading => proto::ServerBinaryStatus::Downloading,
+                        BinaryStatus::Starting => proto::ServerBinaryStatus::Starting,
+                        BinaryStatus::Stopping => proto::ServerBinaryStatus::Stopping,
+                        BinaryStatus::Stopped => proto::ServerBinaryStatus::Stopped,
+                        BinaryStatus::Failed { error } => {
+                            message = Some(error);
+                            proto::ServerBinaryStatus::Failed
                         }
                     };
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
-                        language_server_id: todo!("TODO kb"),
+                        // Binary updates are about the binary that might not have any language server id at that point.
+                        // Reuse `LanguageServerUpdate` for them and provide a fake id that won't be used on the receiver side.
+                        language_server_id: LanguageServerId(0),
                         name: Some(server_name),
                         message: proto::update_language_server::Variant::StatusUpdate(
                             proto::StatusUpdate {
                                 message,
-                                status: Some(status),
+                                status: Some(proto::status_update::Status::Binary(
+                                    binary_status as i32,
+                                )),
                             },
                         ),
                     });
@@ -10547,7 +10528,6 @@ fn subscribe_to_lsp_statuses(languages: &Arc<LanguageRegistry>, cx: &mut Context
             }
         }
     })
-    .detach();
 }
 
 fn lsp_workspace_diagnostics_refresh(
@@ -11505,7 +11485,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
         self.language_registry
-            .update_lsp_status(server_name, LanguageServerStatusUpdate::Binary(status));
+            .update_lsp_binary_status(server_name, status);
     }
 
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>> {

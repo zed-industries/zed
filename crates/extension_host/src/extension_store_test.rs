@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageMatcher, LanguageRegistry, LanguageServerStatusUpdate};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -557,7 +557,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
-    let mut status_updates = language_registry.language_server_statuses();
+    let mut status_updates = language_registry.language_server_binary_statuses();
 
     struct FakeLanguageServerVersion {
         version: String,
@@ -724,16 +724,13 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         [
             (
                 LanguageServerName::new_static("gleam"),
-                LanguageServerStatusUpdate::Binary(BinaryStatus::CheckingForUpdate)
+                BinaryStatus::CheckingForUpdate
             ),
             (
                 LanguageServerName::new_static("gleam"),
-                LanguageServerStatusUpdate::Binary(BinaryStatus::Downloading)
+                BinaryStatus::Downloading
             ),
-            (
-                LanguageServerName::new_static("gleam"),
-                LanguageServerStatusUpdate::Binary(BinaryStatus::None)
-            )
+            (LanguageServerName::new_static("gleam"), BinaryStatus::None)
         ]
     );
 
