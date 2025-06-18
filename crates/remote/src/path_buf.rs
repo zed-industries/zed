@@ -44,17 +44,20 @@ impl RemotePathBuf {
 
 #[cfg(target_os = "windows")]
 impl RemotePathBuf {
-    pub fn to_target(&self) -> PathBuf {
-        match self.style {
-            PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/").into(),
-            PathStyle::Windows => self.inner,
-        }
-    }
-
     pub fn to_string(&self) -> String {
         match self.style {
             PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/"),
             PathStyle::Windows => self.inner.to_string_lossy().into(),
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+impl RemotePathBuf {
+    pub fn to_string(&self) -> String {
+        match self.style {
+            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
+            PathStyle::Windows => self.inner.to_string_lossy().replace('/', "\\"),
         }
     }
 }
