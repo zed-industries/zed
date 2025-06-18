@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
+use title_bar::platforms::{platform_linux, platform_windows};
 use ui::{
     Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, Tooltip, Window, div, prelude::*,
@@ -43,6 +44,7 @@ const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
     "This rule supports special functionality.\n",
     "It's read-only, but you can remove it from your default rules."
 );
+const TITLE_BAR_HEIGHT: Pixels = px(32.0);
 
 pub trait InlineAssistDelegate {
     fn assist(
@@ -1225,7 +1227,7 @@ impl Render for RulesLibrary {
         let ui_font = theme::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
-        h_flex()
+        v_flex()
             .id("rules-library")
             .key_context("PromptLibrary")
             .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
@@ -1242,58 +1244,104 @@ impl Render for RulesLibrary {
             .overflow_hidden()
             .font(ui_font)
             .text_color(theme.colors().text)
-            .child(self.render_rule_list(cx))
-            .map(|el| {
-                if self.store.read(cx).prompt_count() == 0 {
-                    el.child(
-                        v_flex()
-                            .w_2_3()
-                            .h_full()
-                            .items_center()
-                            .justify_center()
-                            .gap_4()
-                            .bg(cx.theme().colors().editor_background)
-                            .child(
-                                h_flex()
-                                    .gap_2()
+            .child(TitleBar)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .child(self.render_rule_list(cx))
+                    .map(|el| {
+                        if self.store.read(cx).prompt_count() == 0 {
+                            el.child(
+                                v_flex()
+                                    .w_2_3()
+                                    .h_full()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_4()
+                                    .bg(cx.theme().colors().editor_background)
                                     .child(
-                                        Icon::new(IconName::Book)
-                                            .size(IconSize::Medium)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new("No rules yet")
-                                            .size(LabelSize::Large)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .child(h_flex())
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(Label::new("Create your first rule:"))
+                                        h_flex()
+                                            .gap_2()
                                             .child(
-                                                Button::new("create-rule", "New Rule")
-                                                    .full_width()
-                                                    .key_binding(KeyBinding::for_action(
-                                                        &NewRule, window, cx,
-                                                    ))
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            NewRule.boxed_clone(),
-                                                            cx,
-                                                        )
-                                                    }),
+                                                Icon::new(IconName::Book)
+                                                    .size(IconSize::Medium)
+                                                    .color(Color::Muted),
+                                            )
+                                            .child(
+                                                Label::new("No rules yet")
+                                                    .size(LabelSize::Large)
+                                                    .color(Color::Muted),
                                             ),
                                     )
-                                    .child(h_flex()),
-                            ),
-                    )
-                } else {
-                    el.child(self.render_active_rule(cx))
-                }
-            })
+                                    .child(
+                                        h_flex()
+                                            .child(h_flex())
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Create your first rule:"))
+                                                    .child(
+                                                        Button::new("create-rule", "New Rule")
+                                                            .full_width()
+                                                            .key_binding(KeyBinding::for_action(
+                                                                &NewRule, window, cx,
+                                                            ))
+                                                            .on_click(|_, window, cx| {
+                                                                window.dispatch_action(
+                                                                    NewRule.boxed_clone(),
+                                                                    cx,
+                                                                )
+                                                            }),
+                                                    ),
+                                            )
+                                            .child(h_flex()),
+                                    ),
+                            )
+                        } else {
+                            el.child(self.render_active_rule(cx))
+                        }
+                    }),
+            )
+    }
+}
+
+#[derive(IntoElement)]
+struct TitleBar;
+
+impl RenderOnce for TitleBar {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let height = TITLE_BAR_HEIGHT;
+        let close_action = Box::new(workspace::CloseWindow);
+
+        match PlatformStyle::platform() {
+            PlatformStyle::Mac => {
+                // for macOS we use just traffic lights
+                div().into_any_element()
+            }
+            PlatformStyle::Linux => div()
+                .id("rules-library-title-bar")
+                .flex()
+                .flex_row()
+                .justify_end()
+                .items_center()
+                .w_full()
+                .h(height)
+                .bg(cx.theme().colors().title_bar_background)
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .child(platform_linux::LinuxWindowControls::new(close_action))
+                .into_any_element(),
+            PlatformStyle::Windows => div()
+                .id("rules-library-title-bar")
+                .flex()
+                .flex_row()
+                .justify_end()
+                .items_center()
+                .w_full()
+                .h(height)
+                .bg(cx.theme().colors().title_bar_background)
+                .child(platform_windows::WindowsWindowControls::new(height))
+                .into_any_element(),
+        }
     }
 }
