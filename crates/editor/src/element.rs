@@ -8529,6 +8529,14 @@ impl Element for EditorElement {
                                     // Blame overrides inline diagnostics
                                     inline_diagnostics.remove(&display_row);
                                 }
+                            } else {
+                                log::error!(
+                                    "bug: line_ix {} is out of bounds - row_infos.len(): {}, line_layouts.len(): {}, crease_trailers.len(): {}",
+                                    line_ix,
+                                    row_infos.len(),
+                                    line_layouts.len(),
+                                    crease_trailers.len(),
+                                );
                             }
                         }
                     }
