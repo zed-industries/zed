@@ -1150,7 +1150,6 @@ impl ExtensionStore {
             }
 
             for (server_id, _) in extension.manifest.context_servers.iter() {
-                dbg!("Unregistering context server with ", server_id);
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
             for (adapter, _) in extension.manifest.debug_adapters.iter() {
