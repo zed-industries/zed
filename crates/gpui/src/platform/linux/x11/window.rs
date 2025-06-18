@@ -1,4 +1,5 @@
 use anyhow::{Context as _, anyhow};
+use x11rb::connection::RequestConnection;
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
@@ -32,6 +33,7 @@ use std::{
 };
 
 use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
+
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         XA_ATOM,
@@ -318,41 +320,55 @@ impl rwh::HasDisplayHandle for X11Window {
     }
 }
 
-fn check_reply<C, F>(
+pub(crate) fn check_reply<E, F, C>(
     failure_context: F,
-    result: Result<VoidCookie<'_, Rc<XCBConnection>>, ConnectionError>,
+    result: Result<VoidCookie<'_, C>, ConnectionError>,
 ) -> anyhow::Result<()>
 where
-    C: Display + Send + Sync + 'static,
-    F: FnOnce() -> C,
+    E: Display + Send + Sync + 'static,
+    F: FnOnce() -> E,
+    C: RequestConnection,
 {
     result
-        .map_err(|connection_error| anyhow!(connection_error))
-        .and_then(|response| {
-            response
-                .check()
-                .map_err(|error_response| anyhow!(error_response))
-        })
+        .map_err(handle_connection_error)
+        .and_then(|response| response.check().map_err(|reply_error| anyhow!(reply_error)))
         .with_context(failure_context)
 }
 
-fn get_reply<C, F, O>(
+pub(crate) fn get_reply<E, F, C, O>(
     failure_context: F,
-    result: Result<Cookie<'_, Rc<XCBConnection>, O>, ConnectionError>,
+    result: Result<Cookie<'_, C, O>, ConnectionError>,
 ) -> anyhow::Result<O>
 where
-    C: Display + Send + Sync + 'static,
-    F: FnOnce() -> C,
+    E: Display + Send + Sync + 'static,
+    F: FnOnce() -> E,
+    C: RequestConnection,
     O: x11rb::x11_utils::TryParse,
 {
     result
-        .map_err(|connection_error| anyhow!(connection_error))
-        .and_then(|response| {
-            response
-                .reply()
-                .map_err(|error_response| anyhow!(error_response))
-        })
+        .map_err(handle_connection_error)
+        .and_then(|response| response.reply().map_err(|reply_error| anyhow!(reply_error)))
         .with_context(failure_context)
+}
+
+/// Convert X11 connection errors to `anyhow::Error` and panic for unrecoverable errors.
+pub(crate) fn handle_connection_error(err: ConnectionError) -> anyhow::Error {
+    match err {
+        ConnectionError::UnknownError => anyhow!("X11 connection: Unknown error"),
+        ConnectionError::UnsupportedExtension => anyhow!("X11 connection: Unsupported extension"),
+        ConnectionError::MaximumRequestLengthExceeded => {
+            anyhow!("X11 connection: Maximum request length exceeded")
+        }
+        ConnectionError::FdPassingFailed => {
+            panic!("X11 connection: File descriptor passing failed")
+        }
+        ConnectionError::ParseError(parse_error) => {
+            anyhow!(parse_error).context("Parse error in X11 response")
+        }
+        ConnectionError::InsufficientMemory => panic!("X11 connection: Insufficient memory"),
+        ConnectionError::IoError(err) => anyhow!(err).context("X11 connection: IOError"),
+        _ => anyhow!(err),
+    }
 }
 
 impl X11WindowState {
@@ -581,7 +597,7 @@ impl X11WindowState {
                 ),
             )?;
 
-            xcb.flush().with_context(|| "X11 Flush failed.")?;
+            xcb.flush()?;
 
             let renderer = {
                 let raw_window = RawWindow {
@@ -641,8 +657,7 @@ impl X11WindowState {
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
             )?;
-            xcb.flush()
-                .with_context(|| "X11 Flush failed while cleaning it up after setup failure.")?;
+            xcb.flush()?;
         }
 
         setup_result
@@ -670,9 +685,7 @@ impl Drop for X11WindowHandle {
                 || "X11 DestroyWindow failed while dropping X11WindowHandle.",
                 self.xcb.destroy_window(self.id),
             )?;
-            self.xcb
-                .flush()
-                .with_context(|| "X11 Flush failed while dropping X11WindowHandle.")?;
+            self.xcb.flush()?;
             anyhow::Ok(())
         })
         .log_err();
@@ -691,10 +704,7 @@ impl Drop for X11Window {
                 || "X11 DestroyWindow failure.",
                 self.0.xcb.destroy_window(self.0.x_window),
             )?;
-            self.0
-                .xcb
-                .flush()
-                .with_context(|| "X11 Flush failed after calling DestroyWindow.")?;
+            self.0.xcb.flush()?;
 
             anyhow::Ok(())
         })
@@ -812,7 +822,7 @@ impl X11Window {
         let state = self.0.state.borrow();
 
         check_reply(
-            || "X11 UngrabPointer before move/resize of window ailed.",
+            || "X11 UngrabPointer before move/resize of window failed.",
             self.0.xcb.ungrab_pointer(x11rb::CURRENT_TIME),
         )?;
 
@@ -846,7 +856,11 @@ impl X11Window {
     }
 
     fn flush(&self) -> anyhow::Result<()> {
-        self.0.xcb.flush().with_context(|| "X11 Flush failed.")
+        self.0
+            .xcb
+            .flush()
+            .map_err(handle_connection_error)
+            .context("X11 flush failed")
     }
 }
 
@@ -889,9 +903,13 @@ impl X11WindowStatePtr {
         )?;
 
         if reply.value_len != 0 {
-            let atom = u32::from_ne_bytes(reply.value[0..4].try_into().unwrap());
-            let edge_constraints = EdgeConstraints::from_atom(atom);
-            state.edge_constraints.replace(edge_constraints);
+            if let Ok(bytes) = reply.value[0..4].try_into() {
+                let atom = u32::from_ne_bytes(bytes);
+                let edge_constraints = EdgeConstraints::from_atom(atom);
+                state.edge_constraints.replace(edge_constraints);
+            } else {
+                log::error!("Failed to parse GTK_EDGE_CONSTRAINTS");
+            }
         }
 
         Ok(())
@@ -1030,7 +1048,7 @@ impl X11WindowStatePtr {
         bounds
     }
 
-    pub fn configure(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
+    pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
         let mut resize_args = None;
         let is_resize;
         {
@@ -1196,12 +1214,14 @@ impl PlatformWindow for X11Window {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        let reply = get_reply(
+        get_reply(
             || "X11 QueryPointer failed.",
             self.0.xcb.query_pointer(self.0.x_window),
         )
-        .unwrap();
-        Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
+        .log_err()
+        .map_or(Point::new(Pixels(0.0), Pixels(0.0)), |reply| {
+            Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
+        })
     }
 
     fn modifiers(&self) -> Modifiers {
@@ -1269,7 +1289,7 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
-        self.flush().unwrap();
+        self.flush().log_err();
     }
 
     fn is_active(&self) -> bool {
@@ -1323,7 +1343,7 @@ impl PlatformWindow for X11Window {
                 &data,
             ),
         )
-        .unwrap();
+        .log_err();
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
@@ -1359,7 +1379,7 @@ impl PlatformWindow for X11Window {
                 message,
             ),
         )
-        .unwrap();
+        .log_err();
     }
 
     fn zoom(&self) {
@@ -1370,7 +1390,7 @@ impl PlatformWindow for X11Window {
             state.atoms._NET_WM_STATE_MAXIMIZED_VERT,
             state.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
         )
-        .unwrap();
+        .log_err();
     }
 
     fn toggle_fullscreen(&self) {
@@ -1381,7 +1401,7 @@ impl PlatformWindow for X11Window {
             state.atoms._NET_WM_STATE_FULLSCREEN,
             xproto::AtomEnum::NONE.into(),
         )
-        .unwrap();
+        .log_err();
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -1444,9 +1464,11 @@ impl PlatformWindow for X11Window {
             || "X11 UngrabPointer failed.",
             self.0.xcb.ungrab_pointer(x11rb::CURRENT_TIME),
         )
-        .unwrap();
+        .log_err();
 
-        let coords = self.get_root_position(position).unwrap();
+        let Some(coords) = self.get_root_position(position).log_err() else {
+            return;
+        };
         let message = ClientMessageEvent::new(
             32,
             self.0.x_window,
@@ -1468,16 +1490,16 @@ impl PlatformWindow for X11Window {
                 message,
             ),
         )
-        .unwrap();
+        .log_err();
     }
 
     fn start_window_move(&self) {
         const MOVERESIZE_MOVE: u32 = 8;
-        self.send_moveresize(MOVERESIZE_MOVE).unwrap();
+        self.send_moveresize(MOVERESIZE_MOVE).log_err();
     }
 
     fn start_window_resize(&self, edge: ResizeEdge) {
-        self.send_moveresize(edge.to_moveresize()).unwrap();
+        self.send_moveresize(edge.to_moveresize()).log_err();
     }
 
     fn window_decorations(&self) -> crate::Decorations {
@@ -1552,7 +1574,7 @@ impl PlatformWindow for X11Window {
                     bytemuck::cast_slice::<u32, u8>(&insets),
                 ),
             )
-            .unwrap();
+            .log_err();
         }
     }
 
@@ -1574,7 +1596,7 @@ impl PlatformWindow for X11Window {
             WindowDecorations::Client => [1 << 1, 0, 0, 0, 0],
         };
 
-        check_reply(
+        let success = check_reply(
             || "X11 ChangeProperty for _MOTIF_WM_HINTS failed.",
             self.0.xcb.change_property(
                 xproto::PropMode::REPLACE,
@@ -1586,7 +1608,11 @@ impl PlatformWindow for X11Window {
                 bytemuck::cast_slice::<u32, u8>(&hints_data),
             ),
         )
-        .unwrap();
+        .log_err();
+
+        let Some(()) = success else {
+            return;
+        };
 
         match decorations {
             WindowDecorations::Server => {
