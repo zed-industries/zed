@@ -14,6 +14,7 @@ use std::{
     any::{Any, TypeId},
     path::PathBuf,
     pin::pin,
+    sync::Arc,
     time::Duration,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
@@ -95,6 +96,10 @@ impl DiffView {
             editor.start_temporary_diff_override();
             editor.disable_inline_diagnostics();
             editor.set_expand_all_diff_hunks(cx);
+            editor.set_render_diff_hunk_controls(
+                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                cx,
+            );
             editor
         });
 
