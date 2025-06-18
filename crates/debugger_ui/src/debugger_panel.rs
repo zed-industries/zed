@@ -1434,7 +1434,10 @@ impl Render for DebugPanel {
                                 h_flex().size_full()
                                     .items_start()
 
-                                    .child(v_flex().bg(cx.theme().colors().background).items_start().min_w_1_3().h_full().p_1().child(Label::new("Breakpoint List").size(LabelSize::Small)).child(self.breakpoint_list.clone()))
+                                    .child(v_flex().items_start().min_w_1_3().h_full().p_1()
+                                        .child(h_flex().px_1().child(Label::new("Breakpoints").size(LabelSize::Small)))
+                                        .child(Divider::horizontal())
+                                        .child(self.breakpoint_list.clone()))
                                     .child(Divider::vertical())
                                     .child(
                                         v_flex().w_2_3().h_full().items_center().justify_center()
