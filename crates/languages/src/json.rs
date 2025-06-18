@@ -41,45 +41,49 @@ const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
 pub(crate) struct JsonTaskProvider;
 
 impl ContextProvider for JsonTaskProvider {
-    fn build_context(
-        &self,
-        _variables: &task::TaskVariables,
-        _location: language::ContextLocation<'_>,
-        _project_env: Option<HashMap<String, String>>,
-        _toolchains: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut App,
-    ) -> gpui::Task<Result<task::TaskVariables>> {
-        let _ = _location;
-        gpui::Task::ready(Ok(task::TaskVariables::default()))
-    }
-
     fn associated_tasks(
         &self,
-        fs: Arc<dyn Fs>,
+        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(path) = file
-            .and_then(|f| Some(f.as_local()?.abs_path(cx)))
-            .filter(|path| path.file_name() == Some("package.json".as_ref()))
+        let Some(file) = project::File::from_dyn(file.as_ref())
+            .filter(|file| file.path.file_name() == Some("package.json".as_ref()))
+            .cloned()
         else {
             return Task::ready(None);
         };
-        cx.background_spawn(async move {
-            let contents = fs.load(&path).await.ok()?;
-            let as_json = serde_json_lenient::Value::from_str(&contents).ok()?;
+
+        cx.spawn(async move |cx| {
+            let contents = file
+                .worktree
+                .update(cx, |this, cx| this.load_file(&file.path, cx))
+                .ok()?
+                .await
+                .ok()?;
+
+            let as_json = serde_json_lenient::Value::from_str(&contents.text).ok()?;
             let gutter_tasks = [
                 TaskTemplate {
                     label: "package script $ZED_CUSTOM_script".to_owned(),
-                    command: "npm --prefix $ZED_DIRNAME run".to_owned(),
-                    args: vec![VariableName::Custom("script".into()).template_value()],
+                    command: "npm".to_owned(),
+                    args: vec![
+                        "--prefix".into(),
+                        "$ZED_DIRNAME".into(),
+                        "run".into(),
+                        VariableName::Custom("script".into()).template_value(),
+                    ],
                     tags: vec!["package-script".into()],
                     ..TaskTemplate::default()
                 },
                 TaskTemplate {
                     label: "composer script $ZED_CUSTOM_script".to_owned(),
-                    command: "composer -d $ZED_DIRNAME".to_owned(),
-                    args: vec![VariableName::Custom("script".into()).template_value()],
+                    command: "composer".to_owned(),
+                    args: vec![
+                        "-d".into(),
+                        "$ZED_DIRNAME".into(),
+                        VariableName::Custom("script".into()).template_value(),
+                    ],
                     tags: vec!["composer-script".into()],
                     ..TaskTemplate::default()
                 },
