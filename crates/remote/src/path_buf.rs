@@ -24,11 +24,26 @@ impl PathStyle {
 pub struct RemotePathBuf {
     inner: PathBuf,
     style: PathStyle,
+    string: String, // Cached string representation
 }
 
 impl RemotePathBuf {
     pub fn new(path: PathBuf, style: PathStyle) -> Self {
-        Self { inner: path, style }
+        #[cfg(target_os = "windows")]
+        let string = match style {
+            PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
+            PathStyle::Windows => path.to_string_lossy().into(),
+        };
+        #[cfg(not(target_os = "windows"))]
+        let string = match style {
+            PathStyle::Posix => path.to_string_lossy().to_string(),
+            PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
+        };
+        Self {
+            inner: path,
+            style,
+            string,
+        }
     }
 
     pub fn path_style(&self) -> PathStyle {
@@ -42,23 +57,9 @@ impl RemotePathBuf {
     }
 }
 
-#[cfg(target_os = "windows")]
 impl RemotePathBuf {
     pub fn to_string(&self) -> String {
-        match self.style {
-            PathStyle::Posix => self.inner.to_string_lossy().replace('\\', "/"),
-            PathStyle::Windows => self.inner.to_string_lossy().into(),
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-impl RemotePathBuf {
-    pub fn to_string(&self) -> String {
-        match self.style {
-            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
-            PathStyle::Windows => self.inner.to_string_lossy().replace('/', "\\"),
-        }
+        self.string.clone()
     }
 }
 
