@@ -571,19 +571,26 @@ message LspDiskBasedDiagnosticsUpdated {}
 
 message StatusUpdate {
     optional string message = 1;
-    Status status = 2;
-
-    enum Status {
-        Starting = 0;
-        Running = 1;
-        Stopping = 2;
-        Stopped = 3;
-        Ok = 4;
-        Info = 5;
-        Warning = 6;
-        Error = 7;
-        Other = 8;
+    oneof status {
+        ServerBinaryStatus binary = 2;
+        ServerHealth health = 3;
     }
+}
+
+enum ServerHealth {
+    OK = 0;
+    WARNING = 1;
+    ERROR = 2;
+}
+
+enum ServerBinaryStatus {
+    NONE = 0;
+    CHECKING_FOR_UPDATE = 1;
+    DOWNLOADING = 2;
+    STARTING = 3;
+    STOPPING = 4;
+    STOPPED = 5;
+    FAILED = 6;
 }
 
 message RegisteredForBuffer {

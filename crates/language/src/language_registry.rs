@@ -157,6 +157,9 @@ pub enum BinaryStatus {
     None,
     CheckingForUpdate,
     Downloading,
+    Starting,
+    Stopping,
+    Stopped,
     Failed { error: String },
 }
 
@@ -1143,7 +1146,7 @@ impl LanguageRegistry {
         Some(server)
     }
 
-    pub fn language_server_binary_statuses(
+    pub fn language_server_statuses(
         &self,
     ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerStatusUpdate)> {
         self.lsp_binary_status_tx.subscribe()

@@ -557,7 +557,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
-    let mut status_updates = language_registry.language_server_binary_statuses();
+    let mut status_updates = language_registry.language_server_statuses();
 
     struct FakeLanguageServerVersion {
         version: String,

@@ -11,7 +11,7 @@ use editor::{
 };
 use gpui::{Entity, Subscription, WeakEntity, actions};
 use itertools::Itertools as _;
-use language::{BufferId, LocalFile};
+use language::{BinaryStatus, BufferId, LocalFile, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
@@ -49,53 +49,50 @@ struct LanguageServers {
 #[derive(Debug, Clone)]
 struct LanguageServerState {
     name: LanguageServerName,
-    message: Option<(SharedString, Severity)>,
-    status: LanguageServerStatus,
+    health: Option<(Option<SharedString>, ServerHealth)>,
+    binary_status: BinaryStatus,
+    binary_status_message: Option<SharedString>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Severity {
-    Ok,
-    Info,
-    Warning,
-    Error,
-    Other,
-}
+impl LanguageServerState {
+    fn health(&self) -> Option<ServerHealth> {
+        self.health.as_ref().map(|(_, health)| *health)
+    }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LanguageServerStatus {
-    Starting,
-    Running,
-    Stopping,
-    Stopped,
+    fn message(&self) -> Option<SharedString> {
+        self.health
+            .as_ref()
+            .and_then(|(message, _)| message.clone())
+            .or_else(|| self.binary_status_message.clone())
+    }
 }
 
 impl LanguageServers {
-    fn update_status(
+    fn update_binary_status(
         &mut self,
         id: LanguageServerId,
-        status: LanguageServerStatus,
+        binary_status: BinaryStatus,
         message: Option<&str>,
         name: Option<LanguageServerName>,
     ) {
+        let binary_status_message = message.map(SharedString::new);
         match self.servers.entry(id) {
             hash_map::Entry::Occupied(mut o) => {
                 let state = o.get_mut();
                 if let Some(name) = name {
                     state.name = name;
                 }
-                state.status = status;
-                state.message = message
-                    .map(|message| (SharedString::from(message.to_owned()), Severity::Other));
+                state.binary_status = binary_status;
+                state.binary_status_message = binary_status_message;
+                state.health = None;
             }
             hash_map::Entry::Vacant(v) => {
                 if let Some(name) = name {
                     v.insert(LanguageServerState {
                         name,
-                        message: message.map(|message| {
-                            (SharedString::from(message.to_owned()), Severity::Other)
-                        }),
-                        status,
+                        health: None,
+                        binary_status,
+                        binary_status_message,
                     });
                 }
             }
@@ -107,7 +104,7 @@ impl LanguageServers {
                 .fold(HashMap::default(), |mut acc, (id, state)| {
                     acc.entry(state.name.clone())
                         .or_insert_with(BTreeMap::new)
-                        .insert(*id, state.status);
+                        .insert(*id, state.binary_status.clone());
                     acc
                 });
 
@@ -119,7 +116,7 @@ impl LanguageServers {
             let mut stopped_servers = BTreeSet::new();
             let mut not_stopped = Vec::new();
             for (id, status) in duplicate_statuses {
-                if status == LanguageServerStatus::Stopped {
+                if status == BinaryStatus::Stopped {
                     stopped_servers.insert(id);
                 } else {
                     not_stopped.push(id);
@@ -140,26 +137,26 @@ impl LanguageServers {
         }
     }
 
-    fn update_message(
+    fn update_server_health(
         &mut self,
         id: LanguageServerId,
+        health: ServerHealth,
         message: Option<&str>,
-        severity: Severity,
         name: Option<LanguageServerName>,
     ) {
         if let Some(state) = self.servers.get_mut(&id) {
-            state.message =
-                message.map(|message| (SharedString::from(message.to_owned()), severity));
+            state.health = Some((message.map(SharedString::new), health));
             if let Some(name) = name {
                 state.name = name;
             }
-        } else if let Some((message, name)) = message.zip(name) {
+        } else if let Some(name) = name {
             self.servers.insert(
                 id,
                 LanguageServerState {
-                    message: Some((SharedString::from(message.to_owned()), severity)),
+                    health: Some((message.map(SharedString::new), health)),
                     name,
-                    status: LanguageServerStatus::Running,
+                    binary_status: BinaryStatus::None,
+                    binary_status_message: None,
                 },
             );
         }
@@ -202,92 +199,52 @@ impl LspTool {
                 language_server_id,
                 name,
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
-            } => match proto::status_update::Status::from_i32(status_update.status) {
-                Some(proto::status_update::Status::Starting) => {
-                    self.language_servers.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Starting,
-                        status_update.message.as_deref(),
-                        name.clone(),
-                    );
-                    cx.notify();
+            } => match status_update.status {
+                Some(proto::status_update::Status::Binary(binary_status)) => {
+                    if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(binary_status)
+                    {
+                        let binary_status = match binary_status {
+                            proto::ServerBinaryStatus::None => BinaryStatus::None,
+                            proto::ServerBinaryStatus::CheckingForUpdate => {
+                                BinaryStatus::CheckingForUpdate
+                            }
+                            proto::ServerBinaryStatus::Downloading => BinaryStatus::Downloading,
+                            proto::ServerBinaryStatus::Starting => BinaryStatus::Starting,
+                            proto::ServerBinaryStatus::Stopping => BinaryStatus::Stopping,
+                            proto::ServerBinaryStatus::Stopped => BinaryStatus::Stopped,
+                            proto::ServerBinaryStatus::Failed => {
+                                let Some(error) = status_update.message.clone() else {
+                                    return;
+                                };
+                                BinaryStatus::Failed { error }
+                            }
+                        };
+                        self.language_servers.update_binary_status(
+                            *language_server_id,
+                            binary_status,
+                            status_update.message.as_deref(),
+                            name.clone(),
+                        );
+                        cx.notify();
+                    };
                 }
-                Some(proto::status_update::Status::Running) => {
-                    self.language_servers.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Running,
-                        status_update.message.as_deref(),
-                        name.clone(),
-                    );
-                    cx.notify();
+                Some(proto::status_update::Status::Health(health_status)) => {
+                    if let Some(health) = proto::ServerHealth::from_i32(health_status) {
+                        let health = match health {
+                            proto::ServerHealth::Ok => ServerHealth::Ok,
+                            proto::ServerHealth::Warning => ServerHealth::Warning,
+                            proto::ServerHealth::Error => ServerHealth::Error,
+                        };
+                        self.language_servers.update_server_health(
+                            *language_server_id,
+                            health,
+                            status_update.message.as_deref(),
+                            name.clone(),
+                        );
+                        cx.notify();
+                    }
                 }
-                Some(proto::status_update::Status::Stopping) => {
-                    self.language_servers.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Stopping,
-                        status_update.message.as_deref(),
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-                Some(proto::status_update::Status::Stopped) => {
-                    self.language_servers.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Stopped,
-                        status_update.message.as_deref(),
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-
-                Some(proto::status_update::Status::Ok) => {
-                    self.language_servers.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Ok,
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-                Some(proto::status_update::Status::Info) => {
-                    self.language_servers.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Info,
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-                Some(proto::status_update::Status::Warning) => {
-                    self.language_servers.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Warning,
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-                Some(proto::status_update::Status::Error) => {
-                    self.language_servers.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Error,
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-                Some(proto::status_update::Status::Other) => {
-                    self.language_servers.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Other,
-                        name.clone(),
-                    );
-                    cx.notify();
-                }
-                None => {
-                    log::error!("Unexpected status update {}", status_update.status);
-                }
+                None => {}
             },
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -435,12 +392,9 @@ fn fill_servers(
     lsp_logs: &WeakEntity<LogStore>,
 ) -> ContextMenu {
     for (server_id, server) in servers {
-        let status_color = match server.status {
-            LanguageServerStatus::Running => Color::Success,
-            LanguageServerStatus::Starting => Color::Modified,
-            LanguageServerStatus::Stopping => Color::Warning,
-            LanguageServerStatus::Stopped => Color::Error,
-        };
+        let can_restart = server.binary_status == BinaryStatus::None;
+        let status_color = status_color(server);
+        let server_message = server.message();
 
         menu = menu.custom_entry(
             {
@@ -449,26 +403,18 @@ fn fill_servers(
                 let workspace = workspace.clone();
                 let editor_buffers = editor_buffers.clone();
                 let lsp_logs = lsp_logs.clone();
-                let server_status = server.status;
                 move |_, _| {
-                    let can_stop = matches!(
-                        server_status,
-                        LanguageServerStatus::Starting | LanguageServerStatus::Running
-                    );
-                    let can_restart = matches!(
-                        server_status,
-                        LanguageServerStatus::Stopping | LanguageServerStatus::Stopped
-                    );
-
                     h_flex()
                         .w_full()
                         .justify_between()
                         .gap_2()
                         .child(
                             h_flex()
+                                .id("server-status-indicator")
                                 .gap_2()
                                 .child(Indicator::dot().color(status_color))
                                 .child(Label::new(server_name.clone()))
+                                .when_some(server_message.clone(), |div, server_message| div.tooltip(move |_, cx| Tooltip::simple(server_message.clone(), cx)))
                         )
                         .child(
                             h_flex()
@@ -501,10 +447,7 @@ fn fill_servers(
                                                     }
                                                 }
                                             })
-                                    )
-                                })
-                                .when(can_stop, |div| {
-                                    div.child(
+                                    ).child(
                                         IconButton::new("stop-server", IconName::Stop)
                                             .icon_size(IconSize::XSmall)
                                             .tooltip(|_, cx| Tooltip::simple("Stop server", cx))
@@ -519,8 +462,7 @@ fn fill_servers(
                                                         );
                                                     }).ok();
                                                 }
-                                            })
-                                    )
+                                            }))
                                 })
                                 .child(
                                     IconButton::new("open-logs", IconName::FileText)
@@ -568,6 +510,27 @@ fn fill_servers(
         );
     }
     menu
+}
+
+fn status_color(server: &LanguageServerState) -> Color {
+    let status_color = match server.binary_status {
+        BinaryStatus::None => None,
+        BinaryStatus::CheckingForUpdate | BinaryStatus::Downloading | BinaryStatus::Starting => {
+            Some(Color::Modified)
+        }
+        BinaryStatus::Stopping => Some(Color::Disabled),
+        BinaryStatus::Stopped => Some(Color::Disabled),
+        BinaryStatus::Failed { .. } => Some(Color::Error),
+    }
+    .or_else(|| {
+        Some(match server.health()? {
+            ServerHealth::Ok => Color::Success,
+            ServerHealth::Warning => Color::Warning,
+            ServerHealth::Error => Color::Error,
+        })
+    })
+    .unwrap_or(Color::Success);
+    status_color
 }
 
 fn empty_context_menu(menu: ContextMenu, message: &'static str) -> ContextMenu {
@@ -657,21 +620,15 @@ impl Render for LspTool {
         let mut has_warnings = false;
         let mut has_other_notifications = false;
         for server in self.language_servers.servers.values() {
-            if let Some((message, severity)) = &server.message {
-                match severity {
-                    Severity::Error => has_errors = true,
-                    Severity::Warning => has_warnings = true,
-                    Severity::Info | Severity::Ok => has_other_notifications = true,
-                    Severity::Other => {
-                        let message_lower = message.to_lowercase();
-                        if message_lower.contains("error") || message_lower.contains("failed") {
-                            has_errors = true;
-                        } else if message_lower.contains("warn") {
-                            has_warnings = true;
-                        } else {
-                            has_other_notifications = true;
-                        }
-                    }
+            has_errors |= matches!(server.binary_status, BinaryStatus::Failed { .. });
+            has_other_notifications |= server.binary_status_message.is_some();
+
+            if let Some((message, health)) = &server.health {
+                has_other_notifications |= message.is_some();
+                match health {
+                    ServerHealth::Ok => {}
+                    ServerHealth::Warning => has_warnings = true,
+                    ServerHealth::Error => has_errors = true,
                 }
             }
         }

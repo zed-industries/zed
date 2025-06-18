@@ -43,8 +43,8 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LanguageServerStatusUpdate, LanguageToolchainStore, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    LspAdapterDelegate, Patch, PointUtf16, ServerHealth, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -372,20 +372,6 @@ impl LocalLspStore {
                             format!("Failed to start language server {server_name:?}: {err:#?}");
                         log::error!("{message}");
                         log::error!("server stderr: {log}");
-                        lsp_store
-                            .update(cx, |_, cx| {
-                                cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                    language_server_id: server_id,
-                                    name: Some(adapter.name()),
-                                    message: proto::update_language_server::Variant::StatusUpdate(
-                                        proto::StatusUpdate {
-                                            message: Some(message),
-                                            status: proto::status_update::Status::Stopped as i32,
-                                        },
-                                    ),
-                                });
-                            })
-                            .ok();
                         None
                     }
                 }
@@ -396,24 +382,10 @@ impl LocalLspStore {
             pending_workspace_folders,
         };
 
-        let server_name = adapter.name();
-        let lsp_store = self.weak.clone();
-        cx.defer(move |cx| {
-            lsp_store
-                .update(cx, |_, cx| {
-                    cx.emit(LspStoreEvent::LanguageServerUpdate {
-                        language_server_id: server_id,
-                        name: Some(server_name),
-                        message: proto::update_language_server::Variant::StatusUpdate(
-                            proto::StatusUpdate {
-                                message: None,
-                                status: proto::status_update::Status::Starting as i32,
-                            },
-                        ),
-                    });
-                })
-                .ok();
-        });
+        self.languages.update_lsp_status(
+            adapter.name(),
+            LanguageServerStatusUpdate::Binary(BinaryStatus::Starting),
+        );
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids
@@ -3554,7 +3526,7 @@ pub struct LspStore {
     worktree_store: Entity<WorktreeStore>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     pub languages: Arc<LanguageRegistry>,
-    pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
@@ -3759,6 +3731,7 @@ impl LspStore {
         }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
+        subscribe_to_lsp_statuses(&languages, cx);
 
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
@@ -3847,6 +3820,7 @@ impl LspStore {
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
+        subscribe_to_lsp_statuses(&languages, cx);
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(fs, receiver, cx), sender)
@@ -9521,20 +9495,24 @@ impl LspStore {
 
         if let Some(name) = name {
             log::info!("stopping language server {name}");
+            self.languages.update_lsp_status(
+                name.clone(),
+                LanguageServerStatusUpdate::Binary(BinaryStatus::Stopping),
+            );
             cx.notify();
-            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                language_server_id: server_id,
-                name: Some(name.clone()),
-                message: proto::update_language_server::Variant::StatusUpdate(
-                    proto::StatusUpdate {
-                        message: None,
-                        status: proto::status_update::Status::Stopped as i32,
-                    },
-                ),
-            });
-            cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
-            return cx.spawn(async move |_, cx| {
-                Self::shutdown_language_server(server_state, name, cx).await;
+
+            return cx.spawn(async move |lsp_store, cx| {
+                Self::shutdown_language_server(server_state, name.clone(), cx).await;
+                lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.languages.update_lsp_status(
+                            name,
+                            LanguageServerStatusUpdate::Binary(BinaryStatus::Stopped),
+                        );
+                        cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
+                        cx.notify();
+                    })
+                    .ok();
                 orphaned_worktrees
             });
         }
@@ -9832,14 +9810,6 @@ impl LspStore {
         workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(LspStoreEvent::LanguageServerUpdate {
-            language_server_id: server_id,
-            name: Some(adapter.name()),
-            message: proto::update_language_server::Variant::StatusUpdate(proto::StatusUpdate {
-                message: None,
-                status: proto::status_update::Status::Running as i32,
-            }),
-        });
         let Some(local) = self.as_local_mut() else {
             return;
         };
@@ -9871,14 +9841,10 @@ impl LspStore {
                 simulate_disk_based_diagnostics_completion: None,
             },
         );
-        cx.emit(LspStoreEvent::LanguageServerUpdate {
-            language_server_id: server_id,
-            name: Some(adapter.name()),
-            message: proto::update_language_server::Variant::StatusUpdate(proto::StatusUpdate {
-                message: None,
-                status: proto::status_update::Status::Running as i32,
-            }),
-        });
+        local.languages.update_lsp_status(
+            adapter.name(),
+            LanguageServerStatusUpdate::Binary(BinaryStatus::None),
+        );
         if let Some(file_ops_caps) = language_server
             .capabilities()
             .workspace
@@ -10522,6 +10488,66 @@ impl LspStore {
             }
         }
     }
+}
+
+fn subscribe_to_lsp_statuses(languages: &Arc<LanguageRegistry>, cx: &mut Context<'_, LspStore>) {
+    let mut server_statuses = languages.language_server_statuses();
+    cx.spawn(async move |lsp_store, cx| {
+        while let Some((server_name, status)) = server_statuses.next().await {
+            if lsp_store
+                .update(cx, |lsp_store, cx| {
+                    let (message, status) = match status {
+                        LanguageServerStatusUpdate::Binary(binary_status) => {
+                            let mut message = None;
+                            let binary_status = match binary_status {
+                                BinaryStatus::None => proto::ServerBinaryStatus::None,
+                                BinaryStatus::CheckingForUpdate => {
+                                    proto::ServerBinaryStatus::CheckingForUpdate
+                                }
+                                BinaryStatus::Downloading => proto::ServerBinaryStatus::Downloading,
+                                BinaryStatus::Starting => proto::ServerBinaryStatus::Starting,
+                                BinaryStatus::Stopping => proto::ServerBinaryStatus::Stopping,
+                                BinaryStatus::Stopped => proto::ServerBinaryStatus::Stopped,
+                                BinaryStatus::Failed { error } => {
+                                    message = Some(error);
+                                    proto::ServerBinaryStatus::Failed
+                                }
+                            };
+                            (
+                                message,
+                                proto::status_update::Status::Binary(binary_status as i32),
+                            )
+                        }
+                        LanguageServerStatusUpdate::Health(health, message) => {
+                            let health = match health {
+                                ServerHealth::Ok => proto::ServerHealth::Ok,
+                                ServerHealth::Warning => proto::ServerHealth::Warning,
+                                ServerHealth::Error => proto::ServerHealth::Error,
+                            };
+                            (
+                                message.map(|shared_string| shared_string.to_string()),
+                                proto::status_update::Status::Health(health as i32),
+                            )
+                        }
+                    };
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id: todo!("TODO kb"),
+                        name: Some(server_name),
+                        message: proto::update_language_server::Variant::StatusUpdate(
+                            proto::StatusUpdate {
+                                message,
+                                status: Some(status),
+                            },
+                        ),
+                    });
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 fn lsp_workspace_diagnostics_refresh(
