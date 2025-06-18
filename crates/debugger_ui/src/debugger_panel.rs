@@ -1007,6 +1007,9 @@ impl DebugPanel {
                         .map(|l| format!("  {l}"))
                         .join("\n");
 
+                    // TODO: add handling for case when there's no objects, probably need a
+                    // separate code path that queries just for the array and inserts the
+                    // json blob before the closing bracket
                     static ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
                         Query::new(
                             &tree_sitter_json::LANGUAGE.into(),
