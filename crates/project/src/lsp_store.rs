@@ -9582,6 +9582,39 @@ impl LspStore {
         Task::ready(orphaned_worktrees)
     }
 
+    pub fn stop_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        if let Some((client, project_id)) = self.upstream_client() {
+            let request = client.request(proto::StopLanguageServers {
+                project_id,
+                buffer_ids: Vec::new(),
+                also_servers: Vec::new(),
+                all: true,
+            });
+            cx.background_spawn(request).detach_and_log_err(cx);
+        } else {
+            let Some(local) = self.as_local_mut() else {
+                return;
+            };
+            let language_servers_to_stop = local
+                .language_server_ids
+                .values()
+                .flatten()
+                .copied()
+                .collect();
+            local.lsp_tree.update(cx, |this, _| {
+                this.remove_nodes(&language_servers_to_stop);
+            });
+            let tasks = language_servers_to_stop
+                .into_iter()
+                .map(|server| self.stop_local_language_server(server, cx))
+                .collect::<Vec<_>>();
+            cx.background_spawn(async move {
+                futures::future::join_all(tasks).await;
+            })
+            .detach();
+        }
+    }
+
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
@@ -9615,6 +9648,7 @@ impl LspStore {
                         }
                     })
                     .collect(),
+                all: false,
             });
             cx.background_spawn(request).detach_and_log_err(cx);
         } else {
@@ -9674,6 +9708,7 @@ impl LspStore {
                         }
                     })
                     .collect(),
+                all: false,
             });
             cx.background_spawn(request).detach_and_log_err(cx);
         } else {

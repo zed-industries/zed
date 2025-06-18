@@ -2,10 +2,7 @@ use std::{collections::hash_map, path::PathBuf};
 
 use client::proto;
 use collections::{HashMap, HashSet};
-use editor::{
-    Editor, EditorEvent,
-    actions::{RestartLanguageServer, StopLanguageServer},
-};
+use editor::{Editor, EditorEvent};
 use gpui::{Entity, Subscription, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, LocalFile, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
@@ -183,6 +180,8 @@ impl ServerDataToRender<'_> {
     }
 }
 
+// TODO kb menu does not refresh any statuses on clicks
+// TODO kb keyboard story
 impl LspTool {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings_subscription =
@@ -420,42 +419,18 @@ impl LspTool {
                     cx,
                 );
             }
-            if let Some(active_editor) = &active_editor {
-                menu = menu
-                    .entry(
-                        "Restart All Servers",
-                        Some(Box::new(RestartLanguageServer)),
-                        {
-                            let active_editor = active_editor.clone();
-                            move |window, cx| {
-                                active_editor
-                                    .update(cx, |editor, cx| {
-                                        // TODO kb use a different action as it's not only restarting the buffer-related servers
-                                        // TODO kb same for the stopping
-                                        // TODO kb menu does not refresh any statuses on clicks
-                                        editor.restart_language_server(
-                                            &RestartLanguageServer,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        },
-                    )
-                    .entry("Stop All Servers", Some(Box::new(StopLanguageServer)), {
-                        let active_editor = active_editor.clone();
-                        move |window, cx| {
-                            active_editor
-                                .update(cx, |editor, cx| {
-                                    editor.stop_language_server(&StopLanguageServer, window, cx);
-                                })
-                                .ok();
-                        }
-                    });
-            }
 
-            menu.separator()
+            menu.entry("Stop All Servers", None, {
+                let lsp_store = lsp_store.clone();
+                move |_, cx| {
+                    lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            lsp_store.stop_all_language_servers(cx);
+                        })
+                        .ok();
+                }
+            })
+            .separator()
         })
     }
 }

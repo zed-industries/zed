@@ -773,12 +773,14 @@ message RestartLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
     repeated LanguageServerSelector only_servers = 3;
+    bool all = 4;
 }
 
 message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
     repeated LanguageServerSelector also_servers = 3;
+    bool all = 4;
 }
 
 message MultiLspQueryResponse {
