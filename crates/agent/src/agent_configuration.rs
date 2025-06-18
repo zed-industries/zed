@@ -731,24 +731,55 @@ impl AgentConfiguration {
                                         let context_server_manager =
                                             self.context_server_store.clone();
                                         let context_server_id = context_server_id.clone();
+                                        let fs = self.fs.clone();
 
-                                        move |state, _window, cx| match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    this.stop_server(&context_server_id, cx)
-                                                        .log_err();
-                                                });
-                                            }
-                                            ToggleState::Selected => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    if let Some(server) =
-                                                        this.get_server(&context_server_id)
-                                                    {
-                                                        this.start_server(server, cx);
+                                        move |state, _window, cx| {
+                                            let is_enabled = match state {
+                                                ToggleState::Unselected
+                                                | ToggleState::Indeterminate => {
+                                                    context_server_manager.update(
+                                                        cx,
+                                                        |this, cx| {
+                                                            this.stop_server(
+                                                                &context_server_id,
+                                                                cx,
+                                                            )
+                                                            .log_err();
+                                                        },
+                                                    );
+                                                    false
+                                                }
+                                                ToggleState::Selected => {
+                                                    context_server_manager.update(
+                                                        cx,
+                                                        |this, cx| {
+                                                            if let Some(server) =
+                                                                this.get_server(&context_server_id)
+                                                            {
+                                                                this.start_server(server, cx);
+                                                            }
+                                                        },
+                                                    );
+                                                    true
+                                                }
+                                            };
+                                            update_settings_file::<ProjectSettings>(
+                                                fs.clone(),
+                                                cx,
+                                                {
+                                                    let context_server_id =
+                                                        context_server_id.clone();
+
+                                                    move |settings, _| {
+                                                        if let Some(context_server) = settings
+                                                            .context_servers
+                                                            .get_mut(&context_server_id.0)
+                                                        {
+                                                            context_server.set_enabled(is_enabled);
+                                                        }
                                                     }
-                                                })
-                                            }
+                                                },
+                                            );
                                         }
                                     }),
                             ),

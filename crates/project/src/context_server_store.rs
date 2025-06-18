@@ -109,10 +109,14 @@ impl ContextServerConfiguration {
         cx: &AsyncApp,
     ) -> Option<Self> {
         match settings {
-            ContextServerSettings::Custom { command } => {
-                Some(ContextServerConfiguration::Custom { command })
-            }
-            ContextServerSettings::Extension { settings } => {
+            ContextServerSettings::Custom {
+                enabled: _,
+                command,
+            } => Some(ContextServerConfiguration::Custom { command }),
+            ContextServerSettings::Extension {
+                enabled: _,
+                settings,
+            } => {
                 let descriptor = cx
                     .update(|cx| registry.read(cx).context_server_descriptor(&id.0))
                     .ok()
@@ -271,6 +275,10 @@ impl ContextServerStore {
                 .ok()
                 .flatten()
                 .context("Failed to get context server settings")?;
+
+            if !settings.enabled() {
+                return Ok(());
+            }
 
             let (registry, worktree_store) = this.update(cx, |this, _| {
                 (this.registry.clone(), this.worktree_store.clone())
@@ -491,21 +499,27 @@ impl ContextServerStore {
             configured_servers
                 .entry(id)
                 .or_insert(ContextServerSettings::Extension {
+                    enabled: true,
                     settings: serde_json::json!({}),
                 });
         }
 
-        let configured_servers = join_all(configured_servers.into_iter().map(|(id, settings)| {
-            let id = ContextServerId(id);
-            ContextServerConfiguration::from_settings(
-                settings,
-                id.clone(),
-                registry.clone(),
-                worktree_store.clone(),
-                cx,
-            )
-            .map(|config| (id, config))
-        }))
+        let configured_servers = join_all(
+            configured_servers
+                .into_iter()
+                .filter(|(_, settings)| settings.enabled())
+                .map(|(id, settings)| {
+                    let id = ContextServerId(id);
+                    ContextServerConfiguration::from_settings(
+                        settings,
+                        id.clone(),
+                        registry.clone(),
+                        worktree_store.clone(),
+                        cx,
+                    )
+                    .map(|config| (id, config))
+                }),
+        )
         .await
         .into_iter()
         .filter_map(|(id, config)| config.map(|config| (id, config)))
@@ -773,6 +787,7 @@ mod tests {
             vec![(
                 SERVER_1_ID.into(),
                 ContextServerSettings::Extension {
+                    enabled: true,
                     settings: json!({
                         "somevalue": true
                     }),
@@ -829,6 +844,7 @@ mod tests {
                 vec![(
                     server_1_id.0.clone(),
                     ContextServerSettings::Extension {
+                        enabled: true,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -847,6 +863,7 @@ mod tests {
                 vec![(
                     server_1_id.0.clone(),
                     ContextServerSettings::Extension {
+                        enabled: true,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -873,6 +890,7 @@ mod tests {
                     (
                         server_1_id.0.clone(),
                         ContextServerSettings::Extension {
+                            enabled: true,
                             settings: json!({
                                 "somevalue": false
                             }),
@@ -881,6 +899,7 @@ mod tests {
                     (
                         server_2_id.0.clone(),
                         ContextServerSettings::Custom {
+                            enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".to_string(),
                                 args: vec!["arg".to_string()],
@@ -911,6 +930,7 @@ mod tests {
                     (
                         server_1_id.0.clone(),
                         ContextServerSettings::Extension {
+                            enabled: true,
                             settings: json!({
                                 "somevalue": false
                             }),
@@ -919,6 +939,7 @@ mod tests {
                     (
                         server_2_id.0.clone(),
                         ContextServerSettings::Custom {
+                            enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".to_string(),
                                 args: vec!["anotherArg".to_string()],
@@ -944,6 +965,7 @@ mod tests {
                 vec![(
                     server_1_id.0.clone(),
                     ContextServerSettings::Extension {
+                        enabled: true,
                         settings: json!({
                             "somevalue": false
                         }),
@@ -957,6 +979,112 @@ mod tests {
             cx.update(|cx| {
                 assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
             });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
+        const SERVER_1_ID: &'static str = "mcp-1";
+
+        let server_1_id = ContextServerId(SERVER_1_ID.into());
+
+        let (_fs, project) = setup_context_server_test(
+            cx,
+            json!({"code.rs": ""}),
+            vec![(
+                SERVER_1_ID.into(),
+                ContextServerSettings::Custom {
+                    enabled: true,
+                    command: ContextServerCommand {
+                        path: "somebinary".to_string(),
+                        args: vec!["arg".to_string()],
+                        env: None,
+                    },
+                },
+            )],
+        )
+        .await;
+
+        let executor = cx.executor();
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test_maintain_server_loop(
+                Box::new(move |id, _| {
+                    Arc::new(ContextServer::new(
+                        id.clone(),
+                        Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+                    ))
+                }),
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                cx,
+            )
+        });
+
+        // Ensure that mcp-1 starts up
+        {
+            let _server_events = assert_server_events(
+                &store,
+                vec![
+                    (server_1_id.clone(), ContextServerStatus::Starting),
+                    (server_1_id.clone(), ContextServerStatus::Running),
+                ],
+                cx,
+            );
+            cx.run_until_parked();
+        }
+
+        // Ensure that mcp-1 is stopped once it is disabled.
+        {
+            let _server_events = assert_server_events(
+                &store,
+                vec![(server_1_id.clone(), ContextServerStatus::Stopped)],
+                cx,
+            );
+            set_context_server_configuration(
+                vec![(
+                    server_1_id.0.clone(),
+                    ContextServerSettings::Custom {
+                        enabled: false,
+                        command: ContextServerCommand {
+                            path: "somebinary".to_string(),
+                            args: vec!["arg".to_string()],
+                            env: None,
+                        },
+                    },
+                )],
+                cx,
+            );
+
+            cx.run_until_parked();
+        }
+
+        // Ensure that mcp-1 is started once it is enabled again.
+        {
+            let _server_events = assert_server_events(
+                &store,
+                vec![
+                    (server_1_id.clone(), ContextServerStatus::Starting),
+                    (server_1_id.clone(), ContextServerStatus::Running),
+                ],
+                cx,
+            );
+            set_context_server_configuration(
+                vec![(
+                    server_1_id.0.clone(),
+                    ContextServerSettings::Custom {
+                        enabled: true,
+                        command: ContextServerCommand {
+                            path: "somebinary".to_string(),
+                            args: vec!["arg".to_string()],
+                            env: None,
+                        },
+                    },
+                )],
+                cx,
+            );
+
+            cx.run_until_parked();
         }
     }
 
@@ -997,6 +1125,7 @@ mod tests {
 
     fn dummy_server_settings() -> ContextServerSettings {
         ContextServerSettings::Custom {
+            enabled: true,
             command: ContextServerCommand {
                 path: "somebinary".to_string(),
                 args: vec!["arg".to_string()],

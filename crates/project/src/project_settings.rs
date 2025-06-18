@@ -88,18 +88,40 @@ pub struct DapSettings {
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettings {
     Custom {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
         /// The command to run this context server.
         ///
         /// This will override the command set by an extension.
         command: ContextServerCommand,
     },
     Extension {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
         /// are supported.
         settings: serde_json::Value,
     },
+}
+
+impl ContextServerSettings {
+    pub fn enabled(&self) -> bool {
+        match self {
+            ContextServerSettings::Custom { enabled, .. } => *enabled,
+            ContextServerSettings::Extension { enabled, .. } => *enabled,
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -478,6 +500,7 @@ impl Settings for ProjectSettings {
                     Some((
                         k.clone().into(),
                         ContextServerSettings::Custom {
+                            enabled: true,
                             command: serde_json::from_value::<VsCodeContextServerCommand>(
                                 v.clone(),
                             )
