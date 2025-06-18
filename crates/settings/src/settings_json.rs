@@ -379,6 +379,8 @@ mod tests {
         pretty_assertions::assert_eq!(new_json, expected_new_json);
     }
 
+    fn check_keymap_update() {}
+
     #[gpui::test]
     fn test_setting_store_update(cx: &mut App) {
         let mut store = SettingsStore::new(cx);

@@ -18,7 +18,9 @@ use util::{
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
 };
 
-use crate::{SettingsAssets, parse_json_with_comments};
+use crate::{
+    SettingsAssets, parse_json_with_comments, update_settings_file, update_value_in_json_text,
+};
 
 pub trait KeyBindingValidator: Send + Sync {
     fn action_type_id(&self) -> TypeId;
@@ -218,7 +220,7 @@ impl KeymapFile {
                 key_bindings: Vec::new(),
             };
         }
-        let keymap_file = match parse_json_with_comments::<Self>(content) {
+        let keymap_file = match Self::parse(content) {
             Ok(keymap_file) => keymap_file,
             Err(error) => {
                 return KeymapFileLoadResult::JsonParseFailure { error };
@@ -629,9 +631,100 @@ impl KeymapFile {
             }
         }
     }
+
+    pub async fn update_keybinding<'a>(
+        mut operation: KeybindUpdateOperation<'a>,
+        tab_size: usize,
+        fs: &Arc<dyn Fs>,
+    ) -> Result<()> {
+        // todo! how to resolve conflicts if user has keymap json open in buffer with unsaved changes and we modify
+        // the file out from under them?
+
+        // todo! how to make sure we don't concurrently update?
+
+        match operation {
+            KeybindUpdateOperation::Replace { source, target }
+                if target.source != KeybindSource::User =>
+            {
+                operation = KeybindUpdateOperation::Add {
+                    key_binding: source,
+                    use_key_equivalents: target.use_key_equivalents,
+                };
+            }
+            _ => {}
+        }
+
+        let contents = Self::load_keymap_file(fs).await?;
+        let keymap = Self::parse(&contents)?;
+        let keymap_json_value: Value = parse_json_with_comments(&contents)?;
+
+        match operation {
+            KeybindUpdateOperation::Replace { source, target } => todo!(),
+            KeybindUpdateOperation::Add {
+                key_binding: keybinding,
+                use_key_equivalents,
+            } => {
+                let context = keybinding.predicate().map(|c| c.to_string());
+                let mut keystrokes = String::with_capacity(16 * keybinding.keystrokes().len());
+                for keystroke in keybinding.keystrokes() {
+                    keystrokes.push_str(&keystroke.unparse());
+                    keystrokes.push(' ');
+                }
+                keystrokes.pop();
+
+                let mut value = serde_json::Map::with_capacity(4);
+                if let Some(context) = context {
+                    value.insert("context".to_string(), context.into());
+                }
+                if use_key_equivalents {
+                    value.insert("use_key_equivalents".to_string(), true.into());
+                }
+
+                value.insert("bindings".to_string(), {
+                    let mut bindings = serde_json::Map::new();
+                    bindings.insert(keystrokes, keybinding.action().name().into());
+                    bindings.into()
+                });
+            }
+        }
+
+        // update_value_in_json_text(
+        //     text,
+        //     key_path,
+        //     tab_size,
+        //     old_value,
+        //     new_value,
+        //     preserved_keys,
+        //     edits,
+        // );
+
+        Ok(())
+    }
 }
 
-#[derive(Clone, Copy)]
+pub enum KeybindUpdateOperation<'a> {
+    Replace {
+        /// The keybind to create
+        source: KeyBinding,
+        /// Describes the keybind to remove
+        target: KeybindUpdateTarget<'a>,
+    },
+    Add {
+        key_binding: KeyBinding,
+        use_key_equivalents: bool,
+    },
+}
+
+pub struct KeybindUpdateTarget<'a> {
+    source: KeybindSource,
+    context: Option<&'a str>,
+    keystrokes: &'a str,
+    action_name: &'a str,
+    use_key_equivalents: bool,
+    input: Option<&'a str>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum KeybindSource {
     User,
     Default,
