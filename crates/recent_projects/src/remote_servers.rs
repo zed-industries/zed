@@ -31,6 +31,7 @@ use project::Project;
 use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use remote::ssh_session::ConnectionIdentifier;
+use remote_path::PathStyle;
 use settings::Settings;
 use settings::SettingsStore;
 use settings::update_settings_file;
@@ -143,6 +144,7 @@ impl ProjectPicker {
         connection: SshConnectionOptions,
         project: Entity<Project>,
         home_dir: PathBuf,
+        path_style: PathStyle,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<RemoteServerProjects>,
@@ -150,7 +152,7 @@ impl ProjectPicker {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
         println!("-> REMOTE: Opening path prompt");
-        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false);
+        let delegate = file_finder::OpenPathDelegate::new(tx, lister, false, path_style);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
@@ -424,6 +426,7 @@ impl RemoteServerProjects {
         connection_options: remote::SshConnectionOptions,
         project: Entity<Project>,
         home_dir: PathBuf,
+        path_style: PathStyle,
         window: &mut Window,
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
@@ -436,6 +439,7 @@ impl RemoteServerProjects {
             connection_options,
             project,
             home_dir,
+            path_style,
             workspace,
             window,
             cx,
@@ -590,6 +594,7 @@ impl RemoteServerProjects {
                         });
                     };
 
+                    let path_style = session.update(cx, |cx, _| cx.path_style())?;
                     let project = cx.update(|_, cx| {
                         project::Project::ssh(
                             session,
@@ -618,6 +623,7 @@ impl RemoteServerProjects {
                                     connection_options,
                                     project,
                                     home_dir,
+                                    path_style,
                                     window,
                                     cx,
                                     weak,

@@ -5,6 +5,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
+use remote_path::PathStyle;
 use settings::Settings;
 use std::{
     path::{self, MAIN_SEPARATOR_STR, Path, PathBuf},
@@ -34,6 +35,7 @@ pub struct OpenPathDelegate {
     string_matches: Vec<StringMatch>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
+    path_style: PathStyle,
     replace_prompt: Task<()>,
 }
 
@@ -42,6 +44,7 @@ impl OpenPathDelegate {
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         lister: DirectoryLister,
         creating_path: bool,
+        path_style: PathStyle,
     ) -> Self {
         Self {
             tx: Some(tx),
@@ -53,6 +56,7 @@ impl OpenPathDelegate {
             string_matches: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             should_dismiss: true,
+            path_style,
             replace_prompt: Task::ready(()),
         }
     }
@@ -186,7 +190,8 @@ impl OpenPathPrompt {
     ) {
         println!("-> LOCAL: Opening path prompt");
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path);
+            let delegate =
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::current());
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);
