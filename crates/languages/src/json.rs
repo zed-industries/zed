@@ -5,12 +5,14 @@ use async_trait::async_trait;
 use collections::HashMap;
 use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{App, AsyncApp};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
-use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{
+    ContextProvider, LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
+use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -36,25 +38,73 @@ const SERVER_PATH: &str =
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
 
-pub(super) fn json_task_context() -> ContextProviderWithTasks {
-    ContextProviderWithTasks::new(TaskTemplates(vec![
-        TaskTemplate {
-            label: "package script $ZED_CUSTOM_script".to_owned(),
-            command: "npm --prefix $ZED_DIRNAME run".to_owned(),
-            args: vec![VariableName::Custom("script".into()).template_value()],
-            tags: vec!["package-script".into()],
-            ..TaskTemplate::default()
-        },
-        TaskTemplate {
-            label: "composer script $ZED_CUSTOM_script".to_owned(),
-            command: "composer -d $ZED_DIRNAME".to_owned(),
-            args: vec![VariableName::Custom("script".into()).template_value()],
-            tags: vec!["composer-script".into()],
-            ..TaskTemplate::default()
-        },
-    ]))
-}
+pub(crate) struct JsonTaskProvider;
 
+impl ContextProvider for JsonTaskProvider {
+    fn build_context(
+        &self,
+        _variables: &task::TaskVariables,
+        _location: language::ContextLocation<'_>,
+        _project_env: Option<HashMap<String, String>>,
+        _toolchains: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut App,
+    ) -> gpui::Task<Result<task::TaskVariables>> {
+        let _ = _location;
+        gpui::Task::ready(Ok(task::TaskVariables::default()))
+    }
+
+    fn associated_tasks(
+        &self,
+        fs: Arc<dyn Fs>,
+        file: Option<Arc<dyn language::File>>,
+        cx: &App,
+    ) -> gpui::Task<Option<TaskTemplates>> {
+        let Some(path) = file
+            .and_then(|f| Some(f.as_local()?.abs_path(cx)))
+            .filter(|path| path.file_name() == Some("package.json".as_ref()))
+        else {
+            return Task::ready(None);
+        };
+        cx.background_spawn(async move {
+            let contents = fs.load(&path).await.ok()?;
+            let as_json = serde_json_lenient::Value::from_str(&contents).ok()?;
+            let gutter_tasks = [
+                TaskTemplate {
+                    label: "package script $ZED_CUSTOM_script".to_owned(),
+                    command: "npm --prefix $ZED_DIRNAME run".to_owned(),
+                    args: vec![VariableName::Custom("script".into()).template_value()],
+                    tags: vec!["package-script".into()],
+                    ..TaskTemplate::default()
+                },
+                TaskTemplate {
+                    label: "composer script $ZED_CUSTOM_script".to_owned(),
+                    command: "composer -d $ZED_DIRNAME".to_owned(),
+                    args: vec![VariableName::Custom("script".into()).template_value()],
+                    tags: vec!["composer-script".into()],
+                    ..TaskTemplate::default()
+                },
+            ];
+            let tasks = as_json
+                .get("scripts")?
+                .as_object()?
+                .keys()
+                .map(|key| TaskTemplate {
+                    label: format!("run {key}"),
+                    command: "npm".to_owned(),
+                    args: vec![
+                        "--prefix".into(),
+                        "$ZED_DIRNAME".into(),
+                        "run".into(),
+                        key.into(),
+                    ],
+                    ..TaskTemplate::default()
+                })
+                .chain(gutter_tasks)
+                .collect();
+            Some(TaskTemplates(tasks))
+        })
+    }
+}
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
