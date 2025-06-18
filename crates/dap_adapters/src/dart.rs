@@ -27,7 +27,7 @@ impl DebugAdapter for DartDebugAdapter {
     }
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
-        Some(LanguageName::new("Dart"))
+        Some(LanguageName::new("Dart".into()))
     }
 
     async fn dap_schema(&self) -> serde_json::Value {
@@ -36,69 +36,88 @@ impl DebugAdapter for DartDebugAdapter {
                 "request": {
                     "type": "string",
                     "enum": ["launch", "attach"],
-                    "description": "Request type: 'launch' to start a new app, 'attach' to connect to a running one"
+                    "description": "Specifies 'launch' to start a new app, or 'attach' to connect to a running one."
                 },
                 "program": {
                     "type": "string",
-                    "description": "Path to the main Dart entry point (e.g., lib/main.dart)"
+                    "description": "Path to the main Dart entry point (e.g., lib/main.dart)."
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Working directory for the Dart/Flutter process"
+                    "description": "Working directory for the Dart/Flutter process. Defaults to project root."
                 },
                 "args": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Arguments passed to the Dart program"
+                    "description": "Arguments passed directly to the Dart program."
                 },
                 "toolArgs": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Arguments for the 'flutter' or 'dart' tool command"
+                    "description": "Arguments for the 'flutter' or 'dart' tool command (e.g., ['--flavor', 'dev'])."
                 },
                 "customTool": {
                     "type": "string",
-                    "description": "Custom tool to run instead of 'flutter' or 'dart'"
+                    "description": "Optional: custom tool (e.g., wrapper script) to run instead of 'flutter' or 'dart'."
                 },
                 "customToolReplacesArgs": {
                     "type": "integer",
-                    "description": "Number of default arguments to remove when using customTool",
-                    "default": 0
+                    "description": "Number of default arguments to remove when 'customTool' is used."
                 },
                 "vmServiceUri": {
                     "type": "string",
-                    "description": "Dart VM Service URI for attach (e.g., ws://127.0.0.1:8181/ws)"
+                    "description": "(Attach only) Dart VM Service URI for an already running application."
                 },
                 "vmServiceInfoFile": {
                     "type": "string",
-                    "description": "Path to file containing the Dart VM Service URI"
+                    "description": "(Attach only) Path to a file containing the Dart VM Service URI."
                 },
                 "noDebug": {
                     "type": "boolean",
-                    "description": "Launch without debugging (run mode)",
+                    "description": "(Launch only) If true, launches without debugging (run mode). Defaults to false (debug mode).",
                     "default": false
                 },
                 "flutterMode": {
                     "type": "string",
                     "enum": ["run", "test"],
-                    "description": "Flutter execution mode",
+                    "description": "If 'test', uses 'flutter test --machine' semantics. Defaults to 'run'.",
                     "default": "run"
                 },
                 "env": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
-                    "description": "Environment variables for the launched program"
+                    "description": "Environment variables for the launched program."
                 },
                 "console": {
                     "type": "string",
                     "enum": ["debugConsole", "terminal"],
-                    "description": "Where to launch the debug target",
+                    "description": "Where to launch the debug target: internal console or terminal.",
                     "default": "debugConsole"
                 },
-                "stopOnEntry": {
+                "enableDartDevelopmentService": {
                     "type": "boolean",
-                    "description": "Automatically stop after launch",
+                    "description": "Whether to enable Dart Development Service (DDS).",
+                    "default": true
+                },
+                "debugExternalPackageLibraries": {
+                    "type": "boolean",
+                    "description": "Whether to debug external package libraries.",
                     "default": false
+                },
+                "debugSdkLibraries": {
+                    "type": "boolean",
+                    "description": "Whether to debug SDK libraries.",
+                    "default": false
+                },
+                "evaluateGettersInDebugViews": {
+                    "type": "boolean",
+                    "description": "Whether to evaluate getters in debug views.",
+                    "default": true
+                },
+                "evaluateToStringInDebugViews": {
+                    "type": "boolean",
+                    "description": "Whether to evaluate toString() in debug views.",
+                    "default": true
                 }
             },
             "required": ["request"],
@@ -106,15 +125,6 @@ impl DebugAdapter for DartDebugAdapter {
                 {
                     "if": { "properties": { "request": { "const": "launch" } } },
                     "then": { "required": ["program"] }
-                },
-                {
-                    "if": { "properties": { "request": { "const": "attach" } } },
-                    "then": {
-                        "anyOf": [
-                            { "required": ["vmServiceUri"] },
-                            { "required": ["vmServiceInfoFile"] }
-                        ]
-                    }
                 }
             ]
         })
@@ -128,76 +138,82 @@ impl DebugAdapter for DartDebugAdapter {
             .as_object()
             .ok_or_else(|| anyhow!("Debug configuration must be a valid JSON object"))?;
 
-        let request_str = map.get("request").and_then(|v| v.as_str()).ok_or_else(|| {
-            anyhow!("'request' field is required and must be 'launch' or 'attach'")
-        })?;
+        let request_str = map
+            .get("request")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("The 'request' field is required in debug.json and must be a string ('launch' or 'attach')"))?;
 
         match request_str {
             "launch" => {
                 if !map.contains_key("program")
-                    || map.get("program").and_then(|v| v.as_str()).is_none()
+                    || !map.get("program").and_then(|v| v.as_str()).is_some()
                 {
-                    return Err(anyhow!("'program' field is required for launch requests"));
+                    return Err(anyhow!(
+                        "The 'program' field (a string path to the main Dart file) is required for a 'launch' request"
+                    ));
                 }
                 Ok(StartDebuggingRequestArgumentsRequest::Launch)
             }
             "attach" => {
                 let has_uri = map.get("vmServiceUri").and_then(|v| v.as_str()).is_some();
-                let has_file = map
+                let has_info_file = map
                     .get("vmServiceInfoFile")
                     .and_then(|v| v.as_str())
                     .is_some();
 
-                if !has_uri && !has_file {
+                if !has_uri && !has_info_file {
                     return Err(anyhow!(
-                        "Attach requests require either 'vmServiceUri' or 'vmServiceInfoFile'"
+                        "For 'attach' request, either 'vmServiceUri' or 'vmServiceInfoFile' must be provided"
                     ));
                 }
 
                 Ok(StartDebuggingRequestArgumentsRequest::Attach)
             }
-            _ => Err(anyhow!("'request' must be either 'launch' or 'attach'")),
+            _ => Err(anyhow!(
+                "Invalid 'request' value: '{}'. It must be either 'launch' or 'attach'.",
+                request_str
+            )),
         }
     }
 
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        let mut config = serde_json::Map::new();
+        let mut dap_config_map = serde_json::Map::new();
 
-        config.insert(
+        dap_config_map.insert(
             "request".to_string(),
             match &zed_scenario.request {
                 DebugRequest::Launch(_) => json!("launch"),
                 DebugRequest::Attach(_) => json!("attach"),
             },
         );
-        config.insert("name".to_string(), json!(zed_scenario.label.as_ref()));
+        dap_config_map.insert("name".to_string(), json!(zed_scenario.label.as_ref()));
 
         match &zed_scenario.request {
             DebugRequest::Launch(launch_config) => {
-                config.insert("program".to_string(), json!(launch_config.program));
+                dap_config_map.insert("program".to_string(), json!(launch_config.program));
                 if let Some(cwd_path) = &launch_config.cwd {
-                    config.insert("cwd".to_string(), json!(cwd_path.to_string_lossy()));
+                    dap_config_map.insert("cwd".to_string(), json!(cwd_path.to_string_lossy()));
                 }
                 if !launch_config.args.is_empty() {
-                    config.insert("args".to_string(), json!(launch_config.args));
+                    dap_config_map.insert("args".to_string(), json!(launch_config.args));
                 }
                 if !launch_config.env.is_empty() {
-                    config.insert("env".to_string(), launch_config.env_json());
+                    dap_config_map.insert("env".to_string(), launch_config.env_json());
                 }
             }
-            DebugRequest::Attach(_) => {
-                // attach-specific fields are handled via task_definition.config
+            DebugRequest::Attach(_attach_config) => {
+                // Attach-specific fields are handled via task_definition.config in get_binary
             }
         }
 
         if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
-            config.insert("stopOnEntry".to_string(), json!(stop_on_entry));
+            dap_config_map.insert("stopOnEntry".to_string(), json!(stop_on_entry));
         }
 
         Ok(DebugScenario {
             adapter: zed_scenario.adapter,
             label: zed_scenario.label,
-            config: serde_json::Value::Object(config),
+            config: serde_json::Value::Object(dap_config_map),
             build: None,
             tcp_connection: None,
         })
@@ -219,7 +235,7 @@ impl DebugAdapter for DartDebugAdapter {
                 .map(|p| p.to_string_lossy().into_owned())
                 .ok_or_else(|| {
                     anyhow!(
-                        "'{}' not found in PATH. Install Flutter SDK and add to PATH",
+                        "'{}' command not found in PATH. Ensure Flutter SDK is installed and 'bin' directory is in PATH.",
                         Self::FLUTTER_EXECUTABLE_NAME
                     )
                 })?
@@ -230,7 +246,7 @@ impl DebugAdapter for DartDebugAdapter {
                 .map(|p| p.to_string_lossy().into_owned())
                 .ok_or_else(|| {
                     anyhow!(
-                        "'{}' not found in PATH. Install Dart SDK and add to PATH",
+                        "'{}' command not found in PATH. Ensure Dart SDK is installed and 'bin' directory is in PATH.",
                         Self::DART_EXECUTABLE_NAME
                     )
                 })?
@@ -259,18 +275,25 @@ impl DebugAdapter for DartDebugAdapter {
                 let remove_count = std::cmp::min(replace_count as usize, adapter_args.len());
                 adapter_args.drain(0..remove_count);
             }
+
             custom_tool.to_string()
         } else {
             tool_executable_path
         };
 
-        let mut processed_config = task_definition.config.clone();
-        self.process_dart_defines(&mut processed_config, delegate)
-            .await?;
+        if let Some(tool_args_val) = task_definition.config.get("toolArgs") {
+            if let Some(tool_args_array) = tool_args_val.as_array() {
+                for arg_val in tool_args_array {
+                    if let Some(arg_str) = arg_val.as_str() {
+                        adapter_args.push(arg_str.to_string());
+                    }
+                }
+            }
+        }
 
         let dap_request_args = StartDebuggingRequestArguments {
-            request: self.validate_config(&processed_config)?,
-            configuration: processed_config,
+            request: self.validate_config(&task_definition.config)?,
+            configuration: task_definition.config.clone(),
         };
 
         let cwd = task_definition
@@ -317,65 +340,5 @@ impl DartDebugAdapter {
         }
 
         false
-    }
-
-    async fn process_dart_defines(
-        &self,
-        config: &mut serde_json::Value,
-        delegate: &Arc<dyn DapDelegate>,
-    ) -> Result<()> {
-        if let Some(tool_args) = config.get("toolArgs").and_then(|v| v.as_array()).cloned() {
-            let mut new_tool_args = Vec::new();
-
-            for arg in tool_args {
-                if let Some(arg_str) = arg.as_str() {
-                    if arg_str.starts_with("--dart-define-from-file=") {
-                        let file_path = &arg_str[24..];
-                        let full_path = if std::path::Path::new(file_path).is_relative() {
-                            delegate.worktree_root_path().join(file_path)
-                        } else {
-                            std::path::PathBuf::from(file_path)
-                        };
-
-                        if let Ok(content) = delegate.fs().load(&full_path).await {
-                            match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
-                                &content,
-                            ) {
-                                Ok(json_map) => {
-                                    for (key, value) in json_map {
-                                        let value_str = match value {
-                                            serde_json::Value::String(s) => s,
-                                            serde_json::Value::Number(n) => n.to_string(),
-                                            serde_json::Value::Bool(b) => b.to_string(),
-                                            _ => value.to_string(),
-                                        };
-                                        new_tool_args.push(serde_json::Value::String(format!(
-                                            "--dart-define={}={}",
-                                            key, value_str
-                                        )));
-                                    }
-                                }
-                                Err(_) => {
-                                    new_tool_args.push(arg);
-                                }
-                            }
-                        } else {
-                            new_tool_args.push(arg);
-                        }
-                    } else {
-                        new_tool_args.push(arg);
-                    }
-                }
-            }
-
-            if let Some(config_obj) = config.as_object_mut() {
-                config_obj.insert(
-                    "toolArgs".to_string(),
-                    serde_json::Value::Array(new_tool_args),
-                );
-            }
-        }
-
-        Ok(())
     }
 }
