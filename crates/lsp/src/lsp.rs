@@ -108,7 +108,7 @@ pub struct LanguageServer {
     root_uri: Url,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LanguageServerSelector {
     Id(LanguageServerId),
     Name(LanguageServerName),

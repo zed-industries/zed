@@ -124,7 +124,6 @@ pub struct GlobalLspSettings {
     pub button: bool,
 }
 
-
 impl ContextServerSettings {
     pub fn enabled(&self) -> bool {
         match self {

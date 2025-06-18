@@ -564,7 +564,7 @@ fn fill_servers(
                                                             lsp_store.update(cx, |lsp_store, cx| {
                                                                 lsp_store.restart_language_servers_for_buffers(
                                                                     buffers,
-                                                                    vec![server_selector.clone()],
+                                                                    HashSet::from_iter([server_selector.clone()]),
                                                                     cx,
                                                                 );
                                                             }).ok();
@@ -585,7 +585,7 @@ fn fill_servers(
                                                     lsp_store.update(cx, |lsp_store, cx| {
                                                         lsp_store.stop_language_servers_for_buffers(
                                                             Vec::new(),
-                                                            vec![server_selector.clone()],
+                                                            HashSet::from_iter([server_selector.clone()]),
                                                             cx,
                                                         );
                                                     }).ok();

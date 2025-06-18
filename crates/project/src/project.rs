@@ -2499,7 +2499,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, Vec::new(), false, cx)
+            lsp_store.register_buffer_with_language_servers(&buffer, HashSet::default(), false, cx)
         })
     }
 
@@ -3144,7 +3144,7 @@ impl Project {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        only_restart_servers: Vec<LanguageServerSelector>,
+        only_restart_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3155,7 +3155,7 @@ impl Project {
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        also_restart_servers: Vec<LanguageServerSelector>,
+        also_restart_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {

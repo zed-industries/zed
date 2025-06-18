@@ -918,7 +918,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
-            Vec::new(),
+            HashSet::default(),
             cx,
         );
     });
@@ -1716,7 +1716,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], Vec::new(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
     });
     let mut events = cx.events(&project);
 
@@ -1825,7 +1825,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], Vec::new(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     // The diagnostics are cleared.
@@ -1880,7 +1880,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], Vec::new(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
