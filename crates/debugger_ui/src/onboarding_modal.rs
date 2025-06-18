@@ -4,7 +4,7 @@ use gpui::{
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::agent_panel::AgentPanel;
+use crate::DebugPanel;
 
 macro_rules! debugger_onboarding_event {
     ($name:expr) => {
@@ -31,7 +31,7 @@ impl DebuggerOnboardingModal {
 
     fn open_panel(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.update(cx, |workspace, cx| {
-            workspace.focus_panel::<AgentPanel>(window, cx);
+            workspace.focus_panel::<DebugPanel>(window, cx);
         });
 
         cx.emit(DismissEvent);
@@ -67,7 +67,7 @@ impl Render for DebuggerOnboardingModal {
         let max_height = window_height - px(200.);
 
         let base = v_flex()
-            .id("agent-onboarding")
+            .id("debugger-onboarding")
             .key_context("DebuggerOnboardingModal")
             .relative()
             .w(px(450.))
@@ -106,7 +106,7 @@ impl Render for DebuggerOnboardingModal {
                     .w(px(400.))
                     .h(px(92.))
                     .child(
-                        Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.))
+                        Vector::new(VectorName::DebuggerGrid, rems_from_px(400.), rems_from_px(92.))
                             .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
                     ),
             )
