@@ -7,10 +7,10 @@ use std::{
     cmp,
     iter::{self, Peekable},
     ops::Range,
-    sync::Arc,
     vec,
 };
-use sum_tree::TreeMap;
+
+use crate::display_map::{HighlightKey, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -19,15 +19,15 @@ pub struct CustomHighlightsChunks<'a> {
     multibuffer_snapshot: &'a MultiBufferSnapshot,
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
-    active_highlights: BTreeMap<TypeId, HighlightStyle>,
-    text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
+    active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
+    text_highlights: Option<&'a TextHighlights>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct HighlightEndpoint {
     offset: usize,
     is_start: bool,
-    tag: TypeId,
+    tag: HighlightKey,
     style: HighlightStyle,
 }
 
@@ -35,7 +35,7 @@ impl<'a> CustomHighlightsChunks<'a> {
     pub fn new(
         range: Range<usize>,
         language_aware: bool,
-        text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
+        text_highlights: Option<&'a TextHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -66,7 +66,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 
 fn create_highlight_endpoints(
     range: &Range<usize>,
-    text_highlights: Option<&TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
+    text_highlights: Option<&TextHighlights>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
