@@ -89,6 +89,9 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Show a diff of the given paths.
+    #[arg(long)]
+    diff: bool,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -277,6 +280,7 @@ fn main() -> Result<()> {
                 open_new_workspace,
                 env,
                 user_data_dir: user_data_dir_for_thread,
+                diff: args.diff,
             })?;
 
             while let Ok(response) = rx.recv() {

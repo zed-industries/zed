@@ -263,7 +263,8 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 env,
-                user_data_dir: _, // Ignore user_data_dir
+                user_data_dir: _,
+                diff,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -293,6 +294,7 @@ pub async fn handle_cli_connection(
                     wait,
                     app_state.clone(),
                     env,
+                    diff,
                     cx,
                 )
                 .await;
@@ -311,6 +313,7 @@ async fn open_workspaces(
     wait: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
+    diff: bool,
     cx: &mut AsyncApp,
 ) -> Result<()> {
     let grouped_locations = if paths.is_empty() {
@@ -367,6 +370,7 @@ async fn open_workspaces(
                         responses,
                         env.as_ref(),
                         &app_state,
+                        diff,
                         cx,
                     )
                     .await;
@@ -416,6 +420,7 @@ async fn open_local_workspace(
     responses: &IpcSender<CliResponse>,
     env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
+    diff: bool,
     cx: &mut AsyncApp,
 ) -> bool {
     let mut errored = false;
@@ -428,6 +433,7 @@ async fn open_local_workspace(
         workspace::OpenOptions {
             open_new_workspace,
             env: env.cloned(),
+            // diff,
             ..Default::default()
         },
         cx,

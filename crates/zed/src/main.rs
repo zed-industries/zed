@@ -14,6 +14,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
+use git_ui::diff_view::DiffView;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
@@ -878,56 +879,62 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        for location in locations {
-            match location {
-                SerializedWorkspaceLocation::Local(location, _) => {
-                    let task = cx.update(|cx| {
-                        workspace::open_paths(
-                            location.paths().as_ref(),
-                            app_state.clone(),
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                    })?;
-                    task.await?;
-                }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
-                    let connection_options = cx.update(|cx| {
-                        SshSettings::get_global(cx)
-                            .connection_options_for(ssh.host, ssh.port, ssh.user)
-                    })?;
-                    let app_state = app_state.clone();
-                    cx.spawn(async move |cx| {
-                        recent_projects::open_ssh_project(
-                            connection_options,
-                            ssh.paths.into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                        .await
-                        .log_err();
-                    })
-                    .detach();
-                }
-            }
-        }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
-    } else {
-        cx.update(|cx| {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-        })?
-        .await?;
-    }
+    // if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+    //     for location in locations {
+    //         match location {
+    //             SerializedWorkspaceLocation::Local(location, _) => {
+    //                 let task = cx.update(|cx| {
+    //                     workspace::open_paths(
+    //                         location.paths().as_ref(),
+    //                         app_state.clone(),
+    //                         workspace::OpenOptions::default(),
+    //                         cx,
+    //                     )
+    //                 })?;
+    //                 task.await?;
+    //             }
+    //             SerializedWorkspaceLocation::Ssh(ssh) => {
+    //                 let connection_options = cx.update(|cx| {
+    //                     SshSettings::get_global(cx)
+    //                         .connection_options_for(ssh.host, ssh.port, ssh.user)
+    //                 })?;
+    //                 let app_state = app_state.clone();
+    //                 cx.spawn(async move |cx| {
+    //                     recent_projects::open_ssh_project(
+    //                         connection_options,
+    //                         ssh.paths.into_iter().map(PathBuf::from).collect(),
+    //                         app_state,
+    //                         workspace::OpenOptions::default(),
+    //                         cx,
+    //                     )
+    //                     .await
+    //                     .log_err();
+    //                 })
+    //                 .detach();
+    //             }
+    //         }
+    //     }
+    // } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+    //     cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
+    // } else {
+    cx.update(|cx| {
+        workspace::open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |workspace, window, cx| {
+                DiffView::open(
+                    PathBuf::from("/Users/conrad/0/go/parallel/LICENSE.MIT"),
+                    PathBuf::from("/Users/conrad/0/go/automerge-go/LICENSE.MIT"),
+                    workspace,
+                    window,
+                    cx,
+                )
+            },
+        )
+    })?
+    .await?;
+    // }
 
     Ok(())
 }
