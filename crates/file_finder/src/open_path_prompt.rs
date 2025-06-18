@@ -21,10 +21,10 @@ use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
 
-#[cfg(target_os = "windows")]
-const PROMPT_ROOT: &str = "C:\\";
-#[cfg(not(target_os = "windows"))]
-const PROMPT_ROOT: &str = "/";
+// #[cfg(target_os = "windows")]
+// const PROMPT_ROOT: &str = "C:\\";
+// #[cfg(not(target_os = "windows"))]
+// const PROMPT_ROOT: &str = "/";
 
 #[derive(Debug)]
 pub struct OpenPathDelegate {
@@ -35,6 +35,7 @@ pub struct OpenPathDelegate {
     string_matches: Vec<StringMatch>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
+    prompt_root: String,
     path_style: PathStyle,
     replace_prompt: Task<()>,
 }
@@ -56,6 +57,10 @@ impl OpenPathDelegate {
             string_matches: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             should_dismiss: true,
+            prompt_root: match path_style {
+                PathStyle::Posix => "/".to_string(),
+                PathStyle::Windows => "C:\\".to_string(),
+            },
             path_style,
             replace_prompt: Task::ready(()),
         }
@@ -263,6 +268,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
+        let parent_path_is_root = self.prompt_root == dir;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
@@ -276,7 +282,7 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: false }
                             | DirectoryState::List { .. } => match paths {
                                 Ok(paths) => DirectoryState::List {
-                                    entries: path_candidates(&dir, paths),
+                                    entries: path_candidates(parent_path_is_root, paths),
                                     parent_path: dir.clone(),
                                     error: None,
                                 },
@@ -289,7 +295,7 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: true }
                             | DirectoryState::Create { .. } => match paths {
                                 Ok(paths) => {
-                                    let mut entries = path_candidates(&dir, paths);
+                                    let mut entries = path_candidates(parent_path_is_root, paths);
                                     let mut exists = false;
                                     let mut is_dir = false;
                                     let mut new_id = None;
@@ -531,8 +537,8 @@ impl PickerDelegate for OpenPathDelegate {
             DirectoryState::None { .. } => return,
             DirectoryState::List { parent_path, .. } => {
                 let confirmed_path =
-                    if parent_path == PROMPT_ROOT && candidate.path.string.is_empty() {
-                        PathBuf::from(PROMPT_ROOT)
+                    if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
+                        PathBuf::from(&self.prompt_root)
                     } else {
                         Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
                             .join(&candidate.path.string)
@@ -552,8 +558,8 @@ impl PickerDelegate for OpenPathDelegate {
                         return;
                     }
                     let prompted_path =
-                        if parent_path == PROMPT_ROOT && user_input.file.string.is_empty() {
-                            PathBuf::from(PROMPT_ROOT)
+                        if parent_path == &self.prompt_root && user_input.file.string.is_empty() {
+                            PathBuf::from(&self.prompt_root)
                         } else {
                             Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
                                 .join(&user_input.file.string)
@@ -656,8 +662,8 @@ impl PickerDelegate for OpenPathDelegate {
                     .inset(true)
                     .toggle_state(selected)
                     .child(HighlightedLabel::new(
-                        if parent_path == PROMPT_ROOT {
-                            format!("{}{}", PROMPT_ROOT, candidate.path.string)
+                        if parent_path == &self.prompt_root {
+                            format!("{}{}", self.prompt_root, candidate.path.string)
                         } else {
                             candidate.path.string.clone()
                         },
@@ -669,10 +675,10 @@ impl PickerDelegate for OpenPathDelegate {
                 user_input,
                 ..
             } => {
-                let (label, delta) = if parent_path == PROMPT_ROOT {
+                let (label, delta) = if parent_path == &self.prompt_root {
                     (
-                        format!("{}{}", PROMPT_ROOT, candidate.path.string),
-                        PROMPT_ROOT.len(),
+                        format!("{}{}", self.prompt_root, candidate.path.string),
+                        self.prompt_root.len(),
                     )
                 } else {
                     (candidate.path.string.clone(), 0)
@@ -755,8 +761,11 @@ impl PickerDelegate for OpenPathDelegate {
     }
 }
 
-fn path_candidates(parent_path: &String, mut children: Vec<DirectoryItem>) -> Vec<CandidateInfo> {
-    if *parent_path == PROMPT_ROOT {
+fn path_candidates(
+    parent_path_is_root: bool,
+    mut children: Vec<DirectoryItem>,
+) -> Vec<CandidateInfo> {
+    if parent_path_is_root {
         children.push(DirectoryItem {
             is_dir: true,
             path: PathBuf::default(),
