@@ -16,6 +16,7 @@ pub enum VectorName {
     ZedXCopilot,
     Grid,
     AiGrid,
+    DebuggerGrid,
 }
 
 impl VectorName {
