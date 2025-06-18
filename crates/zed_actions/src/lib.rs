@@ -249,6 +249,12 @@ pub mod assistant {
     impl_actions!(assistant, [InlineAssist]);
 }
 
+pub mod debugger {
+    use gpui::actions;
+
+    actions!(debugger, [OpenOnboardingModal, ResetOnboarding]);
+}
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {

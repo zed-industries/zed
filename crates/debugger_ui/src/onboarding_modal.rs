@@ -147,7 +147,7 @@ impl Render for DebuggerOnboardingModal {
                 )),
             ));
 
-        let open_panel_button = Button::new("open-panel", "Get Started with the Agent Panel")
+        let open_panel_button = Button::new("open-panel", "Get Started with the Debugger")
             .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
@@ -160,7 +160,7 @@ impl Render for DebuggerOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::view_blog));
 
-        let copy = "Zed now natively supports agentic editing, enabling fluid collaboration between humans and AI.";
+        let copy = "It's finally here: Native support for debugging across multiple programming languages.";
 
         base.child(Label::new(copy).color(Color::Muted)).child(
             v_flex()

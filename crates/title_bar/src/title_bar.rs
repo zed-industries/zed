@@ -340,7 +340,7 @@ impl TitleBar {
                 IconName::Debug,
                 "Debugger",
                 None,
-                zed_actions::ToggleFocus.boxed_clone(),
+                zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
                 cx,
             )
         });
