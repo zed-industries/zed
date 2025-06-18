@@ -1915,10 +1915,14 @@ impl EditorElement {
         rem_size: Pixels,
         em_width: Pixels,
         font_size: Pixels,
+        text_width: Pixels,
         vertical_scrollbar_width: Pixels,
-        editor_width_plus_right_margin: Pixels,
         cx: &App,
-    ) -> Pixels {
+    ) -> Option<Pixels> {
+        if minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown {
+            return None;
+        }
+
         let minimap_font_size = self.editor.read_with(cx, |editor, cx| {
             editor.minimap().map(|minimap_editor| {
                 minimap_editor
@@ -1928,23 +1932,15 @@ impl EditorElement {
                     .and_then(|refinement| refinement.font_size)
                     .unwrap_or(MINIMAP_FONT_SIZE)
             })
-        });
-        if minimap_font_size.is_none() {
-            return MinimapLayout::DEFAULT_MINIMAP_WIDTH;
-        }
-        let minimap_font_size = minimap_font_size.unwrap();
+        })?;
+
         let minimap_em_width = em_width * (minimap_font_size.to_pixels(rem_size) / font_size);
 
-        let minimap_width = (editor_width_plus_right_margin * MinimapLayout::MINIMAP_WIDTH_PCT)
+        let minimap_width = (text_width * MinimapLayout::MINIMAP_WIDTH_PCT)
             .min(minimap_em_width * minimap_settings.max_width_columns.get() as f32);
 
-        if editor_width_plus_right_margin - vertical_scrollbar_width - minimap_width < minimap_width
-            || (minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown)
-        {
-            return MinimapLayout::DEFAULT_MINIMAP_WIDTH;
-        }
-
-        minimap_width
+        (text_width - vertical_scrollbar_width - minimap_width >= minimap_width)
+            .then_some(minimap_width)
     }
 
     fn prepaint_crease_toggles(
@@ -7897,22 +7893,23 @@ impl Element for EditorElement {
                         && self.editor.read(cx).show_scrollbars.vertical)
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
-                    let editor_width_plus_right_margin =
-                        text_width - gutter_dimensions.margin - 2 * em_width;
-
-                    let minimap_width = self.get_minimap_width(
-                        &settings.minimap,
-                        scrollbars_shown,
-                        window.rem_size(),
-                        em_width,
-                        font_size,
-                        vertical_scrollbar_width,
-                        editor_width_plus_right_margin,
-                        cx,
-                    );
+                    let minimap_width = self
+                        .get_minimap_width(
+                            &settings.minimap,
+                            scrollbars_shown,
+                            window.rem_size(),
+                            em_width,
+                            font_size,
+                            text_width,
+                            vertical_scrollbar_width,
+                            cx,
+                        )
+                        .unwrap_or_default();
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
-                    let editor_width = editor_width_plus_right_margin - right_margin;
+
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - 2 * em_width - right_margin;
                     let editor_margins = EditorMargins {
                         gutter: gutter_dimensions,
                         right: right_margin,
@@ -9496,7 +9493,6 @@ struct MinimapLayout {
 }
 
 impl MinimapLayout {
-    const DEFAULT_MINIMAP_WIDTH: Pixels = Pixels::ZERO;
     /// The minimap width as a percentage of the editor width.
     const MINIMAP_WIDTH_PCT: f32 = 0.15;
     /// Calculates the scroll top offset the minimap editor has to have based on the
