@@ -23,7 +23,7 @@ use windows::{
     core::HSTRING,
 };
 
-use crate::{Args, OpenListener};
+use crate::{Args, OpenListener, RawOpenRequest};
 
 pub fn is_first_instance() -> bool {
     unsafe {
@@ -40,7 +40,14 @@ pub fn is_first_instance() -> bool {
 pub fn handle_single_instance(opener: OpenListener, args: &Args, is_first_instance: bool) -> bool {
     if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
-        std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
+        std::thread::spawn(move || {
+            with_pipe(|url| {
+                opener.open(RawOpenRequest {
+                    urls: vec![url],
+                    ..Default::default()
+                })
+            })
+        });
     } else if !args.foreground {
         // We are not the first instance, send args to the first instance
         send_args_to_instance(args).log_err();

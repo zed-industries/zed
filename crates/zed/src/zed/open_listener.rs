@@ -174,7 +174,10 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     thread::spawn(move || {
         let mut buf = [0u8; 1024];
         while let Ok(len) = listener.recv(&mut buf) {
-            opener.open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
+            opener.open(RawOpenRequest {
+                urls: vec![String::from_utf8_lossy(&buf[..len]).to_string()],
+                ..Default::default()
+            });
         }
     });
     Ok(())

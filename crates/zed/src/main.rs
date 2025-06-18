@@ -176,8 +176,6 @@ pub fn main() {
 
     let args = Args::parse();
 
-    dbg!(&args);
-
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
