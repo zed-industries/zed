@@ -1,55 +1,54 @@
+#![cfg_attr(not(unix), allow(unused))]
+
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use std::borrow::Cow;
-use std::ffi::OsStr;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use tempfile::NamedTempFile;
 
 /// Capture all environment variables from the login shell.
-pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, String>> {
-    let shell_path = std::env::var("SHELL").map(PathBuf::from)?;
-    let shell_name = shell_path.file_name().and_then(OsStr::to_str);
+#[cfg(unix)]
+pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let zed_path = super::get_shell_safe_zed_path()?;
+    let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
+    let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
 
     let mut command_string = String::new();
+    let mut command = std::process::Command::new(&shell_path);
+    // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
+    // so file descriptor 0 (stdin) is used instead. [Citation Needed]
+    const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
 
-    // What we're doing here is to spawn a shell and then `cd` into
-    // the project directory to get the env in there as if the user
-    // `cd`'d into it. We do that because tools like direnv, asdf, ...
-    // hook into `cd` and only set up the env after that.
-    if let Some(dir) = change_dir {
-        let dir_str = dir.as_ref().to_string_lossy();
-        command_string.push_str(&format!("cd '{dir_str}';"));
+    match shell_name {
+        Some("tcsh" | "csh") => {
+            // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
+            command.arg0("-");
+        }
+        Some("fish") => {
+            // in fish, asdf, direnv attach to the `fish_prompt` event
+            command_string.push_str("emit fish_prompt;");
+            command.arg("-l");
+        }
+        _ => {
+            command.arg("-l");
+        }
     }
-
-    // In certain shells we need to execute additional_command in order to
-    // trigger the behavior of direnv, etc.
-    command_string.push_str(match shell_name {
-        Some("fish") => "emit fish_prompt;",
-        _ => "",
-    });
-
-    let mut env_output_file = NamedTempFile::new()?;
+    // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
+    command_string.push_str(&format!("cd '{}';", directory.display()));
     command_string.push_str(&format!(
-        "sh -c 'export -p' > '{}';",
-        env_output_file.path().to_string_lossy(),
+        "sh -c \"{} --printenv >&{}\";",
+        zed_path, ENV_OUTPUT_FD
     ));
-
-    let mut command = Command::new(&shell_path);
-
-    // For csh/tcsh, the login shell option is set by passing `-` as
-    // the 0th argument instead of using `-l`.
-    if let Some("tcsh" | "csh") = shell_name {
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::arg0(&mut command, "-");
-    } else {
-        command.arg("-l");
-    }
-
     command.args(["-i", "-c", &command_string]);
 
-    let process_output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
+    super::set_pre_exec_to_start_new_session(&mut command);
+
+    let (env_output, process_output) = spawn_and_read_fd(command, ENV_OUTPUT_FD)?;
+    let env_output = String::from_utf8_lossy(&env_output);
+
     anyhow::ensure!(
         process_output.status.success(),
         "login shell exited with {}. stdout: {:?}, stderr: {:?}",
@@ -58,216 +57,42 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
         String::from_utf8_lossy(&process_output.stderr),
     );
 
-    let mut env_output = String::new();
-    env_output_file.read_to_string(&mut env_output)?;
-
-    parse(&env_output)
-        .filter_map(|entry| match entry {
-            Ok((name, value)) => Some(Ok((name.into(), value?.into()))),
-            Err(err) => Some(Err(err)),
-        })
-        .collect::<Result<HashMap<String, String>>>()
+    // Parse the JSON output from zed --printenv
+    let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
+        .with_context(|| "Failed to deserialize environment variables from json")?;
+    Ok(env_map)
 }
 
-/// Parse the result of calling `sh -c 'export -p'`.
-///
-/// https://www.man7.org/linux/man-pages/man1/export.1p.html
-fn parse(mut input: &str) -> impl Iterator<Item = Result<(Cow<'_, str>, Option<Cow<'_, str>>)>> {
-    std::iter::from_fn(move || {
-        if input.is_empty() {
-            return None;
-        }
-        match parse_declaration(input) {
-            Ok((entry, rest)) => {
-                input = rest;
-                Some(Ok(entry))
-            }
-            Err(err) => Some(Err(err)),
-        }
-    })
+#[cfg(unix)]
+fn spawn_and_read_fd(
+    mut command: std::process::Command,
+    child_fd: std::os::fd::RawFd,
+) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
+    use command_fds::{CommandFdExt, FdMapping};
+    use std::io::Read;
+
+    let (mut reader, writer) = std::io::pipe()?;
+
+    command.fd_mappings(vec![FdMapping {
+        parent_fd: writer.into(),
+        child_fd,
+    }])?;
+
+    let process = command.spawn()?;
+    drop(command);
+
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+
+    Ok((buffer, process.wait_with_output()?))
 }
 
-fn parse_declaration(input: &str) -> Result<((Cow<'_, str>, Option<Cow<'_, str>>), &str)> {
-    let rest = input
-        .strip_prefix("export ")
-        .context("expected 'export ' prefix")?;
-
-    if let Some((name, rest)) = parse_name_and_terminator(rest, '\n') {
-        Ok(((name, None), rest))
-    } else {
-        let (name, rest) = parse_name_and_terminator(rest, '=').context("invalid name")?;
-        let (value, rest) = parse_literal_and_terminator(rest, '\n').context("invalid value")?;
-        Ok(((name, Some(value)), rest))
-    }
-}
-
-fn parse_name_and_terminator(input: &str, terminator: char) -> Option<(Cow<'_, str>, &str)> {
-    let (name, rest) = parse_literal_and_terminator(input, terminator)?;
-    (!name.is_empty() && !name.contains('=')).then_some((name, rest))
-}
-
-fn parse_literal_and_terminator(input: &str, terminator: char) -> Option<(Cow<'_, str>, &str)> {
-    if let Some((literal, rest)) = parse_literal_single_quoted(input) {
-        let rest = rest.strip_prefix(terminator)?;
-        Some((Cow::Borrowed(literal), rest))
-    } else if let Some((literal, rest)) = parse_literal_double_quoted(input) {
-        let rest = rest.strip_prefix(terminator)?;
-        Some((Cow::Owned(literal), rest))
-    } else {
-        let (literal, rest) = input.split_once(terminator)?;
-        (!literal.contains(|c: char| c.is_ascii_whitespace()))
-            .then_some((Cow::Borrowed(literal), rest))
-    }
-}
-
-/// https://www.gnu.org/software/bash/manual/html_node/Single-Quotes.html
-fn parse_literal_single_quoted(input: &str) -> Option<(&str, &str)> {
-    input.strip_prefix('\'')?.split_once('\'')
-}
-
-/// https://www.gnu.org/software/bash/manual/html_node/Double-Quotes.html
-fn parse_literal_double_quoted(input: &str) -> Option<(String, &str)> {
-    let rest = input.strip_prefix('"')?;
-
-    let mut char_indices = rest.char_indices();
-    let mut escaping = false;
-    let (literal, rest) = loop {
-        let (index, char) = char_indices.next()?;
-        if char == '"' && !escaping {
-            break (&rest[..index], &rest[index + 1..]);
-        } else {
-            escaping = !escaping && char == '\\';
-        }
-    };
-
-    let literal = literal
-        .replace("\\$", "$")
-        .replace("\\`", "`")
-        .replace("\\\"", "\"")
-        .replace("\\\n", "")
-        .replace("\\\\", "\\");
-
-    Some((literal, rest))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse() {
-        let input = indoc::indoc! {r#"
-        export foo
-        export 'foo'
-        export "foo"
-        export foo=
-        export 'foo'=
-        export "foo"=
-        export foo=bar
-        export foo='bar'
-        export foo="bar"
-        export foo='b
-        a
-        z'
-        export foo="b
-        a
-        z"
-        export foo='b\
-        a\
-        z'
-        export foo="b\
-        a\
-        z"
-        export foo='\`Hello\`
-        \"wo\
-        rld\"\n!\\
-        !'
-        export foo="\`Hello\`
-        \"wo\
-        rld\"\n!\\
-        !"
-        "#};
-
-        let expected_values = [
-            None,
-            None,
-            None,
-            Some(""),
-            Some(""),
-            Some(""),
-            Some("bar"),
-            Some("bar"),
-            Some("bar"),
-            Some("b\na\nz"),
-            Some("b\na\nz"),
-            Some("b\\\na\\\nz"),
-            Some("baz"),
-            Some(indoc::indoc! {r#"
-            \`Hello\`
-            \"wo\
-            rld\"\n!\\
-            !"#}),
-            Some(indoc::indoc! {r#"
-            `Hello`
-            "world"\n!\!"#}),
-        ];
-        let expected = expected_values
-            .into_iter()
-            .map(|value| ("foo".into(), value.map(Into::into)))
-            .collect::<Vec<_>>();
-
-        let actual = parse(input).collect::<Result<Vec<_>>>().unwrap();
-        assert_eq!(expected, actual);
-    }
-
-    #[test]
-    fn test_parse_declaration() {
-        let ((name, value), rest) = parse_declaration("export foo\nrest").unwrap();
-        assert_eq!(name, "foo");
-        assert_eq!(value, None);
-        assert_eq!(rest, "rest");
-
-        let ((name, value), rest) = parse_declaration("export foo=bar\nrest").unwrap();
-        assert_eq!(name, "foo");
-        assert_eq!(value.as_deref(), Some("bar"));
-        assert_eq!(rest, "rest");
-    }
-
-    #[test]
-    fn test_parse_literal_single_quoted() {
-        let input = indoc::indoc! {r#"
-        '\`Hello\`
-        \"wo\
-        rld\"\n!\\
-        !'
-        rest"#};
-
-        let expected = indoc::indoc! {r#"
-        \`Hello\`
-        \"wo\
-        rld\"\n!\\
-        !"#};
-
-        let (actual, rest) = parse_literal_single_quoted(input).unwrap();
-        assert_eq!(expected, actual);
-        assert_eq!(rest, "\nrest");
-    }
-
-    #[test]
-    fn test_parse_literal_double_quoted() {
-        let input = indoc::indoc! {r#"
-        "\`Hello\`
-        \"wo\
-        rld\"\n!\\
-        !"
-        rest"#};
-
-        let expected = indoc::indoc! {r#"
-        `Hello`
-        "world"\n!\!"#};
-
-        let (actual, rest) = parse_literal_double_quoted(input).unwrap();
-        assert_eq!(expected, actual);
-        assert_eq!(rest, "\nrest");
-    }
+pub fn print_env() {
+    let env_vars: HashMap<String, String> = std::env::vars().collect();
+    let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
+        eprintln!("Error serializing environment variables: {}", err);
+        std::process::exit(1);
+    });
+    println!("{}", json);
+    std::process::exit(0);
 }

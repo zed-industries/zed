@@ -1874,9 +1874,12 @@ impl Buffer {
     }
 
     /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace.
+    /// no other whitespace. Skips if the buffer is empty.
     pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
         let len = self.len();
+        if len == 0 {
+            return;
+        }
         let mut offset = len;
         for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
             let non_whitespace_len = chunk
@@ -3127,7 +3130,7 @@ impl BufferSnapshot {
         None
     }
 
-    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
             grammar.highlights_query.as_ref()
         });
@@ -3143,7 +3146,7 @@ impl BufferSnapshot {
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
+    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
@@ -3192,12 +3195,12 @@ impl BufferSnapshot {
     }
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
-    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
+    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
         self.syntax
             .layers_for_range(0..self.len(), &self.text, true)
     }
 
-    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
+    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text, false)
@@ -3208,7 +3211,7 @@ impl BufferSnapshot {
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
         &self,
         range: Range<D>,
-    ) -> Option<SyntaxLayer> {
+    ) -> Option<SyntaxLayer<'_>> {
         let range = range.to_offset(self);
         return self
             .syntax
@@ -3426,7 +3429,7 @@ impl BufferSnapshot {
     }
 
     /// Returns the root syntax node within the given row
-    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node> {
+    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node<'_>> {
         let start_offset = position.to_offset(self);
 
         let row = self.summary_for_anchor::<text::PointUtf16>(&position).row as usize;
@@ -3763,7 +3766,7 @@ impl BufferSnapshot {
         &self,
         range: Range<usize>,
         query: fn(&Grammar) -> Option<&tree_sitter::Query>,
-    ) -> SyntaxMapMatches {
+    ) -> SyntaxMapMatches<'_> {
         self.syntax.matches(range, self, query)
     }
 
@@ -4263,6 +4266,11 @@ impl BufferSnapshot {
     /// the buffer's text itself (which is versioned via a version vector).
     pub fn non_text_state_update_count(&self) -> usize {
         self.non_text_state_update_count
+    }
+
+    /// An integer version that changes when the buffer's syntax changes.
+    pub fn syntax_update_count(&self) -> usize {
+        self.syntax.update_count()
     }
 
     /// Returns a snapshot of underlying file.

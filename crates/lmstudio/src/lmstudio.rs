@@ -46,22 +46,25 @@ impl From<Role> for String {
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     pub supports_tool_calls: bool,
+    pub supports_images: bool,
 }
 
 impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
-        max_tokens: Option<usize>,
+        max_tokens: Option<u64>,
         supports_tool_calls: bool,
+        supports_images: bool,
     ) -> Self {
         Self {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2048),
             supports_tool_calls,
+            supports_images,
         }
     }
 
@@ -73,7 +76,7 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
 
@@ -110,20 +113,76 @@ pub struct FunctionDefinition {
 pub enum ChatMessage {
     Assistant {
         #[serde(default)]
-        content: Option<String>,
+        content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: MessageContent,
     },
     System {
-        content: String,
+        content: MessageContent,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Plain(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        MessageContent::Multipart(vec![])
+    }
+
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            MessageContent::Plain(text) => {
+                *self =
+                    MessageContent::Multipart(vec![MessagePart::Text { text: text.clone() }, part]);
+            }
+            MessageContent::Multipart(parts) if parts.is_empty() => match part {
+                MessagePart::Text { text } => *self = MessageContent::Plain(text),
+                MessagePart::Image { .. } => *self = MessageContent::Multipart(vec![part]),
+            },
+            MessageContent::Multipart(parts) => parts.push(part),
+        }
+    }
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(mut parts: Vec<MessagePart>) -> Self {
+        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+            MessageContent::Plain(std::mem::take(text))
+        } else {
+            MessageContent::Multipart(parts)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessagePart {
+    Text {
+        text: String,
+    },
+    #[serde(rename = "image_url")]
+    Image {
+        image_url: ImageUrl,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -197,9 +256,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
@@ -209,6 +268,10 @@ pub struct Capabilities(Vec<String>);
 impl Capabilities {
     pub fn supports_tool_calls(&self) -> bool {
         self.0.iter().any(|cap| cap == "tool_use")
+    }
+
+    pub fn supports_images(&self) -> bool {
+        self.0.iter().any(|cap| cap == "vision")
     }
 }
 
@@ -243,8 +306,8 @@ pub struct ModelEntry {
     pub compatibility_type: CompatibilityType,
     pub quantization: Option<String>,
     pub state: ModelState,
-    pub max_context_length: Option<usize>,
-    pub loaded_context_length: Option<usize>,
+    pub max_context_length: Option<u64>,
+    pub loaded_context_length: Option<u64>,
     #[serde(default)]
     pub capabilities: Capabilities,
 }
@@ -276,6 +339,8 @@ pub enum CompatibilityType {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
@@ -390,4 +455,39 @@ pub async fn get_models(
     let response: ListModelsResponse =
         serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
     Ok(response.data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_image_message_part_serialization() {
+        let image_part = MessagePart::Image {
+            image_url: ImageUrl {
+                url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==".to_string(),
+                detail: None,
+            },
+        };
+
+        let json = serde_json::to_string(&image_part).unwrap();
+        println!("Serialized image part: {}", json);
+
+        // Verify the structure matches what LM Studio expects
+        let expected_structure = r#"{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}}"#;
+        assert_eq!(json, expected_structure);
+    }
+
+    #[test]
+    fn test_text_message_part_serialization() {
+        let text_part = MessagePart::Text {
+            text: "Hello, world!".to_string(),
+        };
+
+        let json = serde_json::to_string(&text_part).unwrap();
+        println!("Serialized text part: {}", json);
+
+        let expected_structure = r#"{"type":"text","text":"Hello, world!"}"#;
+        assert_eq!(json, expected_structure);
+    }
 }

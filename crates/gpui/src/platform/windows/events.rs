@@ -702,7 +702,7 @@ fn handle_ime_composition_inner(
     } else {
         if lparam & GCS_COMPSTR.0 > 0 {
             let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
-            let caret_pos = (lparam & GCS_CURSORPOS.0 > 0).then(|| {
+            let caret_pos = (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
                 let pos = retrieve_composition_cursor_position(ctx);
                 pos..pos
             });
@@ -884,7 +884,33 @@ fn handle_hit_test_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.is_movable {
+    if !state_ptr.is_movable || state_ptr.state.borrow().is_fullscreen() {
+        return None;
+    }
+
+    let mut lock = state_ptr.state.borrow_mut();
+    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
+        drop(lock);
+        let area = callback();
+        state_ptr
+            .state
+            .borrow_mut()
+            .callbacks
+            .hit_test_window_control = Some(callback);
+        if let Some(area) = area {
+            return match area {
+                WindowControlArea::Drag => Some(HTCAPTION as _),
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max => Some(HTMAXBUTTON as _),
+                WindowControlArea::Min => Some(HTMINBUTTON as _),
+            };
+        }
+    } else {
+        drop(lock);
+    }
+
+    if !state_ptr.hide_title_bar {
+        // If the OS draws the title bar, we don't need to handle hit test messages.
         return None;
     }
 
@@ -920,25 +946,6 @@ fn handle_hit_test_msg(
     if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
     {
         return Some(HTTOP as _);
-    }
-
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
-        drop(lock);
-        let area = callback();
-        state_ptr
-            .state
-            .borrow_mut()
-            .callbacks
-            .hit_test_window_control = Some(callback);
-        if let Some(area) = area {
-            return match area {
-                WindowControlArea::Drag => Some(HTCAPTION as _),
-                WindowControlArea::Close => Some(HTCLOSE as _),
-                WindowControlArea::Max => Some(HTMAXBUTTON as _),
-                WindowControlArea::Min => Some(HTMINBUTTON as _),
-            };
-        }
     }
 
     Some(HTCLIENT as _)
@@ -1220,6 +1227,7 @@ where
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
+    let capslock = current_capslock();
 
     match virtual_key {
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
@@ -1232,6 +1240,7 @@ where
             state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                capslock,
             }))
         }
         vkey => {
@@ -1362,6 +1371,12 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+#[inline]
+pub(crate) fn current_capslock() -> Capslock {
+    let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
+    Capslock { on: on }
 }
 
 fn get_client_area_insets(

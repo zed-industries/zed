@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use futures::FutureExt;
+use gpui::SharedString;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
@@ -31,6 +32,7 @@ pub struct SyntaxSnapshot {
     parsed_version: clock::Global,
     interpolated_version: clock::Global,
     language_registry_version: usize,
+    update_count: usize,
 }
 
 #[derive(Default)]
@@ -183,6 +185,13 @@ enum ParseStepLanguage {
 }
 
 impl ParseStepLanguage {
+    fn name(&self) -> SharedString {
+        match self {
+            ParseStepLanguage::Loaded { language } => language.name().0,
+            ParseStepLanguage::Pending { name } => name.into(),
+        }
+    }
+
     fn id(&self) -> Option<LanguageId> {
         match self {
             ParseStepLanguage::Loaded { language } => Some(language.id),
@@ -249,7 +258,9 @@ impl SyntaxMap {
     }
 
     pub fn clear(&mut self, text: &BufferSnapshot) {
+        let update_count = self.snapshot.update_count + 1;
         self.snapshot = SyntaxSnapshot::new(text);
+        self.snapshot.update_count = update_count;
     }
 }
 
@@ -260,11 +271,16 @@ impl SyntaxSnapshot {
             parsed_version: clock::Global::default(),
             interpolated_version: clock::Global::default(),
             language_registry_version: 0,
+            update_count: 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
+    }
+
+    pub fn update_count(&self) -> usize {
+        self.update_count
     }
 
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
@@ -415,7 +431,9 @@ impl SyntaxSnapshot {
                         .and_then(|language| language.ok())
                         .is_some()
                     {
-                        resolved_injection_ranges.push(layer.range.to_offset(text));
+                        let range = layer.range.to_offset(text);
+                        log::trace!("reparse range {range:?} for language {language_name:?}");
+                        resolved_injection_ranges.push(range);
                     }
 
                     cursor.next(text);
@@ -433,6 +451,8 @@ impl SyntaxSnapshot {
                 self.language_registry_version = registry.version();
             }
         }
+
+        self.update_count += 1;
     }
 
     fn reparse_with_ranges(
@@ -442,7 +462,10 @@ impl SyntaxSnapshot {
         invalidated_ranges: Vec<Range<usize>>,
         registry: Option<&Arc<LanguageRegistry>>,
     ) {
-        log::trace!("reparse. invalidated ranges:{:?}", invalidated_ranges);
+        log::trace!(
+            "reparse. invalidated ranges:{:?}",
+            LogOffsetRanges(&invalidated_ranges, text),
+        );
 
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
@@ -470,6 +493,13 @@ impl SyntaxSnapshot {
         loop {
             let step = queue.pop();
             let position = if let Some(step) = &step {
+                log::trace!(
+                    "parse step depth:{}, range:{:?}, language:{} ({:?})",
+                    step.depth,
+                    LogAnchorRange(&step.range, text),
+                    step.language.name(),
+                    step.language.id(),
+                );
                 SyntaxLayerPosition {
                     depth: step.depth,
                     range: step.range.clone(),
@@ -568,13 +598,13 @@ impl SyntaxSnapshot {
                             .to_ts_point();
                     }
 
-                    if let Some((SyntaxLayerContent::Parsed { tree: old_tree, .. }, layer_start)) =
-                        old_layer.map(|layer| (&layer.content, layer.range.start))
+                    if let Some((SyntaxLayerContent::Parsed { tree: old_tree, .. }, layer_range)) =
+                        old_layer.map(|layer| (&layer.content, layer.range.clone()))
                     {
                         log::trace!(
-                            "existing layer. language:{}, start:{:?}, ranges:{:?}",
+                            "existing layer. language:{}, range:{:?}, included_ranges:{:?}",
                             language.name(),
-                            LogPoint(layer_start.to_point(text)),
+                            LogAnchorRange(&layer_range, text),
                             LogIncludedRanges(&old_tree.included_ranges())
                         );
 
@@ -613,7 +643,7 @@ impl SyntaxSnapshot {
                         }
 
                         log::trace!(
-                            "update layer. language:{}, start:{:?}, included_ranges:{:?}",
+                            "update layer. language:{}, range:{:?}, included_ranges:{:?}",
                             language.name(),
                             LogAnchorRange(&step.range, text),
                             LogIncludedRanges(&included_ranges),
@@ -761,28 +791,36 @@ impl SyntaxSnapshot {
     #[cfg(debug_assertions)]
     fn check_invariants(&self, text: &BufferSnapshot) {
         let mut max_depth = 0;
-        let mut prev_range: Option<Range<Anchor>> = None;
+        let mut prev_layer: Option<(Range<Anchor>, Option<LanguageId>)> = None;
         for layer in self.layers.iter() {
             match Ord::cmp(&layer.depth, &max_depth) {
                 Ordering::Less => {
                     panic!("layers out of order")
                 }
                 Ordering::Equal => {
-                    if let Some(prev_range) = prev_range {
+                    if let Some((prev_range, prev_language_id)) = prev_layer {
                         match layer.range.start.cmp(&prev_range.start, text) {
                             Ordering::Less => panic!("layers out of order"),
-                            Ordering::Equal => {
-                                assert!(layer.range.end.cmp(&prev_range.end, text).is_ge())
-                            }
+                            Ordering::Equal => match layer.range.end.cmp(&prev_range.end, text) {
+                                Ordering::Less => panic!("layers out of order"),
+                                Ordering::Equal => {
+                                    if layer.content.language_id() < prev_language_id {
+                                        panic!("layers out of order")
+                                    }
+                                }
+                                Ordering::Greater => {}
+                            },
                             Ordering::Greater => {}
                         }
                     }
+                    prev_layer = Some((layer.range.clone(), layer.content.language_id()));
                 }
-                Ordering::Greater => {}
+                Ordering::Greater => {
+                    prev_layer = None;
+                }
             }
 
             max_depth = layer.depth;
-            prev_range = Some(layer.range.clone());
         }
     }
 
@@ -1126,7 +1164,7 @@ impl<'a> SyntaxMapMatches<'a> {
         &self.grammars
     }
 
-    pub fn peek(&self) -> Option<SyntaxMapMatch> {
+    pub fn peek(&self) -> Option<SyntaxMapMatch<'_>> {
         let layer = self.layers.first()?;
 
         if !layer.has_next {
@@ -1550,7 +1588,7 @@ fn insert_newlines_between_ranges(
 
 impl OwnedSyntaxLayer {
     /// Returns the root syntax node for this layer.
-    pub fn node(&self) -> Node {
+    pub fn node(&self) -> Node<'_> {
         self.tree
             .root_node_with_offset(self.offset.0, self.offset.1)
     }
@@ -1642,7 +1680,7 @@ impl Ord for ParseStep {
         Ord::cmp(&other.depth, &self.depth)
             .then_with(|| Ord::cmp(&range_b.start, &range_a.start))
             .then_with(|| Ord::cmp(&range_a.end, &range_b.end))
-            .then_with(|| self.language.id().cmp(&other.language.id()))
+            .then_with(|| other.language.id().cmp(&self.language.id()))
     }
 }
 
@@ -1888,6 +1926,7 @@ impl ToTreeSitterPoint for Point {
 struct LogIncludedRanges<'a>(&'a [tree_sitter::Range]);
 struct LogPoint(Point);
 struct LogAnchorRange<'a>(&'a Range<Anchor>, &'a text::BufferSnapshot);
+struct LogOffsetRanges<'a>(&'a [Range<usize>], &'a text::BufferSnapshot);
 struct LogChangedRegions<'a>(&'a ChangeRegionSet, &'a text::BufferSnapshot);
 
 impl fmt::Debug for LogIncludedRanges<'_> {
@@ -1906,6 +1945,16 @@ impl fmt::Debug for LogAnchorRange<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let range = self.0.to_point(self.1);
         (LogPoint(range.start)..LogPoint(range.end)).fmt(f)
+    }
+}
+
+impl fmt::Debug for LogOffsetRanges<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|range| {
+                LogPoint(range.start.to_point(self.1))..LogPoint(range.end.to_point(self.1))
+            }))
+            .finish()
     }
 }
 

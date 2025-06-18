@@ -1,6 +1,8 @@
 use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, SelectionEffects,
+    ToPoint as _,
+    display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
     scroll::ScrollAnchor,
@@ -40,7 +42,7 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    item::{FollowableItem, Item, ItemEvent, ProjectItem},
+    item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 use workspace::{
@@ -611,12 +613,13 @@ impl Item for Editor {
             if newest_selection.head() == offset {
                 false
             } else {
-                let nav_history = self.nav_history.take();
                 self.set_scroll_anchor(scroll_anchor, window, cx);
-                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_ranges([offset..offset])
-                });
-                self.nav_history = nav_history;
+                self.change_selections(
+                    SelectionEffects::default().nav_history(false),
+                    window,
+                    cx,
+                    |s| s.select_ranges([offset..offset]),
+                );
                 true
             }
         } else {
@@ -805,7 +808,7 @@ impl Item for Editor {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -816,13 +819,25 @@ impl Item for Editor {
             .into_iter()
             .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
             .collect::<HashSet<_>>();
+
+        // let mut buffers_to_save =
+        let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
+            buffers.clone()
+        } else {
+            buffers
+                .iter()
+                .filter(|buffer| buffer.read(cx).is_dirty())
+                .cloned()
+                .collect()
+        };
+
         cx.spawn_in(window, async move |this, cx| {
-            if format {
+            if options.format {
                 this.update_in(cx, |editor, window, cx| {
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
-                        FormatTarget::Buffers,
+                        FormatTarget::Buffers(buffers_to_save.clone()),
                         window,
                         cx,
                     )
@@ -830,33 +845,28 @@ impl Item for Editor {
                 .await?;
             }
 
-            if buffers.len() == 1 {
-                // Apply full save routine for singleton buffers, to allow to `touch` the file via the editor.
+            if !buffers_to_save.is_empty() {
                 project
-                    .update(cx, |project, cx| project.save_buffers(buffers, cx))?
+                    .update(cx, |project, cx| {
+                        project.save_buffers(buffers_to_save.clone(), cx)
+                    })?
                     .await?;
-            } else {
-                // For multi-buffers, only format and save the buffers with changes.
-                // For clean buffers, we simulate saving by calling `Buffer::did_save`,
-                // so that language servers or other downstream listeners of save events get notified.
-                let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
-                    buffer
-                        .read_with(cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
-                        .unwrap_or(false)
-                });
+            }
 
-                project
-                    .update(cx, |project, cx| project.save_buffers(dirty_buffers, cx))?
-                    .await?;
-                for buffer in clean_buffers {
-                    buffer
-                        .update(cx, |buffer, cx| {
-                            let version = buffer.saved_version().clone();
-                            let mtime = buffer.saved_mtime();
-                            buffer.did_save(version, mtime, cx);
-                        })
-                        .ok();
-                }
+            // Notify about clean buffers for language server events
+            let buffers_that_were_not_saved: Vec<_> = buffers
+                .into_iter()
+                .filter(|b| !buffers_to_save.contains(b))
+                .collect();
+
+            for buffer in buffers_that_were_not_saved {
+                buffer
+                    .update(cx, |buffer, cx| {
+                        let version = buffer.saved_version().clone();
+                        let mtime = buffer.saved_mtime();
+                        buffer.did_save(version, mtime, cx);
+                    })
+                    .ok();
             }
 
             Ok(())
@@ -1422,7 +1432,7 @@ impl SearchableItem for Editor {
 
     fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
         self.background_highlights
-            .get(&TypeId::of::<BufferSearchHighlights>())
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map_or(Vec::new(), |(_color, ranges)| {
                 ranges.iter().cloned().collect()
             })
@@ -1445,12 +1455,12 @@ impl SearchableItem for Editor {
     ) {
         let existing_range = self
             .background_highlights
-            .get(&TypeId::of::<BufferSearchHighlights>())
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map(|(_, range)| range.as_ref());
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.search_match_background,
+            |theme| theme.colors().search_match_background,
             cx,
         );
         if updated {
@@ -1692,7 +1702,7 @@ impl SearchableItem for Editor {
         let buffer = self.buffer().read(cx).snapshot(cx);
         let search_within_ranges = self
             .background_highlights
-            .get(&TypeId::of::<SearchWithinRange>())
+            .get(&HighlightKey::Type(TypeId::of::<SearchWithinRange>()))
             .map_or(vec![], |(_color, ranges)| {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });

@@ -22,6 +22,7 @@ use std::fmt;
 use std::ops::{Add, Sub};
 use std::str::FromStr as _;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use util::serde::is_default;
 use zed_llm_client::{
@@ -52,7 +53,7 @@ pub fn init_settings(cx: &mut App) {
 pub struct LanguageModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub should_speculate: bool,
-    pub min_total_token: usize,
+    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
@@ -74,6 +75,8 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
+    #[error("rate limit exceeded, retry after {0:?}")]
+    RateLimit(Duration),
     #[error("received bad input JSON")]
     BadInputJson {
         id: LanguageModelToolUseId,
@@ -132,17 +135,17 @@ impl RequestUsage {
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
-    pub input_tokens: u32,
+    pub input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub output_tokens: u32,
+    pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_creation_input_tokens: u32,
+    pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_read_input_tokens: u32,
+    pub cache_read_input_tokens: u64,
 }
 
 impl TokenUsage {
-    pub fn total_tokens(&self) -> u32 {
+    pub fn total_tokens(&self) -> u64 {
         self.input_tokens
             + self.output_tokens
             + self.cache_read_input_tokens
@@ -251,8 +254,8 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelToolSchemaFormat::JsonSchema
     }
 
-    fn max_token_count(&self) -> usize;
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_token_count(&self) -> u64;
+    fn max_output_tokens(&self) -> Option<u64> {
         None
     }
 
@@ -260,7 +263,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>>;
+    ) -> BoxFuture<'static, Result<u64>>;
 
     fn stream_completion(
         &self,
@@ -270,6 +273,7 @@ pub trait LanguageModel: Send + Sync {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     >;
 
@@ -277,7 +281,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
+    ) -> BoxFuture<'static, Result<LanguageModelTextStream, LanguageModelCompletionError>> {
         let future = self.stream_completion(request, cx);
 
         async move {
@@ -345,7 +349,7 @@ pub trait LanguageModel: Send + Sync {
 #[derive(Debug, Error)]
 pub enum LanguageModelKnownError {
     #[error("Context window limit exceeded ({tokens})")]
-    ContextWindowLimitExceeded { tokens: usize },
+    ContextWindowLimitExceeded { tokens: u64 },
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {

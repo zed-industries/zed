@@ -303,10 +303,9 @@ impl Render for SyntaxTreeView {
         {
             let layer = layer.clone();
             rendered = rendered.child(uniform_list(
-                cx.entity().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
-                move |this, range, _, cx| {
+                cx.processor(move |this, range: Range<usize>, _, cx| {
                     let mut items = Vec::new();
                     let mut cursor = layer.node().walk();
                     let mut descendant_ix = range.start;
@@ -359,7 +358,7 @@ impl Render for SyntaxTreeView {
                                                 editor.clear_background_highlights::<Self>( cx);
                                                 editor.highlight_background::<Self>(
                                                     &[range],
-                                                    |theme| theme.editor_document_highlight_write_background,
+                                                    |theme| theme.colors().editor_document_highlight_write_background,
                                                      cx,
                                                 );
                                             });
@@ -377,7 +376,7 @@ impl Render for SyntaxTreeView {
                         }
                     }
                     items
-                },
+                }),
             )
             .size_full()
             .track_scroll(self.list_scroll_handle.clone())
