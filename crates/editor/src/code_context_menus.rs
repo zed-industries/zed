@@ -980,7 +980,7 @@ impl CompletionsMenu {
                     &query,
                     query.chars().any(|c| c.is_uppercase()),
                     false,
-                    100,
+                    1000,
                     &cancel_filter,
                     background_executor,
                 )

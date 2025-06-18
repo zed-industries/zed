@@ -130,7 +130,7 @@ async fn test_sort_text(cx: &mut TestAppContext) {
             CompletionBuilder::function("unreachable_unchecked", None, "80000020"),
         ];
 
-        test_for_each_prefix("unreachable", &completions, cx, |matches| {
+        test_for_each_prefix("unreachabl", &completions, cx, |matches| {
             // for each prefix, first item should always be one with lower sort_text
             assert_eq!(matches[0].string, "unreachable!(…)");
             assert_eq!(matches[1].string, "unreachable");
@@ -139,6 +139,15 @@ async fn test_sort_text(cx: &mut TestAppContext) {
             assert_eq!(matches[0].score, matches[1].score);
         })
         .await;
+
+        let matches =
+            filter_and_sort_matches("unreachable", &completions, SnippetSortOrder::Top, cx).await;
+        // exact match comes first
+        assert_eq!(matches[0].string, "unreachable");
+        assert_eq!(matches[1].string, "unreachable!(…)");
+
+        // fuzzy score should match for first two items as query is common prefix
+        assert_eq!(matches[0].score, matches[1].score);
     }
 }
 
