@@ -819,6 +819,32 @@ impl ConfigurationView {
         }
     }
 
+    fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_url_editor.update(cx, |input, cx| {
+            input.editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        });
+        let fs = <dyn Fs>::global(cx);
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
+            use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
+
+            if let Some(openai) = settings.openai.as_mut() {
+                match openai {
+                    OpenAiSettingsContent::Versioned(versioned) => match versioned {
+                        VersionedOpenAiSettingsContent::V1(v1) => {
+                            v1.api_url = None;
+                        }
+                    },
+                    OpenAiSettingsContent::Legacy(legacy) => {
+                        legacy.api_url = None;
+                    }
+                }
+            }
+        });
+        cx.notify();
+    }
+
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
@@ -881,9 +907,9 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-key", "Reset API Key")
                         .label_size(LabelSize::Small)
-                        .icon(Some(IconName::Trash))
+                        .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
                         .layer(ElevationIndex::ModalSurface)
@@ -895,26 +921,59 @@ impl Render for ConfigurationView {
                 .into_any()
         };
 
-        let api_url_section = v_flex()
-            .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
-                this.save_api_url(cx);
-                cx.notify();
-            }))
-            .mt_2()
-            .pt_2()
-            .border_t_1()
-            .border_color(cx.theme().colors().border_variant)
-            .gap_1()
-            .child(
-                List::new()
-                    .child(InstructionListItem::text_only(
-                        "Optionally, you can change the base URL for the OpenAI API request.",
-                    ))
-                    .child(InstructionListItem::text_only(
-                        "Paste the new API endpoint below and hit enter",
-                    )),
-            )
-            .child(self.api_url_editor.clone());
+        let custom_api_url_set =
+            AllLanguageModelSettings::get_global(cx).openai.api_url != open_ai::OPEN_AI_API_URL;
+
+        let api_url_section = if custom_api_url_set {
+            h_flex()
+                .mt_1()
+                .p_1()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new("Custom API URL configured.")),
+                )
+                .child(
+                    Button::new("reset-key", "Reset API URL")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
+                        ),
+                )
+                .into_any()
+        } else {
+            v_flex()
+                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                    this.save_api_url(cx);
+                    cx.notify();
+                }))
+                .mt_2()
+                .pt_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .gap_1()
+                .child(
+                    List::new()
+                        .child(InstructionListItem::text_only(
+                            "Optionally, you can change the base URL for the OpenAI API request.",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste the new API endpoint below and hit enter",
+                        )),
+                )
+                .child(self.api_url_editor.clone())
+                .into_any()
+        };
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials…")).into_any()
