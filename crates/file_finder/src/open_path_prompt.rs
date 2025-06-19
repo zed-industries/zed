@@ -57,6 +57,10 @@ impl OpenPathDelegate {
         }
     }
 
+    pub fn set_should_create_path(&mut self, create: bool) {
+        self.directory_state = DirectoryState::None { create };
+    }
+
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => {
@@ -197,7 +201,7 @@ impl OpenPathPrompt {
 impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         let user_input = if let DirectoryState::Create { user_input, .. } = &self.directory_state {
             user_input
                 .as_ref()
@@ -210,7 +214,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.string_matches.len() + user_input
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

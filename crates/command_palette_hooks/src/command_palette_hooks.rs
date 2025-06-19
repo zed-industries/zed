@@ -103,6 +103,9 @@ pub struct CommandInterceptResult {
     // TODO: Document this field.
     #[allow(missing_docs)]
     pub positions: Vec<usize>,
+    // TODO: Document this field.
+    #[allow(missing_docs)]
+    pub autocomplete_and_create_filename: (bool, bool),
 }
 
 /// An interceptor for the command palette.

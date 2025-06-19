@@ -365,11 +365,11 @@ impl ModelMatcher {
 impl PickerDelegate for LanguageModelPickerDelegate {
     type ListItem = AnyElement;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.filtered_entries.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

@@ -2186,21 +2186,22 @@ impl Workspace {
                         keystrokes.borrow_mut().0.clear();
                         return Ok(());
                     };
-                    cx.update(|window, cx| {
-                        let focused = window.focused(cx);
-                        window.dispatch_keystroke(keystroke.clone(), cx);
-                        if window.focused(cx) != focused {
-                            // dispatch_keystroke may cause the focus to change.
-                            // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
-                            // And we need that to happen before the next keystroke to keep vim mode happy...
-                            // (Note that the tests always do this implicitly, so you must manually test with something like:
-                            //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
-                            // )
-                            window.draw(cx);
-                        }
-                        window.wait_until_finished_handling_keystrokes()
-                    })?
-                    .await;
+                    let _ = cx
+                        .update(|window, cx| {
+                            let focused = window.focused(cx);
+                            window.dispatch_keystroke(keystroke.clone(), cx);
+                            if window.focused(cx) != focused {
+                                // dispatch_keystroke may cause the focus to change.
+                                // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                                // And we need that to happen before the next keystroke to keep vim mode happy...
+                                // (Note that the tests always do this implicitly, so you must manually test with something like:
+                                //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                                // )
+                                window.draw(cx);
+                            }
+                            window.wait_until_finished_handling_keystrokes()
+                        })?
+                        .await;
                 }
 
                 *keystrokes.borrow_mut() = Default::default();

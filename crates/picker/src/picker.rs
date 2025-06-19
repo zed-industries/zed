@@ -85,8 +85,8 @@ pub enum PickerEditorPosition {
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
 
-    fn match_count(&self) -> usize;
-    fn selected_index(&self) -> usize;
+    fn match_count(&self, cx: &mut Context<Picker<Self>>) -> usize;
+    fn selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize;
     fn separators_after_indices(&self) -> Vec<usize> {
         Vec::new()
     }
@@ -393,7 +393,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let match_count = self.delegate.match_count();
+        let match_count = self.delegate.match_count(cx);
         if match_count == 0 {
             return;
         }
@@ -427,9 +427,9 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
 
-        let previous_index = self.delegate.selected_index();
+        let previous_index = self.delegate.selected_index(cx);
         self.delegate.set_selected_index(ix, window, cx);
-        let current_index = self.delegate.selected_index();
+        let current_index = self.delegate.selected_index(cx);
 
         if previous_index != current_index {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
@@ -447,9 +447,9 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.delegate.match_count();
+        let count = self.delegate.match_count(cx);
         if count > 0 {
-            let index = self.delegate.selected_index();
+            let index = self.delegate.selected_index(cx);
             let ix = if index == count - 1 { 0 } else { index + 1 };
             self.set_selected_index(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
@@ -466,9 +466,9 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.delegate.match_count();
+        let count = self.delegate.match_count(cx);
         if count > 0 {
-            let index = self.delegate.selected_index();
+            let index = self.delegate.selected_index(cx);
             let ix = if index == 0 { count - 1 } else { index - 1 };
             self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
@@ -485,7 +485,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.delegate.match_count();
+        let count = self.delegate.match_count(cx);
         if count > 0 {
             self.set_selected_index(0, Some(Direction::Down), true, window, cx);
             cx.notify();
@@ -493,7 +493,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.delegate.match_count();
+        let count = self.delegate.match_count(cx);
         if count > 0 {
             self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
@@ -501,8 +501,8 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn cycle_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.delegate.match_count();
-        let index = self.delegate.selected_index();
+        let count = self.delegate.match_count(cx);
+        let index = self.delegate.selected_index(cx);
         let new_index = if index + 1 == count { 0 } else { index + 1 };
         self.set_selected_index(new_index, Some(Direction::Down), true, window, cx);
         cx.notify();
@@ -672,10 +672,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn matches_updated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let ElementContainer::List(state) = &mut self.element_container {
-            state.reset(self.delegate.match_count());
+            state.reset(self.delegate.match_count(cx));
         }
 
-        let index = self.delegate.selected_index();
+        let index = self.delegate.selected_index(cx);
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
@@ -738,7 +738,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .children(self.delegate.render_match(
                 ix,
-                ix == self.delegate.selected_index(),
+                ix == self.delegate.selected_index(cx),
                 window,
                 cx,
             ))
@@ -763,7 +763,7 @@ impl<D: PickerDelegate> Picker<D> {
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
                 "candidates",
-                self.delegate.match_count(),
+                self.delegate.match_count(cx),
                 cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
                     visible_range
                         .map(|ix| picker.render_element(window, cx, ix))
@@ -895,7 +895,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 }
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
             })
-            .when(self.delegate.match_count() > 0, |el| {
+            .when(self.delegate.match_count(cx) > 0, |el| {
                 el.child(
                     v_flex()
                         .id("element-container")
@@ -919,7 +919,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         }),
                 )
             })
-            .when(self.delegate.match_count() == 0, |el| {
+            .when(self.delegate.match_count(cx) == 0, |el| {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
                         v_flex().flex_grow().py_2().child(

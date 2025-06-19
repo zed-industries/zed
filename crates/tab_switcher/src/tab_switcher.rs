@@ -172,7 +172,7 @@ impl TabSwitcher {
         self.picker.update(cx, |picker, cx| {
             picker
                 .delegate
-                .close_item_at(picker.delegate.selected_index(), window, cx)
+                .close_item_at(picker.delegate.selected_index(cx), window, cx)
         });
     }
 }
@@ -328,7 +328,15 @@ impl TabSwitcherDelegate {
             .collect()
         };
 
-        let selected_item_id = self.selected_item_id();
+        let selected_item_id = self
+            .tab_switcher
+            .update(cx, |tab_switcher, cx| {
+                tab_switcher
+                    .picker
+                    .update(cx, |picker, cx| picker.delegate.selected_item_id(cx))
+            })
+            .ok()
+            .flatten();
         self.matches = matches;
         self.selected_index = self.compute_selected_index(selected_item_id);
     }
@@ -350,7 +358,7 @@ impl TabSwitcherDelegate {
             });
             return;
         }
-        let selected_item_id = self.selected_item_id();
+        let selected_item_id = self.selected_item_id(cx);
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {
             return;
@@ -392,9 +400,9 @@ impl TabSwitcherDelegate {
         self.selected_index = self.compute_selected_index(selected_item_id);
     }
 
-    fn selected_item_id(&self) -> Option<EntityId> {
+    fn selected_item_id(&self, cx: &mut Context<Picker<Self>>) -> Option<EntityId> {
         self.matches
-            .get(self.selected_index())
+            .get(self.selected_index(cx))
             .map(|tab_match| tab_match.item.item_id())
     }
 
@@ -458,11 +466,11 @@ impl PickerDelegate for TabSwitcherDelegate {
         Some("No tabs".into())
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -491,7 +499,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<TabSwitcherDelegate>>,
     ) {
-        let Some(selected_match) = self.matches.get(self.selected_index()) else {
+        let Some(selected_match) = self.matches.get(self.selected_index(cx)) else {
             return;
         };
         selected_match

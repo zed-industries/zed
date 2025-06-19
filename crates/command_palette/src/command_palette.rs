@@ -3,6 +3,7 @@ mod persistence;
 use std::{
     cmp::{self, Reverse},
     collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -12,6 +13,7 @@ use command_palette_hooks::{
     CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
 };
 
+use file_finder::OpenPathDelegate;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -20,6 +22,7 @@ use gpui::{
 use persistence::COMMAND_PALETTE_HISTORY;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
+use project::DirectoryLister;
 use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
 use util::ResultExt;
@@ -61,6 +64,15 @@ fn normalize_query(input: &str) -> String {
     result
 }
 
+fn filename_query(input: &str) -> String {
+    input
+        .chars()
+        .skip_while(|c| !c.is_whitespace())
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 impl CommandPalette {
     fn register(
         workspace: &mut Workspace,
@@ -81,14 +93,37 @@ impl CommandPalette {
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
         };
+
+        let lister = if workspace.project().read(cx).is_local() {
+            DirectoryLister::Local(
+                workspace.project().clone(),
+                workspace.app_state().fs.clone(),
+            )
+        } else {
+            DirectoryLister::Project(workspace.project().clone())
+        };
+
+        let abs_path = workspace
+            .most_recent_active_path(cx)
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .or_else(|| {
+                let project = workspace.project().read(cx);
+                project.visible_worktrees(cx).find_map(|worktree| {
+                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                })
+            })
+            .or_else(std::env::home_dir)
+            .unwrap_or_else(|| PathBuf::from(""));
         workspace.toggle_modal(window, cx, move |window, cx| {
-            CommandPalette::new(previous_focus_handle, query, window, cx)
+            CommandPalette::new(previous_focus_handle, query, lister, abs_path, window, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
         query: &str,
+        lister: DirectoryLister,
+        abs_path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -109,8 +144,25 @@ impl CommandPalette {
             })
             .collect();
 
-        let delegate =
-            CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);
+        let (tx, _) = futures::channel::oneshot::channel();
+        let delegate = OpenPathDelegate::new(tx, lister, true);
+
+        let mut path = abs_path.to_string_lossy().to_string();
+        path.push('/');
+
+        let open_path_delegate = cx.new(|cx| {
+            let picker = Picker::uniform_list(delegate, window, cx);
+            picker.set_query(path.clone(), window, cx);
+            picker
+        });
+
+        let delegate = CommandPaletteDelegate::new(
+            cx.entity().downgrade(),
+            commands,
+            previous_focus_handle,
+            path,
+            open_path_delegate,
+        );
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
@@ -152,6 +204,9 @@ pub struct CommandPaletteDelegate {
         Task<()>,
         postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>)>,
     )>,
+    autocomplete_filename: bool,
+    autocomplete_directory: String,
+    open_path_delegate: Entity<Picker<OpenPathDelegate>>,
 }
 
 struct Command {
@@ -173,6 +228,8 @@ impl CommandPaletteDelegate {
         command_palette: WeakEntity<CommandPalette>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
+        autocomplete_directory: String,
+        open_path_delegate: Entity<Picker<OpenPathDelegate>>,
     ) -> Self {
         Self {
             command_palette,
@@ -183,6 +240,9 @@ impl CommandPaletteDelegate {
             previous_focus_handle,
             latest_query: String::new(),
             updating_matches: None,
+            autocomplete_filename: false,
+            autocomplete_directory,
+            open_path_delegate,
         }
     }
 
@@ -192,7 +252,7 @@ impl CommandPaletteDelegate {
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
         cx: &mut Context<Picker<Self>>,
-    ) {
+    ) -> bool {
         self.updating_matches.take();
         self.latest_query = query.clone();
 
@@ -205,17 +265,28 @@ impl CommandPaletteDelegate {
                 action: OpenZedUrl { url: query.clone() }.boxed_clone(),
                 string: query.clone(),
                 positions: vec![],
+                autocomplete_and_create_filename: (false, false),
             }]
         }
 
         let mut new_matches = Vec::new();
-
+        let was_autocomplete = self.autocomplete_filename;
+        self.autocomplete_filename = false;
         for CommandInterceptResult {
             action,
             string,
             positions,
+            autocomplete_and_create_filename,
         } in intercept_results
         {
+            if autocomplete_and_create_filename.0 {
+                self.autocomplete_filename = true;
+                self.open_path_delegate.update(cx, |picker, _| {
+                    picker
+                        .delegate
+                        .set_should_create_path(autocomplete_and_create_filename.1);
+                })
+            }
             if let Some(idx) = matches
                 .iter()
                 .position(|m| commands[m.candidate_id].action.partial_eq(&*action))
@@ -241,6 +312,7 @@ impl CommandPaletteDelegate {
         } else {
             self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
+        return !was_autocomplete && self.autocomplete_filename;
     }
     ///
     /// Hit count for each command in the palette.
@@ -265,21 +337,37 @@ impl PickerDelegate for CommandPaletteDelegate {
         "Execute a command...".into()
     }
 
-    fn match_count(&self) -> usize {
-        self.matches.len()
+    fn match_count(&self, cx: &mut Context<Picker<Self>>) -> usize {
+        if self.autocomplete_filename {
+            self.open_path_delegate
+                .update(cx, |picker, cx| picker.delegate.match_count(cx))
+        } else {
+            self.matches.len()
+        }
     }
 
-    fn selected_index(&self) -> usize {
-        self.selected_ix
+    fn selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
+        if self.autocomplete_filename {
+            self.open_path_delegate
+                .update(cx, |picker, cx| picker.delegate.selected_index(cx))
+        } else {
+            self.selected_ix
+        }
     }
 
     fn set_selected_index(
         &mut self,
         ix: usize,
-        _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) {
-        self.selected_ix = ix;
+        if self.autocomplete_filename {
+            self.open_path_delegate.update(cx, |picker, cx| {
+                picker.delegate.set_selected_index(ix, window, cx)
+            });
+        } else {
+            self.selected_ix = ix;
+        }
     }
 
     fn update_matches(
@@ -340,18 +428,30 @@ impl PickerDelegate for CommandPaletteDelegate {
         });
         self.updating_matches = Some((task, rx.clone()));
 
+        let task = {
+            let query = self.autocomplete_directory.clone() + &filename_query(&query);
+            self.open_path_delegate.update(cx, |picker, cx| {
+                picker.delegate.update_matches(query, window, cx)
+            })
+        };
+
+        let autocomplete_filename = self.autocomplete_filename;
         cx.spawn_in(window, async move |picker, cx| {
             let Some((commands, matches)) = rx.recv().await else {
                 return;
             };
-
-            picker
+            if let Some(should_update) = picker
                 .update(cx, |picker, cx| {
                     picker
                         .delegate
                         .matches_updated(query, commands, matches, cx)
                 })
-                .log_err();
+                .log_err()
+            {
+                if autocomplete_filename || should_update {
+                    task.await;
+                }
+            }
         })
     }
 
@@ -415,6 +515,32 @@ impl PickerDelegate for CommandPaletteDelegate {
         window.dispatch_action(action, cx);
     }
 
+    fn confirm_completion(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        let mut query = query.clone();
+        let new_query = filename_query(&query);
+        let _ = query.split_off(query.find(&new_query).unwrap_or(0));
+
+        let dir = self.autocomplete_directory.clone();
+        self.autocomplete_filename
+            .then(|| {
+                self.open_path_delegate.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .confirm_completion(dir.clone() + &new_query, window, cx)
+                })
+            })
+            .flatten()
+            .map(|s| {
+                query.push_str(s.strip_prefix(&dir).unwrap_or(""));
+                query
+            })
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -422,30 +548,36 @@ impl PickerDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let r#match = self.matches.get(ix)?;
-        let command = self.commands.get(r#match.candidate_id)?;
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .py_px()
-                        .justify_between()
-                        .child(HighlightedLabel::new(
-                            command.name.clone(),
-                            r#match.positions.clone(),
-                        ))
-                        .children(KeyBinding::for_action_in(
-                            &*command.action,
-                            &self.previous_focus_handle,
-                            window,
-                            cx,
-                        )),
-                ),
-        )
+        if self.autocomplete_filename {
+            self.open_path_delegate.update(cx, |picker, cx| {
+                picker.delegate.render_match(ix, selected, window, cx)
+            })
+        } else {
+            let r#match = self.matches.get(ix)?;
+            let command = self.commands.get(r#match.candidate_id)?;
+            Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .py_px()
+                            .justify_between()
+                            .child(HighlightedLabel::new(
+                                command.name.clone(),
+                                r#match.positions.clone(),
+                            ))
+                            .children(KeyBinding::for_action_in(
+                                &*command.action,
+                                &self.previous_focus_handle,
+                                window,
+                                cx,
+                            )),
+                    ),
+            )
+        }
     }
 }
 

@@ -188,7 +188,7 @@ impl EventEmitter<RulePickerEvent> for Picker<RulePickerDelegate> {}
 impl PickerDelegate for RulePickerDelegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
@@ -201,7 +201,7 @@ impl PickerDelegate for RulePickerDelegate {
         Some(text)
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -693,7 +693,7 @@ impl RulesLibrary {
                 if picker
                     .delegate
                     .matches
-                    .get(picker.delegate.selected_index())
+                    .get(picker.delegate.selected_index(cx))
                     .map_or(true, |old_selected_prompt| {
                         old_selected_prompt.id != prompt_id
                     })

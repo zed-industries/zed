@@ -153,7 +153,7 @@ pub(crate) async fn fetch_url_content(
 impl PickerDelegate for FetchContextPickerDelegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         if self.url.is_empty() { 0 } else { 1 }
     }
 
@@ -161,7 +161,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         Some("Enter the URL that you would like to fetch".into())
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         0
     }
 

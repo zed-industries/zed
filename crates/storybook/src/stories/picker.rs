@@ -33,7 +33,7 @@ impl Delegate {
 impl PickerDelegate for Delegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.candidates.len()
     }
 
@@ -61,7 +61,7 @@ impl PickerDelegate for Delegate {
         )
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_ix
     }
 

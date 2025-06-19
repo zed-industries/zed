@@ -869,16 +869,19 @@ impl Render for NewProcessModal {
                                     }))
                                     .disabled(
                                         self.debugger.is_none()
-                                            || self
-                                                .attach_mode
-                                                .read(cx)
-                                                .attach_picker
-                                                .read(cx)
-                                                .picker
-                                                .read(cx)
-                                                .delegate
-                                                .match_count()
-                                                == 0,
+                                            || self.attach_mode.update(cx, |attach_mode, cx| {
+                                                attach_mode.attach_picker.update(
+                                                    cx,
+                                                    |attach_modal, cx| {
+                                                        attach_modal.picker.update(
+                                                            cx,
+                                                            |picker, cx| {
+                                                                picker.delegate.match_count(cx)
+                                                            },
+                                                        )
+                                                    },
+                                                )
+                                            }) == 0,
                                     ),
                             ),
                     ),
@@ -1236,11 +1239,11 @@ impl DebugDelegate {
 impl PickerDelegate for DebugDelegate {
     type ListItem = ui::ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -1431,7 +1434,7 @@ impl PickerDelegate for DebugDelegate {
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         let debug_scenario = self
             .matches
-            .get(self.selected_index())
+            .get(self.selected_index(cx))
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
         let Some((_, debug_scenario)) = debug_scenario else {

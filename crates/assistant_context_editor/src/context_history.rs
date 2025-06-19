@@ -136,11 +136,11 @@ impl SavedContextPickerDelegate {
 impl PickerDelegate for SavedContextPickerDelegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

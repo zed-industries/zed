@@ -44,30 +44,30 @@ async fn test_open_with_prev_tab_selected_and_cycle_on_toggle_action(
 
     // Starts with the previously opened item selected
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_3.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_3.boxed_clone(), cx);
         assert_match_at_position(tab_switcher, 2, tab_2.boxed_clone());
         assert_match_at_position(tab_switcher, 3, tab_1.boxed_clone());
     });
 
     cx.dispatch_action(Toggle { select_last: false });
     cx.dispatch_action(Toggle { select_last: false });
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());
         assert_match_at_position(tab_switcher, 1, tab_3.boxed_clone());
         assert_match_at_position(tab_switcher, 2, tab_2.boxed_clone());
-        assert_match_selection(tab_switcher, 3, tab_1.boxed_clone());
+        assert_match_selection(tab_switcher, 3, tab_1.boxed_clone(), cx);
     });
 
     cx.dispatch_action(SelectPrevious);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 4);
         assert_match_at_position(tab_switcher, 0, tab_4.boxed_clone());
         assert_match_at_position(tab_switcher, 1, tab_3.boxed_clone());
-        assert_match_selection(tab_switcher, 2, tab_2.boxed_clone());
+        assert_match_selection(tab_switcher, 2, tab_2.boxed_clone(), cx);
         assert_match_at_position(tab_switcher, 3, tab_1.boxed_clone());
     });
 }
@@ -99,11 +99,11 @@ async fn test_open_with_last_tab_selected(cx: &mut gpui::TestAppContext) {
 
     // Starts with the last item selected
     let tab_switcher = open_tab_switcher(true, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 3);
         assert_match_at_position(tab_switcher, 0, tab_3);
         assert_match_at_position(tab_switcher, 1, tab_2);
-        assert_match_selection(tab_switcher, 2, tab_1);
+        assert_match_selection(tab_switcher, 2, tab_1, cx);
     });
 }
 
@@ -132,10 +132,10 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 2);
         assert_match_at_position(tab_switcher, 0, tab_2.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone(), cx);
     });
 
     cx.simulate_modifiers_change(Modifiers::none());
@@ -181,9 +181,9 @@ async fn test_open_with_single_item(cx: &mut gpui::TestAppContext) {
     let tab = open_buffer("1.txt", &workspace, cx).await;
 
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
-        assert_match_selection(tab_switcher, 0, tab);
+        assert_match_selection(tab_switcher, 0, tab, cx);
     });
 }
 
@@ -211,17 +211,17 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 
     cx.simulate_modifiers_change(Modifiers::control());
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 2);
         assert_match_at_position(tab_switcher, 0, tab_2.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone(), cx);
     });
 
     cx.simulate_modifiers_change(Modifiers::control());
     cx.dispatch_action(CloseSelectedItem);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
-        assert_match_selection(tab_switcher, 0, tab_2);
+        assert_match_selection(tab_switcher, 0, tab_2, cx);
     });
 
     // Still switches tab on modifiers release
@@ -258,26 +258,26 @@ async fn test_close_preserves_selected_position(cx: &mut gpui::TestAppContext) {
     let tab_3 = open_buffer("3.txt", &workspace, cx).await;
 
     let tab_switcher = open_tab_switcher(false, &workspace, cx);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 3);
         assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_2.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_2.boxed_clone(), cx);
         assert_match_at_position(tab_switcher, 2, tab_1.boxed_clone());
     });
 
     // Verify that if the selected tab was closed, tab at the same position is selected.
     cx.dispatch_action(CloseSelectedItem);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 2);
         assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
-        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone(), cx);
     });
 
     // But if the position is no longer valid, fall back to the position above.
     cx.dispatch_action(CloseSelectedItem);
-    tab_switcher.update(cx, |tab_switcher, _| {
+    tab_switcher.update(cx, |tab_switcher, cx| {
         assert_eq!(tab_switcher.delegate.matches.len(), 1);
-        assert_match_selection(tab_switcher, 0, tab_3.boxed_clone());
+        assert_match_selection(tab_switcher, 0, tab_3.boxed_clone(), cx);
     });
 }
 
@@ -346,9 +346,10 @@ fn assert_match_selection(
     tab_switcher: &Picker<TabSwitcherDelegate>,
     expected_selection_index: usize,
     expected_item: Box<dyn ItemHandle>,
+    cx: &mut Context<Picker<TabSwitcherDelegate>>,
 ) {
     assert_eq!(
-        tab_switcher.delegate.selected_index(),
+        tab_switcher.delegate.selected_index(cx),
         expected_selection_index,
         "item is not selected"
     );

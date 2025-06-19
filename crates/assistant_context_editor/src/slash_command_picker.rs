@@ -76,11 +76,11 @@ where
 impl PickerDelegate for SlashCommandDelegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.filtered_commands.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

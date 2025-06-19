@@ -100,6 +100,7 @@ impl VimOption {
                     ),
                     action: VimSet { options }.boxed_clone(),
                     positions: vec![],
+                    autocomplete_and_create_filename: (false, false),
                 }
             })
             .collect()
@@ -552,6 +553,13 @@ struct VimCommand {
         >,
     >,
     has_count: bool,
+    autocomplete_and_create_filename: (bool, bool),
+}
+
+#[derive(Default, Debug)]
+struct CommandInfo {
+    action: Option<Box<dyn Action>>,
+    autocomplete_and_create_filename: (bool, bool),
 }
 
 impl VimCommand {
@@ -581,8 +589,10 @@ impl VimCommand {
 
     fn args(
         mut self,
+        autocomplete_and_create_filename: (bool, bool),
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
+        self.autocomplete_and_create_filename = autocomplete_and_create_filename;
         self.args = Some(Box::new(f));
         self
     }
@@ -600,50 +610,59 @@ impl VimCommand {
         self
     }
 
-    fn parse(
-        &self,
-        query: &str,
-        range: &Option<CommandRange>,
-        cx: &App,
-    ) -> Option<Box<dyn Action>> {
-        let rest = query
-            .to_string()
-            .strip_prefix(self.prefix)?
-            .to_string()
-            .chars()
-            .zip_longest(self.suffix.to_string().chars())
-            .skip_while(|e| e.clone().both().map(|(s, q)| s == q).unwrap_or(false))
-            .filter_map(|e| e.left())
-            .collect::<String>();
+    fn parse(&self, query: &str, range: &Option<CommandRange>, cx: &App) -> CommandInfo {
+        let Some(rest) = query.to_string().strip_prefix(self.prefix).map(|rest| {
+            rest.to_string()
+                .chars()
+                .zip_longest(self.suffix.to_string().chars())
+                .skip_while(|e| e.clone().both().map(|(s, q)| s == q).unwrap_or(false))
+                .filter_map(|e| e.left())
+                .collect::<String>()
+        }) else {
+            return CommandInfo::default();
+        };
         let has_bang = rest.starts_with('!');
         let args = if has_bang {
-            rest.strip_prefix('!')?.trim().to_string()
+            rest.strip_prefix('!').map(|s| s.trim().to_string())
         } else if rest.is_empty() {
-            "".into()
+            Some("".into())
         } else {
-            rest.strip_prefix(' ')?.trim().to_string()
+            rest.strip_prefix(' ').map(|s| s.trim().to_string())
+        };
+
+        let Some(args) = args else {
+            return CommandInfo::default();
         };
 
         let action = if has_bang && self.bang_action.is_some() {
-            self.bang_action.as_ref().unwrap().boxed_clone()
-        } else if let Some(action) = self.action.as_ref() {
-            action.boxed_clone()
+            self.bang_action.as_ref().map(|action| action.boxed_clone())
+        } else if self.action.is_some() {
+            self.action.as_ref().map(|action| action.boxed_clone())
         } else if let Some(action_name) = self.action_name {
-            cx.build_action(action_name, None).log_err()?
+            cx.build_action(action_name, None).log_err()
         } else {
-            return None;
+            None
+        };
+        let Some(action) = action else {
+            return CommandInfo::default();
         };
         if !args.is_empty() {
             // if command does not accept args and we have args then we should do no action
-            if let Some(args_fn) = &self.args {
-                args_fn.deref()(action, args)
-            } else {
-                None
+            let autocomplete_and_create_filename = self.autocomplete_and_create_filename;
+            CommandInfo {
+                action: self.args.as_ref().and_then(|args_fn| args_fn(action, args)),
+                autocomplete_and_create_filename,
             }
         } else if let Some(range) = range {
-            self.range.as_ref().and_then(|f| f(action, range))
+            CommandInfo {
+                action: self.range.as_ref().and_then(|f| f(action, range)),
+                autocomplete_and_create_filename: (false, false),
+            }
         } else {
-            Some(action)
+            CommandInfo {
+                action: Some(action),
+                autocomplete_and_create_filename: (false, false),
+            }
         }
     }
 
@@ -882,7 +901,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         .bang(workspace::Save {
             save_intent: Some(SaveIntent::Overwrite),
         })
-        .args(|action, args| {
+        .args((true, true), |action, args| {
             Some(
                 VimSave {
                     save_intent: action
@@ -1079,7 +1098,9 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("marks", ""), ToggleMarksView).bang(ToggleMarksView),
         VimCommand::new(("delm", "arks"), ArgumentRequired)
             .bang(DeleteMarks::AllLocal)
-            .args(|_, args| Some(DeleteMarks::Marks(args).boxed_clone())),
+            .args((false, false), |_, args| {
+                Some(DeleteMarks::Marks(args).boxed_clone())
+            }),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -1100,7 +1121,9 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("0", ""), StartOfDocument),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile)
-            .args(|_, args| Some(VimEdit { filename: args }.boxed_clone())),
+            .args((true, false), |_, args| {
+                Some(VimEdit { filename: args }.boxed_clone())
+            }),
         VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
@@ -1246,11 +1269,15 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             action,
             string,
             positions,
+            autocomplete_and_create_filename: (false, false),
         }];
     }
 
     for command in commands(cx).iter() {
-        if let Some(action) = command.parse(query, &range, cx) {
+        let info = command.parse(query, &range, cx);
+        let autocomplete_and_create_filename = info.autocomplete_and_create_filename;
+
+        if let Some(action) = info.action {
             let mut string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
             if query.contains('!') {
                 string.push('!');
@@ -1261,6 +1288,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
                 action,
                 string,
                 positions,
+                autocomplete_and_create_filename,
             }];
         }
     }

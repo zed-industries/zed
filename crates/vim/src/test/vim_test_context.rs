@@ -29,6 +29,7 @@ impl VimTestContext {
             workspace::init_settings(cx);
             language::init(cx);
             editor::init_settings(cx);
+            file_finder::init(cx);
             project::Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
