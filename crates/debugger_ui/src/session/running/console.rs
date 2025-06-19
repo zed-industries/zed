@@ -339,10 +339,9 @@ impl Render for Console {
                                     )
                                 }
                             })
-                            .layer(ui::ElevationIndex::EditorSurface)
+                            .layer(ui::ElevationIndex::ModalSurface)
                             .size(ui::ButtonSize::Compact)
                             .child(Label::new("Evaluate")),
-                            // todo!(debugger): Fix the background of this button not being the same color as query bar / transparent
                             self.render_submit_menu(
                                 ElementId::Name("split-button-right-confirm-button".into()),
                                 Some(query_focus_handle.clone()),
