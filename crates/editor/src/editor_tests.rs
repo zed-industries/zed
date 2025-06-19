@@ -22330,7 +22330,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/first.rs")).unwrap(),
+                    lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
                 Ok(vec![lsp::ColorInformation {
@@ -22355,12 +22355,14 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         });
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
-
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         2,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per editor open and once after the language server startup"
     );
+
     cx.executor().advance_clock(Duration::from_millis(500));
     let save = editor.update_in(cx, |editor, window, cx| {
         assert_eq!(
@@ -22382,6 +22384,17 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         )
     });
     save.await.unwrap();
+
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per save and once per formatting after save"
+    );
+
     drop(editor);
     let close = workspace
         .update(cx, |workspace, window, cx| {
@@ -22392,7 +22405,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .unwrap();
     close.await.unwrap();
     assert_eq!(
-        2,
+        4,
         requests_made.load(atomic::Ordering::Acquire),
         "After saving and closing the editor, no extra requests should be made"
     );
@@ -22406,6 +22419,11 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .unwrap();
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
+    assert_eq!(
+        5,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After navigating back to an editor and reopening it, another color request should be made"
+    );
     let editor = workspace
         .update(cx, |workspace, _, cx| {
             workspace
@@ -22415,13 +22433,6 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                 .expect("Should be an editor")
         })
         .unwrap();
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        3,
-        requests_made.load(atomic::Ordering::Acquire),
-        "After reopening the saved editor, another color request should be made"
-    );
     editor.update(cx, |editor, cx| {
         assert_eq!(
             vec![expected_color],
