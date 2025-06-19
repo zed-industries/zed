@@ -619,6 +619,13 @@ pub trait InteractiveElement: Sized {
         FocusableWrapper { element: self }
     }
 
+    /// Set index of the tab stop order.
+    fn tab_index(mut self, index: isize) -> Self {
+        self.interactivity().focusable = true;
+        self.interactivity().tab_index = Some(index);
+        self
+    }
+
     /// Set the keymap context for this element. This will be used to determine
     /// which action to dispatch from the keymap.
     fn key_context<C, E>(mut self, key_context: C) -> Self
@@ -652,6 +659,12 @@ pub trait InteractiveElement: Sized {
             group: group_name.into(),
             style: Box::new(f(StyleRefinement::default())),
         });
+        self
+    }
+
+    /// Apply the given style to the element when is focused
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 
@@ -1463,6 +1476,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) tab_index: Option<isize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1522,12 +1536,16 @@ impl Interactivity {
                 // as frames contain an element with this id.
                 if self.focusable && self.tracked_focus_handle.is_none() {
                     if let Some(element_state) = element_state.as_mut() {
-                        self.tracked_focus_handle = Some(
-                            element_state
-                                .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone(),
-                        );
+                        let mut handle = element_state
+                            .focus_handle
+                            .get_or_insert_with(|| cx.focus_handle())
+                            .clone();
+
+                        if let Some(index) = self.tab_index {
+                            handle = handle.tab_index(index).tab_stop(true);
+                        }
+
+                        self.tracked_focus_handle = Some(handle);
                     }
                 }
 

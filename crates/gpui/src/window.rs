@@ -214,7 +214,7 @@ thread_local! {
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
 pub(crate) struct FocusRef {
     pub(crate) ref_count: AtomicUsize,
-    pub(crate) tab_index: usize,
+    pub(crate) tab_index: isize,
     pub(crate) tab_stop: bool,
 }
 
@@ -253,7 +253,7 @@ pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
     /// The index of this element in the tab order.
-    pub tab_index: usize,
+    pub tab_index: isize,
     /// Whether this element can be focused by tab navigation.
     pub tab_stop: bool,
 }
@@ -295,7 +295,7 @@ impl FocusHandle {
     }
 
     /// Sets the tab index of the element associated with this handle.
-    pub fn tab_index(mut self, index: usize) -> Self {
+    pub fn tab_index(mut self, index: isize) -> Self {
         self.tab_index = index;
         if let Some(focus) = self.handles.write().get_mut(self.id) {
             focus.tab_index = index;
