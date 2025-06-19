@@ -148,6 +148,8 @@ impl AgentConfiguration {
     ) -> impl IntoElement + use<> {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
+        let provider_id_string = SharedString::from(format!("provider-disclosure-{provider_id}"));
+
         let configuration_view = self
             .configuration_views_by_provider
             .get(&provider.id())
@@ -160,72 +162,81 @@ impl AgentConfiguration {
             .unwrap_or(false);
 
         v_flex()
-            .pt_3()
+            .py_2()
             .gap_1p5()
+            // .debug_bg_blue()
             .border_t_1()
             .border_color(cx.theme().colors().border.opacity(0.6))
             .child(
                 h_flex()
+                    .w_full()
+                    .gap_1()
                     .justify_between()
                     .child(
                         h_flex()
-                            .gap_2()
+                            .id(provider_id_string.clone())
+                            .cursor_pointer()
+                            .py_0p5()
+                            .w_full()
+                            .justify_between()
+                            .rounded_sm()
+                            .hover(|hover| hover.bg(cx.theme().colors().element_hover))
                             .child(
-                                Icon::new(provider.icon())
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(Label::new(provider_name.clone()).size(LabelSize::Large))
-                            .when(provider.is_authenticated(cx) && !is_expanded, |parent| {
-                                parent.child(Icon::new(IconName::Check).color(Color::Success))
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .when(provider.is_authenticated(cx), |parent| {
-                                parent.child(
-                                    Button::new(
-                                        SharedString::from(format!("new-thread-{provider_id}")),
-                                        "Start New Thread",
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(provider.icon())
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
                                     )
-                                    .icon_position(IconPosition::Start)
-                                    .icon(IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener({
-                                        let provider = provider.clone();
-                                        move |_this, _event, _window, cx| {
-                                            cx.emit(AssistantConfigurationEvent::NewThread(
-                                                provider.clone(),
-                                            ))
-                                        }
-                                    })),
-                                )
-                            })
+                                    .child(Label::new(provider_name.clone()).size(LabelSize::Large))
+                                    .when(
+                                        provider.is_authenticated(cx) && !is_expanded,
+                                        |parent| {
+                                            parent.child(
+                                                Icon::new(IconName::Check).color(Color::Success),
+                                            )
+                                        },
+                                    ),
+                            )
                             .child(
-                                Disclosure::new(
-                                    SharedString::from(format!(
-                                        "provider-disclosure-{provider_id}"
-                                    )),
-                                    is_expanded,
-                                )
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown)
-                                .on_click(cx.listener({
-                                    let provider_id = provider.id().clone();
-                                    move |this, _event, _window, _cx| {
-                                        let is_expanded = this
-                                            .expanded_provider_configurations
-                                            .entry(provider_id.clone())
-                                            .or_insert(false);
+                                Disclosure::new(provider_id_string, is_expanded)
+                                    .opened_icon(IconName::ChevronUp)
+                                    .closed_icon(IconName::ChevronDown),
+                            )
+                            .on_click(cx.listener({
+                                let provider_id = provider.id().clone();
+                                move |this, _event, _window, _cx| {
+                                    let is_expanded = this
+                                        .expanded_provider_configurations
+                                        .entry(provider_id.clone())
+                                        .or_insert(false);
 
-                                        *is_expanded = !*is_expanded;
-                                    }
-                                })),
-                            ),
-                    ),
+                                    *is_expanded = !*is_expanded;
+                                }
+                            })),
+                    )
+                    .when(provider.is_authenticated(cx), |parent| {
+                        parent.child(
+                            Button::new(
+                                SharedString::from(format!("new-thread-{provider_id}")),
+                                "Start New Thread",
+                            )
+                            .icon_position(IconPosition::Start)
+                            .icon(IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener({
+                                let provider = provider.clone();
+                                move |_this, _event, _window, cx| {
+                                    cx.emit(AssistantConfigurationEvent::NewThread(
+                                        provider.clone(),
+                                    ))
+                                }
+                            })),
+                        )
+                    }),
             )
             .when(is_expanded, |parent| match configuration_view {
                 Some(configuration_view) => parent.child(configuration_view),
@@ -244,11 +255,11 @@ impl AgentConfiguration {
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_4()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
+                    .mb_2p5()
                     .gap_0p5()
                     .child(Headline::new("LLM Providers"))
                     .child(
