@@ -905,7 +905,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset API Key")
+                    Button::new("reset-api-key", "Reset API Key")
                         .label_size(LabelSize::Small)
                         .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
@@ -938,7 +938,7 @@ impl Render for ConfigurationView {
                         .child(Label::new("Custom API URL configured.")),
                 )
                 .child(
-                    Button::new("reset-key", "Reset API URL")
+                    Button::new("reset-api-url", "Reset API URL")
                         .label_size(LabelSize::Small)
                         .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
