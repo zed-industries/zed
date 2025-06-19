@@ -33,7 +33,7 @@ impl Example {
     }
 
     fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_previous();
+        window.focus_prev();
         self.message = SharedString::from("You have pressed `Shift-Tab`.");
     }
 }

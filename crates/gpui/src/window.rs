@@ -1328,16 +1328,12 @@ impl Window {
     }
 
     /// Move focus to previous tab stop.
-    pub fn focus_previous(&mut self) {
+    pub fn focus_prev(&mut self) {
         if !self.focus_enabled {
             return;
         }
 
-        if let Some(handle) = self
-            .rendered_frame
-            .tab_handles
-            .previous(self.focus.as_ref())
-        {
+        if let Some(handle) = self.rendered_frame.tab_handles.prev(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }

@@ -54,7 +54,7 @@ impl TabHandles {
         }
     }
 
-    pub(crate) fn previous(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
+    pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let ix = self.current_index(focused_id);
         let prev_ix;
         if ix == 0 {
@@ -131,26 +131,26 @@ mod tests {
             Some(tab.handles[0].clone())
         );
 
-        // previous
-        assert_eq!(tab.previous(None), Some(tab.handles[4].clone()));
+        // prev
+        assert_eq!(tab.prev(None), Some(tab.handles[4].clone()));
         assert_eq!(
-            tab.previous(Some(&tab.handles[0].id)),
+            tab.prev(Some(&tab.handles[0].id)),
             Some(tab.handles[4].clone())
         );
         assert_eq!(
-            tab.previous(Some(&tab.handles[1].id)),
+            tab.prev(Some(&tab.handles[1].id)),
             Some(tab.handles[0].clone())
         );
         assert_eq!(
-            tab.previous(Some(&tab.handles[2].id)),
+            tab.prev(Some(&tab.handles[2].id)),
             Some(tab.handles[1].clone())
         );
         assert_eq!(
-            tab.previous(Some(&tab.handles[3].id)),
+            tab.prev(Some(&tab.handles[3].id)),
             Some(tab.handles[2].clone())
         );
         assert_eq!(
-            tab.previous(Some(&tab.handles[4].id)),
+            tab.prev(Some(&tab.handles[4].id)),
             Some(tab.handles[3].clone())
         );
     }
