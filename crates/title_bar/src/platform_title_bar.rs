@@ -63,7 +63,6 @@ impl Render for PlatformTitleBar {
         let children = mem::take(&mut self.children);
 
         h_flex()
-            .id(self.id.clone())
             .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
@@ -94,7 +93,7 @@ impl Render for PlatformTitleBar {
             .content_stretch()
             .child(
                 div()
-                    .id("platform-titlebar-content")
+                    .id(self.id.clone())
                     .flex()
                     .flex_row()
                     .items_center()
