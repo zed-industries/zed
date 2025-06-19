@@ -26,6 +26,7 @@ use language_model::{
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     StopReason, TokenUsage,
 };
+
 use settings::SettingsStore;
 use std::time::Duration;
 use ui::prelude::*;
@@ -290,6 +291,76 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 }
 
+fn fix_copilot_json(src: &str) -> String {
+    // Copilot sometimes fails to wrap args in quotes
+    // and we attempt to fix it but only cover common cases
+    if serde_json::from_str::<serde_json::Value>(src).is_ok() {
+        return src.to_owned();
+    }
+    let mut out = String::with_capacity(src.len() + 16);
+    let mut iter = src.chars().peekable();
+    let mut in_string = false;
+
+    while let Some(ch) = iter.next() {
+        match ch {
+            '"' => {
+                in_string = !in_string;
+                out.push(ch);
+            }
+            ':' if !in_string => {
+                out.push(ch);
+
+                while let Some(' ') = iter.peek() {
+                    out.push(' ');
+                    iter.next();
+                }
+
+                // leave delimiters untouched.
+                let Some(&next) = iter.peek() else { break };
+                if matches!(next, '"' | '{' | '[') {
+                    continue;
+                }
+
+                let mut value = String::new();
+                let mut brace_depth = 0usize;
+                while let Some(&c) = iter.peek() {
+                    match c {
+                        '{' => {
+                            brace_depth += 1;
+                            value.push(c);
+                            iter.next();
+                        }
+                        '}' if brace_depth > 0 => {
+                            brace_depth -= 1;
+                            value.push(c);
+                            iter.next();
+                        }
+                        ',' | '}' if brace_depth == 0 => break,
+                        _ => {
+                            value.push(c);
+                            iter.next();
+                        }
+                    }
+                }
+                let trimmed = value.trim();
+
+                let needs_quotes = !(matches!(trimmed, "true" | "false" | "null")
+                    || trimmed.parse::<f64>().is_ok());
+                if needs_quotes {
+                    out.push('"');
+                    out.push_str(trimmed);
+                    out.push('"');
+                } else {
+                    out.push_str(trimmed);
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+
+    out
+}
+
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
     is_streaming: bool,
@@ -389,6 +460,16 @@ pub fn map_to_language_model_completion_events(
                                             Ok(serde_json::Value::Object(Default::default()))
                                         } else {
                                             serde_json::Value::from_str(&tool_call.arguments)
+                                                .or_else(|original_error| {
+                                                    let fixed =
+                                                        fix_copilot_json(&tool_call.arguments);
+                                                    if fixed != tool_call.arguments {
+                                                        serde_json::Value::from_str(&fixed)
+                                                            .or(Err(original_error))
+                                                    } else {
+                                                        Err(original_error)
+                                                    }
+                                                })
                                         };
                                         match arguments {
                                             Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
@@ -705,5 +786,50 @@ impl Render for ConfigurationView {
                 None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fix_copilot_json() {
+        let broken = r#"{"regex": "\\.(js|jsx|ts|tsx)$", "include_pattern": **/*.{js,jsx,ts,tsx}}"#;
+        let fixed = fix_copilot_json(broken);
+        let expected =
+            r#"{"regex": "\\.(js|jsx|ts|tsx)$", "include_pattern": "**/*.{js,jsx,ts,tsx}"}"#;
+        assert_eq!(fixed, expected);
+
+        let broken = r#"{"a": value1, "b": value2}"#;
+        let fixed = fix_copilot_json(broken);
+        assert_eq!(fixed, r#"{"a": "value1", "b": "value2"}"#);
+
+        let broken = r#"{"path": some path with spaces}"#;
+        let fixed = fix_copilot_json(broken);
+        assert_eq!(fixed, r#"{"path": "some path with spaces"}"#);
+
+        let broken = r#"{"outer": {"inner": **/*.rs, "valid": "string"}}"#;
+        let fixed = fix_copilot_json(broken);
+        assert_eq!(
+            fixed,
+            r#"{"outer": {"inner": "**/*.rs", "valid": "string"}}"#
+        );
+
+        let broken = r#"{"include_pattern": **/*.js}"#;
+        let fixed = fix_copilot_json(broken);
+        assert_eq!(fixed, r#"{"include_pattern": "**/*.js"}"#);
+
+        let valid = r#"{"name": "test", "value": "some value"}"#;
+        assert_eq!(fix_copilot_json(valid), valid);
+
+        let valid = r#"{"path": "**/*.js", "pattern": "test"}"#;
+        assert_eq!(fix_copilot_json(valid), valid);
+
+        let valid = r#"{"number": 123, "bool": true, "null": null}"#;
+        assert_eq!(fix_copilot_json(valid), valid);
+
+        let valid = r#"{"array": [1, 2, 3], "object": {"nested": true}}"#;
+        assert_eq!(fix_copilot_json(valid), valid);
     }
 }
