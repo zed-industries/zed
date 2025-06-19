@@ -108,9 +108,7 @@ pub(crate) fn create_editor(
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
                 min_lines,
-                max_lines: Some(max_lines).expect(
-                    "The max number of lines should always be defined even if the value is None.",
-                ),
+                max_lines: max_lines,
             },
             buffer,
             None,
