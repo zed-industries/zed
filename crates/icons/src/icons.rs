@@ -263,6 +263,8 @@ pub enum IconName {
     ZedAssistantFilled,
     ZedBurnMode,
     ZedBurnModeOn,
+    ZedMcpCustom,
+    ZedMcpExtension,
     ZedPredict,
     ZedPredictDisabled,
     ZedPredictDown,

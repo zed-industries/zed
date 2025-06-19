@@ -638,7 +638,8 @@ impl RunningState {
             )
         });
 
-        let breakpoint_list = BreakpointList::new(session.clone(), workspace.clone(), &project, cx);
+        let breakpoint_list =
+            BreakpointList::new(Some(session.clone()), workspace.clone(), &project, cx);
 
         let _subscriptions = vec![
             cx.observe(&module_list, |_, _, cx| cx.notify()),
@@ -850,17 +851,8 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(task) = task_template.resolve_task_and_check_cwd("debug-build-task", &task_context, cx.background_executor().clone()) else {
+                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
-                };
-                let task = match task.await {
-                    Ok(task) => task,
-                    Err(e) => {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.show_error(&e, cx);
-                        }).ok();
-                        return Err(e)
-                    }
                 };
 
                 let locator_name = if let Some(locator_name) = locator_name {

@@ -126,7 +126,7 @@ struct ModelLimits {
     #[serde(default)]
     max_output_tokens: usize,
     #[serde(default)]
-    max_prompt_tokens: usize,
+    max_prompt_tokens: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -182,7 +182,7 @@ impl Model {
         self.name.as_str()
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.capabilities.limits.max_prompt_tokens
     }
 
@@ -316,15 +316,9 @@ pub struct ResponseEvent {
 
 #[derive(Deserialize, Debug)]
 pub struct Usage {
-    pub completion_tokens: u32,
-    pub prompt_tokens: u32,
-    pub prompt_tokens_details: PromptTokensDetails,
-    pub total_tokens: u32,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct PromptTokensDetails {
-    pub cached_tokens: u32,
+    pub completion_tokens: u64,
+    pub prompt_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -424,12 +418,15 @@ pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        if cfg!(target_os = "windows") {
-            home_dir().join("AppData").join("Local")
+        let config_dir = if cfg!(target_os = "windows") {
+            dirs::data_local_dir().expect("failed to determine LocalAppData directory")
         } else {
-            home_dir().join(".config")
-        }
-        .join("github-copilot")
+            std::env::var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home_dir().join(".config"))
+        };
+
+        config_dir.join("github-copilot")
     })
 }
 

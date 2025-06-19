@@ -39,9 +39,9 @@ pub struct OpenRouterSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
@@ -58,6 +58,7 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<()>>>,
+    settings: OpenRouterSettings,
     _subscription: Subscription,
 }
 
@@ -100,6 +101,7 @@ impl State {
                 .log_err();
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })
         })
@@ -132,6 +134,7 @@ impl State {
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })?;
 
@@ -155,8 +158,10 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
-        self.fetch_models_task.replace(task);
+        if self.is_authenticated() {
+            let task = self.fetch_models(cx);
+            self.fetch_models_task.replace(task);
+        }
     }
 }
 
@@ -168,8 +173,14 @@ impl OpenRouterLanguageModelProvider {
             http_client: http_client.clone(),
             available_models: Vec::new(),
             fetch_models_task: None,
+            settings: OpenRouterSettings::default(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.restart_fetch_models_task(cx);
+                let current_settings = &AllLanguageModelSettings::get_global(cx).open_router;
+                let settings_changed = current_settings != &this.settings;
+                if settings_changed {
+                    this.settings = current_settings.clone();
+                    this.restart_fetch_models_task(cx);
+                }
                 cx.notify();
             }),
         });
@@ -306,11 +317,11 @@ impl LanguageModel for OpenRouterLanguageModel {
         format!("openrouter/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -330,7 +341,7 @@ impl LanguageModel for OpenRouterLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_open_router_tokens(request, self.model.clone(), cx)
     }
 
@@ -361,14 +372,14 @@ impl LanguageModel for OpenRouterLanguageModel {
 pub fn into_open_router(
     request: LanguageModelRequest,
     model: &Model,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> open_router::Request {
     let mut messages = Vec::new();
     for message in request.messages {
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
-                    open_router::MessagePart::Text { text: text },
+                    open_router::MessagePart::Text { text },
                     message.role,
                     &mut messages,
                 ),
@@ -635,7 +646,7 @@ pub fn count_open_router_tokens(
     request: LanguageModelRequest,
     _model: open_router::Model,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request
             .messages
@@ -652,7 +663,7 @@ pub fn count_open_router_tokens(
             })
             .collect::<Vec<_>>();
 
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
+        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
     })
     .boxed()
 }

@@ -44,7 +44,7 @@ pub struct LmStudioSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     pub supports_tool_calls: bool,
     pub supports_images: bool,
 }
@@ -414,7 +414,7 @@ impl LanguageModel for LmStudioLanguageModel {
         format!("lmstudio/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -422,7 +422,7 @@ impl LanguageModel for LmStudioLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         // Endpoint for this is coming soon. In the meantime, hacky estimation
         let token_count = request
             .messages
@@ -430,7 +430,7 @@ impl LanguageModel for LmStudioLanguageModel {
             .map(|msg| msg.string_contents().split_whitespace().count())
             .sum::<usize>();
 
-        let estimated_tokens = (token_count as f64 * 0.75) as usize;
+        let estimated_tokens = (token_count as f64 * 0.75) as u64;
         async move { Ok(estimated_tokens) }.boxed()
     }
 

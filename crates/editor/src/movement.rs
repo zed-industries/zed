@@ -789,7 +789,7 @@ pub fn split_display_range_by_lines(
 mod tests {
     use super::*;
     use crate::{
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, MultiBuffer,
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
@@ -939,26 +939,26 @@ mod tests {
         let inlays = (0..buffer_snapshot.len())
             .flat_map(|offset| {
                 [
-                    Inlay {
-                        id: InlayId::InlineCompletion(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
-                        text: "test".into(),
-                    },
-                    Inlay {
-                        id: InlayId::InlineCompletion(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
-                        text: "test".into(),
-                    },
-                    Inlay {
-                        id: InlayId::Hint(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
-                        text: "test".into(),
-                    },
-                    Inlay {
-                        id: InlayId::Hint(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
-                        text: "test".into(),
-                    },
+                    Inlay::inline_completion(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        "test",
+                    ),
+                    Inlay::inline_completion(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        "test",
+                    ),
+                    Inlay::mock_hint(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        "test",
+                    ),
+                    Inlay::mock_hint(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        "test",
+                    ),
                 ]
             })
             .collect();

@@ -110,6 +110,8 @@
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
+  // Whether to enable helix mode and key bindings.
+  "helix_mode": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
@@ -400,6 +402,13 @@
     // 3. Never show the minimap:
     //    "never" (default)
     "show": "never",
+    // Where to show the minimap in the editor.
+    // This setting can take two values:
+    // 1. Show the minimap on the focused editor only:
+    //    "active_editor" (default)
+    // 2. Show the minimap on all open editors:
+    //    "all_editors"
+    "display_in": "active_editor",
     // When to show the minimap thumb.
     // This setting can take two values:
     // 1. Show the minimap thumb if the mouse is over the minimap:
@@ -426,7 +435,9 @@
     // 1. `null` to inherit the editor `current_line_highlight` setting (default)
     // 2. "line" or "all" to highlight the current line in the minimap.
     // 3. "gutter" or "none" to not highlight the current line in the minimap.
-    "current_line_highlight": null
+    "current_line_highlight": null,
+    // Maximum number of columns to display in the minimap.
+    "max_width_columns": 80
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
@@ -1038,6 +1049,19 @@
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
+  // How to render LSP `textDocument/documentColor` colors in the editor.
+  //
+  // Possible values:
+  //
+  // 1. Do not query and render document colors.
+  //      "lsp_document_colors": "none",
+  // 2. Render document colors as inlay hints near the color text (default).
+  //      "lsp_document_colors": "inlay",
+  // 3. Draw a border around the color text.
+  //      "lsp_document_colors": "border",
+  // 4. Draw a background behind the color text..
+  //      "lsp_document_colors": "background",
+  "lsp_document_colors": "inlay",
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.

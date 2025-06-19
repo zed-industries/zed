@@ -1,8 +1,9 @@
-# Debugger (Beta)
+# Debugger
 
-Zed uses the Debug Adapter Protocol (DAP) to provide debugging functionality across multiple programming languages.
+Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
 DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
 It allows Zed to support various debuggers without needing to implement language-specific debugging logic.
+
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
@@ -45,9 +46,10 @@ You can then use the `New Session Modal` to select a configuration and start deb
 Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
-When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program. Running unit tests or a debug build of your application is a good use case for launching.
+When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program.
+Running unit tests or a debug build of your application is a good use case for launching.
 
-Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because e.g. the bug is not reproducible outside of a production environment or some other circumstances.
+Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because for example, the bug is not reproducible outside of a production environment or some other circumstances.
 
 ## Configuration
 
@@ -73,7 +75,7 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ]
 ```
 
-All configuration fields support task variables. See [Tasks Variables](./tasks.md#variables)
+All configuration fields support [task variables](./tasks.md#variables).
 
 ### Build tasks
 
@@ -111,7 +113,7 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
 ### Automatic scenario creation
 
 Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
-Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
+Automatic scenario creation is currently supported for Rust, Go, and Python. JavaScript/TypeScript support is being worked on.
 
 ### Example Configurations
 
@@ -134,7 +136,7 @@ Automatic scenario creation is currently supported for Rust, Go and Python. Java
 
 ##### Attach debugger to a server running in web browser (`npx serve`)
 
-Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
 
 ```json
 [
@@ -182,7 +184,7 @@ static/
 requirements.txt
 ```
 
-the following configuration can be used:
+…the following configuration can be used:
 
 ```json
 [
@@ -246,12 +248,12 @@ the following configuration can be used:
 
 ##### Attach debugger to a server running in web browser (`npx serve`)
 
-Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
 
 ```json
 [
   {
-    "label": "Launch Chromee (TypeScript)",
+    "label": "Launch Chrome (TypeScript)",
     "adapter": "JavaScript",
     "type": "pwa-chrome",
     "request": "launch",
@@ -269,7 +271,8 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 
 #### Go
 
-Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications. Zed will automatically create debug scenarios for `func main` in your main packages, and also
+Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications.
+Zed will automatically create debug scenarios for `func main` in your main packages, and also
 for any tests, so you can use the Play button in the gutter to debug these without configuration.
 
 ##### Debug Go Packages
@@ -305,7 +308,8 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
 
 ##### Debug Go Tests
 
-To debug the tests for a package, set the Delve mode to "test". The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
+To debug the tests for a package, set the Delve mode to "test".
+The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
 
 ```json
 [
@@ -379,7 +383,7 @@ To run a ruby task in the debugger, you will need to configure it in the `.zed/d
 The configuration should look like this:
 
 ```json
-{
+[
   {
     "adapter": "Ruby",
     "label": "Run CLI",
@@ -392,7 +396,7 @@ The configuration should look like this:
     // "env": {}
     // "cwd": ""
   }
-}
+]
 ```
 
 ## Breakpoints
@@ -573,5 +577,5 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 The Debugger supports the following theme options:
 
-**debugger.accent**: Color used to accent breakpoint & breakpoint-related symbols
-**editor.debugger_active_line.background**: Background color of active debug line
+- `debugger.accent`: Color used to accent breakpoint & breakpoint-related symbols
+- `editor.debugger_active_line.background`: Background color of active debug line

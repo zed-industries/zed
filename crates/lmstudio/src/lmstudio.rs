@@ -46,7 +46,7 @@ impl From<Role> for String {
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     pub supports_tool_calls: bool,
     pub supports_images: bool,
 }
@@ -55,7 +55,7 @@ impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
-        max_tokens: Option<usize>,
+        max_tokens: Option<u64>,
         supports_tool_calls: bool,
         supports_images: bool,
     ) -> Self {
@@ -76,7 +76,7 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
 
@@ -256,9 +256,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
@@ -306,8 +306,8 @@ pub struct ModelEntry {
     pub compatibility_type: CompatibilityType,
     pub quantization: Option<String>,
     pub state: ModelState,
-    pub max_context_length: Option<usize>,
-    pub loaded_context_length: Option<usize>,
+    pub max_context_length: Option<u64>,
+    pub loaded_context_length: Option<u64>,
     #[serde(default)]
     pub capabilities: Capabilities,
 }
