@@ -8,8 +8,8 @@ use std::{
 use dap::ExceptionBreakpointsFilter;
 use editor::Editor;
 use gpui::{
-    AppContext, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy, Stateful, Task,
-    UniformListScrollHandle, WeakEntity, uniform_list,
+    Action, AppContext, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy, Stateful,
+    Task, UniformListScrollHandle, WeakEntity, uniform_list,
 };
 use language::Point;
 use project::{
@@ -21,10 +21,11 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    App, Color, Context, Div, FluentBuilder as _, Icon, IconName, Indicator, InteractiveElement,
-    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, Scrollbar,
-    ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable, Tooltip, Window,
-    div, h_flex, px, v_flex,
+    AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div, FluentBuilder as _,
+    Icon, IconButton, IconName, IconSize, Indicator, InteractiveElement, IntoElement, Label,
+    LabelCommon, LabelSize, ListItem, ParentElement, Render, Scrollbar, ScrollbarState,
+    SharedString, StatefulInteractiveElement, Styled, Toggleable, Tooltip, Window, div, h_flex, px,
+    v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -353,7 +354,93 @@ impl BreakpointList {
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
+    pub(crate) fn render_control_strip(&self) -> AnyElement {
+        let selection_kind = self.selection_kind();
+        let focus_handle = self.focus_handle.clone();
+        let remove_breakpoint_tooltip = selection_kind.map(|(kind, _)| match kind {
+            SelectedBreakpointKind::Source => "Remove breakpoint from a breakpoint list",
+            SelectedBreakpointKind::Exception => {
+                "Exception Breakpoints cannot be removed from the breakpoint list"
+            }
+        });
+        let toggle_label = selection_kind.map(|(_, is_enabled)| {
+            if is_enabled {
+                (
+                    "Disable Breakpoint",
+                    "Disable a breakpoint without removing it from the list",
+                )
+            } else {
+                ("Enable Breakpoint", "Re-enable a breakpoint")
+            }
+        });
+
+        h_flex()
+            .gap_2()
+            .child(
+                IconButton::new(
+                    "disable-breakpoint-breakpoint-list",
+                    IconName::DebugDisabledBreakpoint,
+                )
+                .icon_size(IconSize::XSmall)
+                .when_some(toggle_label, |this, (label, meta)| {
+                    this.tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::with_meta_in(
+                                label,
+                                Some(&ToggleEnableBreakpoint),
+                                meta,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                })
+                .disabled(selection_kind.is_none())
+                .on_click({
+                    let focus_handle = focus_handle.clone();
+                    move |_, window, cx| {
+                        focus_handle.focus(window);
+                        window.dispatch_action(ToggleEnableBreakpoint.boxed_clone(), cx)
+                    }
+                }),
+            )
+            .child(
+                IconButton::new("remove-breakpoint-breakpoint-list", IconName::X)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(ui::Color::Error)
+                    .when_some(remove_breakpoint_tooltip, |this, tooltip| {
+                        this.tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::with_meta_in(
+                                    "Remove Breakpoint",
+                                    Some(&UnsetBreakpoint),
+                                    tooltip,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                    })
+                    .disabled(
+                        selection_kind.map(|kind| kind.0) != Some(SelectedBreakpointKind::Source),
+                    )
+                    .on_click({
+                        let focus_handle = focus_handle.clone();
+                        move |_, window, cx| {
+                            focus_handle.focus(window);
+                            window.dispatch_action(UnsetBreakpoint.boxed_clone(), cx)
+                        }
+                    }),
+            )
+            .mr_2()
+            .into_any_element()
+    }
 }
+
 impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         // let old_len = self.breakpoints.len();

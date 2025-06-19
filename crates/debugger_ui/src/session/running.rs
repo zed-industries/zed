@@ -11,7 +11,6 @@ use crate::{
     ToggleExpandItem,
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
-    session::running::breakpoint_list::SelectedBreakpointKind,
 };
 
 use super::DebugPanelItemEvent;
@@ -48,10 +47,10 @@ use task::{
 };
 use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, Disableable,
-    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab,
-    Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
+    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -59,7 +58,6 @@ use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
-use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -188,92 +186,9 @@ impl SubView {
 
         this.update(cx, |this, _| {
             this.with_actions(Box::new(move |_, cx| {
-                let selection_kind = weak_list
-                    .update(cx, |this, _| this.selection_kind())
-                    .ok()
-                    .flatten();
-                let remove_breakpoint_tooltip = selection_kind.map(|(kind, _)| match kind {
-                    SelectedBreakpointKind::Source => "Remove breakpoint from a breakpoint list",
-                    SelectedBreakpointKind::Exception => {
-                        "Exception Breakpoints cannot be removed from the breakpoint list"
-                    }
-                });
-                let toggle_label = selection_kind.map(|(_, is_enabled)| {
-                    if is_enabled {
-                        (
-                            "Disable Breakpoint",
-                            "Disable a breakpoint without removing it from the list",
-                        )
-                    } else {
-                        ("Enable Breakpoint", "Re-enable a breakpoint")
-                    }
-                });
-
-                h_flex()
-                    .gap_2()
-                    .child(
-                        IconButton::new(
-                            "disable-breakpoint-breakpoint-list",
-                            IconName::DebugDisabledBreakpoint,
-                        )
-                        .icon_size(IconSize::XSmall)
-                        .when_some(toggle_label, |this, (label, meta)| {
-                            this.tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::with_meta_in(
-                                        label,
-                                        Some(&ToggleEnableBreakpoint),
-                                        meta,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                        })
-                        .disabled(selection_kind.is_none())
-                        .on_click({
-                            let focus_handle = focus_handle.clone();
-                            move |_, window, cx| {
-                                focus_handle.focus(window);
-                                window.dispatch_action(ToggleEnableBreakpoint.boxed_clone(), cx)
-                            }
-                        }),
-                    )
-                    .child(
-                        IconButton::new("remove-breakpoint-breakpoint-list", IconName::X)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(ui::Color::Error)
-                            .when_some(remove_breakpoint_tooltip, |this, tooltip| {
-                                this.tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        Tooltip::with_meta_in(
-                                            "Remove Breakpoint",
-                                            Some(&UnsetBreakpoint),
-                                            tooltip,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                })
-                            })
-                            .disabled(
-                                selection_kind.map(|kind| kind.0)
-                                    != Some(SelectedBreakpointKind::Source),
-                            )
-                            .on_click({
-                                let focus_handle = focus_handle.clone();
-                                move |_, window, cx| {
-                                    focus_handle.focus(window);
-                                    window.dispatch_action(UnsetBreakpoint.boxed_clone(), cx)
-                                }
-                            }),
-                    )
-                    .mr_2()
-                    .into_any_element()
+                weak_list
+                    .update(cx, |this, _| this.render_control_strip())
+                    .unwrap_or_else(|_| div().into_any_element())
             }));
         });
         this
