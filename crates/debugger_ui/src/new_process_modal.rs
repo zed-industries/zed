@@ -540,7 +540,6 @@ impl NewProcessModal {
                 menu
             }),
         )
-        // .style(ui::DropdownStyle::Ghost)
     }
 
     fn open_debug_json(&self, window: &mut Window, cx: &mut Context<NewProcessModal>) {
