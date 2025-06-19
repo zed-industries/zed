@@ -34,12 +34,6 @@ impl LinuxKeyboardLayout {
     pub(crate) fn new(name: SharedString) -> Self {
         Self { name }
     }
-
-    pub(crate) fn unknown() -> Self {
-        Self {
-            id: "unknown".to_string(),
-        }
-    }
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]

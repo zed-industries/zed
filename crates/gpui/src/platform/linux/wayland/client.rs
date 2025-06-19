@@ -80,7 +80,7 @@ use crate::{
     size,
 };
 use crate::{
-    KeyboardState, SharedString,
+    SharedString,
     platform::linux::{
         LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
         reveal_path_internal,
@@ -213,10 +213,9 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
-    keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<State>,
     compose_state: Option<xkb::compose::State>,
-    keyboard_layout: Box<LinuxKeyboardLayout>,
+    keyboard_layout: LinuxKeyboardLayout,
     keyboard_mapper: Option<Rc<LinuxKeyboardMapper>>,
     keyboard_mapper_cache: HashMap<String, Rc<LinuxKeyboardMapper>>,
     drag: DragState,
@@ -368,6 +367,13 @@ impl WaylandClientStatePtr {
             changed
         };
         if changed {
+            let id = state.keyboard_layout.id().to_string();
+            let mapper = state
+                .keyboard_mapper_cache
+                .entry(id)
+                .or_insert(Rc::new(LinuxKeyboardMapper::new(0, 0, 0)))
+                .clone();
+            state.keyboard_mapper = Some(mapper);
             if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
                 drop(state);
                 callback();
@@ -455,7 +461,7 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
-        let keyboard_layout = Box::new(LinuxKeyboardLayout::unknown());
+        let keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
         let (globals, mut event_queue) =
             registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
@@ -576,12 +582,11 @@ impl WaylandClient {
             in_progress_outputs,
             windows: HashMap::default(),
             common,
-            keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
+            keyboard_layout,
             keyboard_mapper: None,
             keyboard_mapper_cache: HashMap::default(),
-            keyboard_layout,
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -1222,11 +1227,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     .flatten()
                     .expect("Failed to create keymap")
                 };
-                let keymap_state = xkb::State::new(&keymap);
-                let keyboard_layout = LinuxKeyboardLayout::new(&keymap_state);
-                state.keymap_state = Some(keymap_state);
+                state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
-                update_keyboard_mapper(&mut state, keyboard_layout, 0);
                 drop(state);
 
                 this.handle_keyboard_layout_change();
@@ -1271,8 +1273,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
-                state.capslock = Capslock::from_xkb(&keymap_state);
                 let keymap_state = state.keymap_state.as_mut().unwrap();
+                state.capslock = Capslock::from_xkb(keymap_state);
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
@@ -2178,20 +2180,4 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
             _ => {}
         }
     }
-}
-
-fn update_keyboard_mapper(
-    client: &mut WaylandClientState,
-    keyboard_layout: LinuxKeyboardLayout,
-    group: u32,
-) {
-    let id = keyboard_layout.id().to_string();
-    let mapper = client
-        .keyboard_mapper_cache
-        .entry(id)
-        .or_insert(Rc::new(LinuxKeyboardMapper::new(0, 0, group)))
-        .clone();
-
-    client.keyboard_mapper = Some(mapper);
-    client.keyboard_layout = Box::new(keyboard_layout);
 }
