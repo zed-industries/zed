@@ -90,7 +90,7 @@ pub(crate) fn create_editor(
     thread_store: WeakEntity<ThreadStore>,
     text_thread_store: WeakEntity<TextThreadStore>,
     min_lines: usize,
-    max_lines: usize,
+    max_lines: Option<usize>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
@@ -108,7 +108,9 @@ pub(crate) fn create_editor(
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
                 min_lines,
-                max_lines,
+                max_lines: Some(max_lines).expect(
+                    "The max number of lines should always be defined even if the value is None.",
+                ),
             },
             buffer,
             None,
@@ -164,7 +166,7 @@ impl MessageEditor {
             thread_store.clone(),
             text_thread_store.clone(),
             MIN_EDITOR_LINES,
-            MAX_EDITOR_LINES,
+            Some(MAX_EDITOR_LINES),
             window,
             cx,
         );
@@ -262,7 +264,7 @@ impl MessageEditor {
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
-                    max_lines: MAX_EDITOR_LINES,
+                    max_lines: Some(MAX_EDITOR_LINES),
                 })
             }
         });

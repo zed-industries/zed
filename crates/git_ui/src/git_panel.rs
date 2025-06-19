@@ -379,7 +379,7 @@ pub(crate) fn commit_message_editor(
     let mut commit_editor = Editor::new(
         EditorMode::AutoHeight {
             min_lines: 1,
-            max_lines,
+            max_lines: Some(max_lines),
         },
         buffer,
         None,

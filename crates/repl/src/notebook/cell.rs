@@ -179,7 +179,7 @@ impl Cell {
                     let mut editor = Editor::new(
                         EditorMode::AutoHeight {
                             min_lines: 1,
-                            max_lines: 1024,
+                            max_lines: Some(1024),
                         },
                         multi_buffer,
                         None,
