@@ -101,6 +101,7 @@ impl State {
                 .log_err();
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })
         })
@@ -133,6 +134,7 @@ impl State {
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })?;
 
@@ -156,8 +158,10 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
-        self.fetch_models_task.replace(task);
+        if self.is_authenticated() {
+            let task = self.fetch_models(cx);
+            self.fetch_models_task.replace(task);
+        }
     }
 }
 
@@ -401,7 +405,7 @@ pub fn into_open_router(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     add_message_content_part(
-                        open_router::MessagePart::Text { text: text },
+                        open_router::MessagePart::Text { text },
                         message.role,
                         &mut messages,
                     )
