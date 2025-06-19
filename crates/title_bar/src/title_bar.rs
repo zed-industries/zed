@@ -1,8 +1,8 @@
 mod application_menu;
 mod collab;
 mod onboarding_banner;
-mod platform_title_bar;
-pub mod platforms;
+pub mod platform_title_bar;
+mod platforms;
 mod title_bar_settings;
 
 #[cfg(feature = "stories")]

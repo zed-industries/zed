@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
-use title_bar::platforms::{platform_linux, platform_windows};
+use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, Tooltip, Window, div, prelude::*,
@@ -44,7 +44,6 @@ const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
     "This rule supports special functionality.\n",
     "It's read-only, but you can remove it from your default rules."
 );
-const TITLE_BAR_HEIGHT: Pixels = px(32.0);
 
 pub trait InlineAssistDelegate {
     fn assist(
@@ -142,6 +141,7 @@ pub fn open_rules_library(
 }
 
 pub struct RulesLibrary {
+    title_bar: Option<Entity<PlatformTitleBar>>,
     store: Entity<PromptStore>,
     language_registry: Arc<LanguageRegistry>,
     rule_editors: HashMap<PromptId, RuleEditor>,
@@ -397,6 +397,11 @@ impl RulesLibrary {
             picker
         });
         Self {
+            title_bar: if !cfg!(target_os = "macos") {
+                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+            } else {
+                None
+            },
             store: store.clone(),
             language_registry,
             rule_editors: HashMap::default(),
@@ -1244,7 +1249,9 @@ impl Render for RulesLibrary {
             .overflow_hidden()
             .font(ui_font)
             .text_color(theme.colors().text)
-            .child(TitleBar)
+            .when_some(self.title_bar.clone(), |this, title_bar| {
+                this.child(title_bar)
+            })
             .child(
                 h_flex()
                     .flex_1()
@@ -1302,46 +1309,5 @@ impl Render for RulesLibrary {
                         }
                     }),
             )
-    }
-}
-
-#[derive(IntoElement)]
-struct TitleBar;
-
-impl RenderOnce for TitleBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let height = TITLE_BAR_HEIGHT;
-        let close_action = Box::new(workspace::CloseWindow);
-
-        match PlatformStyle::platform() {
-            PlatformStyle::Mac => {
-                // for macOS we use just traffic lights
-                div().into_any_element()
-            }
-            PlatformStyle::Linux => div()
-                .id("rules-library-title-bar")
-                .flex()
-                .flex_row()
-                .justify_end()
-                .items_center()
-                .w_full()
-                .h(height)
-                .bg(cx.theme().colors().title_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .child(platform_linux::LinuxWindowControls::new(close_action))
-                .into_any_element(),
-            PlatformStyle::Windows => div()
-                .id("rules-library-title-bar")
-                .flex()
-                .flex_row()
-                .justify_end()
-                .items_center()
-                .w_full()
-                .h(height)
-                .bg(cx.theme().colors().title_bar_background)
-                .child(platform_windows::WindowsWindowControls::new(height))
-                .into_any_element(),
-        }
     }
 }
