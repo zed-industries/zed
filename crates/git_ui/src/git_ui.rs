@@ -15,6 +15,9 @@ use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
+use zed_actions::{self, DiffText};
+
+use crate::diff_view::DiffView;
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -151,6 +154,9 @@ pub fn init(cx: &mut App) {
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
+        });
+        workspace.register_action(|workspace, action: &DiffText, window, cx| {
+            DiffView::open_text_diff(action, workspace, window, cx).detach();
         });
     })
     .detach();

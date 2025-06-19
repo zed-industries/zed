@@ -213,6 +213,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
+use zed_actions::{self, DiffText, FilePath, SelectionData, TextData};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -12152,6 +12153,85 @@ impl Editor {
                 this.insert(&clipboard_text, window, cx);
             }
         });
+    }
+
+    pub fn diff_clipboard_with_selection(
+        &mut self,
+        _: &DiffClipboardWithSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self.selections.all::<usize>(cx);
+
+        let Some(first_selection) = selections.first() else {
+            log::warn!("There should always be at least one selection in Zed. This is a bug.");
+            return;
+        };
+
+        let clipboard_text = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.entries()
+                    .first()
+                    .map_or("".to_string(), |entry| match entry {
+                        ClipboardEntry::String(text) => text.text().to_string(),
+                        _ => "".to_string(),
+                    })
+            })
+            .unwrap_or_else(|| "".to_string());
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let selection_range = if first_selection.is_empty() {
+            0..buffer.len()
+        } else {
+            first_selection.range()
+        };
+
+        let mut selected_text = String::new();
+
+        for chunk in buffer.text_for_range(selection_range.clone()) {
+            selected_text.push_str(chunk);
+        }
+
+        let (full_path, language_name) =
+            buffer
+                .as_singleton()
+                .map_or((None, None), |(_, _, buffer)| {
+                    let file = buffer.file();
+                    let full_path = file.map(|f| f.full_path(cx).to_path_buf());
+                    let language_name = buffer
+                        .language()
+                        .map(|language| language.name().to_string());
+                    (full_path, language_name)
+                });
+
+        let selection_start = selection_range.start.to_point(&buffer);
+        let selection_end = selection_range.end.to_point(&buffer);
+
+        window.dispatch_action(
+            Box::new(DiffText {
+                old_text_data: TextData {
+                    text: clipboard_text,
+                    file_path: FilePath::Custom("clipboard".into()),
+                    // We assume that the text in the clipboard is of the same language as the selected text
+                    language: language_name.clone(),
+                    selection_data: None,
+                },
+                new_text_data: TextData {
+                    text: selected_text,
+                    file_path: FilePath::Path(full_path),
+                    language: language_name,
+                    selection_data: Some(SelectionData {
+                        start_row: selection_start.row,
+                        start_column: selection_start.column,
+                        end_row: selection_end.row,
+                        end_column: selection_end.column,
+                    }),
+                },
+            }),
+            cx,
+        );
     }
 
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {

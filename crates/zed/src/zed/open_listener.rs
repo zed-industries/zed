@@ -262,7 +262,7 @@ pub async fn open_paths_with_positions(
         let old_path = Path::new(&diff_pair[0]).canonicalize()?;
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            DiffView::open(old_path, new_path, workspace, window, cx)
+            DiffView::open_file_diff(old_path, new_path, workspace, window, cx)
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
                 items.push(Some(Ok(Box::new(diff_view))))

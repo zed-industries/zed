@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, Task, Window,
 };
-use language::Buffer;
+use language::{self, Buffer};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -18,11 +18,17 @@ use std::{
     time::Duration,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
-use util::paths::PathExt as _;
+use util::paths::PathExt;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
+};
+
+use zed_actions::{
+    self, DiffText,
+    FilePath::{Custom, Path},
+    SelectionData, TextData,
 };
 
 pub struct DiffView {
@@ -30,13 +36,15 @@ pub struct DiffView {
     old_buffer: Entity<Buffer>,
     new_buffer: Entity<Buffer>,
     buffer_changes_tx: watch::Sender<()>,
+    tab_content_text: SharedString,
+    tab_tooltip_text: SharedString,
     _recalculate_diff_task: Task<Result<()>>,
 }
 
 const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl DiffView {
-    pub fn open(
+    pub fn open_file_diff(
         old_path: PathBuf,
         new_path: PathBuf,
         workspace: &Workspace,
@@ -56,11 +64,114 @@ impl DiffView {
             let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
+                let old_file = old_buffer.read(cx).file();
+                let new_file = new_buffer.read(cx).file();
+
+                let untitled = "untitled";
+                let old_filename = old_file
+                    .and_then(|file| {
+                        Some(
+                            file.full_path(cx)
+                                .file_name()?
+                                .to_string_lossy()
+                                .to_string(),
+                        )
+                    })
+                    .unwrap_or_else(|| untitled.into());
+                let new_filename = new_file
+                    .and_then(|file| {
+                        Some(
+                            file.full_path(cx)
+                                .file_name()?
+                                .to_string_lossy()
+                                .to_string(),
+                        )
+                    })
+                    .unwrap_or_else(|| untitled.into());
+                let tab_content_text = diff_tab_text(old_filename, new_filename);
+
+                let old_path = old_file
+                    .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+                    .unwrap_or_else(|| untitled.into());
+                let new_path = new_file
+                    .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+                    .unwrap_or_else(|| untitled.into());
+                let tab_tooltip_text = diff_tab_text(old_path, new_path);
+
                 let diff_view = cx.new(|cx| {
                     DiffView::new(
                         old_buffer,
                         new_buffer,
                         buffer_diff,
+                        tab_content_text,
+                        tab_tooltip_text,
+                        project.clone(),
+                        window,
+                        cx,
+                    )
+                });
+
+                let pane = workspace.active_pane();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
+                });
+
+                diff_view
+            })
+        })
+    }
+
+    pub fn open_text_diff(
+        diff_text_data: &DiffText,
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let action = diff_text_data.clone();
+        let workspace = workspace.weak_handle();
+        window.spawn(cx, async move |cx| {
+            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+
+            let old_buffer =
+                cx.new(|cx| language::Buffer::local(action.old_text_data.text.clone(), cx))?;
+            let new_buffer =
+                cx.new(|cx| language::Buffer::local(action.new_text_data.text.clone(), cx))?;
+
+            let language_registry =
+                project.read_with(cx, |project, _| project.languages().clone())?;
+
+            if let Some(language_name) = &action.old_text_data.language {
+                if let Ok(language) = language_registry.language_for_name(language_name).await {
+                    old_buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(Some(language.clone()), cx);
+                    })?;
+                }
+            }
+
+            if let Some(language_name) = &action.new_text_data.language {
+                if let Ok(language) = language_registry.language_for_name(language_name).await {
+                    new_buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(Some(language), cx);
+                    })?;
+                }
+            }
+
+            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
+
+            let (old_filename, old_path) = source_location_text(action.old_text_data);
+            let (new_filename, new_path) = source_location_text(action.new_text_data);
+
+            let tab_content_text = diff_tab_text(old_filename, new_filename);
+            let tab_tooltip_text = diff_tab_text(old_path, new_path);
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let diff_view = cx.new(|cx| {
+                    DiffView::new(
+                        old_buffer,
+                        new_buffer,
+                        buffer_diff,
+                        tab_content_text,
+                        tab_tooltip_text,
                         project.clone(),
                         window,
                         cx,
@@ -81,6 +192,8 @@ impl DiffView {
         old_buffer: Entity<Buffer>,
         new_buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
+        tab_content_text: SharedString,
+        tab_tooltip_text: SharedString,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -160,11 +273,64 @@ impl DiffView {
                 }
                 Ok(())
             }),
+            tab_content_text,
+            tab_tooltip_text,
         }
     }
 }
 
-async fn build_buffer_diff(
+fn source_location_text(text_data: TextData) -> (String, String) {
+    let untitled = "untitled";
+    let (filename, full_path) = match text_data.file_path {
+        Path(path) => path
+            .map(|p| {
+                let filename = p
+                    .file_name()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or(untitled.to_string());
+                let full_path = p.compact().to_string_lossy().to_string();
+
+                (filename, full_path)
+            })
+            .unwrap_or((untitled.to_string(), untitled.to_string())),
+        Custom(path) => (path.clone(), path),
+    };
+
+    if let Some(selection_data) = text_data.selection_data {
+        let filename = add_line_location(filename, &selection_data);
+        let full_path = add_line_location(full_path, &selection_data);
+        return (filename, full_path);
+    }
+
+    (filename, full_path)
+}
+
+fn add_line_location(source: String, selection_data: &SelectionData) -> String {
+    let start_row = selection_data.start_row;
+    let end_row = selection_data.end_row;
+    let start_col = selection_data.start_column;
+    let end_col = selection_data.end_column;
+
+    let range_text = if start_row == end_row {
+        format!("L{}:{}-{}", start_row + 1, start_col + 1, end_col + 1)
+    } else {
+        format!(
+            "L{}:{}-L{}:{}",
+            start_row + 1,
+            start_col + 1,
+            end_row + 1,
+            end_col + 1
+        )
+    };
+
+    format!("{} @ {}", source, range_text)
+}
+
+fn diff_tab_text(old: String, new: String) -> SharedString {
+    format!("{old} ↔ {new}").into()
+}
+
+pub async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
@@ -215,50 +381,12 @@ impl Item for DiffView {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        let old_filename = self
-            .old_buffer
-            .read(cx)
-            .file()
-            .and_then(|file| {
-                Some(
-                    file.full_path(cx)
-                        .file_name()?
-                        .to_string_lossy()
-                        .to_string(),
-                )
-            })
-            .unwrap_or_else(|| "untitled".into());
-        let new_filename = self
-            .new_buffer
-            .read(cx)
-            .file()
-            .and_then(|file| {
-                Some(
-                    file.full_path(cx)
-                        .file_name()?
-                        .to_string_lossy()
-                        .to_string(),
-                )
-            })
-            .unwrap_or_else(|| "untitled".into());
-        format!("{old_filename} ↔ {new_filename}").into()
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
+        self.tab_content_text.clone()
     }
 
-    fn tab_tooltip_text(&self, cx: &App) -> Option<ui::SharedString> {
-        let old_path = self
-            .old_buffer
-            .read(cx)
-            .file()
-            .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".into());
-        let new_path = self
-            .new_buffer
-            .read(cx)
-            .file()
-            .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".into());
-        Some(format!("{old_path} ↔ {new_path}").into())
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some(self.tab_tooltip_text.clone())
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
@@ -380,6 +508,7 @@ mod tests {
     use unindent::unindent;
     use util::path;
     use workspace::Workspace;
+    use zed_actions::TextData;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -394,7 +523,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_diff_view(cx: &mut TestAppContext) {
+    async fn test_file_diff_view(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -414,7 +543,7 @@ mod tests {
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
-                DiffView::open(
+                DiffView::open_file_diff(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
                     workspace,
@@ -510,6 +639,155 @@ mod tests {
                 ",
             ),
         );
+
+        diff_view.read_with(cx, |diff_view, _| {
+            assert_eq!(diff_view.tab_content_text, "old_file.txt ↔ new_file.txt");
+            assert_eq!(
+                diff_view.tab_tooltip_text,
+                "test/old_file.txt ↔ test/new_file.txt"
+            );
+        })
+    }
+
+    #[gpui::test]
+    async fn test_selection_against_selection_text_diff_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                DiffView::open_text_diff(
+                    &DiffText {
+                        old_text_data: TextData {
+                            text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
+                            file_path: Path(Some(PathBuf::from("a/b/text_1.txt"))),
+                            language: None,
+                            selection_data: Some(SelectionData {
+                                start_row: 0,
+                                start_column: 0,
+                                end_row: 4,
+                                end_column: 0,
+                            }),
+                        },
+                        new_text_data: TextData {
+                            text: "new line 1\nline 2\nnew line 3\nline 4\n".to_string(),
+                            file_path: Path(Some(PathBuf::from("a/b/text_2.txt"))),
+                            language: None,
+                            selection_data: Some(SelectionData {
+                                start_row: 0,
+                                start_column: 0,
+                                end_row: 4,
+                                end_column: 0,
+                            }),
+                        },
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
+            &mut cx,
+            &unindent(
+                "
+                - old line 1
+                + ˇnew line 1
+                  line 2
+                - old line 3
+                + new line 3
+                  line 4
+                ",
+            ),
+        );
+
+        diff_view.read_with(cx, |diff_view, _| {
+            assert_eq!(
+                diff_view.tab_content_text,
+                "text_1.txt @ L1:1-L5:1 ↔ text_2.txt @ L1:1-L5:1"
+            );
+            assert_eq!(
+                diff_view.tab_tooltip_text,
+                "a/b/text_1.txt @ L1:1-L5:1 ↔ a/b/text_2.txt @ L1:1-L5:1"
+            );
+        })
+    }
+
+    #[gpui::test]
+    async fn test_clipboard_against_selection_text_diff_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                DiffView::open_text_diff(
+                    &DiffText {
+                        old_text_data: TextData {
+                            text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
+                            file_path: Custom("clipboard".to_string()),
+                            language: None,
+                            selection_data: None,
+                        },
+                        new_text_data: TextData {
+                            text: "new line 1\nline 2\nnew line 3\nline 4\n".to_string(),
+                            file_path: Path(Some(PathBuf::from("a/b/text.txt"))),
+                            language: None,
+                            selection_data: Some(SelectionData {
+                                start_row: 0,
+                                start_column: 0,
+                                end_row: 4,
+                                end_column: 0,
+                            }),
+                        },
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
+            &mut cx,
+            &unindent(
+                "
+                - old line 1
+                + ˇnew line 1
+                  line 2
+                - old line 3
+                + new line 3
+                  line 4
+                ",
+            ),
+        );
+
+        diff_view.read_with(cx, |diff_view, _| {
+            assert_eq!(
+                diff_view.tab_content_text,
+                "clipboard ↔ text.txt @ L1:1-L5:1"
+            );
+            assert_eq!(
+                diff_view.tab_tooltip_text,
+                "clipboard ↔ a/b/text.txt @ L1:1-L5:1"
+            );
+        })
     }
 
     #[gpui::test]
