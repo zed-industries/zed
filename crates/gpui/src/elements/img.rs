@@ -25,7 +25,7 @@ use std::{
 use thiserror::Error;
 use util::ResultExt;
 
-use super::{Stateful, StatefulInteractiveElement};
+use super::{FocusableElement, Stateful, StatefulInteractiveElement};
 
 /// The delay before showing the loading state.
 pub const LOADING_DELAY: Duration = Duration::from_millis(200);
@@ -508,6 +508,8 @@ impl IntoElement for Img {
         self
     }
 }
+
+impl FocusableElement for Img {}
 
 impl StatefulInteractiveElement for Img {}
 

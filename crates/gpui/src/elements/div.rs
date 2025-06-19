@@ -662,6 +662,12 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Apply the given style to the element when is focused
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
+
     /// Bind the given callback to the mouse down event for the given mouse button,
     /// the fluent API equivalent to [`Interactivity::on_mouse_down`]
     ///
@@ -2800,7 +2806,7 @@ pub struct FocusableWrapper<E> {
     pub element: E,
 }
 
-impl<E: InteractiveElement> FocusableElement for E {}
+impl<E: InteractiveElement> FocusableElement for FocusableWrapper<E> {}
 
 impl<E> InteractiveElement for FocusableWrapper<E>
 where
@@ -2943,6 +2949,8 @@ where
         self.element.interactivity()
     }
 }
+
+impl<E: FocusableElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
 where
