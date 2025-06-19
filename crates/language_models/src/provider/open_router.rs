@@ -58,6 +58,7 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<()>>>,
+    settings: OpenRouterSettings,
     _subscription: Subscription,
 }
 
@@ -168,8 +169,14 @@ impl OpenRouterLanguageModelProvider {
             http_client: http_client.clone(),
             available_models: Vec::new(),
             fetch_models_task: None,
+            settings: OpenRouterSettings::default(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.restart_fetch_models_task(cx);
+                let current_settings = &AllLanguageModelSettings::get_global(cx).open_router;
+                let settings_changed = current_settings != &this.settings;
+                if settings_changed {
+                    this.settings = current_settings.clone();
+                    this.restart_fetch_models_task(cx);
+                }
                 cx.notify();
             }),
         });
