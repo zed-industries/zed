@@ -58,6 +58,7 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<()>>>,
+    settings: OpenRouterSettings,
     _subscription: Subscription,
 }
 
@@ -100,6 +101,7 @@ impl State {
                 .log_err();
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })
         })
@@ -132,6 +134,7 @@ impl State {
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })?;
 
@@ -155,8 +158,10 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
-        self.fetch_models_task.replace(task);
+        if self.is_authenticated() {
+            let task = self.fetch_models(cx);
+            self.fetch_models_task.replace(task);
+        }
     }
 }
 
@@ -168,8 +173,14 @@ impl OpenRouterLanguageModelProvider {
             http_client: http_client.clone(),
             available_models: Vec::new(),
             fetch_models_task: None,
+            settings: OpenRouterSettings::default(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.restart_fetch_models_task(cx);
+                let current_settings = &AllLanguageModelSettings::get_global(cx).open_router;
+                let settings_changed = current_settings != &this.settings;
+                if settings_changed {
+                    this.settings = current_settings.clone();
+                    this.restart_fetch_models_task(cx);
+                }
                 cx.notify();
             }),
         });
@@ -394,7 +405,7 @@ pub fn into_open_router(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     add_message_content_part(
-                        open_router::MessagePart::Text { text: text },
+                        open_router::MessagePart::Text { text },
                         message.role,
                         &mut messages,
                     )
