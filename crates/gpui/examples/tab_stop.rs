@@ -1,17 +1,17 @@
 use gpui::{
-    App, Application, Bounds, Context, FocusHandle, KeyBinding, Window, WindowBounds,
+    App, Application, Bounds, Context, FocusHandle, KeyBinding, SharedString, Window, WindowBounds,
     WindowOptions, actions, div, prelude::*, px, size,
 };
 
 actions!(example, [Tab, TabPrev]);
 
 struct Example {
-    focus_handle: FocusHandle,
     items: Vec<FocusHandle>,
+    message: SharedString,
 }
 
 impl Example {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let items = vec![
             cx.focus_handle().tab_index(1).tab_stop(true),
             cx.focus_handle().tab_index(2).tab_stop(true),
@@ -19,18 +19,22 @@ impl Example {
             cx.focus_handle(),
             cx.focus_handle().tab_index(2).tab_stop(true),
         ];
+
+        window.focus(items.first().unwrap());
         Self {
             items,
-            focus_handle: cx.focus_handle(),
+            message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
         }
     }
 
     fn on_tab(&mut self, _: &Tab, window: &mut Window, _: &mut Context<Self>) {
         window.focus_next();
+        self.message = SharedString::from("You have pressed `Tab`.");
     }
 
     fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, _: &mut Context<Self>) {
         window.focus_previous();
+        self.message = SharedString::from("You have pressed `Shift-Tab`.");
     }
 }
 
@@ -38,7 +42,6 @@ impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("app")
-            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
             .size_full()
@@ -48,6 +51,7 @@ impl Render for Example {
             .gap_3()
             .bg(gpui::white())
             .text_color(gpui::black())
+            .child(self.message.clone())
             .children(
                 self.items
                     .clone()
@@ -92,7 +96,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|cx| Example::new(cx)),
+            |window, cx| cx.new(|cx| Example::new(window, cx)),
         )
         .unwrap();
 
