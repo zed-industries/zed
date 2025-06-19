@@ -487,7 +487,7 @@ pub enum EditorMode {
     },
     AutoHeight {
         min_lines: usize,
-        max_lines: usize,
+        max_lines: Option<usize>,
     },
     Full {
         /// When set to `true`, the editor will scale its UI elements with the buffer font size.
@@ -1643,7 +1643,28 @@ impl Editor {
         Self::new(
             EditorMode::AutoHeight {
                 min_lines,
-                max_lines,
+                max_lines: Some(max_lines),
+            },
+            buffer,
+            None,
+            window,
+            cx,
+        )
+    }
+
+    /// Creates a new auto-height editor with a minimum number of lines but no maximum.
+    /// The editor grows as tall as needed to fit its content.
+    pub fn auto_height_unbounded(
+        min_lines: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer = cx.new(|cx| Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        Self::new(
+            EditorMode::AutoHeight {
+                min_lines,
+                max_lines: None,
             },
             buffer,
             None,
@@ -22673,7 +22694,7 @@ impl BreakpointPromptEditor {
             let mut prompt = Editor::new(
                 EditorMode::AutoHeight {
                     min_lines: 1,
-                    max_lines: Self::MAX_LINES as usize,
+                    max_lines: Some(Self::MAX_LINES as usize),
                 },
                 buffer,
                 None,

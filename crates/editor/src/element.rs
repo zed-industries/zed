@@ -9985,7 +9985,7 @@ pub fn register_action<T: Action>(
 fn compute_auto_height_layout(
     editor: &mut Editor,
     min_lines: usize,
-    max_lines: usize,
+    max_lines: Option<usize>,
     max_line_number_width: Pixels,
     known_dimensions: Size<Option<Pixels>>,
     available_width: AvailableSpace,
@@ -10031,11 +10031,18 @@ fn compute_auto_height_layout(
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
-    let height = scroll_height
-        .max(line_height * min_lines as f32)
-        .min(line_height * max_lines as f32);
 
-    Some(size(width, height))
+    let min_height = line_height * min_lines as f32;
+    let content_height = scroll_height.max(min_height);
+
+    let final_height = if let Some(max_lines) = max_lines {
+        let max_height = line_height * max_lines as f32;
+        content_height.min(max_height)
+    } else {
+        content_height
+    };
+
+    Some(size(width, final_height))
 }
 
 #[cfg(test)]
