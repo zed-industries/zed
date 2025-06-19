@@ -1533,7 +1533,8 @@ impl Interactivity {
                         let mut handle = element_state
                             .focus_handle
                             .get_or_insert_with(|| cx.focus_handle())
-                            .clone();
+                            .clone()
+                            .tab_stop(false);
 
                         if let Some(index) = self.tab_index {
                             handle = handle.tab_index(index).tab_stop(true);

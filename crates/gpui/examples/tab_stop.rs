@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Bounds, Context, ElementId, FocusHandle, KeyBinding, SharedString, Window,
-    WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, Div, ElementId, FocusHandle, KeyBinding, SharedString,
+    Stateful, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
 
 actions!(example, [Tab, TabPrev]);
@@ -40,11 +40,7 @@ impl Example {
 
 impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        fn button(
-            id: impl Into<ElementId>,
-            tab_index: isize,
-            label: impl Into<SharedString>,
-        ) -> impl IntoElement {
+        fn button(id: impl Into<ElementId>) -> Stateful<Div> {
             div()
                 .id(id)
                 .h_10()
@@ -56,10 +52,8 @@ impl Render for Example {
                 .border_color(gpui::black())
                 .bg(gpui::black())
                 .text_color(gpui::white())
-                .tab_index(tab_index)
                 .focus(|this| this.border_color(gpui::blue()))
                 .shadow_sm()
-                .child(label.into())
         }
 
         div()
@@ -108,8 +102,8 @@ impl Render for Example {
                     .flex_row()
                     .gap_3()
                     .items_center()
-                    .child(button("el1", 4, "Button 1"))
-                    .child(button("el2", 4, "Button 2")),
+                    .child(button("el1").tab_index(4).child("Button 1"))
+                    .child(button("el2").tab_index(5).child("Button 2")),
             )
     }
 }
