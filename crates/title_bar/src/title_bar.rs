@@ -15,21 +15,18 @@ use crate::application_menu::{
     ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
 };
 
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
-    Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, WindowControlArea,
-    actions, div, px,
+    Action, AnyElement, App, Context, Corner, Element, Entity, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
-use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -112,7 +109,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct TitleBar {
-    platform_titlebar: PlatformTitleBar,
+    platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
     client: Arc<Client>,
@@ -126,56 +123,68 @@ impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title_bar_settings = *TitleBarSettings::get_global(cx);
 
-        self.platform_titlebar
-            .child(
-                h_flex()
-                    .gap_1()
-                    .map(|title_bar| {
-                        let mut render_project_items = title_bar_settings.show_branch_name
-                            || title_bar_settings.show_project_items;
-                        title_bar
-                            .when_some(self.application_menu.clone(), |title_bar, menu| {
-                                render_project_items &= !menu.read(cx).all_menus_shown();
-                                title_bar.child(menu)
-                            })
-                            .when(render_project_items, |title_bar| {
-                                title_bar
-                                    .when(title_bar_settings.show_project_items, |title_bar| {
-                                        title_bar
-                                            .children(self.render_project_host(cx))
-                                            .child(self.render_project_name(cx))
-                                    })
-                                    .when(title_bar_settings.show_branch_name, |title_bar| {
-                                        title_bar.children(self.render_project_branch(cx))
-                                    })
-                            })
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
-            )
-            .child(self.render_collaborator_list(window, cx))
-            .when(title_bar_settings.show_onboarding_banner, |title_bar| {
-                title_bar.child(self.banner.clone())
-            })
-            .child(
-                h_flex()
-                    .gap_1()
-                    .pr_1()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .children(self.render_call_controls(window, cx))
-                    .map(|el| {
-                        let status = self.client.status();
-                        let status = &*status.borrow();
-                        if matches!(status, client::Status::Connected { .. }) {
-                            el.child(self.render_user_menu_button(cx))
-                        } else {
-                            el.children(self.render_connection_status(status, cx))
-                                .when(TitleBarSettings::get_global(cx).show_sign_in, |el| {
-                                    el.child(self.render_sign_in_button(cx))
+        let mut children = Vec::new();
+
+        children.push(
+            h_flex()
+                .gap_1()
+                .map(|title_bar| {
+                    let mut render_project_items = title_bar_settings.show_branch_name
+                        || title_bar_settings.show_project_items;
+                    title_bar
+                        .when_some(self.application_menu.clone(), |title_bar, menu| {
+                            render_project_items &= !menu.read(cx).all_menus_shown();
+                            title_bar.child(menu)
+                        })
+                        .when(render_project_items, |title_bar| {
+                            title_bar
+                                .when(title_bar_settings.show_project_items, |title_bar| {
+                                    title_bar
+                                        .children(self.render_project_host(cx))
+                                        .child(self.render_project_name(cx))
                                 })
-                                .child(self.render_user_menu_button(cx))
-                        }
-                    }),
-            )
+                                .when(title_bar_settings.show_branch_name, |title_bar| {
+                                    title_bar.children(self.render_project_branch(cx))
+                                })
+                        })
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .into_any_element(),
+        );
+
+        children.push(self.render_collaborator_list(window, cx).into_any_element());
+
+        if title_bar_settings.show_onboarding_banner {
+            children.push(self.banner.clone().into_any_element())
+        }
+
+        children.push(
+            h_flex()
+                .gap_1()
+                .pr_1()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .children(self.render_call_controls(window, cx))
+                .map(|el| {
+                    let status = self.client.status();
+                    let status = &*status.borrow();
+                    if matches!(status, client::Status::Connected { .. }) {
+                        el.child(self.render_user_menu_button(cx))
+                    } else {
+                        el.children(self.render_connection_status(status, cx))
+                            .when(TitleBarSettings::get_global(cx).show_sign_in, |el| {
+                                el.child(self.render_sign_in_button(cx))
+                            })
+                            .child(self.render_user_menu_button(cx))
+                    }
+                })
+                .into_any_element(),
+        );
+
+        self.platform_titlebar.update(cx, |this, _| {
+            this.set_children(children);
+        });
+
+        self.platform_titlebar.clone().into_any_element()
     }
 }
 
@@ -227,7 +236,7 @@ impl TitleBar {
             )
         });
 
-        let platform_titlebar = PlatformTitleBar::new(id);
+        let platform_titlebar = cx.new(|_| PlatformTitleBar::new(id));
 
         Self {
             platform_titlebar,

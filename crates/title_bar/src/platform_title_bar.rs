@@ -1,15 +1,16 @@
 use gpui::{
     AnyElement, Context, Decorations, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, Stateful, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
+    Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
+use std::mem;
 use ui::prelude::*;
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 
 pub struct PlatformTitleBar {
+    id: ElementId,
     platform_style: PlatformStyle,
-    content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
 }
@@ -18,8 +19,8 @@ impl PlatformTitleBar {
     pub fn new(id: impl Into<ElementId>) -> Self {
         let platform_style = PlatformStyle::platform();
         Self {
+            id: id.into(),
             platform_style,
-            content: div().id(id.into()),
             children: SmallVec::new(),
             should_move: false,
         }
@@ -34,6 +35,13 @@ impl PlatformTitleBar {
     pub fn height(_window: &mut Window) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
+    }
+
+    pub fn set_children<T>(&mut self, children: T)
+    where
+        T: IntoIterator<Item = AnyElement>,
+    {
+        self.children = children.into_iter().collect();
     }
 }
 
@@ -52,9 +60,10 @@ impl Render for PlatformTitleBar {
             cx.theme().colors().title_bar_background
         };
         let close_action = Box::new(workspace::CloseWindow);
+        let children = mem::take(&mut self.children);
 
         h_flex()
-            .id("platform-titlebar")
+            .id(self.id.clone())
             .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
@@ -106,7 +115,7 @@ impl Render for PlatformTitleBar {
                             }
                         })
                     })
-                    .children(self.children),
+                    .children(children),
             )
             .when(!window.is_fullscreen(), |title_bar| {
                 match self.platform_style {
@@ -153,14 +162,6 @@ impl Render for PlatformTitleBar {
             })
     }
 }
-
-impl InteractiveElement for PlatformTitleBar {
-    fn interactivity(&mut self) -> &mut gpui::Interactivity {
-        self.content.interactivity()
-    }
-}
-
-impl StatefulInteractiveElement for PlatformTitleBar {}
 
 impl ParentElement for PlatformTitleBar {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
