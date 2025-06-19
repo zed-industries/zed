@@ -1739,7 +1739,6 @@ struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
-    pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
@@ -1751,7 +1750,6 @@ struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
@@ -1803,9 +1801,6 @@ impl Settings for VimSettings {
                 .ok_or_else(Self::missing_default)?,
             use_system_clipboard: settings
                 .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_multiline_find: settings
-                .use_multiline_find
                 .ok_or_else(Self::missing_default)?,
             use_smartcase_find: settings
                 .use_smartcase_find
