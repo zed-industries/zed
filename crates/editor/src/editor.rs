@@ -1717,6 +1717,7 @@ impl Editor {
         );
 
         let full_mode = mode.is_full();
+        let is_minimap = mode.is_minimap();
         let diagnostics_max_severity = if full_mode {
             EditorSettings::get_global(cx)
                 .diagnostics_max_severity
@@ -1777,13 +1778,19 @@ impl Editor {
 
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
-        let blink_manager = cx.new(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
+        let blink_manager = cx.new(|cx| {
+            let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
+            if is_minimap {
+                blink_manager.disable(cx);
+            }
+            blink_manager
+        });
 
         let soft_wrap_mode_override = matches!(mode, EditorMode::SingleLine { .. })
             .then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
-        if mode.is_full() {
+        if full_mode {
             if let Some(project) = project.as_ref() {
                 project_subscriptions.push(cx.subscribe_in(
                     project,
@@ -1894,18 +1901,23 @@ impl Editor {
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
         let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, window, Self::handle_focus)
-            .detach();
-        cx.on_focus_in(&focus_handle, window, Self::handle_focus_in)
-            .detach();
-        cx.on_focus_out(&focus_handle, window, Self::handle_focus_out)
-            .detach();
-        cx.on_blur(&focus_handle, window, Self::handle_blur)
-            .detach();
-        cx.observe_pending_input(window, Self::observe_pending_input)
-            .detach();
+        if !is_minimap {
+            cx.on_focus(&focus_handle, window, Self::handle_focus)
+                .detach();
+            cx.on_focus_in(&focus_handle, window, Self::handle_focus_in)
+                .detach();
+            cx.on_focus_out(&focus_handle, window, Self::handle_focus_out)
+                .detach();
+            cx.on_blur(&focus_handle, window, Self::handle_blur)
+                .detach();
+            cx.observe_pending_input(window, Self::observe_pending_input)
+                .detach();
+        }
 
-        let show_indent_guides = if matches!(mode, EditorMode::SingleLine { .. }) {
+        let show_indent_guides = if matches!(
+            mode,
+            EditorMode::SingleLine { .. } | EditorMode::Minimap { .. }
+        ) {
             Some(false)
         } else {
             None
@@ -1971,10 +1983,10 @@ impl Editor {
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
             offset_content: !matches!(mode, EditorMode::SingleLine { .. }),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
-            show_gutter: mode.is_full(),
-            show_line_numbers: None,
+            show_gutter: full_mode,
+            show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
-            disable_expand_excerpt_buttons: false,
+            disable_expand_excerpt_buttons: !full_mode,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -2008,7 +2020,7 @@ impl Editor {
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
-            searchable: true,
+            searchable: !is_minimap,
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
@@ -2016,9 +2028,9 @@ impl Editor {
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
             workspace: None,
-            input_enabled: true,
-            use_modal_editing: mode.is_full(),
-            read_only: mode.is_minimap(),
+            input_enabled: !is_minimap,
+            use_modal_editing: full_mode,
+            read_only: is_minimap,
             use_autoclose: true,
             use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
@@ -2034,7 +2046,7 @@ impl Editor {
             edit_prediction_preview: EditPredictionPreview::Inactive {
                 released_too_fast: false,
             },
-            inline_diagnostics_enabled: mode.is_full(),
+            inline_diagnostics_enabled: full_mode,
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
@@ -2060,9 +2072,10 @@ impl Editor {
             show_git_blame_inline: false,
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
-            git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
+            git_blame_inline_enabled: full_mode
+                && ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
-            serialize_dirty_buffers: !mode.is_minimap()
+            serialize_dirty_buffers: !is_minimap
                 && ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers,
@@ -2073,27 +2086,31 @@ impl Editor {
             breakpoint_store,
             gutter_breakpoint_indicator: (None, None),
             hovered_diff_hunk_row: None,
-            _subscriptions: vec![
-                cx.observe(&buffer, Self::on_buffer_changed),
-                cx.subscribe_in(&buffer, window, Self::on_buffer_event),
-                cx.observe_in(&display_map, window, Self::on_display_map_changed),
-                cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-                cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
-                observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
-                cx.observe_window_activation(window, |editor, window, cx| {
-                    let active = window.is_window_active();
-                    editor.blink_manager.update(cx, |blink_manager, cx| {
-                        if active {
-                            blink_manager.enable(cx);
-                        } else {
-                            blink_manager.disable(cx);
-                        }
-                    });
-                    if active {
-                        editor.show_mouse_cursor(cx);
-                    }
-                }),
-            ],
+            _subscriptions: (!is_minimap)
+                .then(|| {
+                    vec![
+                        cx.observe(&buffer, Self::on_buffer_changed),
+                        cx.subscribe_in(&buffer, window, Self::on_buffer_event),
+                        cx.observe_in(&display_map, window, Self::on_display_map_changed),
+                        cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                        cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                        observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                        cx.observe_window_activation(window, |editor, window, cx| {
+                            let active = window.is_window_active();
+                            editor.blink_manager.update(cx, |blink_manager, cx| {
+                                if active {
+                                    blink_manager.enable(cx);
+                                } else {
+                                    blink_manager.disable(cx);
+                                }
+                            });
+                            if active {
+                                editor.show_mouse_cursor(cx);
+                            }
+                        }),
+                    ]
+                })
+                .unwrap_or_default(),
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
             colors: None,
@@ -2124,6 +2141,11 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             drag_and_drop_selection_enabled: EditorSettings::get_global(cx).drag_and_drop_selection,
         };
+
+        if is_minimap {
+            return editor;
+        }
+
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
                 ._subscriptions
@@ -17488,7 +17510,7 @@ impl Editor {
                 parent: cx.weak_entity(),
             },
             self.buffer.clone(),
-            self.project.clone(),
+            None,
             Some(self.display_map.clone()),
             window,
             cx,
@@ -19367,14 +19389,12 @@ impl Editor {
     }
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let new_severity = if self.diagnostics_enabled() {
-            EditorSettings::get_global(cx)
+        if self.diagnostics_enabled() {
+            let new_severity = EditorSettings::get_global(cx)
                 .diagnostics_max_severity
-                .unwrap_or(DiagnosticSeverity::Hint)
-        } else {
-            DiagnosticSeverity::Off
-        };
-        self.set_max_diagnostics_severity(new_severity, cx);
+                .unwrap_or(DiagnosticSeverity::Hint);
+            self.set_max_diagnostics_severity(new_severity, cx);
+        }
         self.tasks_update_task = Some(self.refresh_runnables(window, cx));
         self.update_edit_prediction_settings(cx);
         self.refresh_inline_completion(true, false, window, cx);

@@ -2081,16 +2081,19 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
-        if self.editor.read(cx).mode().is_minimap() {
-            return HashMap::default();
-        }
-
-        let max_severity = match ProjectSettings::get_global(cx)
-            .diagnostics
-            .inline
-            .max_severity
-            .unwrap_or_else(|| self.editor.read(cx).diagnostics_max_severity)
-            .into_lsp()
+        let max_severity = match self
+            .editor
+            .read(cx)
+            .inline_diagnostics_enabled()
+            .then(|| {
+                ProjectSettings::get_global(cx)
+                    .diagnostics
+                    .inline
+                    .max_severity
+                    .unwrap_or_else(|| self.editor.read(cx).diagnostics_max_severity)
+                    .into_lsp()
+            })
+            .flatten()
         {
             Some(max_severity) => max_severity,
             None => return HashMap::default(),
@@ -2606,9 +2609,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<IndentGuideLayout>> {
-        if self.editor.read(cx).mode().is_minimap() {
-            return None;
-        }
         let indent_guides = self.editor.update(cx, |editor, cx| {
             editor.indent_guides(visible_buffer_range, snapshot, cx)
         })?;
@@ -3038,9 +3038,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
-        let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
-            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode.is_full()
-        });
+        let include_line_numbers = snapshot
+            .show_line_numbers
+            .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
         if !include_line_numbers {
             return Arc::default();
         }
@@ -8295,18 +8295,22 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-                    let new_fold_widths = line_layouts
-                        .iter()
-                        .flat_map(|layout| &layout.fragments)
-                        .filter_map(|fragment| {
-                            if let LineFragment::Element { id, size, .. } = fragment {
-                                Some((*id, size.width))
-                            } else {
-                                None
-                            }
-                        });
-                    if self.editor.update(cx, |editor, cx| {
-                        editor.update_fold_widths(new_fold_widths, cx)
+                    let new_fold_widths = (!snapshot.mode.is_minimap()).then(|| {
+                        line_layouts
+                            .iter()
+                            .flat_map(|layout| &layout.fragments)
+                            .filter_map(|fragment| {
+                                if let LineFragment::Element { id, size, .. } = fragment {
+                                    Some((*id, size.width))
+                                } else {
+                                    None
+                                }
+                            })
+                    });
+                    if new_fold_widths.is_some_and(|new_fold_widths| {
+                        self.editor.update(cx, |editor, cx| {
+                            editor.update_fold_widths(new_fold_widths, cx)
+                        })
                     }) {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in
@@ -8369,27 +8373,31 @@ impl Element for EditorElement {
                     let sticky_header_excerpt_id =
                         sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
 
-                    let blocks = window.with_element_namespace("blocks", |window| {
-                        self.render_blocks(
-                            start_row..end_row,
-                            &snapshot,
-                            &hitbox,
-                            &text_hitbox,
-                            editor_width,
-                            &mut scroll_width,
-                            &editor_margins,
-                            em_width,
-                            gutter_dimensions.full_width(),
-                            line_height,
-                            &mut line_layouts,
-                            &local_selections,
-                            &selected_buffer_ids,
-                            is_row_soft_wrapped,
-                            sticky_header_excerpt_id,
-                            window,
-                            cx,
-                        )
-                    });
+                    let blocks = (!snapshot.mode.is_minimap())
+                        .then(|| {
+                            window.with_element_namespace("blocks", |window| {
+                                self.render_blocks(
+                                    start_row..end_row,
+                                    &snapshot,
+                                    &hitbox,
+                                    &text_hitbox,
+                                    editor_width,
+                                    &mut scroll_width,
+                                    &editor_margins,
+                                    em_width,
+                                    gutter_dimensions.full_width(),
+                                    line_height,
+                                    &mut line_layouts,
+                                    &local_selections,
+                                    &selected_buffer_ids,
+                                    is_row_soft_wrapped,
+                                    sticky_header_excerpt_id,
+                                    window,
+                                    cx,
+                                )
+                            })
+                        })
+                        .unwrap_or_else(|| Ok((Vec::default(), HashMap::default())));
                     let (mut blocks, row_block_types) = match blocks {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
@@ -8930,19 +8938,21 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self
-            .editor
-            .update(cx, |editor, cx| editor.key_context(window, cx));
+        if !layout.mode.is_minimap() {
+            let focus_handle = self.editor.focus_handle(cx);
+            let key_context = self
+                .editor
+                .update(cx, |editor, cx| editor.key_context(window, cx));
 
-        window.set_key_context(key_context);
-        window.handle_input(
-            &focus_handle,
-            ElementInputHandler::new(bounds, self.editor.clone()),
-            cx,
-        );
-        self.register_actions(window, cx);
-        self.register_key_listeners(window, cx, layout);
+            window.set_key_context(key_context);
+            window.handle_input(
+                &focus_handle,
+                ElementInputHandler::new(bounds, self.editor.clone()),
+                cx,
+            );
+            self.register_actions(window, cx);
+            self.register_key_listeners(window, cx, layout);
+        }
 
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
