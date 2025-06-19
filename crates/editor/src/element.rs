@@ -1912,10 +1912,10 @@ impl EditorElement {
         &self,
         minimap_settings: &Minimap,
         scrollbars_shown: bool,
-        rem_size: Pixels,
+        text_width: Pixels,
         em_width: Pixels,
         font_size: Pixels,
-        text_width: Pixels,
+        rem_size: Pixels,
         cx: &App,
     ) -> Option<Pixels> {
         if minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown {
@@ -1938,8 +1938,7 @@ impl EditorElement {
         let minimap_width = (text_width * MinimapLayout::MINIMAP_WIDTH_PCT)
             .min(minimap_em_width * minimap_settings.max_width_columns.get() as f32);
 
-        // Don't show the minimap if will render too few columns
-        (minimap_width > minimap_em_width * MinimapLayout::MINIMAP_MIN_WIDTH_COLUMNS)
+        (minimap_width >= minimap_em_width * MinimapLayout::MINIMAP_MIN_WIDTH_COLUMNS)
             .then_some(minimap_width)
     }
 
@@ -7864,9 +7863,10 @@ impl Element for EditorElement {
                     });
                     let style = self.style.clone();
 
+                    let rem_size = window.rem_size();
                     let font_id = window.text_system().resolve_font(&style.text.font());
-                    let font_size = style.text.font_size.to_pixels(window.rem_size());
-                    let line_height = style.text.line_height_in_pixels(window.rem_size());
+                    let font_size = style.text.font_size.to_pixels(rem_size);
+                    let line_height = style.text.line_height_in_pixels(rem_size);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let glyph_grid_cell = size(em_advance, line_height);
@@ -7897,10 +7897,10 @@ impl Element for EditorElement {
                         .get_minimap_width(
                             &settings.minimap,
                             scrollbars_shown,
-                            window.rem_size(),
+                            text_width,
                             em_width,
                             font_size,
-                            text_width,
+                            rem_size,
                             cx,
                         )
                         .unwrap_or_default();
