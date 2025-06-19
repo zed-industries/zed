@@ -3902,6 +3902,7 @@ impl GetDocumentDiagnostics {
     }
 }
 
+#[derive(Debug)]
 pub struct WorkspaceLspPullDiagnostics {
     pub version: Option<i32>,
     pub diagnostics: LspPullDiagnostics,
