@@ -9,6 +9,7 @@ use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     ToggleExpandItem,
+    debugger_panel::DebugPanel,
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
@@ -19,10 +20,10 @@ use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{
-    Capabilities, DapRegistry, RunInTerminalRequestArguments, Thread,
     adapters::{DebugAdapterName, DebugTaskDefinition},
     client::SessionId,
     debugger_settings::DebuggerSettings,
+    {Capabilities, DapRegistry, RunInTerminalRequestArguments, Thread},
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
@@ -56,7 +57,7 @@ use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
-    Workspace, item::TabContentParams, move_item, pane::Event,
+    Workspace, item::TabContentParams, move_item, pane,
 };
 
 pub struct RunningState {
@@ -649,8 +650,8 @@ impl RunningState {
                         let panel = this
                             .workspace
                             .update(cx, |workspace, cx| {
-                                workspace.open_panel::<crate::DebugPanel>(window, cx);
-                                workspace.panel::<crate::DebugPanel>(cx)
+                                workspace.open_panel::<DebugPanel>(window, cx);
+                                workspace.panel::<DebugPanel>(cx)
                             })
                             .log_err()
                             .flatten();
@@ -673,6 +674,30 @@ impl RunningState {
                     }
                     SessionEvent::CapabilitiesLoaded => {
                         let capabilities = this.capabilities(cx);
+                        let just_my_code = DebuggerSettings::get_global(cx).just_my_code;
+
+                        // Set exception breakpoints to only break on uncaught/unhandled exceptions
+                        // by default, respecting the user's `just_my_code` setting.
+                        if just_my_code {
+                            if let Some(filters) = &capabilities.exception_breakpoint_filters {
+                                // Different adapters use different names for the "uncaught/unhandled" filter.
+                                // Common names are "uncaught" (e.g. CodeLLDB) and "unhandled" (e.g. Dart).
+                                let filter_to_set =
+                                    if filters.iter().any(|f| f.filter == "unhandled") {
+                                        Some("unhandled")
+                                    } else if filters.iter().any(|f| f.filter == "uncaught") {
+                                        Some("uncaught")
+                                    } else {
+                                        None
+                                    };
+
+                                if let Some(filter_id) = filter_to_set {
+                                    this.session.update(cx, |session, cx| {
+                                        session.toggle_exception_breakpoint(filter_id, cx);
+                                    });
+                                }
+                            }
+                        }
                         if !capabilities.supports_modules_request.unwrap_or(false) {
                             this.remove_pane_item(DebuggerPaneItem::Modules, window, cx);
                         }
@@ -1252,18 +1277,18 @@ impl RunningState {
     pub(crate) fn handle_pane_event(
         this: &mut RunningState,
         source_pane: &Entity<Pane>,
-        event: &Event,
+        event: &pane::Event,
         window: &mut Window,
         cx: &mut Context<RunningState>,
     ) {
         this.serialize_layout(window, cx);
         match event {
-            Event::Remove { .. } => {
+            pane::Event::Remove { .. } => {
                 let _did_find_pane = this.panes.remove(&source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
-            Event::Focus => {
+            pane::Event::Focus => {
                 this.active_pane = source_pane.clone();
             }
             _ => {}

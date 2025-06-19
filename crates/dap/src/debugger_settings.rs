@@ -43,6 +43,10 @@ pub struct DebuggerSettings {
     ///
     /// Default: Bottom
     pub dock: DebugPanelDockPosition,
+    /// Whether to break on all exceptions, or only uncaught ones.
+    ///
+    /// Default: true
+    pub just_my_code: bool,
 }
 
 impl Default for DebuggerSettings {
@@ -55,6 +59,7 @@ impl Default for DebuggerSettings {
             log_dap_communications: true,
             format_dap_log_messages: true,
             dock: DebugPanelDockPosition::Bottom,
+            just_my_code: true,
         }
     }
 }

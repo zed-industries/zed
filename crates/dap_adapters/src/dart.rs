@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use dap::{
     DebugRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     adapters::{DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition},
+    debugger_settings::DebuggerSettings,
 };
 use gpui::AsyncApp;
 use language::LanguageName;
@@ -32,8 +33,7 @@ impl DebugAdapter for DartDebugAdapter {
     }
 
     fn dap_schema(&self) -> serde_json::Value {
-        // This schema is now more comprehensive, incorporating findings from the research
-        // to support more advanced configurations seen in other debug adapters.
+        // comprehensive schema incorporating research findings.
         json!({
             "properties": {
                 "request": {
@@ -75,9 +75,19 @@ impl DebugAdapter for DartDebugAdapter {
                     "type": "string",
                     "description": "(Attach only) Path to a file containing the Dart VM Service URI."
                 },
+                "stopOnEntry": {
+                    "type": "boolean",
+                    "description": "Automatically stop the program after launch.",
+                    "default": false
+                },
+                "justMyCode": {
+                    "type": "boolean",
+                    "description": "When true, the debugger will only break on exceptions in your code, ignoring framework and package code.",
+                    "default": true
+                },
                 "noDebug": {
                     "type": "boolean",
-                    "description": "(Launch only) If true, launches without debugging (run mode). Defaults to false (debug mode).",
+                    "description": "(Launch only) if true, launches without debugging (run mode). Defaults to false (debug mode).",
                     "default": false
                 },
                 "flutterMode": {
@@ -97,7 +107,6 @@ impl DebugAdapter for DartDebugAdapter {
                     "description": "Where to launch the debug target: internal console or terminal.",
                     "default": "debugConsole"
                 },
-                // Advanced/new features based on research
                 "webRoot": {
                     "type": "string",
                     "description": "Specifies the web-root of your application for web debugging, required for resolving source maps.",
@@ -189,7 +198,7 @@ impl DebugAdapter for DartDebugAdapter {
                 }
             }
             DebugRequest::Attach(attach_config) => {
-                // For attach, we expect the vmServiceUri to be in the main config
+                // for attach, we expect the vmServiceUri to be in the main config
                 dap_config_map.insert("vmServiceUri".to_string(), json!(attach_config.process_id));
             }
         }
@@ -214,51 +223,54 @@ impl DebugAdapter for DartDebugAdapter {
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let is_flutter_project = self.is_flutter_project(delegate).await;
-        let worktree_root = delegate.worktree_root_path();
-
-        let tool_executable_path = if is_flutter_project {
-            // 1. Check for project-local Flutter SDK (FVM)
-            let fvm_flutter_path = worktree_root.join(".fvm/flutter_sdk/bin/flutter");
-            if delegate.fs().is_file(&fvm_flutter_path).await {
-                log::info!(
-                    "Detected and using FVM Flutter SDK at: {}",
-                    fvm_flutter_path.display()
-                );
-                fvm_flutter_path.to_string_lossy().into_owned()
-            } else {
-                // 2. Fallback to global PATH
+        // helper to find the dart/flutter executable
+        async fn find_tool_path(
+            delegate: &Arc<dyn DapDelegate>,
+            is_flutter_project: bool,
+        ) -> Result<String> {
+            if is_flutter_project {
+                let worktree_root = delegate.worktree_root_path();
+                let fvm_flutter_path = worktree_root.join(".fvm/flutter_sdk/bin/flutter");
+                if delegate.fs().is_file(&fvm_flutter_path).await {
+                    log::info!(
+                        "Detected and using FVM Flutter SDK: {}",
+                        fvm_flutter_path.display()
+                    );
+                    return Ok(fvm_flutter_path.to_string_lossy().into_owned());
+                }
                 delegate
-                    .which(OsStr::new(Self::FLUTTER_EXECUTABLE_NAME))
+                    .which(OsStr::new(DartDebugAdapter::FLUTTER_EXECUTABLE_NAME))
                     .await
                     .map(|p| p.to_string_lossy().into_owned())
                     .ok_or_else(|| {
                         anyhow!(
                             "Flutter SDK not found. Please ensure '{}' is in your PATH or use FVM.",
-                            Self::FLUTTER_EXECUTABLE_NAME
+                            DartDebugAdapter::FLUTTER_EXECUTABLE_NAME
                         )
-                    })?
+                    })
+            } else {
+                delegate
+                    .which(OsStr::new(DartDebugAdapter::DART_EXECUTABLE_NAME))
+                    .await
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Dart SDK not found. Please ensure '{}' is in your PATH.",
+                            DartDebugAdapter::DART_EXECUTABLE_NAME
+                        )
+                    })
             }
-        } else {
-            // Logic for pure Dart remains the same for now
-            delegate
-                .which(OsStr::new(Self::DART_EXECUTABLE_NAME))
-                .await
-                .map(|p| p.to_string_lossy().into_owned())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Dart SDK not found. Please ensure '{}' is in your PATH.",
-                        Self::DART_EXECUTABLE_NAME
-                    )
-                })?
-        };
+        }
+
+        let is_flutter_project = self.is_flutter_project(delegate).await;
+        let tool_executable_path = find_tool_path(delegate, is_flutter_project).await?;
 
         let mut adapter_args = vec!["debug_adapter".to_string()];
 
         if is_flutter_project {
             if let Some(mode_val) = task_definition.config.get("flutterMode") {
                 if mode_val.as_str() == Some("test") {
-                    // The --machine flag is crucial for structured test output
+                    // --machine is crucial for structured test output
                     adapter_args.extend(["--machine"].iter().map(|&s| s.to_string()));
                 }
             }
@@ -293,9 +305,37 @@ impl DebugAdapter for DartDebugAdapter {
             }
         }
 
+        let mut configuration = task_definition.config.clone();
+        if let Some(obj) = configuration.as_object_mut() {
+            // Default to the global `just_my_code` setting if not specified by the user in their config.
+            obj.entry("justMyCode".to_string())
+                .or_insert(serde_json::Value::Bool(
+                    DebuggerSettings::default().just_my_code,
+                ));
+
+            // If `justMyCode` is true (either from user config or the global default),
+            // then force `debugSdkLibraries` and `debugExternalPackageLibraries` to `false`.
+            // This ensures we don't step into framework code. A user wanting to debug the SDK
+            // should explicitly set `justMyCode` to false in their launch configuration.
+            if obj
+                .get("justMyCode")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                obj.insert(
+                    "debugSdkLibraries".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+                obj.insert(
+                    "debugExternalPackageLibraries".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+        }
+
         let dap_request_args = StartDebuggingRequestArguments {
-            request: self.request_kind(&task_definition.config).await?,
-            configuration: task_definition.config.clone(),
+            request: self.request_kind(&configuration).await?,
+            configuration,
         };
 
         let cwd = task_definition
