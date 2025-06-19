@@ -10344,7 +10344,7 @@ mod tests {
             EditorMode::SingleLine { auto_width: false },
             EditorMode::AutoHeight {
                 min_lines: 1,
-                max_lines: 100,
+                max_lines: Some(100),
             },
         ] {
             for show_line_numbers in [true, false] {
