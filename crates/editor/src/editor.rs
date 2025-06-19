@@ -10230,7 +10230,6 @@ impl Editor {
                 cloned_prompt.clone().into_any_element()
             }),
             priority: 0,
-            render_in_minimap: true,
         }];
 
         let focus_handle = bp_prompt.focus_handle(cx);
@@ -15649,7 +15648,6 @@ impl Editor {
                                 }
                             }),
                             priority: 0,
-                            render_in_minimap: true,
                         }],
                         Some(Autoscroll::fit()),
                         cx,

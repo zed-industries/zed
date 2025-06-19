@@ -3351,22 +3351,18 @@ impl EditorElement {
 
                 div()
                     .size_full()
-                    .children(
-                        (!snapshot.mode.is_minimap() || custom.render_in_minimap).then(|| {
-                            custom.render(&mut BlockContext {
-                                window,
-                                app: cx,
-                                anchor_x,
-                                margins: editor_margins,
-                                line_height,
-                                em_width,
-                                block_id,
-                                selected,
-                                max_width: text_hitbox.size.width.max(*scroll_width),
-                                editor_style: &self.style,
-                            })
-                        }),
-                    )
+                    .child(custom.render(&mut BlockContext {
+                        window,
+                        app: cx,
+                        anchor_x,
+                        margins: editor_margins,
+                        line_height,
+                        em_width,
+                        block_id,
+                        selected,
+                        max_width: text_hitbox.size.width.max(*scroll_width),
+                        editor_style: &self.style,
+                    }))
                     .into_any()
             }
 
@@ -10254,7 +10250,6 @@ mod tests {
                         height: Some(3),
                         render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     }],
                     None,
                     cx,
