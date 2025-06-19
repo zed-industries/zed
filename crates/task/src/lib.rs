@@ -169,6 +169,8 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
+    /// The currently opened buffer, and it's not a real file.
+    CurrentText,
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
     /// Custom variable, provided by the plugin or other external source.
@@ -203,6 +205,7 @@ impl FromStr for VariableName {
             "SYMBOL" => Self::Symbol,
             "RUNNABLE_SYMBOL" => Self::RunnableSymbol,
             "SELECTED_TEXT" => Self::SelectedText,
+            "CURRENT_TEXT" => Self::CurrentText,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
             _ => {
@@ -237,6 +240,7 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::CurrentText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}CURRENT_TEXT"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::Custom(s) => write!(
                 f,

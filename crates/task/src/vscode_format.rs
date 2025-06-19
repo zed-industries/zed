@@ -101,6 +101,10 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
                 "selectedText".to_owned(),
                 VariableName::SelectedText.to_string(),
             ),
+            (
+                "currentText".to_owned(),
+                VariableName::CurrentText.to_string(),
+            ),
         ]));
         let templates = value
             .tasks

@@ -522,6 +522,10 @@ mod tests {
             &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
+                    (
+                        VariableName::CurrentText,
+                        "use std; fn this_is_a_rust_file() { }".into()
+                    ),
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, path!("rust/b.rs").into()),
@@ -564,6 +568,10 @@ mod tests {
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
+                    (
+                        VariableName::CurrentText,
+                        "use std; fn this_is_a_rust_file() { }".into()
+                    ),
                     (VariableName::Symbol, "this_is_a_rust_file".into()),
                 ]),
                 project_env: HashMap::default(),
@@ -583,6 +591,10 @@ mod tests {
             &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
+                    (
+                        VariableName::CurrentText,
+                        "function this_is_a_test() { }".into()
+                    ),
                     (VariableName::File, path!("/dir/a.ts").into()),
                     (VariableName::Filename, "a.ts".into()),
                     (VariableName::RelativeFile, "a.ts".into()),
