@@ -164,7 +164,6 @@ impl AgentConfiguration {
         v_flex()
             .py_2()
             .gap_1p5()
-            // .debug_bg_blue()
             .border_t_1()
             .border_color(cx.theme().colors().border.opacity(0.6))
             .child(
