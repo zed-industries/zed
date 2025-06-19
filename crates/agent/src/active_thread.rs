@@ -59,7 +59,6 @@ use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
-const EDIT_PREVIOUS_MESSAGE_MAX_LINES: usize = 6;
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -1330,7 +1329,7 @@ impl ActiveThread {
             self.thread_store.downgrade(),
             self.text_thread_store.downgrade(),
             EDIT_PREVIOUS_MESSAGE_MIN_LINES,
-            EDIT_PREVIOUS_MESSAGE_MAX_LINES,
+            None,
             window,
             cx,
         );
@@ -1695,7 +1694,7 @@ impl ActiveThread {
             let mut editor = Editor::new(
                 editor::EditorMode::AutoHeight {
                     min_lines: 1,
-                    max_lines: 4,
+                    max_lines: Some(4),
                 },
                 buffer,
                 None,
