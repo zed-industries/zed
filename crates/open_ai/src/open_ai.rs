@@ -570,7 +570,6 @@ pub async fn complete_text(
 
 fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
     ResponseStreamEvent {
-        created: response.created as u32,
         model: response.model,
         choices: response
             .choices
