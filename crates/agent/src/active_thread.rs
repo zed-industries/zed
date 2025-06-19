@@ -3088,6 +3088,7 @@ impl ActiveThread {
                                 .pr_1()
                                 .gap_1()
                                 .justify_between()
+                                .flex_wrap()
                                 .bg(cx.theme().colors().editor_background)
                                 .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
