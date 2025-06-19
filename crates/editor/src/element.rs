@@ -1916,7 +1916,6 @@ impl EditorElement {
         em_width: Pixels,
         font_size: Pixels,
         text_width: Pixels,
-        vertical_scrollbar_width: Pixels,
         cx: &App,
     ) -> Option<Pixels> {
         if minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown {
@@ -1939,7 +1938,8 @@ impl EditorElement {
         let minimap_width = (text_width * MinimapLayout::MINIMAP_WIDTH_PCT)
             .min(minimap_em_width * minimap_settings.max_width_columns.get() as f32);
 
-        (text_width - vertical_scrollbar_width - minimap_width >= minimap_width)
+        // Don't show the minimap if will render too few columns
+        (minimap_width > minimap_em_width * MinimapLayout::MINIMAP_MIN_WIDTH_COLUMNS)
             .then_some(minimap_width)
     }
 
@@ -7901,7 +7901,6 @@ impl Element for EditorElement {
                             em_width,
                             font_size,
                             text_width,
-                            vertical_scrollbar_width,
                             cx,
                         )
                         .unwrap_or_default();
@@ -9493,6 +9492,8 @@ struct MinimapLayout {
 }
 
 impl MinimapLayout {
+    /// The minimum width of the minimap in columns. If the minimap is smaller than this, it will be hidden.
+    const MINIMAP_MIN_WIDTH_COLUMNS: f32 = 20.;
     /// The minimap width as a percentage of the editor width.
     const MINIMAP_WIDTH_PCT: f32 = 0.15;
     /// Calculates the scroll top offset the minimap editor has to have based on the
