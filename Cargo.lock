@@ -13607,6 +13607,7 @@ dependencies = [
  "serde",
  "settings",
  "theme",
+ "title_bar",
  "ui",
  "util",
  "workspace",
