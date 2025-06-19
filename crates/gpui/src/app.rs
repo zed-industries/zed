@@ -945,8 +945,8 @@ impl App {
         self.focus_handles
             .clone()
             .write()
-            .retain(|handle_id, count| {
-                if count.load(SeqCst) == 0 {
+            .retain(|handle_id, focus| {
+                if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {

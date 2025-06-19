@@ -1730,6 +1730,10 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
+                if let Some(focus_handle) = &self.tracked_focus_handle {
+                    window.next_frame.tab_handles.insert(focus_handle);
+                }
+
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                         window.with_text_style(style.text_style().cloned(), |window| {

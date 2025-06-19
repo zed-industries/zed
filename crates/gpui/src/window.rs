@@ -1,5 +1,6 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
+use crate::tab_handle::TabHandles;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
@@ -210,7 +211,12 @@ thread_local! {
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
+pub(crate) struct FocusRef {
+    pub(crate) ref_count: AtomicUsize,
+    pub(crate) tab_index: usize,
+    pub(crate) tab_stop: bool,
+}
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -246,6 +252,10 @@ impl FocusId {
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
+    /// The index of this element in the tab order.
+    pub tab_index: usize,
+    /// Whether this element can be focused by tab navigation.
+    pub tab_stop: bool,
 }
 
 impl std::fmt::Debug for FocusHandle {
@@ -256,23 +266,50 @@ impl std::fmt::Debug for FocusHandle {
 
 impl FocusHandle {
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(AtomicUsize::new(1));
+        let id = handles.write().insert(FocusRef {
+            ref_count: AtomicUsize::new(1),
+            tab_index: 0,
+            tab_stop: false,
+        });
+
         Self {
             id,
+            tab_index: 0,
+            tab_stop: false,
             handles: handles.clone(),
         }
     }
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let ref_count = lock.get(id)?;
-        if atomic_incr_if_not_zero(ref_count) == 0 {
+        let focus = lock.get(id)?;
+        if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
             return None;
         }
         Some(Self {
             id,
+            tab_index: focus.tab_index,
+            tab_stop: focus.tab_stop,
             handles: handles.clone(),
         })
+    }
+
+    /// Sets the tab index of the element associated with this handle.
+    pub fn tab_index(mut self, index: usize) -> Self {
+        self.tab_index = index;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_index = index;
+        }
+        self
+    }
+
+    /// Sets whether the element associated with this handle is a tab stop.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_stop = tab_stop;
+        }
+        self
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -342,6 +379,7 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
+            .ref_count
             .fetch_sub(1, SeqCst);
     }
 }
@@ -630,6 +668,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
+    pub(crate) tab_handles: TabHandles,
 }
 
 #[derive(Clone, Default)]
@@ -677,6 +716,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
+            tab_handles: TabHandles::default(),
         }
     }
 
@@ -692,6 +732,7 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
+        self.tab_handles.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1273,6 +1314,32 @@ impl Window {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.focus_enabled = false;
+    }
+
+    /// Move focus to next tab stop.
+    pub fn focus_next(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_handles.next(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
+    }
+
+    /// Move focus to previous tab stop.
+    pub fn focus_previous(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self
+            .rendered_frame
+            .tab_handles
+            .previous(self.focus.as_ref())
+        {
+            self.focus(&handle)
+        }
     }
 
     /// Accessor for the text system.

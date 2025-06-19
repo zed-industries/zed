@@ -95,6 +95,7 @@ mod style;
 mod styled;
 mod subscription;
 mod svg_renderer;
+mod tab_handle;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
