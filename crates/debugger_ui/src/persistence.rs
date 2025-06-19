@@ -265,56 +265,55 @@ pub(crate) fn deserialize_pane_layout(
                         stack_frame_list.focus_handle(cx),
                         stack_frame_list.clone().into(),
                         DebuggerPaneItem::Frames,
-                        None,
                         cx,
                     )),
                     DebuggerPaneItem::Variables => Box::new(SubView::new(
                         variable_list.focus_handle(cx),
                         variable_list.clone().into(),
                         DebuggerPaneItem::Variables,
-                        None,
                         cx,
                     )),
                     DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
                         breakpoint_list.focus_handle(cx),
                         breakpoint_list.clone().into(),
                         DebuggerPaneItem::BreakpointList,
-                        None,
                         cx,
                     )),
                     DebuggerPaneItem::Modules => Box::new(SubView::new(
                         module_list.focus_handle(cx),
                         module_list.clone().into(),
                         DebuggerPaneItem::Modules,
-                        None,
                         cx,
                     )),
                     DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
                         loaded_sources.focus_handle(cx),
                         loaded_sources.clone().into(),
                         DebuggerPaneItem::LoadedSources,
-                        None,
                         cx,
                     )),
-                    DebuggerPaneItem::Console => Box::new(SubView::new(
-                        console.focus_handle(cx),
-                        console.clone().into(),
-                        DebuggerPaneItem::Console,
-                        Some(Box::new({
-                            let console = console.clone().downgrade();
-                            move |cx| {
-                                console
-                                    .read_with(cx, |console, cx| console.show_indicator(cx))
-                                    .unwrap_or_default()
-                            }
-                        })),
-                        cx,
-                    )),
+                    DebuggerPaneItem::Console => {
+                        let view = SubView::new(
+                            console.focus_handle(cx),
+                            console.clone().into(),
+                            DebuggerPaneItem::Console,
+                            cx,
+                        );
+                        view.update(cx, |this, cx| {
+                            this.with_indicator(Box::new({
+                                let console = console.clone().downgrade();
+                                move |cx| {
+                                    console
+                                        .read_with(cx, |console, cx| console.show_indicator(cx))
+                                        .unwrap_or_default()
+                                }
+                            }));
+                        });
+                        Box::new(view)
+                    }
                     DebuggerPaneItem::Terminal => Box::new(SubView::new(
                         terminal.focus_handle(cx),
                         terminal.clone().into(),
                         DebuggerPaneItem::Terminal,
-                        None,
                         cx,
                     )),
                 })
