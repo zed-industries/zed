@@ -226,7 +226,7 @@ impl DapStore {
                     }
 
                     Ok(binary)
-                })
+                }
             }
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {

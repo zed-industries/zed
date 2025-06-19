@@ -887,58 +887,48 @@ impl Render for NewProcessModal {
                                     ),
                             ),
                     ),
-                    NewProcessMode::Attach => el.child(
-                        container.child(
-                                let action = menu::SecondaryConfirm.boxed_clone();
-                                KeyBinding::for_action(&*action, window, cx).map(|keybind| {
-                                    Button::new("edit-debug-task", "Edit in debug.json")
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(keybind)
-                                        .on_click(move |_, window, cx| {
-                                            window.dispatch_action(action.boxed_clone(), cx)
-                                        })
-                                })
-                                // Button::new("edit-attach-task", "Edit in debug.json")
-                                //     .on_click(cx.listener(|this, _, window, cx| {
-                                //         this.save_debug_scenario(window, cx)
-                                //     }))
-                                //     .disabled(
-                                //         self.debugger.is_none()
-                                //             || self
-                                //                 .attach_mode
-                                //                 .read(cx)
-                                //                 .attach_picker
-                                //                 .read(cx)
-                                //                 .picker
-                                //                 .read(cx)
-                                //                 .delegate
-                                //                 .match_count()
-                                //                 == 0,
-                                //     ),
-                            ),
-                            hflex()
-                                .child(div().child(self.adapter_drop_down_menu(window, cx)))
-                                .child(
-                                    Button::new("debugger-spawn", "Start")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.start_new_session(window, cx)
-                                        }))
-                                        .disabled(
-                                            self.debugger.is_none()
-                                                || self
-                                                    .attach_mode
-                                                    .read(cx)
-                                                    .attach_picker
-                                                    .read(cx)
-                                                    .picker
-                                                    .read(cx)
-                                                    .delegate
-                                                    .match_count()
-                                                    == 0,
-                                        ),
+                    NewProcessMode::Attach => el.child({
+                        let disabled = self.debugger.is_none()
+                            || self
+                                .attach_mode
+                                .read(cx)
+                                .attach_picker
+                                .read(cx)
+                                .picker
+                                .read(cx)
+                                .delegate
+                                .match_count()
+                                == 0;
+                        let secondary_action = menu::SecondaryConfirm.boxed_clone();
+                        container
+                            .child(div().children(
+                                KeyBinding::for_action(&*secondary_action, window, cx).map(
+                                    |keybind| {
+                                        Button::new("edit-attach-task", "Edit in debug.json")
+                                            .label_size(LabelSize::Small)
+                                            .key_binding(keybind)
+                                            .on_click(move |_, window, cx| {
+                                                window.dispatch_action(
+                                                    secondary_action.boxed_clone(),
+                                                    cx,
+                                                )
+                                            })
+                                            .disabled(disabled)
+                                    },
                                 ),
-                        ),
-                    ),
+                            ))
+                            .child(
+                                h_flex()
+                                    .child(div().child(self.adapter_drop_down_menu(window, cx)))
+                                    .child(
+                                        Button::new("debugger-spawn", "Start")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.start_new_session(window, cx)
+                                            }))
+                                            .disabled(disabled),
+                                    ),
+                            )
+                    }),
                     NewProcessMode::Debug => el,
                     NewProcessMode::Task => el,
                 }
@@ -1548,7 +1538,7 @@ impl PickerDelegate for DebugDelegate {
         let footer = h_flex()
             .w_full()
             .p_1p5()
-            .justify_end()
+            .justify_between()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .children({
