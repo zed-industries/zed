@@ -47,7 +47,6 @@ pub struct AvailableModel {
     pub max_completion_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
-    /// The model's mode (e.g. thinking)
     pub mode: Option<ModelMode>,
 }
 
@@ -57,7 +56,6 @@ pub enum ModelMode {
     #[default]
     Default,
     Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u32>,
     },
 }
