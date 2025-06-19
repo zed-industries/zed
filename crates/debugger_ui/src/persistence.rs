@@ -273,12 +273,9 @@ pub(crate) fn deserialize_pane_layout(
                         DebuggerPaneItem::Variables,
                         cx,
                     )),
-                    DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
-                        breakpoint_list.focus_handle(cx),
-                        breakpoint_list.clone().into(),
-                        DebuggerPaneItem::BreakpointList,
-                        cx,
-                    )),
+                    DebuggerPaneItem::BreakpointList => {
+                        Box::new(SubView::breakpoint_list(breakpoint_list.clone(), cx))
+                    }
                     DebuggerPaneItem::Modules => Box::new(SubView::new(
                         module_list.focus_handle(cx),
                         module_list.clone().into(),
@@ -292,22 +289,7 @@ pub(crate) fn deserialize_pane_layout(
                         cx,
                     )),
                     DebuggerPaneItem::Console => {
-                        let view = SubView::new(
-                            console.focus_handle(cx),
-                            console.clone().into(),
-                            DebuggerPaneItem::Console,
-                            cx,
-                        );
-                        view.update(cx, |this, cx| {
-                            this.with_indicator(Box::new({
-                                let console = console.clone().downgrade();
-                                move |cx| {
-                                    console
-                                        .read_with(cx, |console, cx| console.show_indicator(cx))
-                                        .unwrap_or_default()
-                                }
-                            }));
-                        });
+                        let view = SubView::console(console.clone(), cx);
                         Box::new(view)
                     }
                     DebuggerPaneItem::Terminal => Box::new(SubView::new(

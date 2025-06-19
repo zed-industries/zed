@@ -21,15 +21,20 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    App, ButtonCommon, Clickable, Color, Context, Div, FluentBuilder as _, Icon, IconButton,
-    IconName, Indicator, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem,
-    ParentElement, Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
-    Styled, Toggleable, Tooltip, Window, div, h_flex, px, v_flex,
+    App, Color, Context, Div, FluentBuilder as _, Icon, IconName, Indicator, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, Scrollbar,
+    ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable, Tooltip, Window,
+    div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum SelectedBreakpointKind {
+    Source,
+    Exception,
+}
 pub(crate) struct BreakpointList {
     workspace: WeakEntity<Workspace>,
     breakpoint_store: Entity<BreakpointStore>,
@@ -125,6 +130,21 @@ impl BreakpointList {
             anyhow::Ok(())
         })
         .detach();
+    }
+
+    pub(crate) fn selection_kind(&self) -> Option<(SelectedBreakpointKind, bool)> {
+        self.selected_ix.and_then(|ix| {
+            self.breakpoints.get(ix).map(|bp| match &bp.kind {
+                BreakpointEntryKind::LineBreakpoint(bp) => (
+                    SelectedBreakpointKind::Source,
+                    bp.breakpoint.state
+                        == project::debugger::breakpoint_store::BreakpointState::Enabled,
+                ),
+                BreakpointEntryKind::ExceptionBreakpoint(bp) => {
+                    (SelectedBreakpointKind::Exception, bp.is_enabled)
+                }
+            })
+        })
     }
 
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
@@ -505,44 +525,6 @@ impl LineBreakpoint {
         .on_secondary_mouse_down(|_, _, cx| {
             cx.stop_propagation();
         })
-        .end_hover_slot(
-            h_flex()
-                .child(
-                    IconButton::new(
-                        SharedString::from(format!(
-                            "breakpoint-ui-on-click-go-to-line-remove-{:?}/{}:{}",
-                            self.dir, self.name, self.line
-                        )),
-                        IconName::Close,
-                    )
-                    .on_click({
-                        let weak = weak.clone();
-                        let path = path.clone();
-                        move |_, _, cx| {
-                            weak.update(cx, |breakpoint_list, cx| {
-                                breakpoint_list.edit_line_breakpoint(
-                                    path.clone(),
-                                    row,
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                        }
-                    })
-                    .tooltip(move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Unset Breakpoint",
-                            &UnsetBreakpoint,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    })
-                    .icon_size(ui::IconSize::XSmall),
-                )
-                .right_4(),
-        )
         .child(
             v_flex()
                 .py_1()
