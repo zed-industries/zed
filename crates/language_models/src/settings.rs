@@ -421,10 +421,12 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.open_router.api_url,
                 open_router.as_ref().and_then(|s| s.api_url.clone()),
             );
-
-            open_router
-                .as_ref()
-                .and_then(|s| s.available_models.clone());
+            merge(
+                &mut settings.open_router.available_models,
+                open_router
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
         }
 
         Ok(settings)

@@ -14,7 +14,9 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason, TokenUsage,
 };
-use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
+use open_router::{
+    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -33,6 +35,7 @@ const PROVIDER_NAME: &str = "OpenRouter";
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
     pub api_url: String,
+    pub available_models: Vec<AvailableModel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -44,7 +47,41 @@ pub struct AvailableModel {
     pub max_completion_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
-    pub supports_reasoning: Option<bool>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for OpenRouterModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => OpenRouterModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => {
+                OpenRouterModelMode::Thinking { budget_tokens }
+            }
+        }
+    }
+}
+
+impl From<OpenRouterModelMode> for ModelMode {
+    fn from(value: OpenRouterModelMode) -> Self {
+        match value {
+            OpenRouterModelMode::Default => ModelMode::Default,
+            OpenRouterModelMode::Thinking { budget_tokens } => {
+                ModelMode::Thinking { budget_tokens }
+            }
+        }
+    }
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -229,9 +266,35 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let models = self.state.read(cx).available_models.clone();
+        let mut models_from_api = self.state.read(cx).available_models.clone();
+        let mut settings_models = Vec::new();
 
-        models
+        for model in &AllLanguageModelSettings::get_global(cx)
+            .open_router
+            .available_models
+        {
+            settings_models.push(open_router::Model {
+                name: model.name.clone(),
+                display_name: model.display_name.clone(),
+                max_tokens: model.max_tokens,
+                supports_tools: model.supports_tools,
+                supports_images: model.supports_images,
+                mode: model.mode.clone().unwrap_or_default().into(),
+            });
+        }
+
+        for settings_model in &settings_models {
+            if let Some(pos) = models_from_api
+                .iter()
+                .position(|m| m.name == settings_model.name)
+            {
+                models_from_api[pos] = settings_model.clone();
+            } else {
+                models_from_api.push(settings_model.clone());
+            }
+        }
+
+        models_from_api
             .into_iter()
             .map(|model| self.create_language_model(model))
             .collect()
@@ -453,10 +516,10 @@ pub fn into_open_router(
             None
         },
         usage: open_router::RequestUsage { include: true },
-        reasoning: if model.supports_reasoning.unwrap_or(false) {
+        reasoning: if let OpenRouterModelMode::Thinking { budget_tokens } = model.mode {
             Some(open_router::Reasoning {
-                effort: Some("low".to_string()),
-                max_tokens: None,
+                effort: None,
+                max_tokens: budget_tokens,
                 exclude: Some(false),
                 enabled: Some(true),
             })

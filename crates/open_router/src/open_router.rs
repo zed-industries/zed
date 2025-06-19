@@ -53,7 +53,18 @@ pub struct Model {
     pub max_tokens: u64,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
-    pub supports_reasoning: Option<bool>,
+    #[serde(default)]
+    pub mode: ModelMode,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
 }
 
 impl Model {
@@ -64,7 +75,7 @@ impl Model {
             Some(2000000),
             Some(true),
             Some(false),
-            Some(false),
+            Some(ModelMode::Default),
         )
     }
 
@@ -78,7 +89,7 @@ impl Model {
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
-        supports_reasoning: Option<bool>,
+        mode: Option<ModelMode>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -86,7 +97,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or(2000000),
             supports_tools,
             supports_images,
-            supports_reasoning,
+            mode: mode.unwrap_or(ModelMode::Default),
         }
     }
 
@@ -610,11 +621,16 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
                         .map(|arch| arch.input_modalities.contains(&"image".to_string()))
                         .unwrap_or(false),
                 ),
-                supports_reasoning: Some(
-                    entry
-                        .supported_parameters
-                        .contains(&"reasoning".to_string()),
-                ),
+                mode: if entry
+                    .supported_parameters
+                    .contains(&"reasoning".to_string())
+                {
+                    ModelMode::Thinking {
+                        budget_tokens: Some(4_096),
+                    }
+                } else {
+                    ModelMode::Default
+                },
             })
             .collect();
 
