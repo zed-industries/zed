@@ -73,9 +73,8 @@ impl TabHandles {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use crate::{FocusHandle, FocusMap, TabHandles};
+    use std::sync::Arc;
 
     #[test]
     fn test_tab_handles() {
@@ -95,7 +94,6 @@ mod tests {
         for handle in focus_handles.iter() {
             tab.insert(&handle);
         }
-        assert_eq!(tab.handles.len(), 5);
         assert_eq!(
             tab.handles
                 .iter()
