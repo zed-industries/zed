@@ -1807,7 +1807,7 @@ impl SshRemoteConnection {
             self.socket
                 .run_command(
                     "sh",
-                    &["-c", &format!("mkdir -p {}", parent.to_string_lossy())],
+                    &["-c", &format!("mkdir -p '{}'", parent.to_string_lossy())],
                 )
                 .await?;
         }
