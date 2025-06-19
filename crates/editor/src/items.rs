@@ -2,6 +2,7 @@ use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
     MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, SelectionEffects,
     ToPoint as _,
+    display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
     scroll::ScrollAnchor,
@@ -1431,7 +1432,7 @@ impl SearchableItem for Editor {
 
     fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
         self.background_highlights
-            .get(&TypeId::of::<BufferSearchHighlights>())
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map_or(Vec::new(), |(_color, ranges)| {
                 ranges.iter().cloned().collect()
             })
@@ -1454,12 +1455,12 @@ impl SearchableItem for Editor {
     ) {
         let existing_range = self
             .background_highlights
-            .get(&TypeId::of::<BufferSearchHighlights>())
+            .get(&HighlightKey::Type(TypeId::of::<BufferSearchHighlights>()))
             .map(|(_, range)| range.as_ref());
         let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
-            |theme| theme.search_match_background,
+            |theme| theme.colors().search_match_background,
             cx,
         );
         if updated {
@@ -1701,7 +1702,7 @@ impl SearchableItem for Editor {
         let buffer = self.buffer().read(cx).snapshot(cx);
         let search_within_ranges = self
             .background_highlights
-            .get(&TypeId::of::<SearchWithinRange>())
+            .get(&HighlightKey::Type(TypeId::of::<SearchWithinRange>()))
             .map_or(vec![], |(_color, ranges)| {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });

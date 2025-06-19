@@ -1115,7 +1115,7 @@ mod tests {
     use super::*;
     use crate::{
         InlayId, MultiBuffer,
-        display_map::{InlayHighlights, TextHighlights},
+        display_map::{HighlightKey, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
     };
     use gpui::{App, HighlightStyle};
@@ -1629,7 +1629,7 @@ mod tests {
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
-                TypeId::of::<()>(),
+                HighlightKey::Type(TypeId::of::<()>()),
                 Arc::new((
                     HighlightStyle::default(),
                     text_highlight_ranges

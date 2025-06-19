@@ -1,6 +1,6 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
@@ -12,6 +12,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
+use git_ui::diff_view::DiffView;
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use recent_projects::{SshSettings, open_ssh_project};
@@ -31,6 +32,7 @@ use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
     pub open_paths: Vec<String>,
+    pub diff_paths: Vec<[String; 2]>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
@@ -38,9 +40,9 @@ pub struct OpenRequest {
 }
 
 impl OpenRequest {
-    pub fn parse(urls: Vec<String>, cx: &App) -> Result<Self> {
+    pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
         let mut this = Self::default();
-        for url in urls {
+        for url in request.urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
@@ -60,6 +62,8 @@ impl OpenRequest {
                 log::error!("unhandled url: {}", url);
             }
         }
+
+        this.diff_paths = request.diff_paths;
 
         Ok(this)
     }
@@ -130,19 +134,25 @@ impl OpenRequest {
 }
 
 #[derive(Clone)]
-pub struct OpenListener(UnboundedSender<Vec<String>>);
+pub struct OpenListener(UnboundedSender<RawOpenRequest>);
+
+#[derive(Default)]
+pub struct RawOpenRequest {
+    pub urls: Vec<String>,
+    pub diff_paths: Vec<[String; 2]>,
+}
 
 impl Global for OpenListener {}
 
 impl OpenListener {
-    pub fn new() -> (Self, UnboundedReceiver<Vec<String>>) {
+    pub fn new() -> (Self, UnboundedReceiver<RawOpenRequest>) {
         let (tx, rx) = mpsc::unbounded();
         (OpenListener(tx), rx)
     }
 
-    pub fn open_urls(&self, urls: Vec<String>) {
+    pub fn open(&self, request: RawOpenRequest) {
         self.0
-            .unbounded_send(urls)
+            .unbounded_send(request)
             .context("no listener for open requests")
             .log_err();
     }
@@ -164,7 +174,10 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     thread::spawn(move || {
         let mut buf = [0u8; 1024];
         while let Ok(len) = listener.recv(&mut buf) {
-            opener.open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
+            opener.open(RawOpenRequest {
+                urls: vec![String::from_utf8_lossy(&buf[..len]).to_string()],
+                ..Default::default()
+            });
         }
     });
     Ok(())
@@ -201,6 +214,7 @@ fn connect_to_cli(
 
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
+    diff_paths: &[[String; 2]],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
@@ -225,11 +239,27 @@ pub async fn open_paths_with_positions(
         })
         .collect::<Vec<_>>();
 
-    let (workspace, items) = cx
+    let (workspace, mut items) = cx
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
         .await?;
 
-    for (item, path) in items.iter().zip(&paths) {
+    for diff_pair in diff_paths {
+        let old_path = Path::new(&diff_pair[0]).canonicalize()?;
+        let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+        if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
+            DiffView::open(old_path, new_path, workspace, window, cx)
+        }) {
+            if let Some(diff_view) = diff_view.await.log_err() {
+                items.push(Some(Ok(Box::new(diff_view))))
+            }
+        }
+    }
+
+    for (item, path) in items.iter_mut().zip(&paths) {
+        if let Some(Err(error)) = item {
+            *error = anyhow!("error opening {path:?}: {error}");
+            continue;
+        }
         let Some(Ok(item)) = item else {
             continue;
         };
@@ -260,14 +290,15 @@ pub async fn handle_cli_connection(
             CliRequest::Open {
                 urls,
                 paths,
+                diff_paths,
                 wait,
                 open_new_workspace,
                 env,
-                user_data_dir: _, // Ignore user_data_dir
+                user_data_dir: _,
             } => {
-                if !urls.is_empty() {
+                if !urls.is_empty() || !diff_paths.is_empty() {
                     cx.update(|cx| {
-                        match OpenRequest::parse(urls, cx) {
+                        match OpenRequest::parse(RawOpenRequest { urls, diff_paths }, cx) {
                             Ok(open_request) => {
                                 handle_open_request(open_request, app_state.clone(), cx);
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
@@ -288,6 +319,7 @@ pub async fn handle_cli_connection(
 
                 let open_workspace_result = open_workspaces(
                     paths,
+                    diff_paths,
                     open_new_workspace,
                     &responses,
                     wait,
@@ -306,6 +338,7 @@ pub async fn handle_cli_connection(
 
 async fn open_workspaces(
     paths: Vec<String>,
+    diff_paths: Vec<[String; 2]>,
     open_new_workspace: Option<bool>,
     responses: &IpcSender<CliResponse>,
     wait: bool,
@@ -362,6 +395,7 @@ async fn open_workspaces(
 
                     let workspace_failed_to_open = open_local_workspace(
                         workspace_paths,
+                        diff_paths.clone(),
                         open_new_workspace,
                         wait,
                         responses,
@@ -411,6 +445,7 @@ async fn open_workspaces(
 
 async fn open_local_workspace(
     workspace_paths: Vec<String>,
+    diff_paths: Vec<[String; 2]>,
     open_new_workspace: Option<bool>,
     wait: bool,
     responses: &IpcSender<CliResponse>,
@@ -424,6 +459,7 @@ async fn open_local_workspace(
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
     match open_paths_with_positions(
         &paths_with_position,
+        &diff_paths,
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
@@ -437,7 +473,7 @@ async fn open_local_workspace(
         Ok((workspace, items)) => {
             let mut item_release_futures = Vec::new();
 
-            for (item, path) in items.into_iter().zip(&paths_with_position) {
+            for item in items {
                 match item {
                     Some(Ok(item)) => {
                         cx.update(|cx| {
@@ -456,7 +492,7 @@ async fn open_local_workspace(
                     Some(Err(err)) => {
                         responses
                             .send(CliResponse::Stderr {
-                                message: format!("error opening {path:?}: {err}"),
+                                message: err.to_string(),
                             })
                             .log_err();
                         errored = true;
@@ -468,7 +504,7 @@ async fn open_local_workspace(
             if wait {
                 let background = cx.background_executor().clone();
                 let wait = async move {
-                    if paths_with_position.is_empty() {
+                    if paths_with_position.is_empty() && diff_paths.is_empty() {
                         let (done_tx, done_rx) = oneshot::channel();
                         let _subscription = workspace.update(cx, |_, _, cx| {
                             cx.on_release(move |_, _| {
@@ -549,8 +585,16 @@ mod tests {
         cx.update(|cx| {
             SshSettings::register(cx);
         });
-        let request =
-            cx.update(|cx| OpenRequest::parse(vec!["ssh://me@localhost:/".into()], cx).unwrap());
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["ssh://me@localhost:/".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
         assert_eq!(
             request.ssh_connection.unwrap(),
             SshConnectionOptions {
@@ -692,6 +736,7 @@ mod tests {
             .spawn(|mut cx| async move {
                 open_local_workspace(
                     workspace_paths,
+                    vec![],
                     open_new_workspace,
                     false,
                     &response_tx,

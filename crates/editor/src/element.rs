@@ -12,8 +12,8 @@ use crate::{
     ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightedChunk,
-        ToDisplayPoint,
+        Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightKey,
+        HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, MinimapThumb,
@@ -6166,13 +6166,15 @@ impl EditorElement {
                                 background_highlights.iter()
                             {
                                 let is_search_highlights = *background_highlight_id
-                                    == TypeId::of::<BufferSearchHighlights>();
+                                    == HighlightKey::Type(TypeId::of::<BufferSearchHighlights>());
                                 let is_text_highlights = *background_highlight_id
-                                    == TypeId::of::<SelectedTextHighlight>();
+                                    == HighlightKey::Type(TypeId::of::<SelectedTextHighlight>());
                                 let is_symbol_occurrences = *background_highlight_id
-                                    == TypeId::of::<DocumentHighlightRead>()
+                                    == HighlightKey::Type(TypeId::of::<DocumentHighlightRead>())
                                     || *background_highlight_id
-                                        == TypeId::of::<DocumentHighlightWrite>();
+                                        == HighlightKey::Type(
+                                            TypeId::of::<DocumentHighlightWrite>(),
+                                        );
                                 if (is_search_highlights && scrollbar_settings.search_results)
                                     || (is_text_highlights && scrollbar_settings.selected_text)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
@@ -8091,7 +8093,7 @@ impl Element for EditorElement {
                             editor.read(cx).background_highlights_in_range(
                                 start_anchor..end_anchor,
                                 &snapshot.display_snapshot,
-                                cx.theme().colors(),
+                                cx.theme(),
                             )
                         })
                         .unwrap_or_default();
@@ -8504,26 +8506,37 @@ impl Element for EditorElement {
                             );
 
                             let line_ix = display_row.minus(start_row) as usize;
-                            let row_info = &row_infos[line_ix];
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-
-                            if let Some(layout) = self.layout_inline_blame(
-                                display_row,
-                                row_info,
-                                line_layout,
-                                crease_trailer_layout,
-                                em_width,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                &text_hitbox,
-                                window,
-                                cx,
+                            if let (Some(row_info), Some(line_layout), Some(crease_trailer)) = (
+                                row_infos.get(line_ix),
+                                line_layouts.get(line_ix),
+                                crease_trailers.get(line_ix),
                             ) {
-                                inline_blame_layout = Some(layout);
-                                // Blame overrides inline diagnostics
-                                inline_diagnostics.remove(&display_row);
+                                let crease_trailer_layout = crease_trailer.as_ref();
+                                if let Some(layout) = self.layout_inline_blame(
+                                    display_row,
+                                    row_info,
+                                    line_layout,
+                                    crease_trailer_layout,
+                                    em_width,
+                                    content_origin,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    &text_hitbox,
+                                    window,
+                                    cx,
+                                ) {
+                                    inline_blame_layout = Some(layout);
+                                    // Blame overrides inline diagnostics
+                                    inline_diagnostics.remove(&display_row);
+                                }
+                            } else {
+                                log::error!(
+                                    "bug: line_ix {} is out of bounds - row_infos.len(): {}, line_layouts.len(): {}, crease_trailers.len(): {}",
+                                    line_ix,
+                                    row_infos.len(),
+                                    line_layouts.len(),
+                                    crease_trailers.len(),
+                                );
                             }
                         }
                     }

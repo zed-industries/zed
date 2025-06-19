@@ -71,6 +71,7 @@ dependencies = [
  "db",
  "editor",
  "extension",
+ "extension_host",
  "feature_flags",
  "file_icons",
  "fs",
@@ -127,7 +128,6 @@ dependencies = [
  "time",
  "time_format",
  "ui",
- "ui_input",
  "urlencoding",
  "util",
  "uuid",
@@ -4268,6 +4268,7 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "client",
  "collections",
@@ -4299,6 +4300,7 @@ dependencies = [
  "sysinfo",
  "task",
  "tasks_ui",
+ "telemetry",
  "terminal_view",
  "theme",
  "tree-sitter",
@@ -6217,6 +6219,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "watch",
  "windows 0.61.1",
  "workspace",
  "workspace-hack",
@@ -9005,6 +9008,7 @@ dependencies = [
  "tiktoken-rs",
  "tokio",
  "ui",
+ "ui_input",
  "util",
  "workspace-hack",
  "zed_llm_client",
@@ -19954,7 +19958,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.192.0"
+version = "0.193.0"
 dependencies = [
  "activity_indicator",
  "agent",
