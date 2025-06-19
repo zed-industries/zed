@@ -383,7 +383,7 @@ To run a ruby task in the debugger, you will need to configure it in the `.zed/d
 The configuration should look like this:
 
 ```json
-{
+[
   {
     "adapter": "Ruby",
     "label": "Run CLI",
@@ -396,7 +396,7 @@ The configuration should look like this:
     // "env": {}
     // "cwd": ""
   }
-}
+]
 ```
 
 ## Breakpoints

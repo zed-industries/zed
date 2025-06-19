@@ -385,7 +385,6 @@ pub enum ResponseStreamResult {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub created: u32,
     pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
