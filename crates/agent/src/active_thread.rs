@@ -1618,6 +1618,14 @@ impl ActiveThread {
                     })
                     .log_err();
             }));
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.focus_handle(cx).focus(window);
+                }
+            });
+        }
     }
 
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
