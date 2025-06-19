@@ -57,6 +57,10 @@ use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
 use zed_llm_client::CompletionIntent;
 
+const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
+const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const EDIT_PREVIOUS_MESSAGE_MAX_LINES: usize = 6;
+
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
     language_registry: Arc<LanguageRegistry>,
@@ -333,8 +337,6 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         ..Default::default()
     }
 }
-
-const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -1327,6 +1329,8 @@ impl ActiveThread {
             self.context_store.downgrade(),
             self.thread_store.downgrade(),
             self.text_thread_store.downgrade(),
+            EDIT_PREVIOUS_MESSAGE_MIN_LINES,
+            EDIT_PREVIOUS_MESSAGE_MAX_LINES,
             window,
             cx,
         );
@@ -1618,6 +1622,14 @@ impl ActiveThread {
                     })
                     .log_err();
             }));
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.focus_handle(cx).focus(window);
+                }
+            });
+        }
     }
 
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
