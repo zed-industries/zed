@@ -1,4 +1,4 @@
-# Debugger (Beta)
+# Debugger
 
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
 DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
@@ -383,7 +383,7 @@ To run a ruby task in the debugger, you will need to configure it in the `.zed/d
 The configuration should look like this:
 
 ```json
-{
+[
   {
     "adapter": "Ruby",
     "label": "Run CLI",
@@ -396,7 +396,7 @@ The configuration should look like this:
     // "env": {}
     // "cwd": ""
   }
-}
+]
 ```
 
 ## Breakpoints

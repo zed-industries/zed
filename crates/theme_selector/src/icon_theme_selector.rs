@@ -244,6 +244,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,

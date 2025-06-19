@@ -1,4 +1,3 @@
-mod add_context_server_modal;
 mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -9,22 +8,29 @@ use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;
+use extension::ExtensionManifest;
+use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyView, App, Entity, EventEmitter, FocusHandle,
-    Focusable, ScrollHandle, Subscription, Transformation, percentage,
+    Action, Animation, AnimationExt as _, AnyView, App, Corner, Entity, EventEmitter, FocusHandle,
+    Focusable, ScrollHandle, Subscription, Task, Transformation, WeakEntity, percentage,
 };
+use language::LanguageRegistry;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use project::context_server_store::{ContextServerStatus, ContextServerStore};
+use notifications::status_toast::{StatusToast, ToastIcon};
+use project::{
+    context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
+    project_settings::ProjectSettings,
+};
 use settings::{Settings, update_settings_file};
 use ui::{
-    Disclosure, ElevationIndex, Indicator, Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip,
-    prelude::*,
+    ContextMenu, Disclosure, ElevationIndex, Indicator, PopoverMenu, Scrollbar, ScrollbarState,
+    Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+use workspace::Workspace;
 use zed_actions::ExtensionCategoryFilter;
 
-pub(crate) use add_context_server_modal::AddContextServerModal;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
@@ -32,6 +38,8 @@ use crate::AddContextServer;
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
+    language_registry: Arc<LanguageRegistry>,
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
@@ -48,6 +56,8 @@ impl AgentConfiguration {
         fs: Arc<dyn Fs>,
         context_server_store: Entity<ContextServerStore>,
         tools: Entity<ToolWorkingSet>,
+        language_registry: Arc<LanguageRegistry>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -70,11 +80,16 @@ impl AgentConfiguration {
             },
         );
 
+        cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
+            .detach();
+
         let scroll_handle = ScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
             fs,
+            language_registry,
+            workspace,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             context_server_store,
@@ -460,9 +475,22 @@ impl AgentConfiguration {
             .read(cx)
             .status_for_server(&context_server_id)
             .unwrap_or(ContextServerStatus::Stopped);
+        let server_configuration = self
+            .context_server_store
+            .read(cx)
+            .configuration_for_server(&context_server_id);
 
         let is_running = matches!(server_status, ContextServerStatus::Running);
         let item_id = SharedString::from(context_server_id.0.clone());
+        let is_from_extension = server_configuration
+            .as_ref()
+            .map(|config| {
+                matches!(
+                    config.as_ref(),
+                    ContextServerConfiguration::Extension { .. }
+                )
+            })
+            .unwrap_or(false);
 
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
@@ -483,6 +511,18 @@ impl AgentConfiguration {
         let tool_count = tools.len();
 
         let border_color = cx.theme().colors().border.opacity(0.6);
+
+        let (source_icon, source_tooltip) = if is_from_extension {
+            (
+                IconName::ZedMcpExtension,
+                "This MCP server was installed from an extension.",
+            )
+        } else {
+            (
+                IconName::ZedMcpCustom,
+                "This custom MCP server was installed directly.",
+            )
+        };
 
         let (status_indicator, tooltip_text) = match server_status {
             ContextServerStatus::Starting => (
@@ -510,6 +550,105 @@ impl AgentConfiguration {
                 "Server is stopped.",
             ),
         };
+
+        let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
+            .trigger_with_tooltip(
+                IconButton::new("context-server-config-menu", IconName::Settings)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small),
+                Tooltip::text("Open MCP server options"),
+            )
+            .anchor(Corner::TopRight)
+            .menu({
+                let fs = self.fs.clone();
+                let context_server_id = context_server_id.clone();
+                let language_registry = self.language_registry.clone();
+                let context_server_store = self.context_server_store.clone();
+                let workspace = self.workspace.clone();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Configure Server", None, {
+                            let context_server_id = context_server_id.clone();
+                            let language_registry = language_registry.clone();
+                            let workspace = workspace.clone();
+                            move |window, cx| {
+                                ConfigureContextServerModal::show_modal_for_existing_server(
+                                    context_server_id.clone(),
+                                    language_registry.clone(),
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                            }
+                        })
+                        .separator()
+                        .entry("Delete", None, {
+                            let fs = fs.clone();
+                            let context_server_id = context_server_id.clone();
+                            let context_server_store = context_server_store.clone();
+                            let workspace = workspace.clone();
+                            move |_, cx| {
+                                let is_provided_by_extension = context_server_store
+                                    .read(cx)
+                                    .configuration_for_server(&context_server_id)
+                                    .as_ref()
+                                    .map(|config| {
+                                        matches!(
+                                            config.as_ref(),
+                                            ContextServerConfiguration::Extension { .. }
+                                        )
+                                    })
+                                    .unwrap_or(false);
+
+                                let uninstall_extension_task = match (
+                                    is_provided_by_extension,
+                                    resolve_extension_for_context_server(&context_server_id, cx),
+                                ) {
+                                    (true, Some((id, manifest))) => {
+                                        if extension_only_provides_context_server(manifest.as_ref())
+                                        {
+                                            ExtensionStore::global(cx).update(cx, |store, cx| {
+                                                store.uninstall_extension(id, cx)
+                                            })
+                                        } else {
+                                            workspace.update(cx, |workspace, cx| {
+                                                show_unable_to_uninstall_extension_with_context_server(workspace, context_server_id.clone(), cx);
+                                            }).log_err();
+                                            Task::ready(Ok(()))
+                                        }
+                                    }
+                                    _ => Task::ready(Ok(())),
+                                };
+
+                                cx.spawn({
+                                    let fs = fs.clone();
+                                    let context_server_id = context_server_id.clone();
+                                    async move |cx| {
+                                        uninstall_extension_task.await?;
+                                        cx.update(|cx| {
+                                            update_settings_file::<ProjectSettings>(
+                                                fs.clone(),
+                                                cx,
+                                                {
+                                                    let context_server_id =
+                                                        context_server_id.clone();
+                                                    move |settings, _| {
+                                                        settings
+                                                            .context_servers
+                                                            .remove(&context_server_id.0);
+                                                    }
+                                                },
+                                            )
+                                        })
+                                    }
+                                })
+                                .detach_and_log_err(cx);
+                            }
+                        })
+                    }))
+                }
+            });
 
         v_flex()
             .id(item_id.clone())
@@ -556,7 +695,19 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).ml_0p5().mr_1p5())
+                            .child(Label::new(item_id).ml_0p5())
+                            .child(
+                                div()
+                                    .id("extension-source")
+                                    .mt_0p5()
+                                    .mx_1()
+                                    .tooltip(Tooltip::text(source_tooltip))
+                                    .child(
+                                        Icon::new(source_icon)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
                             .when(is_running, |this| {
                                 this.child(
                                     Label::new(if tool_count == 1 {
@@ -570,28 +721,37 @@ impl AgentConfiguration {
                             }),
                     )
                     .child(
-                        Switch::new("context-server-switch", is_running.into())
-                            .color(SwitchColor::Accent)
-                            .on_click({
-                                let context_server_manager = self.context_server_store.clone();
-                                let context_server_id = context_server_id.clone();
-                                move |state, _window, cx| match state {
-                                    ToggleState::Unselected | ToggleState::Indeterminate => {
-                                        context_server_manager.update(cx, |this, cx| {
-                                            this.stop_server(&context_server_id, cx).log_err();
-                                        });
-                                    }
-                                    ToggleState::Selected => {
-                                        context_server_manager.update(cx, |this, cx| {
-                                            if let Some(server) =
-                                                this.get_server(&context_server_id)
-                                            {
-                                                this.start_server(server, cx);
+                        h_flex()
+                            .gap_1()
+                            .child(context_server_configuration_menu)
+                            .child(
+                                Switch::new("context-server-switch", is_running.into())
+                                    .color(SwitchColor::Accent)
+                                    .on_click({
+                                        let context_server_manager =
+                                            self.context_server_store.clone();
+                                        let context_server_id = context_server_id.clone();
+
+                                        move |state, _window, cx| match state {
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    this.stop_server(&context_server_id, cx)
+                                                        .log_err();
+                                                });
                                             }
-                                        })
-                                    }
-                                }
-                            }),
+                                            ToggleState::Selected => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    if let Some(server) =
+                                                        this.get_server(&context_server_id)
+                                                    {
+                                                        this.start_server(server, cx);
+                                                    }
+                                                })
+                                            }
+                                        }
+                                    }),
+                            ),
                     ),
             )
             .map(|parent| {
@@ -700,4 +860,52 @@ impl Render for AgentConfiguration {
                     .children(Scrollbar::vertical(self.scrollbar_state.clone())),
             )
     }
+}
+
+fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool {
+    manifest.context_servers.len() == 1
+        && manifest.themes.is_empty()
+        && manifest.icon_themes.is_empty()
+        && manifest.languages.is_empty()
+        && manifest.grammars.is_empty()
+        && manifest.language_servers.is_empty()
+        && manifest.slash_commands.is_empty()
+        && manifest.indexed_docs_providers.is_empty()
+        && manifest.snippets.is_none()
+        && manifest.debug_locators.is_empty()
+}
+
+pub(crate) fn resolve_extension_for_context_server(
+    id: &ContextServerId,
+    cx: &App,
+) -> Option<(Arc<str>, Arc<ExtensionManifest>)> {
+    ExtensionStore::global(cx)
+        .read(cx)
+        .installed_extensions()
+        .iter()
+        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
+        .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
+}
+
+// This notification appears when trying to delete
+// an MCP server extension that not only provides
+// the server, but other things, too, like language servers and more.
+fn show_unable_to_uninstall_extension_with_context_server(
+    workspace: &mut Workspace,
+    id: ContextServerId,
+    cx: &mut App,
+) {
+    let status_toast = StatusToast::new(
+        format!(
+            "Unable to uninstall the {} extension, as it provides more than just the MCP server.",
+            id.0
+        ),
+        cx,
+        |this, _cx| {
+            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
+                .action("Dismiss", |_, _| {})
+        },
+    );
+
+    workspace.toggle_status_toast(status_toast, cx);
 }

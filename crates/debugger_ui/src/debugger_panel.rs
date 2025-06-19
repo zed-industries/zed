@@ -1,6 +1,7 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
+use crate::session::running::breakpoint_list::BreakpointList;
 use crate::{
     ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
     FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
@@ -18,7 +19,7 @@ use dap::{DapRegistry, StartDebuggingRequestArguments};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
-    WeakEntity, actions, anchored, deferred,
+    WeakEntity, anchored, deferred,
 };
 
 use itertools::Itertools as _;
@@ -38,6 +39,7 @@ use workspace::{
     Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
+use zed_actions::ToggleFocus;
 
 pub enum DebugPanelEvent {
     Exited(SessionId),
@@ -56,8 +58,6 @@ pub enum DebugPanelEvent {
     CapabilitiesChanged(SessionId),
 }
 
-actions!(debug_panel, [ToggleFocus]);
-
 pub struct DebugPanel {
     size: Pixels,
     sessions: Vec<Entity<DebugSession>>,
@@ -72,6 +72,7 @@ pub struct DebugPanel {
     fs: Arc<dyn Fs>,
     is_zoomed: bool,
     _subscriptions: [Subscription; 1],
+    breakpoint_list: Entity<BreakpointList>,
 }
 
 impl DebugPanel {
@@ -99,6 +100,7 @@ impl DebugPanel {
                 sessions: vec![],
                 active_session: None,
                 focus_handle,
+                breakpoint_list: BreakpointList::new(None, workspace.weak_handle(), &project, cx),
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
@@ -1139,7 +1141,9 @@ async fn register_session_inner(
         let debug_session = DebugSession::running(
             this.project.clone(),
             this.workspace.clone(),
-            parent_session.map(|p| p.read(cx).running_state().read(cx).debug_terminal.clone()),
+            parent_session
+                .as_ref()
+                .map(|p| p.read(cx).running_state().read(cx).debug_terminal.clone()),
             session,
             serialized_layout,
             this.position(window, cx).axis(),
@@ -1154,8 +1158,14 @@ async fn register_session_inner(
             |_, _, cx| cx.notify(),
         )
         .detach();
-
-        this.sessions.push(debug_session.clone());
+        let insert_position = this
+            .sessions
+            .iter()
+            .position(|session| Some(session) == parent_session.as_ref())
+            .map(|position| position + 1)
+            .unwrap_or(this.sessions.len());
+        // Maintain topological sort order of sessions
+        this.sessions.insert(insert_position, debug_session.clone());
 
         debug_session
     })?;
@@ -1459,11 +1469,16 @@ impl Render for DebugPanel {
                             .items_center()
                             .justify_center()
                             .child(
-                                h_flex()
+                                h_flex().size_full()
                                     .items_start()
-                                    .gap_8()
+
+                                    .child(v_flex().items_start().min_w_1_3().h_full().p_1()
+                                        .child(h_flex().px_1().child(Label::new("Breakpoints").size(LabelSize::Small)))
+                                        .child(Divider::horizontal())
+                                        .child(self.breakpoint_list.clone()))
+                                    .child(Divider::vertical())
                                     .child(
-                                        v_flex()
+                                        v_flex().w_2_3().h_full().items_center().justify_center()
                                             .gap_2()
                                             .pr_8()
                                             .child(

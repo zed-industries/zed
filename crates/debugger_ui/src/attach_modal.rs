@@ -183,6 +183,7 @@ impl PickerDelegate for AttachModalDelegate {
                     .collect::<Vec<_>>(),
                 &query,
                 true,
+                true,
                 100,
                 &Default::default(),
                 cx.background_executor().clone(),

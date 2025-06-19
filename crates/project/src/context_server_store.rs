@@ -235,6 +235,13 @@ impl ContextServerStore {
         self.servers.get(id).map(ContextServerStatus::from_state)
     }
 
+    pub fn configuration_for_server(
+        &self,
+        id: &ContextServerId,
+    ) -> Option<Arc<ContextServerConfiguration>> {
+        self.servers.get(id).map(|state| state.configuration())
+    }
+
     pub fn all_server_ids(&self) -> Vec<ContextServerId> {
         self.servers.keys().cloned().collect()
     }
