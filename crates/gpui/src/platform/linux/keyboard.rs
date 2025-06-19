@@ -86,16 +86,15 @@ impl LinuxKeyboardMapper {
             if !key.is_empty() {
                 if key_is_a_letter(&key) {
                     letters.insert(keycode, key.clone());
+                    inserted_letters.insert(key);
                 } else {
                     code_to_key.insert(keycode, key.clone());
                 }
-                inserted_letters.insert(key);
             } else {
                 // keycode might be a dead key
                 let keysym = xkb_state.key_get_one_sym(keycode);
                 if let Some(key) = underlying_dead_key(keysym) {
                     code_to_key.insert(keycode, key.clone());
-                    inserted_letters.insert(key);
                 }
             }
 
