@@ -374,6 +374,21 @@ name = "My Language LSP"
 languages = ["My Language"]
 ```
 
+If your language server supports multiple languages, you can use `language_ids` to map `languages` to its identifiers, [defined by the LSP](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem):
+
+```toml
+
+[language-servers.fancy-lsp]
+name = "Fancy LSP"
+languages = ["JavaScript", "JSX", "HTML", "CSS"]
+
+[language-servers.fancy-lsp.language_ids]
+"JavaScript" = "javascript"
+"JSX" = "javascriptreact"
+"HTML" = "html"
+"CSS" = "css"
+```
+
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:
 
 ```rust
