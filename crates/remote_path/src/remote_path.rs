@@ -44,6 +44,11 @@ impl RemotePathBuf {
         }
     }
 
+    pub fn from_str(path: &str, style: PathStyle) -> Self {
+        let path_buf = PathBuf::from(path);
+        Self::new(path_buf, style)
+    }
+
     pub fn as_path(&self) -> &Path {
         &self.inner
     }

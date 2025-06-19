@@ -28,7 +28,7 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
-use remote_path::PathStyle;
+use remote_path::{PathStyle, RemotePathBuf};
 pub mod search_history;
 mod yarn;
 
@@ -4072,7 +4072,8 @@ impl Project {
                 })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-            let request_path = Path::new(path);
+            let path_style = ssh_client.read(cx).path_style();
+            let request_path = RemotePathBuf::from_str(path, path_style);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
