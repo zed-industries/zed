@@ -82,6 +82,8 @@ pub struct ProjectSettings {
 #[serde(rename_all = "snake_case")]
 pub struct DapSettings {
     pub binary: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]

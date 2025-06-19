@@ -119,6 +119,7 @@ impl DebugAdapter for RubyDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         definition: &DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
+        _user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());

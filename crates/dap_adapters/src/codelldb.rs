@@ -329,6 +329,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -364,10 +365,12 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            arguments: vec![
-                "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
-            ],
+            arguments: user_args.unwrap_or_else(|| {
+                vec![
+                    "--settings".into(),
+                    json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
+                ]
+            }),
             request_args: self.request_args(delegate, &config).await?,
             envs: HashMap::default(),
             connection: None,

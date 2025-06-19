@@ -32,29 +32,23 @@ impl PythonDebugAdapter {
         host: &Ipv4Addr,
         port: u16,
         user_installed_path: Option<&Path>,
+        user_args: Option<Vec<String>>,
         installed_in_venv: bool,
     ) -> Result<Vec<String>> {
-        if let Some(user_installed_path) = user_installed_path {
+        let mut args = if let Some(user_installed_path) = user_installed_path {
             log::debug!(
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
             );
-            Ok(vec![
+            vec![
                 user_installed_path
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
-                format!("--host={}", host),
-                format!("--port={}", port),
-            ])
+            ]
         } else if installed_in_venv {
             log::debug!("Using venv-installed debugpy");
-            Ok(vec![
-                "-m".to_string(),
-                "debugpy.adapter".to_string(),
-                format!("--host={}", host),
-                format!("--port={}", port),
-            ])
+            vec!["-m".to_string(), "debugpy.adapter".to_string()]
         } else {
             let adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
             let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
@@ -70,15 +64,20 @@ impl PythonDebugAdapter {
                 "Using GitHub-downloaded debugpy adapter from: {}",
                 debugpy_dir.display()
             );
-            Ok(vec![
+            vec![
                 debugpy_dir
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
-                format!("--host={}", host),
-                format!("--port={}", port),
-            ])
-        }
+            ]
+        };
+
+        args.extend(if let Some(args) = user_args {
+            args
+        } else {
+            vec![format!("--host={}", host), format!("--port={}", port)]
+        });
+        Ok(args)
     }
 
     async fn request_args(
@@ -151,6 +150,7 @@ impl PythonDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         toolchain: Option<Toolchain>,
         installed_in_venv: bool,
     ) -> Result<DebugAdapterBinary> {
@@ -182,6 +182,7 @@ impl PythonDebugAdapter {
             &host,
             port,
             user_installed_path.as_deref(),
+            user_args,
             installed_in_venv,
         )
         .await?;
@@ -595,6 +596,7 @@ impl DebugAdapter for PythonDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if let Some(local_path) = &user_installed_path {
@@ -603,7 +605,14 @@ impl DebugAdapter for PythonDebugAdapter {
                 local_path.display()
             );
             return self
-                .get_installed_binary(delegate, &config, Some(local_path.clone()), None, false)
+                .get_installed_binary(
+                    delegate,
+                    &config,
+                    Some(local_path.clone()),
+                    user_args,
+                    None,
+                    false,
+                )
                 .await;
         }
 
@@ -630,6 +639,7 @@ impl DebugAdapter for PythonDebugAdapter {
                             delegate,
                             &config,
                             None,
+                            user_args,
                             Some(toolchain.clone()),
                             true,
                         )
@@ -647,7 +657,7 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, None, toolchain, false)
+        self.get_installed_binary(delegate, &config, None, user_args, toolchain, false)
             .await
     }
 }
@@ -682,15 +692,21 @@ mod tests {
 
         // Case 1: User-defined debugpy path (highest precedence)
         let user_path = PathBuf::from("/custom/path/to/debugpy");
-        let user_args =
-            PythonDebugAdapter::generate_debugpy_arguments(&host, port, Some(&user_path), false)
-                .await
-                .unwrap();
+        let user_args = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            Some(&user_path),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
 
         // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
-        let venv_args = PythonDebugAdapter::generate_debugpy_arguments(&host, port, None, true)
-            .await
-            .unwrap();
+        let venv_args =
+            PythonDebugAdapter::generate_debugpy_arguments(&host, port, None, None, true)
+                .await
+                .unwrap();
 
         assert!(user_args[0].ends_with("src/debugpy/adapter"));
         assert_eq!(user_args[1], "--host=127.0.0.1");
