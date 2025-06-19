@@ -504,6 +504,17 @@ impl ContextProvider for PythonContextProvider {
                 cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
+            // Execute the current text
+            TaskTemplate {
+                label: "execute current text".to_owned(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                args: vec![
+                    "-c".to_owned(),
+                    format!("\"{}\"", VariableName::CurrentText.template_value()),
+                ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
+                ..TaskTemplate::default()
+            },
             // Execute an entire file
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),

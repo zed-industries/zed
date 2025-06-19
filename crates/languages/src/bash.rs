@@ -9,6 +9,11 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
             ..TaskTemplate::default()
         },
         TaskTemplate {
+            label: "execute current".to_owned(),
+            command: VariableName::CurrentText.template_value(),
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
             label: format!("run '{}'", VariableName::File.template_value()),
             command: VariableName::File.template_value(),
             ..TaskTemplate::default()

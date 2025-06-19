@@ -982,6 +982,7 @@ impl ContextProvider for BasicContextProvider {
         let selected_text = buffer
             .chars_for_range(location.range.clone())
             .collect::<String>();
+        let current_text = buffer.chars().collect::<String>();
 
         let mut task_variables = TaskVariables::from_iter([
             (VariableName::Row, row.to_string()),
@@ -993,6 +994,9 @@ impl ContextProvider for BasicContextProvider {
         }
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
+        }
+        if !current_text.trim().is_empty() {
+            task_variables.insert(VariableName::CurrentText, current_text);
         }
         let worktree_root_dir =
             buffer
