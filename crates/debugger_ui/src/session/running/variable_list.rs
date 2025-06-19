@@ -489,14 +489,26 @@ impl VariableList {
             let Some(state) = self.entry_states.get(&var_path) else {
                 return;
             };
+
             let variables_reference = state.parent_reference;
             let Some(name) = var_path.leaf_name else {
                 return;
             };
+
+            let Some(stack_frame_id) = self.selected_stack_frame_id else {
+                return;
+            };
+
             let value = editor.read(cx).text(cx);
 
             self.session.update(cx, |session, cx| {
-                session.set_variable_value(variables_reference, name.into(), value, cx)
+                session.set_variable_value(
+                    stack_frame_id,
+                    variables_reference,
+                    name.into(),
+                    value,
+                    cx,
+                )
             });
         }
     }

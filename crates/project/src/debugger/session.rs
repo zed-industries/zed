@@ -2200,6 +2200,7 @@ impl Session {
 
     pub fn set_variable_value(
         &mut self,
+        stack_frame_id: u64,
         variables_reference: u64,
         name: String,
         value: String,
@@ -2215,12 +2216,13 @@ impl Session {
                 move |this, response, cx| {
                     let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
+                    this.refresh_watchers(stack_frame_id, cx);
                     cx.notify();
                     Some(response)
                 },
                 cx,
             )
-            .detach()
+            .detach();
         }
     }
 
