@@ -304,6 +304,8 @@ impl FocusHandle {
     }
 
     /// Sets whether the element associated with this handle is a tab stop.
+    ///
+    /// When `false`, the element will not be included in the tab order.
     pub fn tab_stop(mut self, tab_stop: bool) -> Self {
         self.tab_stop = tab_stop;
         if let Some(focus) = self.handles.write().get_mut(self.id) {
