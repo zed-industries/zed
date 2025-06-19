@@ -424,18 +424,12 @@ pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        let config_dir = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            std::env::var("FLATPAK_XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| {
-                    dirs::config_dir().expect(
-                        "failed to determine XDG_CONFIG_HOME or FLATPAK_XDG_CONFIG_HOME directory",
-                    )
-                })
-        } else if cfg!(target_os = "windows") {
-            dirs::config_dir().expect("failed to determine RoamingAppData directory")
+        let config_dir = if cfg!(target_os = "windows") {
+            dirs::data_local_dir().expect("failed to determine LocalAppData directory")
         } else {
-            home_dir().join(".config")
+            std::env::var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home_dir().join(".config"))
         };
 
         config_dir.join("github-copilot")
