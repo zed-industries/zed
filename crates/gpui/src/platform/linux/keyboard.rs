@@ -9,7 +9,7 @@ use strum::{EnumIter, IntoEnumIterator as _};
 use x11rb::{protocol::xkb::ConnectionExt as _, xcb_ffi::XCBConnection};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{
-    Keycode, Keysym, STATE_LAYOUT_EFFECTIVE, State,
+    Keycode, Keysym,
     x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION},
 };
 
