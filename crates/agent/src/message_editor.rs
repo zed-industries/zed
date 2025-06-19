@@ -89,6 +89,8 @@ pub(crate) fn create_editor(
     context_store: WeakEntity<ContextStore>,
     thread_store: WeakEntity<ThreadStore>,
     text_thread_store: WeakEntity<TextThreadStore>,
+    min_lines: usize,
+    max_lines: usize,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
@@ -105,8 +107,8 @@ pub(crate) fn create_editor(
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
-                min_lines: MIN_EDITOR_LINES,
-                max_lines: MAX_EDITOR_LINES,
+                min_lines,
+                max_lines,
             },
             buffer,
             None,
@@ -161,6 +163,8 @@ impl MessageEditor {
             context_store.downgrade(),
             thread_store.clone(),
             text_thread_store.clone(),
+            MIN_EDITOR_LINES,
+            MAX_EDITOR_LINES,
             window,
             cx,
         );
