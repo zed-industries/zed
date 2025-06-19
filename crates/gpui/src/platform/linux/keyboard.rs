@@ -1,17 +1,9 @@
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use std::sync::LazyLock;
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
 use collections::{HashMap, HashSet};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use strum::{EnumIter, IntoEnumIterator as _};
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use x11rb::{protocol::xkb::ConnectionExt as _, xcb_ffi::XCBConnection};
-#[cfg(any(feature = "wayland", feature = "x11"))]
-use xkbcommon::xkb::{
-    Keycode, Keymap, Keysym, MOD_NAME_SHIFT, State,
-    x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION},
-};
+use xkbcommon::xkb::{Keycode, Keymap, Keysym, MOD_NAME_SHIFT, State};
 
 use crate::{PlatformKeyboardLayout, SharedString};
 
@@ -35,10 +27,6 @@ impl LinuxKeyboardLayout {
         Self { name }
     }
 }
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-static XCB_CONNECTION: LazyLock<XCBConnection> =
-    LazyLock::new(|| XCBConnection::connect(None).unwrap().0);
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) struct LinuxKeyboardMapper {
@@ -426,52 +414,62 @@ impl LinuxScanCodes {
 
 #[cfg(all(test, any(feature = "wayland", feature = "x11")))]
 mod tests {
+    use std::sync::LazyLock;
+
     use strum::IntoEnumIterator;
+    use x11rb::{protocol::xkb::ConnectionExt, xcb_ffi::XCBConnection};
+    use xkbcommon::xkb::{
+        CONTEXT_NO_FLAGS, KEYMAP_COMPILE_NO_FLAGS, Keymap,
+        x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION},
+    };
 
     use crate::platform::linux::keyboard::LinuxScanCodes;
 
     use super::LinuxKeyboardMapper;
 
-    // let _ = XCB_CONNECTION
-    //         .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
-    //         .unwrap()
-    //         .reply()
-    //         .unwrap();
-    //     let xkb_context = xkbcommon::xkb::Context::new(xkbcommon::xkb::CONTEXT_NO_FLAGS);
-    //     let xkb_device_id = xkbcommon::xkb::x11::get_core_keyboard_device_id(&*XCB_CONNECTION);
-    //     let mut xkb_state = {
-    //         let xkb_keymap = xkbcommon::xkb::x11::keymap_new_from_device(
-    //             &xkb_context,
-    //             &*XCB_CONNECTION,
-    //             xkb_device_id,
-    //             xkbcommon::xkb::KEYMAP_COMPILE_NO_FLAGS,
-    //         );
-    //         xkbcommon::xkb::x11::state_new_from_device(&xkb_keymap, &*XCB_CONNECTION, xkb_device_id)
-    //     };
+    fn get_keymap() -> Keymap {
+        static XCB_CONNECTION: LazyLock<XCBConnection> =
+            LazyLock::new(|| XCBConnection::connect(None).unwrap().0);
 
-    // #[test]
-    // fn test_us_layout_mapper() {
-    //     let mapper = LinuxKeyboardMapper::new(0, 0, 0);
-    //     for scan_code in super::LinuxScanCodes::iter() {
-    //         if scan_code == LinuxScanCodes::IntlBackslash || scan_code == LinuxScanCodes::IntlRo {
-    //             continue;
-    //         }
-    //         let keycode = xkbcommon::xkb::Keycode::new(scan_code as u32);
-    //         let key = mapper
-    //             .get_key(keycode, &mut crate::Modifiers::default())
-    //             .unwrap();
-    //         assert_eq!(key.as_str(), scan_code.to_str());
+        let _ = XCB_CONNECTION
+            .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let xkb_context = xkbcommon::xkb::Context::new(CONTEXT_NO_FLAGS);
+        let xkb_device_id = xkbcommon::xkb::x11::get_core_keyboard_device_id(&*XCB_CONNECTION);
+        xkbcommon::xkb::x11::keymap_new_from_device(
+            &xkb_context,
+            &*XCB_CONNECTION,
+            xkb_device_id,
+            KEYMAP_COMPILE_NO_FLAGS,
+        )
+    }
 
-    //         let shifted_key = mapper
-    //             .get_key(
-    //                 keycode,
-    //                 &mut crate::Modifiers {
-    //                     shift: true,
-    //                     ..Default::default()
-    //                 },
-    //             )
-    //             .unwrap();
-    //         assert_eq!(shifted_key.as_str(), scan_code.to_shifted());
-    //     }
-    // }
+    #[test]
+    fn test_us_layout_mapper() {
+        let keymap = get_keymap();
+        let mapper = LinuxKeyboardMapper::new(&keymap, 0, 0, 0);
+        for scan_code in super::LinuxScanCodes::iter() {
+            if scan_code == LinuxScanCodes::IntlBackslash || scan_code == LinuxScanCodes::IntlRo {
+                continue;
+            }
+            let keycode = xkbcommon::xkb::Keycode::new(scan_code as u32);
+            let key = mapper
+                .get_key(keycode, &mut crate::Modifiers::default())
+                .unwrap();
+            assert_eq!(key.as_str(), scan_code.to_str());
+
+            let shifted_key = mapper
+                .get_key(
+                    keycode,
+                    &mut crate::Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(shifted_key.as_str(), scan_code.to_shifted());
+        }
+    }
 }
