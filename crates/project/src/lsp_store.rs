@@ -4169,7 +4169,7 @@ impl LspStore {
                         // and reused later in the invisible worktrees.
                         plain_text_buffers.sort_by_key(|buffer| {
                             Reverse(
-                                crate::File::from_dyn(buffer.read(cx).file())
+                                File::from_dyn(buffer.read(cx).file())
                                     .map(|file| file.worktree.read(cx).is_visible()),
                             )
                         });
@@ -4513,7 +4513,7 @@ impl LspStore {
                 let mut rebase = lsp_tree.rebase();
                 for buffer_handle in buffer_store.read(cx).buffers().sorted_by_key(|buffer| {
                     Reverse(
-                        crate::File::from_dyn(buffer.read(cx).file())
+                        File::from_dyn(buffer.read(cx).file())
                             .map(|file| file.worktree.read(cx).is_visible()),
                     )
                 }) {
@@ -4914,7 +4914,7 @@ impl LspStore {
         } else {
             let path = match buffer
                 .update(cx, |buffer, cx| {
-                    Some(crate::File::from_dyn(buffer.file())?.abs_path(cx))
+                    Some(File::from_dyn(buffer.file())?.abs_path(cx))
                 })
                 .context("buffer with the missing path")
             {
@@ -6077,32 +6077,30 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        update_on_edit: bool,
         for_server_id: Option<LanguageServerId>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let buffer_mtime = buffer.read(cx).saved_mtime()?;
-        let abs_path = crate::File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
         let buffer_version = buffer.read(cx).version();
-        let ignore_existing_mtime = update_on_edit
-            && self.lsp_data.as_ref().is_none_or(|lsp_data| {
-                lsp_data.last_version_queried.get(&abs_path) != Some(&buffer_version)
-            });
+        let abs_path = File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
 
-        let mut has_other_versions = false;
         let mut received_colors_data = false;
-        let mut outdated_lsp_data = false;
         let buffer_lsp_data = self
             .lsp_data
             .as_ref()
             .into_iter()
             .filter(|lsp_data| {
-                if ignore_existing_mtime {
-                    return false;
+                if buffer_mtime == lsp_data.mtime {
+                    lsp_data
+                        .last_version_queried
+                        .get(&abs_path)
+                        .is_none_or(|version_queried| {
+                            !buffer_version.changed_since(version_queried)
+                        })
+                } else {
+                    !buffer_mtime.bad_is_greater_than(lsp_data.mtime)
                 }
-                has_other_versions |= lsp_data.mtime != buffer_mtime;
-                lsp_data.mtime == buffer_mtime
             })
             .flat_map(|lsp_data| lsp_data.buffer_lsp_data.values())
             .filter_map(|buffer_data| buffer_data.get(&abs_path))
@@ -6118,16 +6116,22 @@ impl LspStore {
         if buffer_lsp_data.is_empty() || for_server_id.is_some() {
             if received_colors_data && for_server_id.is_none() {
                 return None;
-            } else if has_other_versions && !ignore_existing_mtime {
-                return None;
             }
 
-            if ignore_existing_mtime
-                || self.lsp_data.is_none()
-                || self
-                    .lsp_data
-                    .as_ref()
-                    .is_some_and(|lsp_data| buffer_mtime != lsp_data.mtime)
+            let mut outdated_lsp_data = false;
+            if self.lsp_data.is_none()
+                || self.lsp_data.as_ref().is_some_and(|lsp_data| {
+                    if buffer_mtime == lsp_data.mtime {
+                        lsp_data
+                            .last_version_queried
+                            .get(&abs_path)
+                            .is_none_or(|version_queried| {
+                                buffer_version.changed_since(version_queried)
+                            })
+                    } else {
+                        buffer_mtime.bad_is_greater_than(lsp_data.mtime)
+                    }
+                })
             {
                 self.lsp_data = Some(LspData {
                     mtime: buffer_mtime,
@@ -6207,6 +6211,7 @@ impl LspStore {
             lsp_data
                 .last_version_queried
                 .insert(abs_path, buffer_version);
+            lsp_data.mtime = buffer_mtime;
             Some(new_task)
         } else {
             Some(Task::ready(Ok(buffer_lsp_data)).shared())
