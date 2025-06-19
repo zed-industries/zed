@@ -357,6 +357,12 @@ impl WaylandClientStatePtr {
             let changed = layout_name != state.keyboard_layout.name();
             if changed {
                 state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
+                let mapper = state
+                    .keyboard_mapper_cache
+                    .entry(layout_name.to_string())
+                    .or_insert(Rc::new(LinuxKeyboardMapper::new(&keymap, 0, 0, 0)))
+                    .clone();
+                state.keyboard_mapper = Some(mapper);
             }
             changed
         } else {
@@ -367,13 +373,6 @@ impl WaylandClientStatePtr {
             changed
         };
         if changed {
-            let id = state.keyboard_layout.id().to_string();
-            let mapper = state
-                .keyboard_mapper_cache
-                .entry(id)
-                .or_insert(Rc::new(LinuxKeyboardMapper::new(0, 0, 0)))
-                .clone();
-            state.keyboard_mapper = Some(mapper);
             if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
                 drop(state);
                 callback();

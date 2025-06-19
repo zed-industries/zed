@@ -411,24 +411,24 @@ impl X11Client {
 
         let xkb_context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
         let xkb_device_id = xkbc::x11::get_core_keyboard_device_id(&xcb_connection);
-        let xkb_state = {
-            let xkb_keymap = xkbc::x11::keymap_new_from_device(
-                &xkb_context,
-                &xcb_connection,
-                xkb_device_id,
-                xkbc::KEYMAP_COMPILE_NO_FLAGS,
-            );
-            xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
-        };
+        let xkb_keymap = xkbc::x11::keymap_new_from_device(
+            &xkb_context,
+            &xcb_connection,
+            xkb_device_id,
+            xkbc::KEYMAP_COMPILE_NO_FLAGS,
+        );
+        let xkb_state =
+            xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id);
         let compose_state = get_xkb_compose_state(&xkb_context);
         let layout_idx = xkb_state.serialize_layout(STATE_LAYOUT_EFFECTIVE);
         let layout_name = xkb_state
             .get_keymap()
             .layout_get_name(layout_idx)
             .to_string();
-        let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
-        let keyboard_mapper = Rc::new(LinuxKeyboardMapper::new(0, 0, 0));
-        let keyboard_mapper_cache = HashMap::default();
+        let keyboard_layout = LinuxKeyboardLayout::new(layout_name.clone().into());
+        let keyboard_mapper = Rc::new(LinuxKeyboardMapper::new(&xkb_keymap, 0, 0, 0));
+        let mut keyboard_mapper_cache = HashMap::default();
+        keyboard_mapper_cache.insert(layout_name, keyboard_mapper.clone());
 
         let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
 
@@ -1453,6 +1453,7 @@ impl X11Client {
                 .keyboard_mapper_cache
                 .entry(layout_name.to_string())
                 .or_insert(Rc::new(LinuxKeyboardMapper::new(
+                    &keymap,
                     base_group,
                     latched_group,
                     locked_group,
