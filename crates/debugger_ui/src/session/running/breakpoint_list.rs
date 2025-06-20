@@ -9,7 +9,7 @@ use dap::{Capabilities, ExceptionBreakpointsFilter};
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, WeakEntity, uniform_list,
+    Stateful, Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
 use language::Point;
 use project::{
@@ -31,6 +31,10 @@ use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
+actions!(
+    debugger,
+    [PreviousBreakpointProperty, NextBreakpointProperty]
+);
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum SelectedBreakpointKind {
     Source,
@@ -291,6 +295,41 @@ impl BreakpointList {
         cx.notify();
     }
 
+    fn previous_breakpoint_property(
+        &mut self,
+        _: &PreviousBreakpointProperty,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next_mode = match self.strip_mode {
+            Some(ActiveBreakpointStripMode::Log) => None,
+            Some(ActiveBreakpointStripMode::Condition) => Some(ActiveBreakpointStripMode::Log),
+            Some(ActiveBreakpointStripMode::HitCondition) => {
+                Some(ActiveBreakpointStripMode::Condition)
+            }
+            None => Some(ActiveBreakpointStripMode::HitCondition),
+        };
+        self.strip_mode = next_mode;
+        cx.notify();
+    }
+    fn next_breakpoint_property(
+        &mut self,
+        _: &NextBreakpointProperty,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next_mode = match self.strip_mode {
+            Some(ActiveBreakpointStripMode::Log) => Some(ActiveBreakpointStripMode::Condition),
+            Some(ActiveBreakpointStripMode::Condition) => {
+                Some(ActiveBreakpointStripMode::HitCondition)
+            }
+            Some(ActiveBreakpointStripMode::HitCondition) => None,
+            None => Some(ActiveBreakpointStripMode::Log),
+        };
+        self.strip_mode = next_mode;
+        cx.notify();
+    }
+
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
@@ -548,6 +587,8 @@ impl Render for BreakpointList {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::toggle_enable_breakpoint))
             .on_action(cx.listener(Self::unset_breakpoint))
+            .on_action(cx.listener(Self::next_breakpoint_property))
+            .on_action(cx.listener(Self::previous_breakpoint_property))
             .size_full()
             .m_0p5()
             .child(self.render_list(cx))
@@ -945,8 +986,10 @@ impl RenderOnce for BreakpointOptionsStrip {
         let has_logs = self.breakpoint.has_log();
         let has_condition = self.breakpoint.has_condition();
         let has_hit_condition = self.breakpoint.has_hit_condition();
-        let style_for_toggle = |is_enabled| {
-            if is_enabled {
+        let style_for_toggle = |kind, is_enabled| {
+            if Some(kind) == self.strip_mode && self.is_selected {
+                ui::ButtonStyle::Tinted(ui::TintColor::Accent)
+            } else if is_enabled {
                 ui::ButtonStyle::Filled
             } else {
                 ui::ButtonStyle::Subtle
@@ -961,7 +1004,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-log-toggle")),
                             IconName::ListTodo,
                         )
-                        .style(style_for_toggle(has_logs))
+                        .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
                         .disabled(!supports_logs)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Log))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log)),
@@ -975,7 +1018,10 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-condition-toggle")),
                             IconName::ListTodo,
                         )
-                        .style(style_for_toggle(has_condition))
+                        .style(style_for_toggle(
+                            ActiveBreakpointStripMode::Condition,
+                            has_condition,
+                        ))
                         .disabled(!supports_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition)),
@@ -989,7 +1035,10 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-hit-condition-toggle")),
                             IconName::ListTodo,
                         )
-                        .style(style_for_toggle(has_hit_condition))
+                        .style(style_for_toggle(
+                            ActiveBreakpointStripMode::HitCondition,
+                            has_hit_condition,
+                        ))
                         .disabled(!supports_hit_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::HitCondition))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition)),
