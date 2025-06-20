@@ -505,7 +505,7 @@ You can add custom models to the OpenRouter provider by adding the following to 
           "max_tokens": 200000,
           "max_output_tokens": 8192,
           "supports_tools": true,
-          "supports_images": true
+          "supports_images": true,
           "mode": {
             "type": "thinking",
             "budget_tokens": 8000
