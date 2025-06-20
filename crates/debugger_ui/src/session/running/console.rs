@@ -494,9 +494,10 @@ impl Render for Console {
                 this.child(Divider::horizontal()).child(
                     h_flex()
                         .gap_1()
+                        .bg(cx.theme().colors().editor_background)
                         .child(self.render_query_bar(cx))
                         .child(SplitButton::new(
-                            ui::ButtonLike::new_rounded_left(ElementId::Name(
+                            ui::ButtonLike::new_rounded_all(ElementId::Name(
                                 "split-button-left-confirm-button".into(),
                             ))
                             .on_click(move |_, window, cx| {
