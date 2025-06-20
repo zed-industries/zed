@@ -476,36 +476,46 @@ impl Project {
             },
             terminal_settings::ActivateScript::Nushell => "overlay use",
             terminal_settings::ActivateScript::PowerShell => ".",
+            terminal_settings::ActivateScript::Pyenv => "pyenv",
             _ => "source",
         };
         let activate_script_name = match venv_settings.activate_script {
-            terminal_settings::ActivateScript::Default => "activate",
+            terminal_settings::ActivateScript::Default
+            | terminal_settings::ActivateScript::Pyenv => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
             terminal_settings::ActivateScript::Fish => "activate.fish",
             terminal_settings::ActivateScript::Nushell => "activate.nu",
             terminal_settings::ActivateScript::PowerShell => "activate.ps1",
         };
-        let path = venv_base_directory
-            .join(match std::env::consts::OS {
-                "windows" => "Scripts",
-                _ => "bin",
-            })
-            .join(activate_script_name)
-            .to_string_lossy()
-            .to_string();
-        let quoted = shlex::try_quote(&path).ok()?;
-        let line_ending = match std::env::consts::OS {
-            "windows" => "\r",
-            _ => "\n",
-        };
-        smol::block_on(self.fs.metadata(path.as_ref()))
-            .ok()
-            .flatten()?;
+        match venv_settings.venv_name.is_empty() {
+            false => Some(format!(
+                "{activate_keyword} {activate_script_name} {name}",
+                name = venv_settings.venv_name
+            )),
+            true => {
+                let path = venv_base_directory
+                    .join(match std::env::consts::OS {
+                        "windows" => "Scripts",
+                        _ => "bin",
+                    })
+                    .join(activate_script_name)
+                    .to_string_lossy()
+                    .to_string();
+                let quoted = shlex::try_quote(&path).ok()?;
+                let line_ending = match std::env::consts::OS {
+                    "windows" => "\r",
+                    _ => "\n",
+                };
+                smol::block_on(self.fs.metadata(path.as_ref()))
+                    .ok()
+                    .flatten()?;
 
-        Some(format!(
-            "{} {} ; clear{}",
-            activate_keyword, quoted, line_ending
-        ))
+                Some(format!(
+                    "{} {} ; clear{}",
+                    activate_keyword, quoted, line_ending
+                ))
+            }
+        }
     }
 
     fn activate_python_virtual_environment(
