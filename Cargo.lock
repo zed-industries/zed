@@ -2821,6 +2821,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -2859,6 +2860,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -8159,6 +8161,7 @@ name = "inline_completion"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "gpui",
  "language",
  "project",
