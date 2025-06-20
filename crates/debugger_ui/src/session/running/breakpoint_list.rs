@@ -887,6 +887,7 @@ impl LineBreakpoint {
                         weak: weak,
                     },
                     is_selected,
+                    focus_handle,
                     strip_mode,
                     index: ix,
                 }),
@@ -940,18 +941,21 @@ impl ExceptionBreakpoint {
                     "exception-breakpoint-ui-item-{}-click-handler",
                     self.id
                 )))
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action_in(
-                        if is_enabled {
-                            "Disable Exception Breakpoint"
-                        } else {
-                            "Enable Exception Breakpoint"
-                        },
-                        &ToggleEnableBreakpoint,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
+                .tooltip({
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            if is_enabled {
+                                "Disable Exception Breakpoint"
+                            } else {
+                                "Enable Exception Breakpoint"
+                            },
+                            &ToggleEnableBreakpoint,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
                 })
                 .on_click({
                     let list = list.clone();
@@ -999,6 +1003,7 @@ impl ExceptionBreakpoint {
                         weak: weak,
                     },
                     is_selected,
+                    focus_handle,
                     strip_mode,
                     index: ix,
                 }),
@@ -1136,6 +1141,7 @@ struct BreakpointOptionsStrip {
     props: SupportedBreakpointProperties,
     breakpoint: BreakpointEntry,
     is_selected: bool,
+    focus_handle: FocusHandle,
     strip_mode: Option<ActiveBreakpointStripMode>,
     index: usize,
 }
@@ -1163,9 +1169,37 @@ impl BreakpointOptionsStrip {
             .ok();
         }
     }
+    fn add_border(
+        &self,
+        kind: ActiveBreakpointStripMode,
+        available: bool,
+        window: &Window,
+        cx: &App,
+    ) -> impl Fn(Div) -> Div {
+        let expected_kind = Some(kind);
+        let focus_handle = self.focus_handle.clone();
+
+        move |this: Div| {
+            if self.is_selected && self.strip_mode == expected_kind {
+                let theme = cx.theme().colors();
+                if self.focus_handle.is_focused(window) {
+                    this.border_2()
+                        .rounded_sm()
+                        .border_color(theme.border_selected)
+                } else {
+                    this.border_2()
+                        .rounded_sm()
+                        .border_color(theme.border_disabled)
+                }
+            } else {
+                // Avoid layout shifts in case there's no colored border
+                this.border_2().rounded_sm()
+            }
+        }
+    }
 }
 impl RenderOnce for BreakpointOptionsStrip {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let id = self.breakpoint.id();
         let supports_logs = self.props.contains(SupportedBreakpointProperties::LOG);
         let supports_condition = self
@@ -1177,25 +1211,32 @@ impl RenderOnce for BreakpointOptionsStrip {
         let has_logs = self.breakpoint.has_log();
         let has_condition = self.breakpoint.has_condition();
         let has_hit_condition = self.breakpoint.has_hit_condition();
-        let style_for_toggle = |kind, is_enabled| {
-            if Some(kind) == self.strip_mode && self.is_selected {
-                ui::ButtonStyle::Tinted(ui::TintColor::Accent)
-            } else if is_enabled {
+        let style_for_toggle = |mode, is_enabled| {
+            if is_enabled && self.strip_mode == Some(mode) && self.is_selected {
                 ui::ButtonStyle::Filled
             } else {
                 ui::ButtonStyle::Subtle
             }
         };
+        let color_for_toggle = |is_enabled| {
+            if is_enabled {
+                ui::Color::Default
+            } else {
+                ui::Color::Muted
+            }
+        };
+
         h_flex()
             .gap_2()
             .child(
-                div()
+                div() .map(self.add_border(ActiveBreakpointStripMode::Log, supports_logs, window, cx))
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
                             IconName::ScrollText,
                         )
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
+                        .icon_color(color_for_toggle(has_logs))
                         .disabled(!supports_logs)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Log))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log)).tooltip(|window, cx| Tooltip::with_meta("Set Log Message", None, "Set log message to display (instead of stopping) when a breakpoint is hit", window, cx))
@@ -1203,7 +1244,11 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .when(!has_logs && !self.is_selected, |this| this.invisible()),
             )
             .child(
-                div()
+                div().map(self.add_border(
+                    ActiveBreakpointStripMode::Condition,
+                    supports_condition,
+                    window, cx
+                ))
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-condition-toggle")),
@@ -1211,8 +1256,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                         )
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::Condition,
-                            has_condition,
+                            has_condition
                         ))
+                        .icon_color(color_for_toggle(has_condition))
                         .disabled(!supports_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
@@ -1221,7 +1267,10 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .when(!has_condition && !self.is_selected, |this| this.invisible()),
             )
             .child(
-                div()
+                div()                  .map(self.add_border(
+                    ActiveBreakpointStripMode::HitCondition,
+                    supports_hit_condition,window, cx
+                ))
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-hit-condition-toggle")),
@@ -1231,6 +1280,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             ActiveBreakpointStripMode::HitCondition,
                             has_hit_condition,
                         ))
+                        .icon_color(color_for_toggle(has_hit_condition))
                         .disabled(!supports_hit_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::HitCondition))
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition)).tooltip(|window, cx| Tooltip::with_meta("Set Hit Condition", None, "Set expression that controls how many hits of the breakpoint are ignored.", window, cx))
