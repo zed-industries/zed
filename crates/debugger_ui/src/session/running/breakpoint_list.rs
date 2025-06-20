@@ -102,13 +102,22 @@ impl BreakpointList {
     }
 
     fn edit_line_breakpoint(
-        &mut self,
+        &self,
         path: Arc<Path>,
         row: u32,
         action: BreakpointEditAction,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) {
-        self.breakpoint_store.update(cx, |breakpoint_store, cx| {
+        Self::edit_line_breakpoint_inner(&self.breakpoint_store, path, row, action, cx);
+    }
+    fn edit_line_breakpoint_inner(
+        breakpoint_store: &Entity<BreakpointStore>,
+        path: Arc<Path>,
+        row: u32,
+        action: BreakpointEditAction,
+        cx: &mut App,
+    ) {
+        breakpoint_store.update(cx, |breakpoint_store, cx| {
             if let Some((buffer, breakpoint)) = breakpoint_store.breakpoint_at_row(&path, row, cx) {
                 breakpoint_store.toggle_breakpoint(buffer, breakpoint, action, cx);
             } else {
@@ -292,10 +301,50 @@ impl BreakpointList {
             return;
         };
 
-        if self.strip_mode.is_some() {
+        if let Some(mode) = self.strip_mode {
             let handle = self.input.focus_handle(cx);
             if handle.is_focused(window) {
-                // Go back to the main strip.
+                // Go back to the main strip. Save the result as well.
+                let text = self.input.read(cx).text(cx);
+
+                match mode {
+                    ActiveBreakpointStripMode::Log => match &entry.kind {
+                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                            Self::edit_line_breakpoint_inner(
+                                &self.breakpoint_store,
+                                line_breakpoint.breakpoint.path.clone(),
+                                line_breakpoint.breakpoint.row,
+                                BreakpointEditAction::EditLogMessage(Arc::from(text)),
+                                cx,
+                            );
+                        }
+                        _ => {}
+                    },
+                    ActiveBreakpointStripMode::Condition => match &entry.kind {
+                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                            Self::edit_line_breakpoint_inner(
+                                &self.breakpoint_store,
+                                line_breakpoint.breakpoint.path.clone(),
+                                line_breakpoint.breakpoint.row,
+                                BreakpointEditAction::EditCondition(Arc::from(text)),
+                                cx,
+                            );
+                        }
+                        _ => {}
+                    },
+                    ActiveBreakpointStripMode::HitCondition => match &entry.kind {
+                        BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                            Self::edit_line_breakpoint_inner(
+                                &self.breakpoint_store,
+                                line_breakpoint.breakpoint.path.clone(),
+                                line_breakpoint.breakpoint.row,
+                                BreakpointEditAction::EditHitCondition(Arc::from(text)),
+                                cx,
+                            );
+                        }
+                        _ => {}
+                    },
+                }
                 self.focus_handle.focus(window);
             } else {
                 handle.focus(window);
