@@ -509,9 +509,14 @@ impl Project {
             .ok()
             .flatten()?;
 
+        let joiner = match venv_settings.activate_script {
+            terminal_settings::ActivateScript::Cmd => "&&",
+            _ => ";"
+        };
+
         Some(format!(
-            "{} {} ; {}{}",
-            activate_keyword, quoted, clear_cmd, line_ending
+            "{} {} {} {}{}",
+            activate_keyword, quoted, joiner, clear_cmd, line_ending
         ))
     }
 
