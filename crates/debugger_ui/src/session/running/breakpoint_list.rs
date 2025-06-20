@@ -21,11 +21,11 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div, Divider,
-    FluentBuilder as _, Icon, IconButton, IconName, IconSize, Indicator, InteractiveElement,
-    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
-    Tooltip, Window, div, h_flex, px, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div,
+    Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, Indicator,
+    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement,
+    Render, RenderOnce, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
+    Styled, Toggleable, Tooltip, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -211,6 +211,12 @@ impl BreakpointList {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if self.strip_mode.is_some() {
+            if self.input.focus_handle(cx).contains_focused(window, cx) {
+                cx.propagate();
+                return;
+            }
+        }
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
             None => Some(0),
@@ -231,6 +237,12 @@ impl BreakpointList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.strip_mode.is_some() {
+            if self.input.focus_handle(cx).contains_focused(window, cx) {
+                cx.propagate();
+                return;
+            }
+        }
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
             None => Some(self.breakpoints.len() - 1),
@@ -246,6 +258,12 @@ impl BreakpointList {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+        if self.strip_mode.is_some() {
+            if self.input.focus_handle(cx).contains_focused(window, cx) {
+                cx.propagate();
+                return;
+            }
+        }
         let ix = if self.breakpoints.len() > 0 {
             Some(0)
         } else {
@@ -255,6 +273,12 @@ impl BreakpointList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
+        if self.strip_mode.is_some() {
+            if self.input.focus_handle(cx).contains_focused(window, cx) {
+                cx.propagate();
+                return;
+            }
+        }
         let ix = if self.breakpoints.len() > 0 {
             Some(self.breakpoints.len() - 1)
         } else {
@@ -268,6 +292,17 @@ impl BreakpointList {
             return;
         };
 
+        if self.strip_mode.is_some() {
+            let handle = self.input.focus_handle(cx);
+            if handle.is_focused(window) {
+                // Go back to the main strip.
+                self.focus_handle.focus(window);
+            } else {
+                handle.focus(window);
+            }
+
+            return;
+        }
         match &mut entry.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 let path = line_breakpoint.breakpoint.path.clone();
@@ -281,12 +316,18 @@ impl BreakpointList {
     fn toggle_enable_breakpoint(
         &mut self,
         _: &ToggleEnableBreakpoint,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
             return;
         };
+        if self.strip_mode.is_some() {
+            if self.input.focus_handle(cx).contains_focused(window, cx) {
+                cx.propagate();
+                return;
+            }
+        }
 
         match &mut entry.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
@@ -545,7 +586,7 @@ impl BreakpointList {
 }
 
 impl Render for BreakpointList {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
         let weak = cx.weak_entity();
@@ -634,7 +675,19 @@ impl Render for BreakpointList {
             .m_0p5()
             .child(self.render_list(cx))
             .when_some(self.strip_mode, |this, mode| {
-                this.child(Divider::horizontal()).child(self.input.clone())
+                this.child(Divider::horizontal()).child(
+                    h_flex()
+                        // .w_full()
+                        .m_0p5()
+                        .p_0p5()
+                        .border_1()
+                        .rounded_sm()
+                        .when(
+                            self.input.focus_handle(cx).contains_focused(window, cx),
+                            |this| this.border_color(cx.theme().colors().border_focused),
+                        )
+                        .child(self.input.clone()),
+                )
             })
             .children(self.render_vertical_scrollbar(cx))
     }
