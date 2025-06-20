@@ -87,9 +87,9 @@ pub struct ExtensionManifest {
     pub snippets: Option<PathBuf>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
 }
 

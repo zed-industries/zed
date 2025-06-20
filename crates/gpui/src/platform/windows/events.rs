@@ -148,22 +148,18 @@ fn handle_get_min_max_info_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let lock = state_ptr.state.borrow();
-    if let Some(min_size) = lock.min_size {
-        let scale_factor = lock.scale_factor;
-        let boarder_offset = lock.border_offset;
-        drop(lock);
-
-        unsafe {
-            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x =
-                min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
-            minmax_info.ptMinTrackSize.y =
-                min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
-        }
-        Some(0)
-    } else {
-        None
+    let min_size = lock.min_size?;
+    let scale_factor = lock.scale_factor;
+    let boarder_offset = lock.border_offset;
+    drop(lock);
+    unsafe {
+        let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+        minmax_info.ptMinTrackSize.x =
+            min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+        minmax_info.ptMinTrackSize.y =
+            min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
     }
+    Some(0)
 }
 
 fn handle_size_msg(
@@ -1227,7 +1223,6 @@ where
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
-    let capslock = current_capslock();
 
     match virtual_key {
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
@@ -1238,6 +1233,20 @@ where
                 return None;
             }
             state.last_reported_modifiers = Some(modifiers);
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock: current_capslock(),
+            }))
+        }
+        VK_CAPITAL => {
+            let capslock = current_capslock();
+            if state
+                .last_reported_capslock
+                .is_some_and(|prev_capslock| prev_capslock == capslock)
+            {
+                return None;
+            }
+            state.last_reported_capslock = Some(capslock);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
                 capslock,

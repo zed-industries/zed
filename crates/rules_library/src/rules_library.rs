@@ -20,12 +20,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
+use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
     SharedString, Styled, Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::Workspace;
+use workspace::{Workspace, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -110,15 +111,22 @@ pub fn open_rules_library(
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
             let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
+            let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+                Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+                Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+                _ => gpui::WindowDecorations::Client,
+            };
             cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
                         title: Some("Rules Library".into()),
-                        appears_transparent: cfg!(target_os = "macos"),
+                        appears_transparent: true,
                         traffic_light_position: Some(point(px(9.0), px(9.0))),
                     }),
                     app_id: Some(app_id.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_background: cx.theme().window_background_appearance(),
+                    window_decorations: Some(window_decorations),
                     ..Default::default()
                 },
                 |window, cx| {
@@ -140,6 +148,7 @@ pub fn open_rules_library(
 }
 
 pub struct RulesLibrary {
+    title_bar: Option<Entity<PlatformTitleBar>>,
     store: Entity<PromptStore>,
     language_registry: Arc<LanguageRegistry>,
     rule_editors: HashMap<PromptId, RuleEditor>,
@@ -395,6 +404,11 @@ impl RulesLibrary {
             picker
         });
         Self {
+            title_bar: if !cfg!(target_os = "macos") {
+                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+            } else {
+                None
+            },
             store: store.clone(),
             language_registry,
             rule_editors: HashMap::default(),
@@ -1225,75 +1239,90 @@ impl Render for RulesLibrary {
         let ui_font = theme::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
-        h_flex()
-            .id("rules-library")
-            .key_context("PromptLibrary")
-            .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
-            .on_action(
-                cx.listener(|this, &DeleteRule, window, cx| this.delete_active_rule(window, cx)),
-            )
-            .on_action(cx.listener(|this, &DuplicateRule, window, cx| {
-                this.duplicate_active_rule(window, cx)
-            }))
-            .on_action(cx.listener(|this, &ToggleDefaultRule, window, cx| {
-                this.toggle_default_for_active_rule(window, cx)
-            }))
-            .size_full()
-            .overflow_hidden()
-            .font(ui_font)
-            .text_color(theme.colors().text)
-            .child(self.render_rule_list(cx))
-            .map(|el| {
-                if self.store.read(cx).prompt_count() == 0 {
-                    el.child(
-                        v_flex()
-                            .w_2_3()
-                            .h_full()
-                            .items_center()
-                            .justify_center()
-                            .gap_4()
-                            .bg(cx.theme().colors().editor_background)
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Icon::new(IconName::Book)
-                                            .size(IconSize::Medium)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new("No rules yet")
-                                            .size(LabelSize::Large)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .child(h_flex())
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(Label::new("Create your first rule:"))
-                                            .child(
-                                                Button::new("create-rule", "New Rule")
-                                                    .full_width()
-                                                    .key_binding(KeyBinding::for_action(
-                                                        &NewRule, window, cx,
-                                                    ))
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            NewRule.boxed_clone(),
-                                                            cx,
-                                                        )
-                                                    }),
-                                            ),
-                                    )
-                                    .child(h_flex()),
-                            ),
-                    )
-                } else {
-                    el.child(self.render_active_rule(cx))
-                }
-            })
+        client_side_decorations(
+            v_flex()
+                .id("rules-library")
+                .key_context("PromptLibrary")
+                .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
+                .on_action(
+                    cx.listener(|this, &DeleteRule, window, cx| {
+                        this.delete_active_rule(window, cx)
+                    }),
+                )
+                .on_action(cx.listener(|this, &DuplicateRule, window, cx| {
+                    this.duplicate_active_rule(window, cx)
+                }))
+                .on_action(cx.listener(|this, &ToggleDefaultRule, window, cx| {
+                    this.toggle_default_for_active_rule(window, cx)
+                }))
+                .size_full()
+                .overflow_hidden()
+                .font(ui_font)
+                .text_color(theme.colors().text)
+                .children(self.title_bar.clone())
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .child(self.render_rule_list(cx))
+                        .map(|el| {
+                            if self.store.read(cx).prompt_count() == 0 {
+                                el.child(
+                                    v_flex()
+                                        .w_2_3()
+                                        .h_full()
+                                        .items_center()
+                                        .justify_center()
+                                        .gap_4()
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::new(IconName::Book)
+                                                        .size(IconSize::Medium)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Label::new("No rules yet")
+                                                        .size(LabelSize::Large)
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .child(h_flex())
+                                                .child(
+                                                    v_flex()
+                                                        .gap_1()
+                                                        .child(Label::new(
+                                                            "Create your first rule:",
+                                                        ))
+                                                        .child(
+                                                            Button::new("create-rule", "New Rule")
+                                                                .full_width()
+                                                                .key_binding(
+                                                                    KeyBinding::for_action(
+                                                                        &NewRule, window, cx,
+                                                                    ),
+                                                                )
+                                                                .on_click(|_, window, cx| {
+                                                                    window.dispatch_action(
+                                                                        NewRule.boxed_clone(),
+                                                                        cx,
+                                                                    )
+                                                                }),
+                                                        ),
+                                                )
+                                                .child(h_flex()),
+                                        ),
+                                )
+                            } else {
+                                el.child(self.render_active_rule(cx))
+                            }
+                        }),
+                ),
+            window,
+            cx,
+        )
     }
 }

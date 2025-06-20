@@ -1,3 +1,6 @@
+use core::num;
+use std::num::NonZeroU32;
+
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
@@ -150,6 +153,7 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    pub max_width_columns: num::NonZeroU32,
 }
 
 impl Minimap {
@@ -632,6 +636,11 @@ pub struct MinimapContent {
     ///
     /// Default: inherits editor line highlights setting
     pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+
+    /// Maximum number of columns to display in the minimap.
+    ///
+    /// Default: 80
+    pub max_width_columns: Option<num::NonZeroU32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -854,6 +863,8 @@ impl Settings for EditorSettings {
         let mut minimap = MinimapContent::default();
         let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
         let autohide = vscode.read_bool("editor.minimap.autohide");
+        let mut max_width_columns: Option<u32> = None;
+        vscode.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
         if minimap_enabled {
             if let Some(false) = autohide {
                 minimap.show = Some(ShowMinimap::Always);
@@ -862,6 +873,9 @@ impl Settings for EditorSettings {
             }
         } else {
             minimap.show = Some(ShowMinimap::Never);
+        }
+        if let Some(max_width_columns) = max_width_columns {
+            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
         }
 
         vscode.enum_setting(
