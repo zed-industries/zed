@@ -1590,7 +1590,7 @@ impl Size<DevicePixels> {
 }
 
 impl Size<Pixels> {
-    /// Converts the size from physical to logical pixels.
+    /// Converts the size from logical to physical pixels.
     pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
             DevicePixels((self.width.0 * scale_factor).round() as i32),
