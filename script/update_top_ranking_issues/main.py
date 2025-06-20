@@ -126,24 +126,31 @@ def get_label_to_issues(
 
     common_filter_string = " ".join(common_filters)
 
-    section_queries = {
-        "bug": "label:bug,type:Bug",
-        "crash": "label:crash,type:Crash",
-        "feature": "label:feature",
-        "meta": "type:Meta",
-        "unlabeled": "no:label no:type",
+    # Because PyGithub doesn't seem to support logical operators `AND` and `OR`
+    # that GitHub issue queries can use, we use lists as values, rather thatn
+    # using `(label:bug OR type:Bug)`. This is not as efficient, as we might
+    # query the same issue multiple times. Issues that are potentially queried
+    # mutliple times are deduplicated in the `label_to_issues` dictionary. If
+    # PyGithub ever supports logical operators, we should definitely make the
+    # switch.
+    section_queries: dict[str, list[str]] = {
+        "bug": ["label:bug", "type:Bug"],
+        "crash": ["label:crash", "type:Crash"],
+        "feature": ["label:feature", "type:Feature"],
+        "meta": ["type:Meta"],
+        "unlabeled": ["no:label no:type"],
     }
 
     label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
 
-    for section, section_query in section_queries.items():
-        label_query: str = f"{common_filter_string} {section_query}"
+    for section, section_queries in section_queries.items():
+        for section_query in section_queries:
+            query: str = f"{common_filter_string} {section_query}"
+            issues = github.search_issues(query)
 
-        issues = github.search_issues(label_query)
-
-        if issues.totalCount > 0:
-            for issue in issues[0:ISSUES_PER_LABEL]:
-                label_to_issues[section].append(issue)
+            if issues.totalCount > 0:
+                for issue in issues:
+                    label_to_issues[section].append(issue)
 
     return label_to_issues
 
@@ -164,7 +171,7 @@ def get_label_to_issue_data(
         )
 
         if issue_data:
-            label_to_issue_data[label] = issue_data
+            label_to_issue_data[label] = issue_data[0:ISSUES_PER_LABEL]
 
     return label_to_issue_data
 
