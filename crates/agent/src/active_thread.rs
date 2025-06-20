@@ -1996,8 +1996,8 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(h_flex()
-                    .child(scroll_to_top)
                     .child(open_as_markdown))
+                    .child(scroll_to_top)
                 .into_any_element(),
         };
 
