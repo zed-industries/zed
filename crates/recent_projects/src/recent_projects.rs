@@ -251,6 +251,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             candidates.as_slice(),
             query,
             smart_case,
+            true,
             100,
             &Default::default(),
             cx.background_executor().clone(),

@@ -80,9 +80,9 @@ pub enum Model {
         name: String,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        max_tokens: usize,
-        max_output_tokens: Option<u32>,
-        max_completion_tokens: Option<u32>,
+        max_tokens: u64,
+        max_output_tokens: Option<u64>,
+        max_completion_tokens: Option<u64>,
     },
 }
 
@@ -147,7 +147,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         match self {
             Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
@@ -165,7 +165,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u32> {
+    pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Custom {
                 max_output_tokens, ..
@@ -209,7 +209,7 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_completion_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     pub temperature: f32,
@@ -385,7 +385,6 @@ pub enum ResponseStreamResult {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub created: u32,
     pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,

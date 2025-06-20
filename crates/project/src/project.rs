@@ -768,6 +768,21 @@ pub struct DirectoryItem {
     pub is_dir: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentColor {
+    pub lsp_range: lsp::Range,
+    pub color: lsp::Color,
+    pub resolved: bool,
+    pub color_presentations: Vec<ColorPresentation>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorPresentation {
+    pub label: String,
+    pub text_edit: Option<lsp::TextEdit>,
+    pub additional_text_edits: Vec<lsp::TextEdit>,
+}
+
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Entity<Project>),
@@ -2424,11 +2439,14 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
-            self.open_buffer((worktree.read(cx).id(), relative_path), cx)
-        } else {
-            Task::ready(Err(anyhow!("no such path")))
-        }
+        let worktree_task = self.find_or_create_worktree(abs_path.as_ref(), false, cx);
+        cx.spawn(async move |this, cx| {
+            let (worktree, relative_path) = worktree_task.await?;
+            this.update(cx, |this, cx| {
+                this.open_buffer((worktree.read(cx).id(), relative_path), cx)
+            })?
+            .await
+        })
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2945,7 +2963,7 @@ impl Project {
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, changes) => {
                 self.client()
                     .telemetry()
-                    .report_discovered_project_events(*worktree_id, changes);
+                    .report_discovered_project_type_events(*worktree_id, changes);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
@@ -3718,16 +3736,6 @@ impl Project {
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
-        })
-    }
-
-    pub fn document_diagnostics(
-        &mut self,
-        buffer_handle: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.pull_diagnostics(buffer_handle, cx)
         })
     }
 
@@ -5063,6 +5071,12 @@ impl Project {
     pub fn agent_location(&self) -> Option<AgentLocation> {
         self.agent_location.clone()
     }
+
+    pub fn mark_buffer_as_non_searchable(&self, buffer_id: BufferId, cx: &mut Context<Project>) {
+        self.buffer_store.update(cx, |buffer_store, _| {
+            buffer_store.mark_buffer_as_non_searchable(buffer_id)
+        });
+    }
 }
 
 pub struct PathMatchCandidateSet {
@@ -5292,6 +5306,16 @@ impl ProjectItem for Buffer {
 }
 
 impl Completion {
+    pub fn filter_text(&self) -> &str {
+        match &self.source {
+            CompletionSource::Lsp { lsp_completion, .. } => lsp_completion
+                .filter_text
+                .as_deref()
+                .unwrap_or_else(|| self.label.filter_text()),
+            _ => self.label.filter_text(),
+        }
+    }
+
     pub fn kind(&self) -> Option<CompletionItemKind> {
         self.source
             // `lsp::CompletionListItemDefaults` has no `kind` field
@@ -5308,17 +5332,18 @@ impl Completion {
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
-        const DEFAULT_KIND_KEY: usize = 3;
+        const DEFAULT_KIND_KEY: usize = 4;
         let kind_key = self
             .kind()
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
                 lsp::CompletionItemKind::CONSTANT => Some(2),
+                lsp::CompletionItemKind::PROPERTY => Some(3),
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);
-        (kind_key, &self.label.text[self.label.filter_range.clone()])
+        (kind_key, &self.label.filter_text())
     }
 
     /// Whether this completion is a snippet.

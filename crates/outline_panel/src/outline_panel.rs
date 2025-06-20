@@ -3233,15 +3233,22 @@ impl OutlinePanel {
                 self.outline_fetch_tasks.insert(
                     (buffer_id, excerpt_id),
                     cx.spawn_in(window, async move |outline_panel, cx| {
+                        let buffer_language = buffer_snapshot.language().cloned();
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                buffer_snapshot
+                                let mut outlines = buffer_snapshot
                                     .outline_items_containing(
                                         excerpt_range.context,
                                         false,
                                         Some(&syntax_theme),
                                     )
-                                    .unwrap_or_default()
+                                    .unwrap_or_default();
+                                outlines.retain(|outline| {
+                                    buffer_language.is_none()
+                                        || buffer_language.as_ref()
+                                            == buffer_snapshot.language_at(outline.range.start)
+                                });
+                                outlines
                             })
                             .await;
                         outline_panel
@@ -3814,6 +3821,7 @@ impl OutlinePanel {
             let mut matched_ids = match_strings(
                 &generation_state.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &AtomicBool::default(),

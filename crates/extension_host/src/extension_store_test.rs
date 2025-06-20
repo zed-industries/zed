@@ -163,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
+                        debug_locators: Default::default(),
                     }),
                     dev: false,
                 },
@@ -193,6 +194,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
+                        debug_locators: Default::default(),
                     }),
                     dev: false,
                 },
@@ -368,6 +370,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 snippets: None,
                 capabilities: Vec::new(),
                 debug_adapters: Default::default(),
+                debug_locators: Default::default(),
             }),
             dev: false,
         },
@@ -479,7 +482,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 
     store.update(cx, |store, cx| {
-        store.uninstall_extension("zed-ruby".into(), cx)
+        store
+            .uninstall_extension("zed-ruby".into(), cx)
+            .detach_and_log_err(cx);
     });
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);

@@ -1496,25 +1496,24 @@ fn replace_value_in_json_text(
                 if between_comma_and_key.trim().is_empty() {
                     removal_start = comma_pos;
                 }
-            } else {
-                // No preceding comma, check for trailing comma
-                if let Some(remaining_text) = text.get(existing_value_range.end..) {
-                    let mut chars = remaining_text.char_indices();
-                    while let Some((offset, ch)) = chars.next() {
-                        if ch == ',' {
-                            removal_end = existing_value_range.end + offset + 1;
-                            // Also consume whitespace after the comma
-                            while let Some((_, next_ch)) = chars.next() {
-                                if next_ch.is_whitespace() {
-                                    removal_end += next_ch.len_utf8();
-                                } else {
-                                    break;
-                                }
+            }
+
+            if let Some(remaining_text) = text.get(existing_value_range.end..) {
+                let mut chars = remaining_text.char_indices();
+                while let Some((offset, ch)) = chars.next() {
+                    if ch == ',' {
+                        removal_end = existing_value_range.end + offset + 1;
+                        // Also consume whitespace after the comma
+                        while let Some((_, next_ch)) = chars.next() {
+                            if next_ch.is_whitespace() {
+                                removal_end += next_ch.len_utf8();
+                            } else {
+                                break;
                             }
-                            break;
-                        } else if !ch.is_whitespace() {
-                            break;
                         }
+                        break;
+                    } else if !ch.is_whitespace() {
+                        break;
                     }
                 }
             }

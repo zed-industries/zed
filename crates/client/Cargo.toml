@@ -28,9 +28,6 @@ feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
-# Don't update `hickory-resolver`, it has a bug that causes it to not resolve DNS queries correctly.
-# See https://github.com/hickory-dns/hickory-dns/issues/3048
-hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
 http_client.workspace = true
 http_client_tls.workspace = true
 httparse = "1.10"
@@ -39,6 +36,7 @@ paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
@@ -63,11 +61,12 @@ workspace-hack.workspace = true
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

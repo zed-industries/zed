@@ -18,7 +18,6 @@ use smol::{fs, io::BufReader, lock::RwLock, stream::StreamExt};
 use std::{
     any::Any,
     borrow::Cow,
-    collections::BTreeSet,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -27,6 +26,8 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::archive::extract_zip;
 use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
+
+use crate::{PackageJson, PackageJsonData};
 
 #[derive(Debug)]
 pub(crate) struct TypeScriptContextProvider {
@@ -57,135 +58,43 @@ const TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE: VariableName =
 #[derive(Clone, Debug, Default)]
 struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
 
-#[derive(Clone, Debug)]
-struct PackageJson {
-    mtime: DateTime<Local>,
-    data: PackageJsonData,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct PackageJsonData {
-    jest_package_path: Option<Arc<Path>>,
-    mocha_package_path: Option<Arc<Path>>,
-    vitest_package_path: Option<Arc<Path>>,
-    jasmine_package_path: Option<Arc<Path>>,
-    scripts: BTreeSet<(Arc<Path>, String)>,
-    package_manager: Option<&'static str>,
-}
-
 impl PackageJsonData {
-    fn new(path: Arc<Path>, package_json: HashMap<String, Value>) -> Self {
-        let mut scripts = BTreeSet::new();
-        if let Some(serde_json::Value::Object(package_json_scripts)) = package_json.get("scripts") {
-            scripts.extend(
-                package_json_scripts
-                    .keys()
-                    .cloned()
-                    .map(|name| (path.clone(), name)),
-            );
-        }
-
-        let mut jest_package_path = None;
-        let mut mocha_package_path = None;
-        let mut vitest_package_path = None;
-        let mut jasmine_package_path = None;
-        if let Some(serde_json::Value::Object(dependencies)) = package_json.get("devDependencies") {
-            if dependencies.contains_key("jest") {
-                jest_package_path.get_or_insert_with(|| path.clone());
-            }
-            if dependencies.contains_key("mocha") {
-                mocha_package_path.get_or_insert_with(|| path.clone());
-            }
-            if dependencies.contains_key("vitest") {
-                vitest_package_path.get_or_insert_with(|| path.clone());
-            }
-            if dependencies.contains_key("jasmine") {
-                jasmine_package_path.get_or_insert_with(|| path.clone());
-            }
-        }
-        if let Some(serde_json::Value::Object(dev_dependencies)) = package_json.get("dependencies")
-        {
-            if dev_dependencies.contains_key("jest") {
-                jest_package_path.get_or_insert_with(|| path.clone());
-            }
-            if dev_dependencies.contains_key("mocha") {
-                mocha_package_path.get_or_insert_with(|| path.clone());
-            }
-            if dev_dependencies.contains_key("vitest") {
-                vitest_package_path.get_or_insert_with(|| path.clone());
-            }
-            if dev_dependencies.contains_key("jasmine") {
-                jasmine_package_path.get_or_insert_with(|| path.clone());
-            }
-        }
-
-        let package_manager = package_json
-            .get("packageManager")
-            .and_then(|value| value.as_str())
-            .and_then(|value| {
-                if value.starts_with("pnpm") {
-                    Some("pnpm")
-                } else if value.starts_with("yarn") {
-                    Some("yarn")
-                } else if value.starts_with("npm") {
-                    Some("npm")
-                } else {
-                    None
-                }
-            });
-
-        Self {
-            jest_package_path,
-            mocha_package_path,
-            vitest_package_path,
-            jasmine_package_path,
-            scripts,
-            package_manager,
-        }
-    }
-
-    fn merge(&mut self, other: Self) {
-        self.jest_package_path = self.jest_package_path.take().or(other.jest_package_path);
-        self.mocha_package_path = self.mocha_package_path.take().or(other.mocha_package_path);
-        self.vitest_package_path = self
-            .vitest_package_path
-            .take()
-            .or(other.vitest_package_path);
-        self.jasmine_package_path = self
-            .jasmine_package_path
-            .take()
-            .or(other.jasmine_package_path);
-        self.scripts.extend(other.scripts);
-        self.package_manager = self.package_manager.or(other.package_manager);
-    }
-
     fn fill_task_templates(&self, task_templates: &mut TaskTemplates) {
         if self.jest_package_path.is_some() {
             task_templates.0.push(TaskTemplate {
                 label: "jest file test".to_owned(),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["jest".to_owned(), VariableName::Filename.template_value()],
-                cwd: Some(VariableName::Dirname.template_value()),
+                args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
+                    "jest".to_owned(),
+                    "--runInBand".to_owned(),
+                    VariableName::File.template_value(),
+                ],
+                cwd: Some(TYPESCRIPT_JEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
                 label: format!("jest test {}", VariableName::Symbol.template_value()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "jest".to_owned(),
+                    "--runInBand".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
                         TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value()
                     ),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_JEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -195,11 +104,15 @@ impl PackageJsonData {
                 label: format!("{} file test", "vitest".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
-                    VariableName::Filename.template_value(),
+                    "--poolOptions.forks.minForks=0".to_owned(),
+                    "--poolOptions.forks.maxForks=1".to_owned(),
+                    VariableName::File.template_value(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -210,21 +123,25 @@ impl PackageJsonData {
                 ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "vitest".to_owned(),
                     "run".to_owned(),
+                    "--poolOptions.forks.minForks=0".to_owned(),
+                    "--poolOptions.forks.maxForks=1".to_owned(),
                     "--testNamePattern".to_owned(),
                     format!(
                         "\"{}\"",
                         TYPESCRIPT_VITEST_TEST_NAME_VARIABLE.template_value()
                     ),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -233,8 +150,13 @@ impl PackageJsonData {
             task_templates.0.push(TaskTemplate {
                 label: format!("{} file test", "mocha".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec!["mocha".to_owned(), VariableName::Filename.template_value()],
-                cwd: Some(VariableName::Dirname.template_value()),
+                args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
+                    "mocha".to_owned(),
+                    VariableName::File.template_value(),
+                ],
+                cwd: Some(TYPESCRIPT_MOCHA_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -245,17 +167,19 @@ impl PackageJsonData {
                 ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "mocha".to_owned(),
                     "--grep".to_owned(),
                     format!("\"{}\"", VariableName::Symbol.template_value()),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_MOCHA_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -265,10 +189,12 @@ impl PackageJsonData {
                 label: format!("{} file test", "jasmine".to_owned()),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "jasmine".to_owned(),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
             task_templates.0.push(TaskTemplate {
@@ -279,17 +205,18 @@ impl PackageJsonData {
                 ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
+                    "exec".to_owned(),
+                    "--".to_owned(),
                     "jasmine".to_owned(),
                     format!("--filter={}", VariableName::Symbol.template_value()),
-                    VariableName::Filename.template_value(),
+                    VariableName::File.template_value(),
                 ],
                 tags: vec![
                     "ts-test".to_owned(),
                     "js-test".to_owned(),
                     "tsx-test".to_owned(),
-                    "jasmine-test".to_owned(),
                 ],
-                cwd: Some(VariableName::Dirname.template_value()),
+                cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -373,8 +300,8 @@ impl TypeScriptContextProvider {
                         fs.load(&package_json_path).await.with_context(|| {
                             format!("loading package.json from {package_json_path:?}")
                         })?;
-                    let package_json: HashMap<String, serde_json::Value> =
-                        serde_json::from_str(&package_json_string).with_context(|| {
+                    let package_json: HashMap<String, serde_json_lenient::Value> =
+                        serde_json_lenient::from_str(&package_json_string).with_context(|| {
                             format!("parsing package.json from {package_json_path:?}")
                         })?;
                     let new_data =
