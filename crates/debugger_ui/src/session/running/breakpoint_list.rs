@@ -164,6 +164,45 @@ impl BreakpointList {
         })
     }
 
+    fn set_active_breakpoint_property(
+        &mut self,
+        prop: ActiveBreakpointStripMode,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.strip_mode = Some(prop);
+        let placeholder = match prop {
+            ActiveBreakpointStripMode::Log => {
+                "Set log message to display (instead of stopping) when a breakpoint is hit"
+            }
+            ActiveBreakpointStripMode::Condition => {
+                "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met"
+            }
+            ActiveBreakpointStripMode::HitCondition => {
+                "Set expression that controls how many hits of the breakpoint are ignored."
+            }
+        };
+        let active_value = self.selected_ix.and_then(|ix| {
+            self.breakpoints.get(ix).and_then(|bp| {
+                if let BreakpointEntryKind::LineBreakpoint(bp) = &bp.kind {
+                    match prop {
+                        ActiveBreakpointStripMode::Log => bp.breakpoint.message.clone(),
+                        ActiveBreakpointStripMode::Condition => bp.breakpoint.condition.clone(),
+                        ActiveBreakpointStripMode::HitCondition => {
+                            bp.breakpoint.hit_condition.clone()
+                        }
+                    }
+                } else {
+                    None
+                }
+            })
+        });
+        self.input.update(cx, |this, cx| {
+            this.set_placeholder_text(placeholder, cx);
+            this.set_text(active_value.as_deref().unwrap_or(""), window, cx);
+        });
+    }
+
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_ix = ix;
         if let Some(ix) = ix {
@@ -309,7 +348,12 @@ impl BreakpointList {
             }
             None => Some(ActiveBreakpointStripMode::HitCondition),
         };
-        self.strip_mode = next_mode;
+        if let Some(mode) = next_mode {
+            self.set_active_breakpoint_property(mode, window, cx);
+        } else {
+            self.strip_mode.take();
+        }
+
         cx.notify();
     }
     fn next_breakpoint_property(
@@ -326,7 +370,11 @@ impl BreakpointList {
             Some(ActiveBreakpointStripMode::HitCondition) => None,
             None => Some(ActiveBreakpointStripMode::Log),
         };
-        self.strip_mode = next_mode;
+        if let Some(mode) = next_mode {
+            self.set_active_breakpoint_property(mode, window, cx);
+        } else {
+            self.strip_mode.take();
+        }
         cx.notify();
     }
 
@@ -961,10 +1009,10 @@ impl BreakpointOptionsStrip {
         mode: ActiveBreakpointStripMode,
     ) -> impl for<'a> Fn(&ClickEvent, &mut Window, &'a mut App) + use<> {
         let list = self.breakpoint.weak.clone();
-        move |_, _, cx| {
+        move |_, window, cx| {
             list.update(cx, |this, cx| {
                 if this.strip_mode != Some(mode) {
-                    this.strip_mode = Some(mode);
+                    this.set_active_breakpoint_property(mode, window, cx);
                 } else {
                     this.strip_mode.take();
                 }
