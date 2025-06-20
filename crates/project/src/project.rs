@@ -3671,14 +3671,6 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        dbg!(
-            snapshot
-                .debug_variables_query(range.start..range.end)
-                .into_iter()
-                .map(|k| snapshot.text_for_range(k.0).collect::<String>())
-                .collect_vec()
-        );
-
         let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
 
         let row = snapshot
@@ -3686,7 +3678,7 @@ impl Project {
             .row as usize;
 
         let inline_value_locations = provide_inline_values(captures, &snapshot, row);
-        // dbg!(&inline_value_locations);
+        // dbg!(&inline_value_locations); todo! remove this
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
@@ -5395,7 +5387,7 @@ fn provide_inline_values(
                 let variable_name = snapshot
                     .text_for_range(capture_range.clone())
                     .collect::<String>();
-                let point = snapshot.offset_to_point(capture_range.end.clone());
+                let point = snapshot.offset_to_point(capture_range.end);
 
                 if point.row as usize > max_row {
                     break;
