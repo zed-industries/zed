@@ -1323,7 +1323,6 @@ impl Session {
 
         if event.all_threads_stopped.unwrap_or_default() || event.thread_id.is_none() {
             self.thread_states.stop_all_threads();
-
             self.invalidate_command_type::<StackTraceCommand>();
         }
 
@@ -2207,7 +2206,7 @@ impl Session {
                 move |this, response, cx| {
                     let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
-                    cx.notify();
+                    cx.emit(SessionEvent::Variables);
                     Some(response)
                 },
                 cx,
@@ -2275,7 +2274,6 @@ impl Session {
                         this.push_output(event, cx);
                     }
                 };
-                this.invalidate_command_type::<ScopesCommand>();
                 cx.notify();
             })
             .ok();
