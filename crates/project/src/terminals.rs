@@ -476,6 +476,7 @@ impl Project {
             },
             terminal_settings::ActivateScript::Nushell => "overlay use",
             terminal_settings::ActivateScript::PowerShell => ".",
+            terminal_settings::ActivateScript::Cmd => "",
             _ => "source",
         };
         let activate_script_name = match venv_settings.activate_script {
@@ -484,6 +485,12 @@ impl Project {
             terminal_settings::ActivateScript::Fish => "activate.fish",
             terminal_settings::ActivateScript::Nushell => "activate.nu",
             terminal_settings::ActivateScript::PowerShell => "activate.ps1",
+            terminal_settings::ActivateScript::Cmd => "activate.bat",
+        };
+
+        let clear_cmd = match venv_settings.activate_script {
+            terminal_settings::ActivateScript::Cmd => "cls",
+            _ => "clear",
         };
         let path = venv_base_directory
             .join(match std::env::consts::OS {
@@ -503,8 +510,8 @@ impl Project {
             .flatten()?;
 
         Some(format!(
-            "{} {} ; clear{}",
-            activate_keyword, quoted, line_ending
+            "{} {} ; {}{}",
+            activate_keyword, quoted, clear_cmd, line_ending
         ))
     }
 

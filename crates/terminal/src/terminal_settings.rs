@@ -126,6 +126,7 @@ pub enum ActivateScript {
     Fish,
     Nushell,
     PowerShell,
+    Cmd,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
