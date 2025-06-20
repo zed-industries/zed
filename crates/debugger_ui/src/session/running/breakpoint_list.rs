@@ -185,9 +185,11 @@ impl BreakpointList {
             ActiveBreakpointStripMode::Condition => "Set Condition",
             ActiveBreakpointStripMode::HitCondition => "Set Hit Condition",
         };
+        let mut is_exception_breakpoint = true;
         let active_value = self.selected_ix.and_then(|ix| {
             self.breakpoints.get(ix).and_then(|bp| {
                 if let BreakpointEntryKind::LineBreakpoint(bp) = &bp.kind {
+                    is_exception_breakpoint = false;
                     match prop {
                         ActiveBreakpointStripMode::Log => bp.breakpoint.message.clone(),
                         ActiveBreakpointStripMode::Condition => bp.breakpoint.condition.clone(),
@@ -200,8 +202,10 @@ impl BreakpointList {
                 }
             })
         });
+
         self.input.update(cx, |this, cx| {
             this.set_placeholder_text(placeholder, cx);
+            this.set_read_only(is_exception_breakpoint);
             this.set_text(active_value.as_deref().unwrap_or(""), window, cx);
         });
     }
@@ -738,13 +742,22 @@ impl Render for BreakpointList {
                         .rounded_sm()
                         .when(
                             self.input.focus_handle(cx).contains_focused(window, cx),
-                            |this| this.border_color(cx.theme().colors().border_focused),
+                            |this| {
+                                let colors = cx.theme().colors();
+                                let border = if self.input.read(cx).read_only(cx) {
+                                    colors.border_disabled
+                                } else {
+                                    colors.border_focused
+                                };
+                                this.border_color(border)
+                            },
                         )
                         .child(self.input.clone()),
                 )
             })
     }
 }
+
 #[derive(Clone, Debug)]
 struct LineBreakpoint {
     name: SharedString,
@@ -833,7 +846,7 @@ impl LineBreakpoint {
             h_flex()
                 .w_full()
                 .mr_4()
-                .py_1()
+                .py_0p5()
                 .gap_1()
                 .min_h(px(26.))
                 .justify_between()
@@ -891,6 +904,8 @@ struct ExceptionBreakpoint {
 impl ExceptionBreakpoint {
     fn render(
         &mut self,
+        props: SupportedBreakpointProperties,
+        strip_mode: Option<ActiveBreakpointStripMode>,
         ix: usize,
         is_selected: bool,
         focus_handle: FocusHandle,
@@ -903,7 +918,7 @@ impl ExceptionBreakpoint {
         };
         let id = SharedString::from(&self.id);
         let is_enabled = self.is_enabled;
-
+        let weak = list.clone();
         ListItem::new(SharedString::from(format!(
             "exception-breakpoint-ui-item-{}",
             self.id
@@ -956,19 +971,36 @@ impl ExceptionBreakpoint {
                 .child(Indicator::icon(Icon::new(IconName::Flame)).color(color)),
         )
         .child(
-            v_flex()
-                .py_1()
-                .gap_1()
-                .min_h(px(26.))
-                .justify_center()
-                .id(("exception-breakpoint-label", ix))
+            h_flex()
+                .w_full()
+                .mr_4()
+                .py_0p5()
+                .justify_between()
                 .child(
-                    Label::new(self.data.label.clone())
-                        .size(LabelSize::Small)
-                        .line_height_style(ui::LineHeightStyle::UiLabel),
+                    v_flex()
+                        .py_1()
+                        .gap_1()
+                        .min_h(px(26.))
+                        .justify_center()
+                        .id(("exception-breakpoint-label", ix))
+                        .child(
+                            Label::new(self.data.label.clone())
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel),
+                        )
+                        .when_some(self.data.description.clone(), |el, description| {
+                            el.tooltip(Tooltip::text(description))
+                        }),
                 )
-                .when_some(self.data.description.clone(), |el, description| {
-                    el.tooltip(Tooltip::text(description))
+                .child(BreakpointOptionsStrip {
+                    props,
+                    breakpoint: BreakpointEntry {
+                        kind: BreakpointEntryKind::ExceptionBreakpoint(self.clone()),
+                        weak: weak,
+                    },
+                    is_selected,
+                    strip_mode,
+                    index: ix,
                 }),
         )
         .toggle_state(is_selected)
@@ -1004,9 +1036,15 @@ impl BreakpointEntry {
                 focus_handle,
                 self.weak.clone(),
             ),
-            BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
-                exception_breakpoint.render(ix, is_selected, focus_handle, self.weak.clone())
-            }
+            BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => exception_breakpoint
+                .render(
+                    props.for_exception_breakpoints(),
+                    strip_mode,
+                    ix,
+                    is_selected,
+                    focus_handle,
+                    self.weak.clone(),
+                ),
         }
     }
 
