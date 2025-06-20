@@ -300,6 +300,16 @@ impl BreakpointList {
         self.select_ix(ix, window, cx);
     }
 
+    fn dismiss(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.input.focus_handle(cx).contains_focused(window, cx) {
+            self.focus_handle.focus(window);
+        } else if self.strip_mode.is_some() {
+            self.strip_mode.take();
+            cx.notify();
+        } else {
+            cx.propagate();
+        }
+    }
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
             return;
@@ -719,6 +729,7 @@ impl Render for BreakpointList {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::toggle_enable_breakpoint))
             .on_action(cx.listener(Self::unset_breakpoint))
