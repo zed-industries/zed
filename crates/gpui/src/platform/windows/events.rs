@@ -1227,7 +1227,6 @@ where
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
-    let capslock = current_capslock();
 
     match virtual_key {
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
@@ -1238,6 +1237,20 @@ where
                 return None;
             }
             state.last_reported_modifiers = Some(modifiers);
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock: current_capslock(),
+            }))
+        }
+        VK_CAPITAL => {
+            let capslock = current_capslock();
+            if state
+                .last_reported_capslock
+                .is_some_and(|prev_capslock| prev_capslock == capslock)
+            {
+                return None;
+            }
+            state.last_reported_capslock = Some(capslock);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
                 capslock,
