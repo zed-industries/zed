@@ -769,6 +769,7 @@ impl LineBreakpoint {
                     },
                     is_selected,
                     strip_mode,
+                    index: ix,
                 }),
         )
         .toggle_state(is_selected)
@@ -991,6 +992,7 @@ struct BreakpointOptionsStrip {
     breakpoint: BreakpointEntry,
     is_selected: bool,
     strip_mode: Option<ActiveBreakpointStripMode>,
+    index: usize,
 }
 
 impl BreakpointOptionsStrip {
@@ -1002,12 +1004,15 @@ impl BreakpointOptionsStrip {
         mode: ActiveBreakpointStripMode,
     ) -> impl for<'a> Fn(&ClickEvent, &mut Window, &'a mut App) + use<> {
         let list = self.breakpoint.weak.clone();
+        let ix = self.index;
         move |_, window, cx| {
             list.update(cx, |this, cx| {
                 if this.strip_mode != Some(mode) {
                     this.set_active_breakpoint_property(mode, window, cx);
-                } else {
+                } else if this.selected_ix == Some(ix) {
                     this.strip_mode.take();
+                } else {
+                    cx.propagate();
                 }
             })
             .ok();
