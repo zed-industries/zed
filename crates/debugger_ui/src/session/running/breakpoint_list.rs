@@ -8,7 +8,7 @@ use std::{
 use dap::{Capabilities, ExceptionBreakpointsFilter};
 use editor::Editor;
 use gpui::{
-    Action, AppContext, Component, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
+    Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
     Stateful, Task, UniformListScrollHandle, WeakEntity, uniform_list,
 };
 use language::Point;
@@ -21,7 +21,7 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    AnyElement, App, ButtonCommon, ButtonSize, Clickable, Color, Context, Disableable, Div,
+    AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div, Divider,
     FluentBuilder as _, Icon, IconButton, IconName, IconSize, Indicator, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
     Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
@@ -48,6 +48,8 @@ pub(crate) struct BreakpointList {
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
+    input: Entity<Editor>,
+    strip_mode: Option<ActiveBreakpointStripMode>,
 }
 
 impl Focusable for BreakpointList {
@@ -56,11 +58,19 @@ impl Focusable for BreakpointList {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ActiveBreakpointStripMode {
+    Log,
+    Condition,
+    HitCondition,
+}
+
 impl BreakpointList {
     pub(crate) fn new(
         session: Option<Entity<Session>>,
         workspace: WeakEntity<Workspace>,
         project: &Entity<Project>,
+        window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let project = project.read(cx);
@@ -70,7 +80,7 @@ impl BreakpointList {
         let scroll_handle = UniformListScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             breakpoint_store,
             worktree_store,
             scrollbar_state,
@@ -82,6 +92,8 @@ impl BreakpointList {
             focus_handle,
             scroll_handle,
             selected_ix: None,
+            input: cx.new(|cx| Editor::single_line(window, cx)),
+            strip_mode: None,
         })
     }
 
@@ -302,6 +314,7 @@ impl BreakpointList {
             .as_ref()
             .map(|session| SupportedBreakpointProperties::from(session.read(cx).capabilities()))
             .unwrap_or_else(SupportedBreakpointProperties::empty);
+        let strip_mode = self.strip_mode;
         uniform_list(
             "breakpoint-list",
             self.breakpoints.len(),
@@ -312,6 +325,7 @@ impl BreakpointList {
                     .map(|(ix, breakpoint)| {
                         breakpoint
                             .render(
+                                strip_mode,
                                 supported_breakpoint_properties,
                                 ix,
                                 Some(ix) == selected_ix,
@@ -537,6 +551,9 @@ impl Render for BreakpointList {
             .size_full()
             .m_0p5()
             .child(self.render_list(cx))
+            .when_some(self.strip_mode, |this, mode| {
+                this.child(Divider::horizontal()).child(self.input.clone())
+            })
             .children(self.render_vertical_scrollbar(cx))
     }
 }
@@ -552,6 +569,7 @@ impl LineBreakpoint {
     fn render(
         &mut self,
         props: SupportedBreakpointProperties,
+        strip_mode: Option<ActiveBreakpointStripMode>,
         ix: usize,
         is_selected: bool,
         focus_handle: FocusHandle,
@@ -668,6 +686,7 @@ impl LineBreakpoint {
                         weak: weak,
                     },
                     is_selected,
+                    strip_mode,
                 }),
         )
         .toggle_state(is_selected)
@@ -781,15 +800,21 @@ struct BreakpointEntry {
 impl BreakpointEntry {
     fn render(
         &mut self,
+        strip_mode: Option<ActiveBreakpointStripMode>,
         props: SupportedBreakpointProperties,
         ix: usize,
         is_selected: bool,
         focus_handle: FocusHandle,
     ) -> ListItem {
         match &mut self.kind {
-            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                line_breakpoint.render(props, ix, is_selected, focus_handle, self.weak.clone())
-            }
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => line_breakpoint.render(
+                props,
+                strip_mode,
+                ix,
+                is_selected,
+                focus_handle,
+                self.weak.clone(),
+            ),
             BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
                 exception_breakpoint.render(ix, is_selected, focus_handle, self.weak.clone())
             }
@@ -883,8 +908,30 @@ struct BreakpointOptionsStrip {
     props: SupportedBreakpointProperties,
     breakpoint: BreakpointEntry,
     is_selected: bool,
+    strip_mode: Option<ActiveBreakpointStripMode>,
 }
 
+impl BreakpointOptionsStrip {
+    fn is_toggled(&self, expected_mode: ActiveBreakpointStripMode) -> bool {
+        self.is_selected && self.strip_mode == Some(expected_mode)
+    }
+    fn on_click_callback(
+        &self,
+        mode: ActiveBreakpointStripMode,
+    ) -> impl for<'a> Fn(&ClickEvent, &mut Window, &'a mut App) + use<> {
+        let list = self.breakpoint.weak.clone();
+        move |_, _, cx| {
+            list.update(cx, |this, cx| {
+                if this.strip_mode != Some(mode) {
+                    this.strip_mode = Some(mode);
+                } else {
+                    this.strip_mode.take();
+                }
+            })
+            .ok();
+        }
+    }
+}
 impl RenderOnce for BreakpointOptionsStrip {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let id = self.breakpoint.id();
@@ -916,7 +963,8 @@ impl RenderOnce for BreakpointOptionsStrip {
                         )
                         .style(style_for_toggle(has_logs))
                         .disabled(!supports_logs)
-                        .toggle_state(true),
+                        .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Log))
+                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log)),
                     )
                     .when(!has_logs && !self.is_selected, |this| this.invisible()),
             )
@@ -928,7 +976,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                             IconName::ListTodo,
                         )
                         .style(style_for_toggle(has_condition))
-                        .disabled(!supports_condition),
+                        .disabled(!supports_condition)
+                        .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
+                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition)),
                     )
                     .when(!has_condition && !self.is_selected, |this| this.invisible()),
             )
@@ -940,7 +990,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                             IconName::ListTodo,
                         )
                         .style(style_for_toggle(has_hit_condition))
-                        .disabled(!supports_hit_condition),
+                        .disabled(!supports_hit_condition)
+                        .toggle_state(self.is_toggled(ActiveBreakpointStripMode::HitCondition))
+                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition)),
                     )
                     .when(!has_hit_condition && !self.is_selected, |this| {
                         this.invisible()
