@@ -47,29 +47,29 @@ def main(
     # GitHub Workflow will pass in the token as an environment variable,
     # but we can place it in our env when running the script locally, for convenience
     github_token = github_token or os.getenv("GITHUB_ACCESS_TOKEN")
-    github = Github(github_token)
 
-    remaining_requests_before: int = github.rate_limiting[0]
-    print(f"Remaining requests before: {remaining_requests_before}")
+    with Github(github_token, per_page=100) as github:
+        remaining_requests_before: int = github.rate_limiting[0]
+        print(f"Remaining requests before: {remaining_requests_before}")
 
-    repo_name: str = "zed-industries/zed"
-    repository: Repository = github.get_repo(repo_name)
+        repo_name: str = "zed-industries/zed"
+        repository: Repository = github.get_repo(repo_name)
 
-    label_to_issue_data: dict[str, list[IssueData]] = get_issue_maps(
-        github, repository, start_date
-    )
+        label_to_issue_data: dict[str, list[IssueData]] = get_issue_maps(
+            github, repository, start_date
+        )
 
-    issue_text: str = get_issue_text(label_to_issue_data)
+        issue_text: str = get_issue_text(label_to_issue_data)
 
-    if issue_reference_number:
-        top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
-        top_ranking_issues_issue.edit(body=issue_text)
-    else:
-        print(issue_text)
+        if issue_reference_number:
+            top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
+            top_ranking_issues_issue.edit(body=issue_text)
+        else:
+            print(issue_text)
 
-    remaining_requests_after: int = github.rate_limiting[0]
-    print(f"Remaining requests after: {remaining_requests_after}")
-    print(f"Requests used: {remaining_requests_before - remaining_requests_after}")
+        remaining_requests_after: int = github.rate_limiting[0]
+        print(f"Remaining requests after: {remaining_requests_after}")
+        print(f"Requests used: {remaining_requests_before - remaining_requests_after}")
 
     run_duration: timedelta = datetime.now() - start_time
     print(run_duration)
