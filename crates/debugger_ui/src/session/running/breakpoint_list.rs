@@ -1127,7 +1127,8 @@ impl From<&Capabilities> for SupportedBreakpointProperties {
 
 impl SupportedBreakpointProperties {
     fn for_exception_breakpoints(self) -> Self {
-        self & (Self::EXCEPTION_FILTER_OPTIONS | Self::CONDITION)
+        // TODO: we don't yet support conditions for exception breakpoints at the data layer, hence all props are disabled here.
+        Self::empty()
     }
 }
 #[derive(IntoElement)]
