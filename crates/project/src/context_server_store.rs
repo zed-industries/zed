@@ -36,13 +36,8 @@ impl ContextServerStatus {
         match state {
             ContextServerState::Starting { .. } => ContextServerStatus::Starting,
             ContextServerState::Running { .. } => ContextServerStatus::Running,
-            ContextServerState::Stopped { error, .. } => {
-                if let Some(error) = error {
-                    ContextServerStatus::Error(error.clone())
-                } else {
-                    ContextServerStatus::Stopped
-                }
-            }
+            ContextServerState::Stopped { .. } => ContextServerStatus::Stopped,
+            ContextServerState::Error { error, .. } => ContextServerStatus::Error(error.clone()),
         }
     }
 }
@@ -60,7 +55,11 @@ enum ContextServerState {
     Stopped {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
-        error: Option<Arc<str>>,
+    },
+    Error {
+        server: Arc<ContextServer>,
+        configuration: Arc<ContextServerConfiguration>,
+        error: Arc<str>,
     },
 }
 
@@ -70,6 +69,7 @@ impl ContextServerState {
             ContextServerState::Starting { server, .. } => server.clone(),
             ContextServerState::Running { server, .. } => server.clone(),
             ContextServerState::Stopped { server, .. } => server.clone(),
+            ContextServerState::Error { server, .. } => server.clone(),
         }
     }
 
@@ -78,11 +78,12 @@ impl ContextServerState {
             ContextServerState::Starting { configuration, .. } => configuration.clone(),
             ContextServerState::Running { configuration, .. } => configuration.clone(),
             ContextServerState::Stopped { configuration, .. } => configuration.clone(),
+            ContextServerState::Error { configuration, .. } => configuration.clone(),
         }
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ContextServerConfiguration {
     Custom {
         command: ContextServerCommand,
@@ -301,6 +302,13 @@ impl ContextServerStore {
     }
 
     pub fn stop_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
+        if matches!(
+            self.servers.get(id),
+            Some(ContextServerState::Stopped { .. })
+        ) {
+            return Ok(());
+        }
+
         let state = self
             .servers
             .remove(id)
@@ -319,7 +327,6 @@ impl ContextServerStore {
             ContextServerState::Stopped {
                 configuration,
                 server,
-                error: None,
             },
             cx,
         );
@@ -379,10 +386,10 @@ impl ContextServerStore {
                         this.update(cx, |this, cx| {
                             this.update_server_state(
                                 id.clone(),
-                                ContextServerState::Stopped {
+                                ContextServerState::Error {
                                     configuration,
                                     server,
-                                    error: Some(err.to_string().into()),
+                                    error: err.to_string().into(),
                                 },
                                 cx,
                             )
@@ -504,22 +511,22 @@ impl ContextServerStore {
                 });
         }
 
-        let configured_servers = join_all(
+        let (enabled_servers, disabled_servers): (HashMap<_, _>, HashMap<_, _>) =
             configured_servers
                 .into_iter()
-                .filter(|(_, settings)| settings.enabled())
-                .map(|(id, settings)| {
-                    let id = ContextServerId(id);
-                    ContextServerConfiguration::from_settings(
-                        settings,
-                        id.clone(),
-                        registry.clone(),
-                        worktree_store.clone(),
-                        cx,
-                    )
-                    .map(|config| (id, config))
-                }),
-        )
+                .partition(|(_, settings)| settings.enabled());
+
+        let configured_servers = join_all(enabled_servers.into_iter().map(|(id, settings)| {
+            let id = ContextServerId(id);
+            ContextServerConfiguration::from_settings(
+                settings,
+                id.clone(),
+                registry.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+            .map(|config| (id, config))
+        }))
         .await
         .into_iter()
         .filter_map(|(id, config)| config.map(|config| (id, config)))
@@ -534,13 +541,19 @@ impl ContextServerStore {
                 // All servers that are not in desired_servers should be removed from the store.
                 // This can happen if the user removed a server from the context server settings.
                 if !configured_servers.contains_key(&server_id) {
-                    servers_to_remove.insert(server_id.clone());
+                    if disabled_servers.contains_key(&server_id.0) {
+                        servers_to_stop.insert(server_id.clone());
+                    } else {
+                        servers_to_remove.insert(server_id.clone());
+                    }
                 }
             }
 
             for (id, config) in configured_servers {
-                let existing_config = this.servers.get(&id).map(|state| state.configuration());
-                if existing_config.as_deref() != Some(&config) {
+                let state = this.servers.get(&id);
+                let is_stopped = matches!(state, Some(ContextServerState::Stopped { .. }));
+                let existing_config = state.as_ref().map(|state| state.configuration());
+                if existing_config.as_deref() != Some(&config) || is_stopped {
                     let config = Arc::new(config);
                     if let Some(server) = this
                         .create_context_server(id.clone(), config.clone())
