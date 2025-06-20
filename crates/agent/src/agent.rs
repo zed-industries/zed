@@ -249,6 +249,7 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::TabsSlashCommand, true);
     slash_command_registry
         .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
