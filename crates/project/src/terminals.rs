@@ -18,7 +18,6 @@ use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettings},
 };
 use util::ResultExt;
-use zlog::info;
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
