@@ -28,6 +28,7 @@ pub enum IconName {
     ArrowRight,
     ArrowRightLeft,
     ArrowUp,
+    ArrowUpAlt,
     ArrowUpFromLine,
     ArrowUpRight,
     ArrowUpRightAlt,
