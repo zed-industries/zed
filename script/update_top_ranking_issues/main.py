@@ -127,10 +127,10 @@ def get_label_to_issues(
     common_filter_string = " ".join(common_filters)
 
     # Because PyGithub doesn't seem to support logical operators `AND` and `OR`
-    # that GitHub issue queries can use, we use lists as values, rather thatn
+    # that GitHub issue queries can use, we use lists as values, rather than
     # using `(label:bug OR type:Bug)`. This is not as efficient, as we might
     # query the same issue multiple times. Issues that are potentially queried
-    # mutliple times are deduplicated in the `label_to_issues` dictionary. If
+    # multiple times are deduplicated in the `label_to_issues` dictionary. If
     # PyGithub ever supports logical operators, we should definitely make the
     # switch.
     section_queries: dict[str, list[str]] = {
