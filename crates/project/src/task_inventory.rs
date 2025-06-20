@@ -379,9 +379,11 @@ impl Inventory {
                     .enabled
             })
             .and_then(|language| {
-                language
-                    .context_provider()
-                    .map(|provider| provider.associated_tasks(fs, file, cx))
+                dbg!("XDD");
+                language.context_provider().map(|provider| {
+                    dbg!("lol");
+                    provider.associated_tasks(fs, file, cx)
+                })
             });
         cx.background_spawn(async move {
             if let Some(t) = language_tasks {
@@ -457,6 +459,7 @@ impl Inventory {
 
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        dbg!("Ayo wtf");
         let associated_tasks = language
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)

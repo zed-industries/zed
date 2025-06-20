@@ -28,7 +28,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
+use task::{AdapterSchemas, TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::PackageJsonData;
@@ -41,6 +41,23 @@ const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
 
 pub(crate) struct JsonTaskProvider;
+impl JsonTaskProvider {
+    fn associated_debug_json(
+        &self,
+        file: project::File,
+        cx: &App,
+    ) -> gpui::Task<Option<TaskTemplates>> {
+        cx.spawn(async move |cx| {
+            Some(TaskTemplates(vec![TaskTemplate {
+                label: "ayy lmaodd".into(),
+                command: "composer".to_owned(),
+                args: vec![],
+                tags: vec!["debug-task".into()],
+                ..Default::default()
+            }]))
+        })
+    }
+}
 
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
@@ -49,11 +66,17 @@ impl ContextProvider for JsonTaskProvider {
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
+        dbg!("???");
         let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
             return Task::ready(None);
         };
         let is_package_json = file.path.ends_with("package.json");
         let is_composer_json = file.path.ends_with("composer.json");
+        let is_debug_json = file.path.ends_with("debug.json");
+        dbg!(is_debug_json);
+
+        return self.associated_debug_json(file, cx);
+
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }
@@ -125,6 +148,31 @@ impl ContextProvider for JsonTaskProvider {
 
             Some(TaskTemplates(task_templates))
         })
+    }
+    fn build_context(
+        &self,
+        variables: &task::TaskVariables,
+        location: language::ContextLocation<'_>,
+        _: Option<HashMap<String, String>>,
+        _: Arc<dyn LanguageToolchainStore>,
+        cx: &mut App,
+    ) -> Task<Result<task::TaskVariables>> {
+        dbg!("Lmao");
+        let Some(file) =
+            project::File::from_dyn(location.file_location.buffer.read(cx).file()).cloned()
+        else {
+            return Task::ready(Ok(Default::default()));
+        };
+        let json_contents = variables.get(&VariableName::Custom("_debug_json_entry".into()));
+        dbg!(&json_contents);
+        if let Some(contents) = json_contents.filter(|_| file.path.ends_with("debug.json")) {
+            Task::ready(Ok(TaskVariables::from_iter([(
+                VariableName::Custom("DEBUG_JSON_SCENARIO_CONTENTS".into()),
+                contents.to_owned(),
+            )])))
+        } else {
+            Task::ready(Ok(Default::default()))
+        }
     }
 }
 

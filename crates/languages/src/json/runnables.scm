@@ -19,3 +19,8 @@
     (#set! tag package-script)
     (#set! tag composer-script)
 )
+
+(
+    (document) @run
+    (#set! tag debug-task)
+)
