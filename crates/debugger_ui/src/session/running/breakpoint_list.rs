@@ -673,8 +673,13 @@ impl Render for BreakpointList {
             .on_action(cx.listener(Self::previous_breakpoint_property))
             .size_full()
             .m_0p5()
-            .child(self.render_list(cx))
-            .when_some(self.strip_mode, |this, mode| {
+            .child(
+                v_flex()
+                    .size_full()
+                    .child(self.render_list(cx))
+                    .children(self.render_vertical_scrollbar(cx)),
+            )
+            .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
                         // .w_full()
@@ -689,7 +694,6 @@ impl Render for BreakpointList {
                         .child(self.input.clone()),
                 )
             })
-            .children(self.render_vertical_scrollbar(cx))
     }
 }
 #[derive(Clone, Debug)]
