@@ -577,7 +577,8 @@ impl ExtensionsPage {
                     let extension = &self.dev_extension_entries[ix];
                     self.render_dev_extension(extension, cx)
                 } else if ix < dev_extension_entries_len + external_extension_entries_len {
-                    let extension = &self.external_extension_entries[ix - dev_extension_entries_len];
+                    let extension =
+                        &self.external_extension_entries[ix - dev_extension_entries_len];
                     self.render_external_extension(extension, cx)
                 } else {
                     let extension_ix = self.filtered_remote_extension_indices
