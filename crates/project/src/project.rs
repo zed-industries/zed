@@ -31,6 +31,8 @@ use git_store::{Repository, RepositoryId};
 pub mod search_history;
 mod yarn;
 
+use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
+
 use crate::git_store::GitStore;
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
@@ -45,7 +47,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{DapRegistry, client::DebugAdapterClient};
+use dap::client::DebugAdapterClient;
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -3667,35 +3669,16 @@ impl Project {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let language_name = buffer_handle
-            .read(cx)
-            .language()
-            .map(|language| language.name().to_string());
-
-        let Some(inline_value_provider) = language_name
-            .and_then(|language| DapRegistry::global(cx).inline_value_provider(&language))
-        else {
-            return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
-        };
-
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let Some(root_node) = snapshot.syntax_root_ancestor(range.end) else {
-            return Task::ready(Ok(vec![]));
-        };
+        let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)
             .row as usize;
 
-        let inline_value_locations = inline_value_provider.provide(
-            root_node,
-            snapshot
-                .text_for_range(Anchor::MIN..range.end)
-                .collect::<String>()
-                .as_str(),
-            row,
-        );
+        let inline_value_locations = provide_inline_values(captures, &snapshot, row);
+        dbg!(&inline_value_locations);
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
@@ -5386,4 +5369,43 @@ fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui:
         proto::language_server_prompt_request::Level::Warning(_) => gpui::PromptLevel::Warning,
         proto::language_server_prompt_request::Level::Critical(_) => gpui::PromptLevel::Critical,
     }
+}
+
+fn provide_inline_values(
+    captures: impl Iterator<Item = (Range<usize>, language::DebuggerTextObject)>,
+    snapshot: &language::BufferSnapshot,
+    max_row: usize,
+) -> Vec<InlineValueLocation> {
+    let mut variables = Vec::new();
+    let mut variable_names = HashSet::default();
+    let current_scope: VariableScope = VariableScope::Local;
+
+    // todo! We should be skipping scopes we don't care about
+    for (capture_range, capture_kind) in captures {
+        match capture_kind {
+            language::DebuggerTextObject::Variable => {
+                let variable_name = snapshot
+                    .text_for_range(capture_range.clone())
+                    .collect::<String>();
+                let point = snapshot.offset_to_point(capture_range.end);
+
+                if point.row as usize > max_row {
+                    break;
+                }
+
+                if variable_names.insert(variable_name.clone()) {
+                    variables.push(InlineValueLocation {
+                        variable_name,
+                        scope: current_scope.clone(),
+                        lookup: VariableLookupKind::Variable,
+                        row: point.row as usize,
+                        column: point.column as usize,
+                    });
+                }
+            }
+            language::DebuggerTextObject::Scope => {}
+        }
+    }
+
+    variables
 }

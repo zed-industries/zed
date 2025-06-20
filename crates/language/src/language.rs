@@ -1082,6 +1082,7 @@ pub struct Grammar {
     pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
+    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -1102,6 +1103,22 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DebuggerTextObject {
+    Variable,
+    Scope,
+}
+
+impl DebuggerTextObject {
+    pub fn from_capture_name(name: &str) -> Option<DebuggerTextObject> {
+        match name {
+            "debug-variable" => Some(DebuggerTextObject::Variable),
+            "debug-scope" => Some(DebuggerTextObject::Scope),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1206,6 +1223,11 @@ struct BracketsPatternConfig {
     newline_only: bool,
 }
 
+pub struct DebugVariablesConfig {
+    pub query: Query,
+    pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
+}
+
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
@@ -1237,6 +1259,7 @@ impl Language {
                     redactions_config: None,
                     runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
+                    debug_variables_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1306,6 +1329,11 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
+        }
+        if let Some(query) = queries.debug_variables {
+            self = self
+                .with_debug_variables_query(query.as_ref())
+                .context("Error loading debug variables query")?;
         }
         Ok(self)
     }
@@ -1422,6 +1450,24 @@ impl Language {
                 keep_capture_ix,
             });
         }
+        Ok(self)
+    }
+
+    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut objects_by_capture_ix = Vec::new();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(text_object) = DebuggerTextObject::from_capture_name(name) {
+                objects_by_capture_ix.push((ix as u32, text_object));
+            }
+        }
+
+        grammar.debug_variables_config = Some(DebugVariablesConfig {
+            query,
+            objects_by_capture_ix,
+        });
         Ok(self)
     }
 
@@ -1929,6 +1975,10 @@ impl Grammar {
             .as_ref()?
             .capture_index_for_name(name)?;
         Some(self.highlight_map.lock().get(capture_id))
+    }
+
+    pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
+        self.debug_variables_config.as_ref()
     }
 }
 
