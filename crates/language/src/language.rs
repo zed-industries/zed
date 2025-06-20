@@ -1330,7 +1330,7 @@ impl Language {
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
         }
-        if let Some(query) = queries.debug_variables {
+        if let Some(query) = queries.debugger {
             self = self
                 .with_debug_variables_query(query.as_ref())
                 .context("Error loading debug variables query")?;

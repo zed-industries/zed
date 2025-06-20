@@ -1519,6 +1519,7 @@ fn main() {
 }
 
 fn rust_lang() -> Language {
+    let debug_variables_query = include_str!("../../../languages/src/rust/debugger.scm");
     Language::new(
         LanguageConfig {
             name: "Rust".into(),
@@ -1530,6 +1531,8 @@ fn rust_lang() -> Language {
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
     )
+    .with_debug_variables_query(debug_variables_query)
+    .unwrap()
 }
 
 #[gpui::test]
@@ -2105,7 +2108,7 @@ fn main() {
 fn main() {
     let x: 10 = 10;
     let y: 20 = 20;
-    let result: 30 = x + y;
+    let result: 30 = x: 10 + y: 30;
     println!("Result: {}", result);
 }
 "#
