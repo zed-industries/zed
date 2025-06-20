@@ -48,8 +48,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, Divider, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState,
-    TextSize, Tooltip, prelude::*,
+    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
