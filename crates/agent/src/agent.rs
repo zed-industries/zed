@@ -47,7 +47,7 @@ use settings::{Settings as _, SettingsStore};
 use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
-use crate::agent_configuration::{AddContextServerModal, ManageProfilesModal};
+use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::agent_panel_manager::AgentPanelManager;
 pub use crate::context::{ContextLoadResult, LoadedContext};
@@ -166,7 +166,6 @@ pub fn init(
     agent_panel::init(cx);
     agent_panel_manager::init(cx);
     context_server_configuration::init(language_registry, fs.clone(), cx);
-
     register_slash_commands(cx);
     inline_assistant::init(
         fs.clone(),
@@ -181,7 +180,10 @@ pub fn init(
         cx,
     );
     indexed_docs::init(cx);
-    cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(move |workspace, window, cx| {
+        ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
+    })
+    .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
 }
 

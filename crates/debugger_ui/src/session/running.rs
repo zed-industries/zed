@@ -135,6 +135,7 @@ pub(crate) struct SubView {
     item_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
+    actions: Option<Box<dyn FnMut(&mut Window, &mut App) -> AnyElement>>,
     hovered: bool,
 }
 
@@ -143,20 +144,67 @@ impl SubView {
         item_focus_handle: FocusHandle,
         view: AnyView,
         kind: DebuggerPaneItem,
-        show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|_| Self {
             kind,
             inner: view,
             item_focus_handle,
-            show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
+            show_indicator: Box::new(|_| false),
+            actions: None,
             hovered: false,
         })
     }
 
+    pub(crate) fn console(console: Entity<Console>, cx: &mut App) -> Entity<Self> {
+        let weak_console = console.downgrade();
+        let this = Self::new(
+            console.focus_handle(cx),
+            console.into(),
+            DebuggerPaneItem::Console,
+            cx,
+        );
+        this.update(cx, |this, _| {
+            this.with_indicator(Box::new(move |cx| {
+                weak_console
+                    .read_with(cx, |console, cx| console.show_indicator(cx))
+                    .unwrap_or_default()
+            }))
+        });
+        this
+    }
+
+    pub(crate) fn breakpoint_list(list: Entity<BreakpointList>, cx: &mut App) -> Entity<Self> {
+        let weak_list = list.downgrade();
+        let focus_handle = list.focus_handle(cx);
+        let this = Self::new(
+            focus_handle.clone(),
+            list.into(),
+            DebuggerPaneItem::BreakpointList,
+            cx,
+        );
+
+        this.update(cx, |this, _| {
+            this.with_actions(Box::new(move |_, cx| {
+                weak_list
+                    .update(cx, |this, _| this.render_control_strip())
+                    .unwrap_or_else(|_| div().into_any_element())
+            }));
+        });
+        this
+    }
+
     pub(crate) fn view_kind(&self) -> DebuggerPaneItem {
         self.kind
+    }
+    pub(crate) fn with_indicator(&mut self, indicator: Box<dyn Fn(&App) -> bool>) {
+        self.show_indicator = indicator;
+    }
+    pub(crate) fn with_actions(
+        &mut self,
+        actions: Box<dyn FnMut(&mut Window, &mut App) -> AnyElement>,
+    ) {
+        self.actions = Some(actions);
     }
 }
 impl Focusable for SubView {
@@ -359,10 +407,13 @@ pub(crate) fn new_debugger_pane(
                 let active_pane_item = pane.active_item();
                 let pane_group_id: SharedString =
                     format!("pane-zoom-button-hover-{}", cx.entity_id()).into();
-                let is_hovered = active_pane_item.as_ref().map_or(false, |item| {
-                    item.downcast::<SubView>()
-                        .map_or(false, |this| this.read(cx).hovered)
-                });
+                let as_subview = active_pane_item
+                    .as_ref()
+                    .and_then(|item| item.downcast::<SubView>());
+                let is_hovered = as_subview
+                    .as_ref()
+                    .map_or(false, |item| item.read(cx).hovered);
+
                 h_flex()
                     .group(pane_group_id.clone())
                     .justify_between()
@@ -459,9 +510,17 @@ pub(crate) fn new_debugger_pane(
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        div()
+                        h_flex()
                             .visible_on_hover(pane_group_id)
                             .when(is_hovered, |this| this.visible())
+                            .when_some(as_subview.as_ref(), |this, subview| {
+                                subview.update(cx, |view, cx| {
+                                    let Some(additional_actions) = view.actions.as_mut() else {
+                                        return this;
+                                    };
+                                    this.child(additional_actions(window, cx))
+                                })
+                            })
                             .child(
                                 IconButton::new(
                                     SharedString::from(format!(
@@ -1095,61 +1154,38 @@ impl RunningState {
         cx: &mut Context<Self>,
     ) -> Box<dyn ItemHandle> {
         match item_kind {
-            DebuggerPaneItem::Console => {
-                let weak_console = self.console.clone().downgrade();
-
-                Box::new(SubView::new(
-                    self.console.focus_handle(cx),
-                    self.console.clone().into(),
-                    item_kind,
-                    Some(Box::new(move |cx| {
-                        weak_console
-                            .read_with(cx, |console, cx| console.show_indicator(cx))
-                            .unwrap_or_default()
-                    })),
-                    cx,
-                ))
-            }
+            DebuggerPaneItem::Console => Box::new(SubView::console(self.console.clone(), cx)),
             DebuggerPaneItem::Variables => Box::new(SubView::new(
                 self.variable_list.focus_handle(cx),
                 self.variable_list.clone().into(),
                 item_kind,
-                None,
                 cx,
             )),
-            DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
-                self.breakpoint_list.focus_handle(cx),
-                self.breakpoint_list.clone().into(),
-                item_kind,
-                None,
-                cx,
-            )),
+            DebuggerPaneItem::BreakpointList => {
+                Box::new(SubView::breakpoint_list(self.breakpoint_list.clone(), cx))
+            }
             DebuggerPaneItem::Frames => Box::new(SubView::new(
                 self.stack_frame_list.focus_handle(cx),
                 self.stack_frame_list.clone().into(),
                 item_kind,
-                None,
                 cx,
             )),
             DebuggerPaneItem::Modules => Box::new(SubView::new(
                 self.module_list.focus_handle(cx),
                 self.module_list.clone().into(),
                 item_kind,
-                None,
                 cx,
             )),
             DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
                 self.loaded_sources_list.focus_handle(cx),
                 self.loaded_sources_list.clone().into(),
                 item_kind,
-                None,
                 cx,
             )),
             DebuggerPaneItem::Terminal => Box::new(SubView::new(
                 self.debug_terminal.focus_handle(cx),
                 self.debug_terminal.clone().into(),
                 item_kind,
-                None,
                 cx,
             )),
         }
@@ -1558,7 +1594,6 @@ impl RunningState {
                     this.focus_handle(cx),
                     stack_frame_list.clone().into(),
                     DebuggerPaneItem::Frames,
-                    None,
                     cx,
                 )),
                 true,
@@ -1568,13 +1603,7 @@ impl RunningState {
                 cx,
             );
             this.add_item(
-                Box::new(SubView::new(
-                    breakpoints.focus_handle(cx),
-                    breakpoints.clone().into(),
-                    DebuggerPaneItem::BreakpointList,
-                    None,
-                    cx,
-                )),
+                Box::new(SubView::breakpoint_list(breakpoints.clone(), cx)),
                 true,
                 false,
                 None,
@@ -1586,32 +1615,15 @@ impl RunningState {
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
 
         center_pane.update(cx, |this, cx| {
-            let weak_console = console.downgrade();
-            this.add_item(
-                Box::new(SubView::new(
-                    console.focus_handle(cx),
-                    console.clone().into(),
-                    DebuggerPaneItem::Console,
-                    Some(Box::new(move |cx| {
-                        weak_console
-                            .read_with(cx, |console, cx| console.show_indicator(cx))
-                            .unwrap_or_default()
-                    })),
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
+            let view = SubView::console(console.clone(), cx);
+
+            this.add_item(Box::new(view), true, false, None, window, cx);
 
             this.add_item(
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
                     variable_list.clone().into(),
                     DebuggerPaneItem::Variables,
-                    None,
                     cx,
                 )),
                 true,
@@ -1630,7 +1642,6 @@ impl RunningState {
                     debug_terminal.focus_handle(cx),
                     debug_terminal.clone().into(),
                     DebuggerPaneItem::Terminal,
-                    None,
                     cx,
                 )),
                 false,

@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
@@ -8,6 +7,7 @@ use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
+use client::{ModelRequestUsage, RequestUsage};
 use collections::HashMap;
 use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
@@ -23,8 +23,8 @@ use language_model::{
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -37,8 +37,9 @@ use settings::Settings;
 use thiserror::Error;
 use ui::Window;
 use util::{ResultExt as _, post_inc};
+
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
+use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 use crate::ThreadStore;
 use crate::agent_profile::AgentProfile;
@@ -350,7 +351,6 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
-    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -443,7 +443,6 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -568,7 +567,6 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -873,10 +871,6 @@ impl Thread {
                     .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
             })
             .unwrap_or(false)
-    }
-
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
     }
 
     pub fn tool_use_limit_reached(&self) -> bool {
@@ -1389,8 +1383,6 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attach_tracked_files_state(&mut request.messages, cx);
-
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
             Some(self.completion_mode.into())
@@ -1451,60 +1443,6 @@ impl Thread {
         });
 
         request
-    }
-
-    fn attach_tracked_files_state(
-        &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
-    ) {
-        let mut stale_files = String::new();
-
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            if let Some(file) = stale_file.read(cx).file() {
-                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
-            }
-        }
-
-        if stale_files.is_empty() {
-            return;
-        }
-
-        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-        let content = MessageContent::Text(
-            format!("{STALE_FILES_HEADER}{stale_files}").replace("\r\n", "\n"),
-        );
-
-        // Insert our message before the last Assistant message.
-        // Inserting it to the tail distracts the agent too much
-        let insert_position = messages
-            .iter()
-            .enumerate()
-            .rfind(|(_, message)| message.role == Role::Assistant)
-            .map_or(messages.len(), |(i, _)| i);
-
-        let request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![content],
-            cache: false,
-        };
-
-        messages.insert(insert_position, request_message);
-
-        // It makes no sense to cache messages after this one because
-        // the cache is invalidated when this message is gone.
-        // Move the cache marker before this message.
-        let has_cached_messages_after = messages
-            .iter()
-            .skip(insert_position + 1)
-            .any(|message| message.cache);
-
-        if has_cached_messages_after {
-            messages[insert_position - 1].cache = true;
-        }
     }
 
     pub fn stream_completion(
@@ -1714,9 +1652,7 @@ impl Thread {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            let usage = RequestUsage { limit, amount: amount as i32 };
-
-                                            thread.last_usage = Some(usage);
+                                            thread.update_model_request_usage(amount as u32, limit, cx);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1927,11 +1863,8 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |thread, _cx| {
-                                thread.last_usage = Some(RequestUsage {
-                                    limit,
-                                    amount: amount as i32,
-                                });
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount as u32, limit, cx);
                             })?;
                             continue;
                         }
@@ -2813,6 +2746,20 @@ impl Thread {
         }
     }
 
+    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            project.user_store().update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            })
+        });
+    }
+
     pub fn deny_tool_use(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -3226,106 +3173,6 @@ fn main() {{
         assert_eq!(
             request.messages[2].string_contents(),
             "Are there any good books?"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        init_test_settings(cx);
-
-        let project = create_test_project(
-            cx,
-            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
-        )
-        .await;
-
-        let (_workspace, _thread_store, thread, context_store, model) =
-            setup_test_environment(cx, project.clone()).await;
-
-        // Open buffer and add it to context
-        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
-            .await
-            .unwrap();
-
-        let context =
-            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
-        let loaded_context = cx
-            .update(|cx| load_context(vec![context], &project, &None, cx))
-            .await;
-
-        // Insert user message with the buffer as context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
-        });
-
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
-        assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
-        );
-
-        // Modify the buffer
-        buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
-            buffer.edit(
-                [(1..1, "\n    println!(\"Added a new line\");\n")],
-                None,
-                cx,
-            );
-        });
-
-        // Insert another user message without context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What does the code do now?",
-                ContextLoadResult::default(),
-                None,
-                Vec::new(),
-                cx,
-            )
-        });
-
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // We should have a stale file warning as the last message
-        let last_message = new_request
-            .messages
-            .last()
-            .expect("Request should have messages");
-
-        // The last message should be the stale buffer notification
-        assert_eq!(last_message.role, Role::User);
-
-        // Check the exact content of the message
-        let expected_content = "[The following is an auto-generated notification; do not reply]
-
-These files have changed since the last read:
-- code.rs
-";
-        assert_eq!(
-            last_message.string_contents(),
-            expected_content,
-            "Last message should be exactly the stale buffer notification"
-        );
-
-        // The message before the notification should be cached
-        let index = new_request.messages.len() - 2;
-        let previous_message = new_request.messages.get(index).unwrap();
-        assert!(
-            previous_message.cache,
-            "Message before the stale buffer notification should be cached"
         );
     }
 

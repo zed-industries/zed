@@ -87,7 +87,7 @@ pub fn register_notifications(
                         None,
                         DiagnosticSourceKind::Pushed,
                         &adapter.disk_based_diagnostic_sources,
-                        |diag, _| !is_inactive_region(diag),
+                        |_, diag, _| !is_inactive_region(diag),
                         cx,
                     )
                     .log_err();

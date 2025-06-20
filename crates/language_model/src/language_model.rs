@@ -8,27 +8,22 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-use http_client::http::{HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
-use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::{
-    CompletionRequestStatus, MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
-};
+use zed_llm_client::CompletionRequestStatus;
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -104,32 +99,6 @@ pub enum StopReason {
     MaxTokens,
     ToolUse,
     Refusal,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RequestUsage {
-    pub limit: UsageLimit,
-    pub amount: i32,
-}
-
-impl RequestUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let limit = headers
-            .get(MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME)
-            .with_context(|| {
-                format!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header")
-            })?;
-        let limit = UsageLimit::from_str(limit.to_str()?)?;
-
-        let amount = headers
-            .get(MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME)
-            .with_context(|| {
-                format!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header")
-            })?;
-        let amount = amount.to_str()?.parse::<i32>()?;
-
-        Ok(Self { limit, amount })
-    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
