@@ -165,7 +165,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         debug_adapters: Default::default(),
                     }),
                     dev: false,
-                    private: false,
+                    external: false,
                 },
             ),
             (
@@ -196,7 +196,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         debug_adapters: Default::default(),
                     }),
                     dev: false,
-                    private: false,
+                    external: false,
                 },
             ),
         ]
@@ -372,7 +372,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 debug_adapters: Default::default(),
             }),
             dev: false,
-            private: false,
+            external: false,
         },
     );
     expected_index.themes.insert(

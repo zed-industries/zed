@@ -154,7 +154,7 @@ pub struct ExtensionIndex {
 pub struct ExtensionIndexEntry {
     pub manifest: Arc<ExtensionManifest>,
     pub dev: bool,
-    pub private: bool,
+    pub external: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
@@ -433,11 +433,11 @@ impl ExtensionStore {
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
     }
 
-    pub fn private_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
+    pub fn external_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
         self.extension_index
             .extensions
             .values()
-            .filter_map(|extension| extension.private.then_some(&extension.manifest))
+            .filter_map(|extension| extension.external.then_some(&extension.manifest))
     }
 
     pub fn extension_manifest_for_id(&self, extension_id: &str) -> Option<&Arc<ExtensionManifest>> {
@@ -1016,7 +1016,7 @@ impl ExtensionStore {
         .detach_and_log_err(cx)
     }
 
-    pub fn install_private_extension(
+    pub fn install_external_extension(
         &mut self,
         cx: &mut Context<Self>,
         url: Url,
@@ -1086,7 +1086,7 @@ impl ExtensionStore {
                 }
             };
 
-            // Add a file (to keep the url from where this private extension was downloaded)
+            // Add a file (to keep the url from where this external extension was downloaded)
             let url_file_path = extension_root.join(".origin");
             fs.create_file(
                 &url_file_path,
@@ -1584,9 +1584,9 @@ impl ExtensionStore {
             .context("directory does not exist")?
             .is_symlink;
 
-        // Only private extensions have the .origin file
+        // Only external extensions have the .origin file
         let origin_file_path = extension_dir.join(".origin");
-        let is_private = fs.is_file(&origin_file_path).await;
+        let is_external = fs.is_file(&origin_file_path).await;
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
             while let Some(language_path) = language_paths.next().await {
@@ -1698,7 +1698,7 @@ impl ExtensionStore {
             ExtensionIndexEntry {
                 dev: is_dev,
                 manifest: Arc::new(extension_manifest),
-                private: is_private,
+                external: is_external,
             },
         );
 

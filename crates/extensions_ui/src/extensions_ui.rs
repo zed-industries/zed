@@ -1,7 +1,7 @@
 mod components;
 mod extension_suggest;
 mod extension_version_selector;
-mod private_extension_config;
+mod external_extension_config;
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -38,9 +38,9 @@ use crate::components::{ExtensionCard, FeatureUpsell};
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
-use crate::private_extension_config::PrivateExtensionsModal;
+use crate::external_extension_config::ExternalExtensionsModal;
 
-actions!(zed, [InstallDevExtension, InstallPrivateExtension]);
+actions!(zed, [InstallDevExtension, InstallExternalExtension]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
@@ -95,10 +95,10 @@ pub fn init(cx: &mut App) {
                     }
                 },
             )
-            .register_action(move |workspace, _: &InstallPrivateExtension, window, cx| {
+            .register_action(move |workspace, _: &InstallExternalExtension, window, cx| {
                 let wspc = workspace.weak_handle();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    PrivateExtensionsModal::new(window, cx, wspc.clone())
+                    ExternalExtensionsModal::new(window, cx, wspc.clone())
                 });
             })
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
@@ -209,7 +209,7 @@ impl ExtensionFilter {
             Self::NotInstalled => false,
         }
     }
-    pub fn include_private_extensions(&self) -> bool {
+    pub fn include_external_extensions(&self) -> bool {
         match self {
             Self::All | Self::Installed => true,
             Self::NotInstalled => false,
@@ -279,7 +279,7 @@ pub struct ExtensionsPage {
     filter: ExtensionFilter,
     remote_extension_entries: Vec<ExtensionMetadata>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
-    private_extension_entries: Vec<Arc<ExtensionManifest>>,
+    external_extension_entries: Vec<Arc<ExtensionManifest>>,
     filtered_remote_extension_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
@@ -336,7 +336,7 @@ impl ExtensionsPage {
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
-                private_extension_entries: Vec::new(),
+                external_extension_entries: Vec::new(),
                 filtered_remote_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
@@ -403,13 +403,13 @@ impl ExtensionsPage {
         }
     }
 
-    /// Returns whether a private extension currently exists for the extension with the given ID.
-    fn private_extension_exists(extension_id: &str, cx: &mut Context<Self>) -> bool {
+    /// Returns whether a external extension currently exists for the extension with the given ID.
+    fn external_extension_exists(extension_id: &str, cx: &mut Context<Self>) -> bool {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
         extension_store
-            .private_extensions()
-            .any(|private_extension| private_extension.id.as_ref() == extension_id)
+            .external_extensions()
+            .any(|external_extension| external_extension.id.as_ref() == extension_id)
     }
 
     /// Returns whether a dev extension currently exists for the extension with the given ID.
@@ -475,8 +475,8 @@ impl ExtensionsPage {
 
         let extension_store = ExtensionStore::global(cx);
 
-        let private_extensions = extension_store.update(cx, |store, _| {
-            store.private_extensions().cloned().collect::<Vec<_>>()
+        let external_extensions = extension_store.update(cx, |store, _| {
+            store.external_extensions().cloned().collect::<Vec<_>>()
         });
 
         let dev_extensions = extension_store
@@ -514,8 +514,8 @@ impl ExtensionsPage {
                 dev_extensions
             };
 
-            let private_extensions = if let Some(ref search) = search {
-                let match_candidates = private_extensions
+            let external_extensions = if let Some(ref search) = search {
+                let match_candidates = external_extensions
                     .iter()
                     .enumerate()
                     .map(|(ix, manifest)| StringMatchCandidate::new(ix, &manifest.name))
@@ -532,10 +532,10 @@ impl ExtensionsPage {
                 .await;
                 matches
                     .into_iter()
-                    .map(|mat| private_extensions[mat.candidate_id].clone())
+                    .map(|mat| external_extensions[mat.candidate_id].clone())
                     .collect()
             } else {
-                private_extensions
+                external_extensions
             };
 
             let fetch_result = remote_extensions.await;
@@ -544,7 +544,7 @@ impl ExtensionsPage {
                 this.dev_extension_entries = dev_extensions;
                 this.is_fetching_extensions = false;
                 this.remote_extension_entries = fetch_result?;
-                this.private_extension_entries = private_extensions;
+                this.external_extension_entries = external_extensions;
                 this.filter_extension_entries(cx);
                 if let Some(callback) = on_complete {
                     callback(this, cx);
@@ -566,8 +566,8 @@ impl ExtensionsPage {
         } else {
             0
         };
-        let private_extension_entries_len = if self.filter.include_private_extensions() {
-            self.private_extension_entries.len()
+        let external_extension_entries_len = if self.filter.include_external_extensions() {
+            self.external_extension_entries.len()
         } else {
             0
         };
@@ -576,12 +576,12 @@ impl ExtensionsPage {
                 if ix < dev_extension_entries_len {
                     let extension = &self.dev_extension_entries[ix];
                     self.render_dev_extension(extension, cx)
-                } else if ix < dev_extension_entries_len + private_extension_entries_len {
-                    let extension = &self.private_extension_entries[ix - dev_extension_entries_len];
-                    self.render_private_extension(extension, cx)
+                } else if ix < dev_extension_entries_len + external_extension_entries_len {
+                    let extension = &self.external_extension_entries[ix - dev_extension_entries_len];
+                    self.render_external_extension(extension, cx)
                 } else {
                     let extension_ix = self.filtered_remote_extension_indices
-                        [ix - dev_extension_entries_len - private_extension_entries_len];
+                        [ix - dev_extension_entries_len - external_extension_entries_len];
                     let extension = &self.remote_extension_entries[extension_ix];
                     self.render_remote_extension(extension, cx)
                 }
@@ -589,7 +589,7 @@ impl ExtensionsPage {
             .collect()
     }
 
-    fn render_private_extension(
+    fn render_external_extension(
         &self,
         extension: &ExtensionManifest,
         cx: &mut Context<Self>,
@@ -697,7 +697,7 @@ impl ExtensionsPage {
                             .gap_2()
                             .items_center()
                             .child(
-                                Label::new("Private Extension")
+                                Label::new("External Extension")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
                             )
@@ -875,14 +875,14 @@ impl ExtensionsPage {
         let this = cx.entity().clone();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
-        let has_private_extension = Self::private_extension_exists(&extension.id, cx);
+        let has_external_extension = Self::external_extension_exists(&extension.id, cx);
 
         let extension_id = extension.id.clone();
         let buttons = self.buttons_for_entry(
             extension,
             &status,
             has_dev_extension,
-            has_private_extension,
+            has_external_extension,
             cx,
         );
         let version = extension.manifest.version.clone();
@@ -896,7 +896,7 @@ impl ExtensionsPage {
 
         ExtensionCard::new()
             .overridden_by_dev_extension(has_dev_extension)
-            .overridden_by_private_extension(has_private_extension)
+            .overridden_by_external_extension(has_external_extension)
             .child(
                 h_flex()
                     .justify_between()
@@ -1116,14 +1116,14 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         status: &ExtensionStatus,
         has_dev_extension: bool,
-        has_private_extension: bool,
+        has_external_extension: bool,
         cx: &mut Context<Self>,
     ) -> ExtensionCardButtons {
         let is_compatible =
             extension_host::is_version_compatible(ReleaseChannel::global(cx), extension);
 
-        if has_dev_extension || has_private_extension {
-            // If we have a dev extension or private extension for the given extension, just treat it as uninstalled.
+        if has_dev_extension || has_external_extension {
+            // If we have a dev extension or external extension for the given extension, just treat it as uninstalled.
             // The button here is a placeholder, as it won't be interactable anyways.
             return ExtensionCardButtons {
                 install_or_uninstall: Button::new(
@@ -1571,15 +1571,15 @@ impl Render for ExtensionsPage {
                                     .gap_2()
                                     .child(
                                         Button::new(
-                                            "install-private-extension",
-                                            "Install Private Extension",
+                                            "install-external-extension",
+                                            "Install External Extension",
                                         )
                                         .style(ButtonStyle::Filled)
                                         .size(ButtonSize::Large)
                                         .on_click(
                                             |_event, window, cx| {
                                                 window.dispatch_action(
-                                                    Box::new(InstallPrivateExtension),
+                                                    Box::new(InstallExternalExtension),
                                                     cx,
                                                 )
                                             },
@@ -1714,8 +1714,8 @@ impl Render for ExtensionsPage {
                         if self.filter.include_dev_extensions() {
                             count += self.dev_extension_entries.len();
                         }
-                        if self.filter.include_private_extensions() {
-                            count += self.private_extension_entries.len();
+                        if self.filter.include_external_extensions() {
+                            count += self.external_extension_entries.len();
                         }
 
                         if count == 0 {

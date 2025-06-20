@@ -18,7 +18,7 @@ pub enum RepoType {
     Custom,
 }
 
-pub struct PrivateExtensionsModal {
+pub struct ExternalExtensionsModal {
     workspace: WeakEntity<Workspace>,
     custom_url_editor: Entity<Editor>,
     github_repo_user: Entity<Editor>,
@@ -31,7 +31,7 @@ pub struct PrivateExtensionsModal {
     repo_type: RepoType,
 }
 
-impl Render for PrivateExtensionsModal {
+impl Render for ExternalExtensionsModal {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let colors = theme.colors();
@@ -49,7 +49,7 @@ impl Render for PrivateExtensionsModal {
                                     .w_full()
                                     .justify_between()
                                     .child(
-                                        Headline::new("Add a Private Extension")
+                                        Headline::new("Add an External Extension")
                                             .size(HeadlineSize::Medium),
                                     )
                                     .child(self.render_repo_options_button(cx)),
@@ -73,7 +73,7 @@ impl Render for PrivateExtensionsModal {
     }
 }
 
-impl PrivateExtensionsModal {
+impl ExternalExtensionsModal {
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -152,10 +152,10 @@ impl PrivateExtensionsModal {
     fn render_repo_option(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().clone();
 
-        PopoverMenu::new(SharedString::from("private-repo-options".to_string()))
+        PopoverMenu::new(SharedString::from("external-repo-options".to_string()))
             .trigger(
                 IconButton::new(
-                    SharedString::from("private-repo-options".to_string()),
+                    SharedString::from("external-repo-options".to_string()),
                     IconName::ChevronDown,
                 )
                 .icon_color(Color::Accent)
@@ -427,7 +427,7 @@ impl PrivateExtensionsModal {
                 let url_str = download_link.clone();
                 let token: Option<Arc<str>> = token.clone().map(|s| Arc::from(s.into_boxed_str()));
 
-                // Call async function to fetch, save and install private extension
+                // Call async function to fetch, save and install external extension
                 let workspace_handle = this.workspace.clone();
                 window
                     .spawn(cx, async move |cx| {
@@ -438,7 +438,7 @@ impl PrivateExtensionsModal {
 
                         let install_task = store
                             .update(cx, |store, cx| {
-                                store.install_private_extension(
+                                store.install_external_extension(
                                     cx,
                                     extension_url,
                                     header_type.unwrap_or_default(),
@@ -449,17 +449,17 @@ impl PrivateExtensionsModal {
 
                         match install_task.await {
                             Ok(_) => {
-                                log::info!("Private extension successfully installed!");
+                                log::info!("External extension successfully installed!");
                             }
                             Err(err) => {
-                                log::error!("Failed to install private extension: {:?}", err);
+                                log::error!("Failed to install external extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
                                         workspace.show_error(
                                             // NOTE: using `anyhow::context` here ends up not printing
                                             // the error
                                             &format!(
-                                                "Failed to install private extension: {}",
+                                                "Failed to install external extension: {}",
                                                 err
                                             ),
                                             cx,
@@ -486,11 +486,11 @@ impl PrivateExtensionsModal {
     }
 }
 
-impl EventEmitter<DismissEvent> for PrivateExtensionsModal {}
-impl Focusable for PrivateExtensionsModal {
+impl EventEmitter<DismissEvent> for ExternalExtensionsModal {}
+impl Focusable for ExternalExtensionsModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.custom_url_editor.focus_handle(cx)
     }
 }
 
-impl ModalView for PrivateExtensionsModal {}
+impl ModalView for ExternalExtensionsModal {}

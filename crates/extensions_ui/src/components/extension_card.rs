@@ -5,7 +5,7 @@ use ui::prelude::*;
 #[derive(IntoElement)]
 pub struct ExtensionCard {
     overridden_by_dev_extension: bool,
-    overridden_by_private_extension: bool,
+    overridden_by_external_extension: bool,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -13,7 +13,7 @@ impl ExtensionCard {
     pub fn new() -> Self {
         Self {
             overridden_by_dev_extension: false,
-            overridden_by_private_extension: false,
+            overridden_by_external_extension: false,
             children: SmallVec::new(),
         }
     }
@@ -23,8 +23,8 @@ impl ExtensionCard {
         self
     }
 
-    pub fn overridden_by_private_extension(mut self, overridden: bool) -> Self {
-        self.overridden_by_private_extension = overridden;
+    pub fn overridden_by_external_extension(mut self, overridden: bool) -> Self {
+        self.overridden_by_external_extension = overridden;
         self
     }
 }
@@ -64,7 +64,7 @@ impl RenderOnce for ExtensionCard {
                             .child(Label::new("Overridden by dev extension.")),
                     )
                 })
-                .when(self.overridden_by_private_extension, |card| {
+                .when(self.overridden_by_external_extension, |card| {
                     card.child(
                         h_flex()
                             .absolute()
@@ -76,7 +76,7 @@ impl RenderOnce for ExtensionCard {
                             .items_center()
                             .justify_center()
                             .bg(cx.theme().colors().elevated_surface_background.alpha(0.8))
-                            .child(Label::new("Overridden by private extension.")),
+                            .child(Label::new("Overridden by external extension.")),
                     )
                 }),
         )
