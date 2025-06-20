@@ -1066,7 +1066,7 @@ impl VariableList {
                         .w_full()
                         .child(
                             Label::new(&Self::center_truncate_string(
-                                &watcher.expression.to_string(),
+                                watcher.expression.as_ref(),
                                 watcher_len,
                             ))
                             .when_some(variable_color.name, |this, color| {
