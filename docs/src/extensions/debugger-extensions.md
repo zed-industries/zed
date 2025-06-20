@@ -8,7 +8,7 @@ A given extension may provide one or more DAP servers.
 Each DAP server must be registered in the `extension.toml`:
 
 ```toml
-[debug-adapters.my-debug-adapter]
+[debug_adapters.my-debug-adapter]
 # Optional relative path to the JSON schema for the debug adapter configuration schema. Defaults to `debug_adapter_schemas/$DEBUG_ADAPTER_NAME_ID.json`.
 # Note that while this field is optional, a schema is mandatory.
 schema_path = "relative/path/to/schema.json"
@@ -72,7 +72,7 @@ Locators can (but don't have to) be agnostic to the debug adapter they are used 
 Your extension can define one or more debug locators. Each debug locator must be registered in the `extension.toml`:
 
 ```toml
-[debug-locators.my-debug-locator]
+[debug_locators.my-debug-locator]
 ```
 
 Locators have two components.
