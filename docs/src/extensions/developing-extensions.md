@@ -89,6 +89,8 @@ impl zed::Extension for MyExtension {
 zed::register_extension!(MyExtension);
 ```
 
+> `stdout`/`stderr` is forwarded directly to the Zed process. In order to see `println!`/`dbg!` output from your extension, you can start Zed in your terminal with a `--foreground` flag.
+
 ## Forking and cloning the repo
 
 1. Fork the repo
