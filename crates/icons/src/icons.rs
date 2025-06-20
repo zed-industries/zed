@@ -10,6 +10,7 @@ use strum::{EnumIter, EnumString, IntoStaticStr};
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiCowriter,
     AiBedrock,
     AiDeepSeek,
     AiEdit,

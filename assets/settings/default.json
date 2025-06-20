@@ -1636,6 +1636,10 @@
   },
   // Different settings for specific language models.
   "language_models": {
+    "cowriter": {
+      "version": "1",
+      "api_url": "https://cowriter.deno.dev/api/agent/proxy-claude"
+    },
     "anthropic": {
       "version": "1",
       "api_url": "https://api.anthropic.com"

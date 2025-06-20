@@ -34,7 +34,7 @@ use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
-const PROVIDER_NAME: &str = "Anthropic";
+const PROVIDER_NAME: &str = "Cowriter";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -227,7 +227,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiAnthropic
+        IconName::AiCowriter
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -1023,19 +1023,19 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new("在使用Cowriter以前, 你需要激活码:"))
                 .child(
                     List::new()
-                        .child(
-                            InstructionListItem::new(
-                                "Create one by visiting",
-                                Some("Anthropic's settings"),
-                                Some("https://console.anthropic.com/settings/keys")
-                            )
-                        )
-                        .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
-                        )
+                        .child(InstructionListItem::new(
+                            "请联系开发者",
+                            Some("@UP进化论 小红书"),
+                            Some(
+                                "https://www.xiaohongshu.com/user/profile/664efd1e0000000003032b21",
+                            ),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "将您的激活码粘贴在下面的文本框中",
+                        )),
                 )
                 .child(
                     h_flex()
@@ -1048,13 +1048,6 @@ impl Render for ConfigurationView {
                         .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
-                )
-                .child(
-                    Label::new(
-                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
                 )
                 .into_any()
         } else {
