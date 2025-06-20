@@ -1,11 +1,11 @@
 use ::serde::{Deserialize, Serialize};
 use anyhow::Context as _;
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
-use language::{LanguageServerStatusUpdate, ServerHealth};
+use gpui::{App, Entity, Task, WeakEntity};
+use language::ServerHealth;
 use lsp::LanguageServer;
 use rpc::proto;
 
-use crate::{LspStore, Project, ProjectPath, lsp_store};
+use crate::{LspStore, LspStoreEvent, Project, ProjectPath, lsp_store};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
@@ -36,24 +36,45 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
         .on_notification::<ServerStatus, _>({
             let name = name.clone();
             move |params, cx| {
-                let status = params.message;
-                let log_message =
-                    format!("Language server {name} (id {server_id}) status update: {status:?}");
-                match &params.health {
-                    ServerHealth::Ok => log::info!("{log_message}"),
-                    ServerHealth::Warning => log::warn!("{log_message}"),
-                    ServerHealth::Error => log::error!("{log_message}"),
-                }
+                let message = params.message;
+                let log_message = message.as_ref().map(|message| {
+                    format!("Language server {name} (id {server_id}) status update: {message}")
+                });
+                let status = match &params.health {
+                    ServerHealth::Ok => {
+                        if let Some(log_message) = log_message {
+                            log::info!("{log_message}");
+                        }
+                        proto::ServerHealth::Ok
+                    }
+                    ServerHealth::Warning => {
+                        if let Some(log_message) = log_message {
+                            log::warn!("{log_message}");
+                        }
+                        proto::ServerHealth::Warning
+                    }
+                    ServerHealth::Error => {
+                        if let Some(log_message) = log_message {
+                            log::error!("{log_message}");
+                        }
+                        proto::ServerHealth::Error
+                    }
+                };
 
                 lsp_store
-                    .update(cx, |lsp_store, _| {
-                        lsp_store.languages.update_lsp_status(
-                            name.clone(),
-                            LanguageServerStatusUpdate::Health(
-                                params.health,
-                                status.map(SharedString::from),
+                    .update(cx, |_, cx| {
+                        cx.emit(LspStoreEvent::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            name: Some(name.clone()),
+                            message: proto::update_language_server::Variant::StatusUpdate(
+                                proto::StatusUpdate {
+                                    message,
+                                    status: Some(proto::status_update::Status::Health(
+                                        status as i32,
+                                    )),
+                                },
                             ),
-                        );
+                        });
                     })
                     .ok();
             }
