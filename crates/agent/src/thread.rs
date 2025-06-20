@@ -1481,6 +1481,72 @@ impl Thread {
         request
     }
 
+    fn attach_tracked_files_state(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        cx: &App,
+    ) {
+        let mut stale_files = String::new();
+
+        let action_log = self.action_log.read(cx);
+
+        for stale_file in action_log.stale_buffers(cx) {
+            if let Some(file) = stale_file.read(cx).file() {
+                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
+            }
+        }
+
+        if stale_files.is_empty() {
+            return;
+        }
+
+        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
+        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
+        let notification_text = format!("{STALE_FILES_HEADER}{stale_files}").replace("\r\n", "\n");
+
+        let tool_use_id =
+            LanguageModelToolUseId::from(format!("project_updates_{}", messages.len()));
+
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: Arc::from("project_updates"),
+            raw_input: "{}".to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+        };
+
+        let assistant_message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: vec![MessageContent::ToolUse(tool_use)],
+            cache: false,
+        };
+
+        let tool_result = LanguageModelToolResult {
+            tool_use_id,
+            tool_name: Arc::from("project_updates"),
+            is_error: false,
+            content: LanguageModelToolResultContent::Text(Arc::from(notification_text)),
+            output: None,
+        };
+
+        let user_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::ToolResult(tool_result)],
+            cache: false,
+        };
+
+        // Insert our messages before the last Assistant message.
+        // Inserting it to the tail distracts the agent too much
+        let insert_position = messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map_or(messages.len(), |(i, _)| i);
+
+        messages.insert(insert_position, assistant_message);
+        messages.insert(insert_position + 1, user_message);
+    }
+
     pub fn stream_completion(
         &mut self,
         request: LanguageModelRequest,
@@ -3485,6 +3551,126 @@ fn main() {{
             request.messages[2].string_contents(),
             "Are there any good books?"
         );
+    }
+
+    #[gpui::test]
+    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Open buffer and add it to context
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+            .await
+            .unwrap();
+
+        let context =
+            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
+
+        // Insert user message with the buffer as context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
+        });
+
+        // Create a request and check that it doesn't have a stale buffer warning yet
+        let initial_request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // Make sure we don't have a stale file warning yet
+        let has_stale_warning = initial_request.messages.iter().any(|msg| {
+            msg.string_contents()
+                .contains("These files changed since last read:")
+        });
+        assert!(
+            !has_stale_warning,
+            "Should not have stale buffer warning before buffer is modified"
+        );
+
+        // Modify the buffer
+        buffer.update(cx, |buffer, cx| {
+            // Find a position at the end of line 1
+            buffer.edit(
+                [(1..1, "\n    println!(\"Added a new line\");\n")],
+                None,
+                cx,
+            );
+        });
+
+        // Insert another user message without context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "What does the code do now?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        // Create a new request and check for the stale buffer warning
+        let new_request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // Find the fake project_updates tool use and result
+        let mut found_tool_use = false;
+        let mut found_tool_result = false;
+
+        for (i, message) in new_request.messages.iter().enumerate() {
+            if message.role == Role::Assistant {
+                for content in &message.content {
+                    if let MessageContent::ToolUse(tool_use) = content {
+                        if tool_use.name.as_ref() == "project_updates" {
+                            found_tool_use = true;
+                            // The next message should be the tool result
+                            if let Some(next_msg) = new_request.messages.get(i + 1) {
+                                assert_eq!(next_msg.role, Role::User);
+                                for result_content in &next_msg.content {
+                                    if let MessageContent::ToolResult(tool_result) = result_content
+                                    {
+                                        assert_eq!(
+                                            tool_result.tool_name.as_ref(),
+                                            "project_updates"
+                                        );
+                                        assert!(!tool_result.is_error);
+
+                                        if let LanguageModelToolResultContent::Text(text) =
+                                            &tool_result.content
+                                        {
+                                            let expected_content = "[The following is an auto-generated notification; do not reply]
+
+These files have changed since the last read:
+- code.rs
+";
+                                            assert_eq!(
+                                                text.as_ref(),
+                                                expected_content,
+                                                "Tool result should contain the stale buffer notification"
+                                            );
+                                            found_tool_result = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(found_tool_use, "Should find project_updates tool use");
+        assert!(found_tool_result, "Should find project_updates tool result");
     }
 
     #[gpui::test]
