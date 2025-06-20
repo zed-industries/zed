@@ -1708,12 +1708,20 @@ impl AgentDiff {
             if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
                 let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-                let mut keys = changed_buffers.keys().cycle();
-                keys.find(|k| *k == &curr_buffer);
-                let next_project_path = keys
-                    .next()
-                    .filter(|k| *k != &curr_buffer)
-                    .and_then(|after| after.read(cx).project_path(cx));
+                // Check if current buffer exists in changed_buffers to avoid infinite loop
+                let next_project_path = if changed_buffers.contains_key(&curr_buffer) {
+                    let mut keys = changed_buffers.keys().cycle();
+                    keys.find(|k| *k == &curr_buffer);
+                    keys.next()
+                        .filter(|k| *k != &curr_buffer)
+                        .and_then(|after| after.read(cx).project_path(cx))
+                } else {
+                    // Current buffer doesn't exist (e.g., removed file), just get the first one
+                    changed_buffers
+                        .keys()
+                        .next()
+                        .and_then(|buffer| buffer.read(cx).project_path(cx))
+                };
 
                 if let Some(path) = next_project_path {
                     let task = workspace.open_path(path, None, true, window, cx);
