@@ -80,13 +80,10 @@ def get_issue_maps(
     repository: Repository,
     start_date: datetime | None = None,
 ) -> dict[str, list[IssueData]]:
-    label_to_issues: defaultdict[str, list[Issue]] = get_label_to_issues(
+    label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
         github,
         repository,
         start_date,
-    )
-    label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
-        label_to_issues
     )
 
     # Create a new dictionary with labels ordered by the summation the of likes on the associated issues
@@ -104,11 +101,11 @@ def get_issue_maps(
     return label_to_issue_data
 
 
-def get_label_to_issues(
+def get_label_to_issue_data(
     github: Github,
     repository: Repository,
     start_date: datetime | None = None,
-) -> defaultdict[str, list[Issue]]:
+) -> dict[str, list[IssueData]]:
     common_filters = [
         f"repo:{repository.full_name}",
         "is:open",
@@ -141,28 +138,22 @@ def get_label_to_issues(
         "unlabeled": ["no:label no:type"],
     }
 
-    label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
+    label_to_issue_data: dict[str, list[IssueData]] = {}
 
     for section, section_queries in section_queries.items():
+        unique_issues = set()
+
         for section_query in section_queries:
             query: str = f"{common_filter_string} {section_query}"
             issues = github.search_issues(query)
 
-            if issues.totalCount > 0:
-                for issue in issues:
-                    label_to_issues[section].append(issue)
+            for issue in issues:
+                unique_issues.add(issue)
 
-    return label_to_issues
+        if len(unique_issues) <= 0:
+            continue
 
-
-def get_label_to_issue_data(
-    label_to_issues: defaultdict[str, list[Issue]],
-) -> dict[str, list[IssueData]]:
-    label_to_issue_data: dict[str, list[IssueData]] = {}
-
-    for label in label_to_issues:
-        issues: list[Issue] = label_to_issues[label]
-        issue_data: list[IssueData] = [IssueData(issue) for issue in issues]
+        issue_data: list[IssueData] = [IssueData(issue) for issue in unique_issues]
         issue_data.sort(
             key=lambda issue_data: (
                 -issue_data.like_count,
@@ -170,8 +161,7 @@ def get_label_to_issue_data(
             )
         )
 
-        if issue_data:
-            label_to_issue_data[label] = issue_data[0:ISSUES_PER_LABEL]
+        label_to_issue_data[section] = issue_data[0:ISSUES_PER_LABEL]
 
     return label_to_issue_data
 
