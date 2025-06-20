@@ -83,7 +83,10 @@
         ] @context
         (#any-of? @_name "it" "test" "describe" "context" "suite")
         arguments: (
-            arguments . (string (string_fragment) @name)
+            arguments . [
+                (string (string_fragment) @name)
+                (identifier) @name
+            ]
         )
     )
 ) @item
@@ -100,7 +103,10 @@
             (#any-of? @_property "each")
         )
         arguments: (
-            arguments . (string (string_fragment) @name)
+            arguments . [
+                (string (string_fragment) @name)
+                (identifier) @name
+            ]
         )
     )
 ) @item

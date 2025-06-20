@@ -1887,8 +1887,16 @@ mod tests {
             .set_entity(&entity3, &mut cx.to_async());
         drop(subscription3);
 
-        server.send(proto::JoinProject { project_id: 1 });
-        server.send(proto::JoinProject { project_id: 2 });
+        server.send(proto::JoinProject {
+            project_id: 1,
+            committer_name: None,
+            committer_email: None,
+        });
+        server.send(proto::JoinProject {
+            project_id: 2,
+            committer_name: None,
+            committer_email: None,
+        });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();
     }

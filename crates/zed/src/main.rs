@@ -46,10 +46,10 @@ use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
-    OpenListener, OpenRequest, app_menus, build_window_options, derive_paths_with_position,
-    handle_cli_connection, handle_keymap_file_changes, handle_settings_changed,
-    handle_settings_file_changes, initialize_workspace, inline_completion_registry,
-    open_paths_with_positions,
+    OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
+    derive_paths_with_position, handle_cli_connection, handle_keymap_file_changes,
+    handle_settings_changed, handle_settings_file_changes, initialize_workspace,
+    inline_completion_registry, open_paths_with_positions,
 };
 
 #[cfg(feature = "mimalloc")]
@@ -162,22 +162,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 
 pub fn main() {
     #[cfg(unix)]
-    {
-        let is_root = nix::unistd::geteuid().is_root();
-        let allow_root = env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
-
-        // Prevent running Zed with root privileges on Unix systems unless explicitly allowed
-        if is_root && !allow_root {
-            eprintln!(
-                "\
-Error: Running Zed as root or via sudo is unsupported.
-       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
-       It is untested and not recommended, don't complain when things break.
-       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
-            );
-            process::exit(1);
-        }
-    }
+    util::prevent_root_execution();
 
     // Check if there is a pending installer
     // If there is, run the installer and exit
@@ -191,8 +176,15 @@ Error: Running Zed as root or via sudo is unsupported.
 
     let args = Args::parse();
 
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
+        return;
+    }
+
+    // `zed --printenv` Outputs environment variables as JSON to stdout
+    if args.printenv {
+        util::shell_env::print_env();
         return;
     }
 
@@ -337,7 +329,12 @@ Error: Running Zed as root or via sudo is unsupported.
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
-        move |urls| open_listener.open_urls(urls)
+        move |urls| {
+            open_listener.open(RawOpenRequest {
+                urls,
+                diff_paths: Vec::new(),
+            })
+        }
     });
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
@@ -666,15 +663,21 @@ Error: Running Zed as root or via sudo is unsupported.
             .filter_map(|arg| parse_url_arg(arg, cx).log_err())
             .collect();
 
-        if !urls.is_empty() {
-            open_listener.open_urls(urls)
+        let diff_paths: Vec<[String; 2]> = args
+            .diff
+            .chunks(2)
+            .map(|chunk| [chunk[0].clone(), chunk[1].clone()])
+            .collect();
+
+        if !urls.is_empty() || !diff_paths.is_empty() {
+            open_listener.open(RawOpenRequest { urls, diff_paths })
         }
 
         match open_rx
             .try_next()
             .ok()
             .flatten()
-            .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
+            .and_then(|request| OpenRequest::parse(request, cx).log_err())
         {
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
@@ -741,13 +744,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     let mut task = None;
-    if !request.open_paths.is_empty() {
+    if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(async move |mut cx| {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
+                &request.diff_paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,
@@ -1035,6 +1039,10 @@ struct Args {
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
     paths_or_urls: Vec<String>,
 
+    /// Pairs of file paths to diff. Can be specified multiple times.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    diff: Vec<String>,
+
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location.
     /// On macOS, the default is `~/Library/Application Support/Zed`.
@@ -1071,6 +1079,10 @@ struct Args {
 
     #[arg(long, hide = true)]
     dump_all_actions: bool,
+
+    /// Output current environment variables as JSON to stdout
+    #[arg(long, hide = true)]
+    printenv: bool,
 }
 
 #[derive(Clone, Debug)]

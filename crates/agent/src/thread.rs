@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
@@ -37,6 +36,7 @@ use settings::Settings;
 use thiserror::Error;
 use ui::Window;
 use util::{ResultExt as _, post_inc};
+
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
 
@@ -195,20 +195,20 @@ impl MessageSegment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
     pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorktreeSnapshot {
     pub worktree_path: String,
     pub git_state: Option<GitState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GitState {
     pub remote_url: Option<String>,
     pub head_sha: Option<String>,
@@ -247,7 +247,7 @@ impl LastRestoreCheckpoint {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum DetailedSummaryState {
     #[default]
     NotGenerated,
@@ -272,8 +272,8 @@ impl DetailedSummaryState {
 
 #[derive(Default, Debug)]
 pub struct TotalTokenUsage {
-    pub total: usize,
-    pub max: usize,
+    pub total: u64,
+    pub max: u64,
 }
 
 impl TotalTokenUsage {
@@ -299,7 +299,7 @@ impl TotalTokenUsage {
         }
     }
 
-    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+    pub fn add(&self, tokens: u64) -> TotalTokenUsage {
         TotalTokenUsage {
             total: self.total + tokens,
             max: self.max,
@@ -391,12 +391,12 @@ impl ThreadSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
     /// Token count including last message
-    token_count: usize,
+    token_count: u64,
 }
 
 impl Thread {
@@ -1389,8 +1389,6 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attached_tracked_files_state(&mut request.messages, cx);
-
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
             Some(self.completion_mode.into())
@@ -1451,46 +1449,6 @@ impl Thread {
         });
 
         request
-    }
-
-    fn attached_tracked_files_state(
-        &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
-    ) {
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-
-        let mut stale_message = String::new();
-
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER.trim()).ok();
-            }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
-        }
-
-        let mut content = Vec::with_capacity(2);
-
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
-        }
-
-        if !content.is_empty() {
-            let context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content,
-                cache: false,
-            };
-
-            messages.push(context_message);
-        }
     }
 
     pub fn stream_completion(
@@ -1562,6 +1520,9 @@ impl Thread {
                             }
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
+                            }
+                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                                return Err(err.into());
                             }
                         };
 
@@ -2752,7 +2713,7 @@ impl Thread {
             .unwrap_or_default();
 
         TotalTokenUsage {
-            total: token_usage.total_tokens() as usize,
+            total: token_usage.total_tokens(),
             max,
         }
     }
@@ -2774,7 +2735,7 @@ impl Thread {
         let total = self
             .token_usage_at_last_message()
             .unwrap_or_default()
-            .total_tokens() as usize;
+            .total_tokens();
 
         Some(TotalTokenUsage { total, max })
     }
@@ -3209,94 +3170,6 @@ fn main() {{
         assert_eq!(
             request.messages[2].string_contents(),
             "Are there any good books?"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        init_test_settings(cx);
-
-        let project = create_test_project(
-            cx,
-            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
-        )
-        .await;
-
-        let (_workspace, _thread_store, thread, context_store, model) =
-            setup_test_environment(cx, project.clone()).await;
-
-        // Open buffer and add it to context
-        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
-            .await
-            .unwrap();
-
-        let context =
-            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
-        let loaded_context = cx
-            .update(|cx| load_context(vec![context], &project, &None, cx))
-            .await;
-
-        // Insert user message with the buffer as context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
-        });
-
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
-        assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
-        );
-
-        // Modify the buffer
-        buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
-            buffer.edit(
-                [(1..1, "\n    println!(\"Added a new line\");\n")],
-                None,
-                cx,
-            );
-        });
-
-        // Insert another user message without context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What does the code do now?",
-                ContextLoadResult::default(),
-                None,
-                Vec::new(),
-                cx,
-            )
-        });
-
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // We should have a stale file warning as the last message
-        let last_message = new_request
-            .messages
-            .last()
-            .expect("Request should have messages");
-
-        // The last message should be the stale buffer notification
-        assert_eq!(last_message.role, Role::User);
-
-        // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
-        assert_eq!(
-            last_message.string_contents(),
-            expected_content,
-            "Last message should be exactly the stale buffer notification"
         );
     }
 

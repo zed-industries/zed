@@ -8,6 +8,7 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
+use project::Fs;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -24,7 +25,11 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::archive::extract_zip;
 use util::merge_json_value_into;
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{
+    ResultExt,
+    fs::{make_file_executable, remove_matching},
+    maybe,
+};
 
 use crate::language_settings::language_settings;
 
@@ -225,14 +230,7 @@ impl LspAdapter for RustLspAdapter {
             };
 
             // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &server_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
+            make_file_executable(&server_path).await?;
         }
 
         Ok(LanguageServerBinary {
@@ -628,9 +626,10 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
+        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
@@ -798,7 +797,7 @@ impl ContextProvider for RustContextProvider {
                 .collect();
         }
 
-        Some(TaskTemplates(task_templates))
+        Task::ready(Some(TaskTemplates(task_templates)))
     }
 
     fn lsp_task_source(&self) -> Option<LanguageServerName> {

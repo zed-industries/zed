@@ -1,12 +1,11 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
-use editor::{Editor, EditorElement, EditorStyle};
+
+use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
-};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -15,16 +14,18 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason,
 };
+use menu;
 use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+
+use ui::{ElevationIndex, List, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
 use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
@@ -43,9 +44,9 @@ pub struct OpenAiSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -62,6 +63,7 @@ pub struct State {
 const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
+    //
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -312,11 +314,11 @@ impl LanguageModel for OpenAiLanguageModel {
         format!("openai/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -324,7 +326,7 @@ impl LanguageModel for OpenAiLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_open_ai_tokens(request, self.model.clone(), cx)
     }
 
@@ -339,6 +341,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_open_ai(request, &self.model, self.max_output_tokens());
@@ -354,7 +357,7 @@ impl LanguageModel for OpenAiLanguageModel {
 pub fn into_open_ai(
     request: LanguageModelRequest,
     model: &Model,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> open_ai::Request {
     let stream = !model.id().starts_with("o1-");
 
@@ -437,7 +440,7 @@ pub fn into_open_ai(
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
-        max_tokens: max_output_tokens,
+        max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
@@ -526,9 +529,7 @@ impl OpenAiEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                "Response contained no choices"
-            )))];
+            return Vec::new();
         };
 
         let mut events = Vec::new();
@@ -605,7 +606,7 @@ pub fn count_open_ai_tokens(
     request: LanguageModelRequest,
     model: Model,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request
             .messages
@@ -647,18 +648,18 @@ pub fn count_open_ai_tokens(
             | Model::FourPointOneMini
             | Model::FourPointOneNano
             | Model::O1
-            | Model::O1Preview
-            | Model::O1Mini
             | Model::O3
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
+        .map(|tokens| tokens as u64)
     })
     .boxed()
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<Editor>,
+    api_key_editor: Entity<SingleLineInput>,
+    api_url_editor: Entity<SingleLineInput>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -666,9 +667,28 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
-            editor
+            SingleLineInput::new(
+                window,
+                cx,
+                "sk-000000000000000000000000000000000000000000000000",
+            )
+            .label("API key")
+        });
+
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+
+        let api_url_editor = cx.new(|cx| {
+            let input = SingleLineInput::new(window, cx, open_ai::OPEN_AI_API_URL).label("API URL");
+
+            if !api_url.is_empty() {
+                input.editor.update(cx, |editor, cx| {
+                    editor.set_text(&*api_url, window, cx);
+                });
+            }
+            input
         });
 
         cx.observe(&state, |_, _, cx| {
@@ -686,7 +706,6 @@ impl ConfigurationView {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-
                 this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
@@ -697,14 +716,24 @@ impl ConfigurationView {
 
         Self {
             api_key_editor,
+            api_url_editor,
             state,
             load_credentials_task,
         }
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx);
-        if api_key.is_empty() {
+        let api_key = self
+            .api_key_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+
+        // Don't proceed if no API key is provided and we're not authenticated
+        if api_key.is_empty() && !self.state.read(cx).is_authenticated() {
             return;
         }
 
@@ -720,8 +749,11 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.api_key_editor.update(cx, |input, cx| {
+            input.editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        });
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
@@ -732,29 +764,83 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            white_space: WhiteSpace::Normal,
-            ..Default::default()
+    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+        let api_url = self
+            .api_url_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+
+        let current_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+
+        let effective_current_url = if current_url.is_empty() {
+            open_ai::OPEN_AI_API_URL
+        } else {
+            &current_url
         };
-        EditorElement::new(
-            &self.api_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+
+        if !api_url.is_empty() && api_url != effective_current_url {
+            let fs = <dyn Fs>::global(cx);
+            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+                use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
+
+                if settings.openai.is_none() {
+                    settings.openai = Some(OpenAiSettingsContent::Versioned(
+                        VersionedOpenAiSettingsContent::V1(
+                            crate::settings::OpenAiSettingsContentV1 {
+                                api_url: Some(api_url.clone()),
+                                available_models: None,
+                            },
+                        ),
+                    ));
+                } else {
+                    if let Some(openai) = settings.openai.as_mut() {
+                        match openai {
+                            OpenAiSettingsContent::Versioned(versioned) => match versioned {
+                                VersionedOpenAiSettingsContent::V1(v1) => {
+                                    v1.api_url = Some(api_url.clone());
+                                }
+                            },
+                            OpenAiSettingsContent::Legacy(legacy) => {
+                                legacy.api_url = Some(api_url.clone());
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_url_editor.update(cx, |input, cx| {
+            input.editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        });
+        let fs = <dyn Fs>::global(cx);
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
+            use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
+
+            if let Some(openai) = settings.openai.as_mut() {
+                match openai {
+                    OpenAiSettingsContent::Versioned(versioned) => match versioned {
+                        VersionedOpenAiSettingsContent::V1(v1) => {
+                            v1.api_url = None;
+                        }
+                    },
+                    OpenAiSettingsContent::Legacy(legacy) => {
+                        legacy.api_url = None;
+                    }
+                }
+            }
+        });
+        cx.notify();
     }
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
@@ -766,12 +852,10 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_from_env;
 
-        if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
+        let api_key_section = if self.should_render_editor(cx) {
             v_flex()
-                .size_full()
                 .on_action(cx.listener(Self::save_api_key))
+
                 .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
@@ -787,18 +871,7 @@ impl Render for ConfigurationView {
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
+                .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
@@ -807,7 +880,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
+                        "Note that having a subscription for another service like GitHub Copilot won't work.",
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -832,17 +905,81 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-api-key", "Reset API Key")
                         .label_size(LabelSize::Small)
-                        .icon(Some(IconName::Trash))
+                        .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
+                        .layer(ElevationIndex::ModalSurface)
                         .when(env_var_set, |this| {
                             this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
+                .into_any()
+        };
+
+        let custom_api_url_set =
+            AllLanguageModelSettings::get_global(cx).openai.api_url != open_ai::OPEN_AI_API_URL;
+
+        let api_url_section = if custom_api_url_set {
+            h_flex()
+                .mt_1()
+                .p_1()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new("Custom API URL configured.")),
+                )
+                .child(
+                    Button::new("reset-api-url", "Reset API URL")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
+                        ),
+                )
+                .into_any()
+        } else {
+            v_flex()
+                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                    this.save_api_url(cx);
+                    cx.notify();
+                }))
+                .mt_2()
+                .pt_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .gap_1()
+                .child(
+                    List::new()
+                        .child(InstructionListItem::text_only(
+                            "Optionally, you can change the base URL for the OpenAI API request.",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste the new API endpoint below and hit enter",
+                        )),
+                )
+                .child(self.api_url_editor.clone())
+                .into_any()
+        };
+
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials…")).into_any()
+        } else {
+            v_flex()
+                .size_full()
+                .child(api_key_section)
+                .child(api_url_section)
                 .into_any()
         }
     }

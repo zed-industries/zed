@@ -25,8 +25,8 @@ To sign out of Zed, you can use either of these methods:
 - Click on the profile icon in the upper right corner and select `Sign Out` from the dropdown menu.
 - Open the command palette and run the `client: sign out` command.
 
-## Email
+## Email Addresses {#email}
 
-Note that Zed associates your GitHub _profile email_ with your Zed account, not your _primary email_. We're unable to change the email associated with your Zed account without you changing your profile email.
+Your Zed account's email address is the address provided by GitHub OAuth. If you have a public email address then it will be used, otherwise your primary GitHub email address will be used. Changes to your email address on GitHub can be synced to your Zed account by [signing in to zed.dev](https://zed.dev/sign_in).
 
-We _are_ able to update the billing email on your account, if you're a Zed Pro user. See [Updating Billing Information](./ai/billing.md#updating-billing-info) for more
+Stripe is used for billing, and will use your Zed account's email address when starting a subscription. Changes to your Zed account email address do not currently update the email address used in Stripe. See [Updating Billing Information](./ai/billing.md#updating-billing-info) for how to change this email address.

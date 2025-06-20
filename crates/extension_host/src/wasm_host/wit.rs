@@ -7,10 +7,15 @@ mod since_v0_3_0;
 mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
+use dap::DebugRequest;
 use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
+use gpui::BackgroundExecutor;
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+
+use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest;
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
@@ -35,9 +40,10 @@ pub use latest::{
 pub use since_v0_0_4::LanguageServerConfig;
 
 pub fn new_linker(
+    executor: &BackgroundExecutor,
     f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
 ) -> Linker<WasmState> {
-    let mut linker = Linker::new(&wasm_engine());
+    let mut linker = Linker::new(&wasm_engine(executor));
     wasmtime_wasi::add_to_linker_async(&mut linker).unwrap();
     f(&mut linker, wasi_view).unwrap();
     linker
@@ -63,7 +69,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_5_0::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -105,6 +111,7 @@ pub enum Extension {
 
 impl Extension {
     pub async fn instantiate_async(
+        executor: &BackgroundExecutor,
         store: &mut Store<WasmState>,
         release_channel: ReleaseChannel,
         version: SemanticVersion,
@@ -114,10 +121,8 @@ impl Extension {
         let _ = release_channel;
 
         if version >= latest::MIN_VERSION {
-            authorize_access_to_unreleased_wasm_api_version(release_channel)?;
-
             let extension =
-                latest::Extension::instantiate_async(store, component, latest::linker())
+                latest::Extension::instantiate_async(store, component, latest::linker(executor))
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_6_0(extension))
@@ -125,7 +130,7 @@ impl Extension {
             let extension = since_v0_5_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_5_0::linker(),
+                since_v0_5_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -134,7 +139,7 @@ impl Extension {
             let extension = since_v0_4_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_4_0::linker(),
+                since_v0_4_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -143,7 +148,7 @@ impl Extension {
             let extension = since_v0_3_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_3_0::linker(),
+                since_v0_3_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -152,7 +157,7 @@ impl Extension {
             let extension = since_v0_2_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_2_0::linker(),
+                since_v0_2_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -161,7 +166,7 @@ impl Extension {
             let extension = since_v0_1_0::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_1_0::linker(),
+                since_v0_1_0::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -170,7 +175,7 @@ impl Extension {
             let extension = since_v0_0_6::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_0_6::linker(),
+                since_v0_0_6::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -179,7 +184,7 @@ impl Extension {
             let extension = since_v0_0_4::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_0_4::linker(),
+                since_v0_0_4::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -188,7 +193,7 @@ impl Extension {
             let extension = since_v0_0_1::Extension::instantiate_async(
                 store,
                 component,
-                since_v0_0_1::linker(),
+                since_v0_0_1::linker(executor),
             )
             .await
             .context("failed to instantiate wasm extension")?;
@@ -922,18 +927,87 @@ impl Extension {
             _ => anyhow::bail!("`get_dap_binary` not available prior to v0.6.0"),
         }
     }
-
-    pub async fn call_dap_schema(&self, store: &mut Store<WasmState>) -> Result<String, String> {
+    pub async fn call_dap_request_kind(
+        &self,
+        store: &mut Store<WasmState>,
+        adapter_name: Arc<str>,
+        config: serde_json::Value,
+    ) -> Result<Result<StartDebuggingRequestArgumentsRequest, String>> {
         match self {
             Extension::V0_6_0(ext) => {
-                let schema = ext
-                    .call_dap_schema(store)
-                    .await
-                    .map_err(|err| err.to_string())?;
+                let config =
+                    serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
+                let dap_binary = ext
+                    .call_dap_request_kind(store, &adapter_name, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
 
-                schema
+                Ok(Ok(dap_binary))
             }
-            _ => Err("`get_dap_binary` not available prior to v0.6.0".to_string()),
+            _ => anyhow::bail!("`dap_request_kind` not available prior to v0.6.0"),
+        }
+    }
+    pub async fn call_dap_config_to_scenario(
+        &self,
+        store: &mut Store<WasmState>,
+        config: ZedDebugConfig,
+    ) -> Result<Result<DebugScenario, String>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let config = config.into();
+                let dap_binary = ext
+                    .call_dap_config_to_scenario(store, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary.try_into()?))
+            }
+            _ => anyhow::bail!("`dap_config_to_scenario` not available prior to v0.6.0"),
+        }
+    }
+    pub async fn call_dap_locator_create_scenario(
+        &self,
+        store: &mut Store<WasmState>,
+        locator_name: String,
+        build_config_template: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let build_config_template = build_config_template.into();
+                let dap_binary = ext
+                    .call_dap_locator_create_scenario(
+                        store,
+                        &locator_name,
+                        &build_config_template,
+                        &resolved_label,
+                        &debug_adapter_name,
+                    )
+                    .await?;
+
+                Ok(dap_binary.map(TryInto::try_into).transpose()?)
+            }
+            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
+        }
+    }
+    pub async fn call_run_dap_locator(
+        &self,
+        store: &mut Store<WasmState>,
+        locator_name: String,
+        resolved_build_task: SpawnInTerminal,
+    ) -> Result<Result<DebugRequest, String>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let build_config_template = resolved_build_task.into();
+                let dap_request = ext
+                    .call_run_dap_locator(store, &locator_name, &build_config_template)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_request.into()))
+            }
+            _ => anyhow::bail!("`dap_locator_create_scenario` not available prior to v0.6.0"),
         }
     }
 }

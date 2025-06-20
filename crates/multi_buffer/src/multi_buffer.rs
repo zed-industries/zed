@@ -728,7 +728,7 @@ impl MultiBuffer {
         self.snapshot.borrow().clone()
     }
 
-    pub fn read(&self, cx: &App) -> Ref<MultiBufferSnapshot> {
+    pub fn read(&self, cx: &App) -> Ref<'_, MultiBufferSnapshot> {
         self.sync(cx);
         self.snapshot.borrow()
     }
@@ -2607,7 +2607,7 @@ impl MultiBuffer {
                 return file.file_name(cx).to_string_lossy();
             }
 
-            if let Some(title) = self.buffer_based_title(buffer) {
+            if let Some(title) = self.buffer_content_title(buffer) {
                 return title;
             }
         };
@@ -2615,7 +2615,7 @@ impl MultiBuffer {
         "untitled".into()
     }
 
-    fn buffer_based_title(&self, buffer: &Buffer) -> Option<Cow<str>> {
+    fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
         let mut is_leading_whitespace = true;
         let mut count = 0;
         let mut prev_was_space = false;
@@ -2647,11 +2647,11 @@ impl MultiBuffer {
 
         let title = title.trim_end().to_string();
 
-        if !title.is_empty() {
-            return Some(title.into());
+        if title.is_empty() {
+            return None;
         }
 
-        None
+        Some(title.into())
     }
 
     pub fn set_title(&mut self, title: String, cx: &mut Context<Self>) {
@@ -3779,7 +3779,7 @@ impl MultiBufferSnapshot {
             .flat_map(|c| c.chars().rev())
     }
 
-    fn reversed_chunks_in_range(&self, range: Range<usize>) -> ReversedMultiBufferChunks {
+    fn reversed_chunks_in_range(&self, range: Range<usize>) -> ReversedMultiBufferChunks<'_> {
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.end);
         let current_chunks = cursor.region().as_ref().map(|region| {
@@ -4294,7 +4294,7 @@ impl MultiBufferSnapshot {
         self.excerpts.summary().widest_line_number + 1
     }
 
-    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes {
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpts = self.cursor::<usize>();
         excerpts.seek(&range.start);
@@ -4333,7 +4333,7 @@ impl MultiBufferSnapshot {
     pub fn reversed_bytes_in_range<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> ReversedMultiBufferBytes {
+    ) -> ReversedMultiBufferBytes<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut chunks = self.reversed_chunks_in_range(range.clone());
         let chunk = chunks.next().map_or(&[][..], |c| c.as_bytes());
@@ -4344,7 +4344,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn row_infos(&self, start_row: MultiBufferRow) -> MultiBufferRows {
+    pub fn row_infos(&self, start_row: MultiBufferRow) -> MultiBufferRows<'_> {
         let mut cursor = self.cursor::<Point>();
         cursor.seek(&Point::new(start_row.0, 0));
         let mut result = MultiBufferRows {
@@ -4357,7 +4357,11 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> MultiBufferChunks {
+    pub fn chunks<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        language_aware: bool,
+    ) -> MultiBufferChunks<'_> {
         let mut chunks = MultiBufferChunks {
             excerpt_offset_range: ExcerptOffset::new(0)..ExcerptOffset::new(0),
             range: 0..0,
@@ -5318,7 +5322,7 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    fn cursor<D: TextDimension + Default>(&self) -> MultiBufferCursor<D> {
+    fn cursor<D: TextDimension + Default>(&self) -> MultiBufferCursor<'_, D> {
         let excerpts = self.excerpts.cursor(&());
         let diff_transforms = self.diff_transforms.cursor(&());
         MultiBufferCursor {
@@ -6081,7 +6085,7 @@ impl MultiBufferSnapshot {
     pub fn syntax_ancestor<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<(tree_sitter::Node, MultiOrSingleBufferOffsetRange)> {
+    ) -> Option<(tree_sitter::Node<'_>, MultiOrSingleBufferOffsetRange)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
@@ -6279,7 +6283,10 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
-    pub fn excerpt_containing<T: ToOffset>(&self, range: Range<T>) -> Option<MultiBufferExcerpt> {
+    pub fn excerpt_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<MultiBufferExcerpt<'_>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.start);
@@ -6933,7 +6940,7 @@ impl Excerpt {
         }
     }
 
-    fn chunks_in_range(&self, range: Range<usize>, language_aware: bool) -> ExcerptChunks {
+    fn chunks_in_range(&self, range: Range<usize>, language_aware: bool) -> ExcerptChunks<'_> {
         let content_start = self.range.context.start.to_offset(&self.buffer);
         let chunks_start = content_start + range.start;
         let chunks_end = content_start + cmp::min(range.end, self.text_summary.len);

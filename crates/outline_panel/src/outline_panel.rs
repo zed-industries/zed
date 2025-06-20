@@ -3233,15 +3233,22 @@ impl OutlinePanel {
                 self.outline_fetch_tasks.insert(
                     (buffer_id, excerpt_id),
                     cx.spawn_in(window, async move |outline_panel, cx| {
+                        let buffer_language = buffer_snapshot.language().cloned();
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                buffer_snapshot
+                                let mut outlines = buffer_snapshot
                                     .outline_items_containing(
                                         excerpt_range.context,
                                         false,
                                         Some(&syntax_theme),
                                     )
-                                    .unwrap_or_default()
+                                    .unwrap_or_default();
+                                outlines.retain(|outline| {
+                                    buffer_language.is_none()
+                                        || buffer_language.as_ref()
+                                            == buffer_snapshot.language_at(outline.range.start)
+                                });
+                                outlines
                             })
                             .await;
                         outline_panel
@@ -3814,6 +3821,7 @@ impl OutlinePanel {
             let mut matched_ids = match_strings(
                 &generation_state.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &AtomicBool::default(),
@@ -4497,8 +4505,10 @@ impl OutlinePanel {
                 let multi_buffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
-                uniform_list(cx.entity().clone(), "entries", items_len, {
-                    move |outline_panel, range, window, cx| {
+                uniform_list(
+                    "entries",
+                    items_len,
+                    cx.processor(move |outline_panel, range: Range<usize>, window, cx| {
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4555,8 +4565,8 @@ impl OutlinePanel {
                                 ),
                             })
                             .collect()
-                    }
-                })
+                    }),
+                )
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(self.max_width_item_index)
