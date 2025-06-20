@@ -77,69 +77,108 @@ impl Tool for ProjectUpdatesTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use assistant_tool::ToolResultContent;
+    use gpui::{AppContext, TestAppContext};
+    use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModelProvider};
     use project::{FakeFs, Project};
+    use serde_json::json;
     use settings::SettingsStore;
-    use std::path::Path;
-    use tempfile::TempDir;
+    use std::sync::Arc;
+    use util::path;
 
     #[gpui::test]
-    async fn test_to_absolute_path(cx: &mut TestAppContext) {
+    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
         init_test(cx);
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let temp_path = temp_dir.path().to_string_lossy().to_string();
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            &temp_path,
-            serde_json::json!({
-                "src": {
-                    "main.rs": "fn main() {}",
-                    "lib.rs": "pub fn lib_fn() {}"
-                },
-                "docs": {
-                    "readme.md": "# Project Documentation"
-                }
-            }),
+            path!("/test"),
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
         .await;
 
-        // Use the temp_path as the root directory, not just its filename
-        let project = Project::test(fs.clone(), [temp_dir.path()], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        // Test cases where the function should return Some
-        cx.update(|cx| {
-            // Project-relative paths should return Some
-            // Create paths using the last segment of the temp path to simulate a project-relative path
-            let root_dir_name = Path::new(&temp_path)
-                .file_name()
-                .unwrap_or_else(|| std::ffi::OsStr::new("temp"))
-                .to_string_lossy();
+        let buffer_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/code.rs", cx)
+            })
+            .unwrap();
 
-            assert!(
-                to_absolute_path(&format!("{root_dir_name}/src/main.rs"), project.clone(), cx)
-                    .is_some(),
-                "Failed to resolve main.rs path"
-            );
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path.clone(), cx)
+            })
+            .await
+            .unwrap();
 
-            assert!(
-                to_absolute_path(
-                    &format!("{root_dir_name}/docs/readme.md",),
-                    project.clone(),
-                    cx,
-                )
-                .is_some(),
-                "Failed to resolve readme.md path"
-            );
-
-            // External URL should return None
-            let result = to_absolute_path("https://example.com", project.clone(), cx);
-            assert_eq!(result, None, "External URLs should return None");
-
-            // Path outside project
-            let result = to_absolute_path("../invalid/path", project.clone(), cx);
-            assert_eq!(result, None, "Paths outside the project should return None");
+        // Start tracking the buffer
+        action_log.update(cx, |log, cx| {
+            log.buffer_read(buffer.clone(), cx);
         });
+
+        // Run the tool before any changes
+        let tool = Arc::new(ProjectUpdatesTool);
+        let provider = Arc::new(FakeLanguageModelProvider);
+        let model: Arc<dyn LanguageModel> = Arc::new(provider.test_model());
+        let request = Arc::new(LanguageModelRequest::default());
+        let tool_input = json!({});
+
+        let result = cx.update(|cx| {
+            tool.clone().run(
+                tool_input.clone(),
+                request.clone(),
+                project.clone(),
+                action_log.clone(),
+                model.clone(),
+                None,
+                cx,
+            )
+        });
+
+        let response = result.output.await.unwrap();
+        let response_text = match &response.content {
+            ToolResultContent::Text(text) => text.clone(),
+            _ => panic!("Expected text response"),
+        };
+        assert_eq!(
+            response_text.as_str(),
+            "Files up-to-date",
+            "Tool should return 'Files up-to-date' when no stale buffers"
+        );
+
+        // Modify the buffer (makes it stale)
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "\nChange!\n")], None, cx);
+        });
+
+        // Run the tool again
+        let result = cx.update(|cx| {
+            tool.run(
+                tool_input.clone(),
+                request.clone(),
+                project.clone(),
+                action_log,
+                model.clone(),
+                None,
+                cx,
+            )
+        });
+
+        // This time the buffer is stale, so the tool should return a notification
+        let response = result.output.await.unwrap();
+        let response_text = match &response.content {
+            ToolResultContent::Text(text) => text.clone(),
+            _ => panic!("Expected text response"),
+        };
+
+        let expected_content = "[The following is an auto-generated notification; do not reply]\n\nThese files have changed since the last read:\n- code.rs\n";
+        assert_eq!(
+            response_text.as_str(),
+            expected_content,
+            "Tool should return the stale buffer notification"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -148,6 +187,7 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
+            assistant_tool::init(cx);
         });
     }
 }
