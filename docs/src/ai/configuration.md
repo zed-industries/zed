@@ -489,6 +489,49 @@ The OpenRouter API key will be saved in your keychain.
 
 Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
+#### Custom Models {#openrouter-custom-models}
+
+You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+      "available_models": [
+        {
+          "name": "google/gemini-2.0-flash-thinking-exp",
+          "display_name": "Gemini 2.0 Flash (Thinking)",
+          "max_tokens": 200000,
+          "max_output_tokens": 8192,
+          "supports_tools": true,
+          "supports_images": true
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 8000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The available configuration options for each model are:
+
+- `name`: The model identifier used by OpenRouter (required)
+- `display_name`: A human-readable name shown in the UI (optional)
+- `max_tokens`: The model's context window size (required)
+- `max_output_tokens`: Maximum tokens the model can generate (optional)
+- `max_completion_tokens`: Maximum completion tokens (optional)
+- `supports_tools`: Whether the model supports tool/function calling (optional)
+- `supports_images`: Whether the model supports image inputs (optional)
+- `mode`: Special mode configuration for thinking models (optional)
+
+You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
+
+Custom models will be listed in the model dropdown in the Agent Panel.
+
 ## Advanced Configuration {#advanced-configuration}
 
 ### Custom Provider Endpoints {#custom-provider-endpoint}
