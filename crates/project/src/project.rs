@@ -3671,6 +3671,14 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
+        dbg!(
+            snapshot
+                .debug_variables_query(range.start..range.end)
+                .into_iter()
+                .map(|k| snapshot.text_for_range(k.0).collect::<String>())
+                .collect_vec()
+        );
+
         let captures = snapshot.debug_variables_query(Anchor::MIN..range.end);
 
         let row = snapshot
@@ -3678,7 +3686,7 @@ impl Project {
             .row as usize;
 
         let inline_value_locations = provide_inline_values(captures, &snapshot, row);
-        dbg!(&inline_value_locations);
+        // dbg!(&inline_value_locations);
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
@@ -5377,7 +5385,7 @@ fn provide_inline_values(
     max_row: usize,
 ) -> Vec<InlineValueLocation> {
     let mut variables = Vec::new();
-    let mut variable_names = HashSet::default();
+    let mut variable_position = HashSet::default();
     let current_scope: VariableScope = VariableScope::Local;
 
     // todo! We should be skipping scopes we don't care about
@@ -5387,13 +5395,13 @@ fn provide_inline_values(
                 let variable_name = snapshot
                     .text_for_range(capture_range.clone())
                     .collect::<String>();
-                let point = snapshot.offset_to_point(capture_range.end);
+                let point = snapshot.offset_to_point(capture_range.end.clone());
 
                 if point.row as usize > max_row {
                     break;
                 }
 
-                if variable_names.insert(variable_name.clone()) {
+                if variable_position.insert(capture_range.end) {
                     variables.push(InlineValueLocation {
                         variable_name,
                         scope: current_scope.clone(),
