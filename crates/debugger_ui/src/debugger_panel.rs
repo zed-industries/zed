@@ -1013,7 +1013,7 @@ impl DebugPanel {
                     static ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
                         Query::new(
                             &tree_sitter_json::LANGUAGE.into(),
-                            "(document (array (object) @object))", // TODO: use "." anchor to only match last object
+                            "(document (array (object) @object .))", // TODO: use "." anchor to only match last object
                         )
                         .expect("Failed to create ARRAY_QUERY")
                     });
@@ -1031,6 +1031,7 @@ impl DebugPanel {
                     // the whole thing to find the last one
                     let mut last_offset = None;
                     while let Some(mat) = matches.next() {
+                        dbg!(mat);
                         if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
                             last_offset = Some(pos)
                         }

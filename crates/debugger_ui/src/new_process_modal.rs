@@ -409,39 +409,6 @@ impl NewProcessModal {
         self.debug_picker.read(cx).delegate.task_contexts.clone()
     }
 
-    fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let task_contents = self.task_contexts(cx);
-        let Some(adapter) = self.debugger.as_ref() else {
-            return;
-        };
-        let scenario = self.debug_scenario(&adapter, cx);
-
-        cx.spawn_in(window, async move |this, cx| {
-            let Some((scenario, worktree_id)) = scenario
-                .await
-                .zip(task_contents.and_then(|tcx| tcx.worktree()))
-            else {
-                return; // "Couldn't get scenario or task contents".into(),
-            };
-
-            let Some(save_scenario) = this
-                .update_in(cx, |this, window, cx| {
-                    this.debug_panel
-                        .update(cx, |panel, cx| {
-                            panel.save_scenario(&scenario, worktree_id, window, cx)
-                        })
-                        .ok()
-                })
-                .ok()
-                .flatten()
-            else {
-                return;
-            };
-            save_scenario.await.ok(); // TODO: log error?
-        })
-        .detach();
-    }
-
     fn open_in_debug_json(
         &self,
         cx: &mut Context<Self>,
@@ -458,8 +425,11 @@ impl NewProcessModal {
                             this.workspace.update(cx, |workspace, cx| {
                                 workspace.open_path(path.clone(), None, true, window, cx)
                             })
-                        })??
-                        .await?;
+                        })
+                        .ok()?
+                        .ok()?
+                        .await
+                        .ok()?;
 
                     cx.update(|window, cx| {
                         if let Some(editor) = editor.act_as::<Editor>(cx) {
@@ -506,18 +476,56 @@ impl NewProcessModal {
                                         }]);
                                     },
                                 );
-
                                 Some(())
                             });
                         }
-                    })?;
-
-                    this_entity.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-
-                    anyhow::Ok(())
+                    })
+                    .ok()?;
+                    this_entity.update(cx, |_, cx| cx.emit(DismissEvent)).ok()
                 }
             })
             .detach();
+    }
+
+    fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let task_contents = self.task_contexts(cx);
+        let Some(adapter) = self.debugger.as_ref() else {
+            return;
+        };
+        let scenario = self.debug_scenario(&adapter, cx);
+        let this_entity = cx.weak_entity().clone();
+
+        cx.spawn_in(window, async move |this, async_cx| {
+            let Some((scenario, worktree_id)) = scenario
+                .await
+                .zip(task_contents.and_then(|tcx| tcx.worktree()))
+            else {
+                let _ = async_cx.prompt(
+                    PromptLevel::Critical,
+                    "Cannot open debug.json",
+                    Some("You must have at least one project open"),
+                    &[PromptButton::ok("Ok")],
+                );
+                return Err(anyhow::anyhow!("No open project"));
+            };
+            let label = scenario.label.clone();
+
+            let Ok(Ok(save_scenario)) = this.update_in(async_cx, |this, window, cx| {
+                this.debug_panel.update(cx, |panel, cx| {
+                    panel.save_scenario(&scenario, worktree_id, window, cx)
+                })
+            }) else {
+                return Err(anyhow::anyhow!("Failed to save debug scenario"));
+            };
+            let Ok(path) = save_scenario.await else {
+                return Err(anyhow::anyhow!("Failed to save debug scenario"));
+            };
+            this_entity.update_in(cx, |this, window, cx| {
+                this.open_in_debug_json(cx, window, path, label);
+            });
+            Ok(())
+        })
+        .detach();
     }
 
     fn adapter_drop_down_menu(
@@ -584,72 +592,6 @@ impl NewProcessModal {
                 menu
             }),
         )
-    }
-
-    fn open_debug_json(&self, window: &mut Window, cx: &mut Context<NewProcessModal>) {
-        // TODO: combine with open_in_debug_json to include the handling for non-existent
-        // file in that flow
-        let this = cx.entity();
-        window
-            .spawn(cx, async move |cx| {
-                let worktree_id = this.update(cx, |this, cx| {
-                    let tcx = this.task_contexts(cx);
-                    tcx?.worktree()
-                })?;
-
-                let Some(worktree_id) = worktree_id else {
-                    let _ = cx.prompt(
-                        PromptLevel::Critical,
-                        "Cannot open debug.json",
-                        Some("You must have at least one project open"),
-                        &[PromptButton::ok("Ok")],
-                    );
-                    return Ok(());
-                };
-
-                let editor = this
-                    .update_in(cx, |this, window, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.open_path(
-                                ProjectPath {
-                                    worktree_id,
-                                    path: local_debug_file_relative_path().into(),
-                                },
-                                None,
-                                true,
-                                window,
-                                cx,
-                            )
-                        })
-                    })??
-                    .await?;
-
-                cx.update(|_window, cx| {
-                    if let Some(editor) = editor.act_as::<Editor>(cx) {
-                        editor.update(cx, |editor, cx| {
-                            editor.buffer().update(cx, |buffer, cx| {
-                                if let Some(singleton) = buffer.as_singleton() {
-                                    singleton.update(cx, |buffer, cx| {
-                                        if buffer.is_empty() {
-                                            buffer.edit(
-                                                [(0..0, initial_local_debug_tasks_content())],
-                                                None,
-                                                cx,
-                                            );
-                                        }
-                                    })
-                                }
-                            })
-                        });
-                    }
-                })
-                .ok();
-
-                this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-
-                anyhow::Ok(())
-            })
-            .detach();
     }
 }
 
@@ -1467,22 +1409,6 @@ impl PickerDelegate for DebugDelegate {
             return;
         };
 
-        if secondary {
-            match kind {
-                Some(TaskSourceKind::Worktree {
-                    id: _,
-                    directory_in_worktree: _,
-                    id_base: _,
-                }) => return,
-                Some(TaskSourceKind::AbsPath {
-                    id_base: _,
-                    abs_path: _,
-                }) => return,
-                // TODO: handle tasks from debug.json separately, just open the file and scroll to it
-                _ => {}
-            }
-        }
-
         let (task_context, worktree_id) = self
             .task_contexts
             .as_ref()
@@ -1495,9 +1421,33 @@ impl PickerDelegate for DebugDelegate {
             .unwrap_or_default();
 
         if secondary {
+            match kind {
+                Some(TaskSourceKind::Worktree {
+                    id: _,
+                    directory_in_worktree: dir,
+                    id_base: id,
+                }) => {
+                    dbg!(id);
+                    dbg!(&dir);
+                    dbg!(dir.join(local_debug_file_relative_path()));
+                    return;
+                }
+                Some(TaskSourceKind::AbsPath {
+                    id_base: id,
+                    abs_path: path,
+                }) => {
+                    dbg!(id);
+                    dbg!(path);
+                    return;
+                }
+                // TODO: handle tasks from debug.json separately, just open the file and scroll to it
+                _ => {}
+            }
+
             let Some(id) = worktree_id else { return };
             let debug_panel = self.debug_panel.clone();
             cx.spawn_in(window, async move |_, cx| {
+                // TODO: switch to calling save_debug_scenario(window, cx);
                 debug_panel
                     .update_in(cx, |debug_panel, window, cx| {
                         debug_panel.save_scenario(&debug_scenario, id, window, cx)
