@@ -172,15 +172,9 @@ impl BreakpointList {
     ) {
         self.strip_mode = Some(prop);
         let placeholder = match prop {
-            ActiveBreakpointStripMode::Log => {
-                "Set log message to display (instead of stopping) when a breakpoint is hit"
-            }
-            ActiveBreakpointStripMode::Condition => {
-                "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met"
-            }
-            ActiveBreakpointStripMode::HitCondition => {
-                "Set expression that controls how many hits of the breakpoint are ignored."
-            }
+            ActiveBreakpointStripMode::Log => "Set Log Message",
+            ActiveBreakpointStripMode::Condition => "Set Condition",
+            ActiveBreakpointStripMode::HitCondition => "Set Hit Condition",
         };
         let active_value = self.selected_ix.and_then(|ix| {
             self.breakpoints.get(ix).and_then(|bp| {
@@ -203,16 +197,20 @@ impl BreakpointList {
         });
     }
 
-    fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+    fn select_ix(&mut self, ix: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_ix = ix;
         if let Some(ix) = ix {
             self.scroll_handle
                 .scroll_to_item(ix, ScrollStrategy::Center);
         }
+        if let Some(mode) = self.strip_mode {
+            self.set_active_breakpoint_property(mode, window, cx);
+        }
+
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         let ix = match self.selected_ix {
             _ if self.breakpoints.len() == 0 => None,
             None => Some(0),
@@ -224,13 +222,13 @@ impl BreakpointList {
                 }
             }
         };
-        self.select_ix(ix, cx);
+        self.select_ix(ix, window, cx);
     }
 
     fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let ix = match self.selected_ix {
@@ -244,30 +242,25 @@ impl BreakpointList {
                 }
             }
         };
-        self.select_ix(ix, cx);
+        self.select_ix(ix, window, cx);
     }
 
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let ix = if self.breakpoints.len() > 0 {
             Some(0)
         } else {
             None
         };
-        self.select_ix(ix, cx);
+        self.select_ix(ix, window, cx);
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let ix = if self.breakpoints.len() > 0 {
             Some(self.breakpoints.len() - 1)
         } else {
             None
         };
-        self.select_ix(ix, cx);
+        self.select_ix(ix, window, cx);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -718,9 +711,9 @@ impl LineBreakpoint {
         )))
         .on_click({
             let weak = weak.clone();
-            move |_, _, cx| {
+            move |_, window, cx| {
                 weak.update(cx, |breakpoint_list, cx| {
-                    breakpoint_list.select_ix(Some(ix), cx);
+                    breakpoint_list.select_ix(Some(ix), window, cx);
                 })
                 .ok();
             }
@@ -746,7 +739,7 @@ impl LineBreakpoint {
                     let weak = weak.clone();
                     move |_, window, cx| {
                         weak.update(cx, |breakpoint_list, cx| {
-                            breakpoint_list.select_ix(Some(ix), cx);
+                            breakpoint_list.select_ix(Some(ix), window, cx);
                             breakpoint_list.go_to_line_breakpoint(path.clone(), row, window, cx);
                         })
                         .ok();
@@ -810,8 +803,8 @@ impl ExceptionBreakpoint {
         )))
         .on_click({
             let list = list.clone();
-            move |_, _, cx| {
-                list.update(cx, |list, cx| list.select_ix(Some(ix), cx))
+            move |_, window, cx| {
+                list.update(cx, |list, cx| list.select_ix(Some(ix), window, cx))
                     .ok();
             }
         })
@@ -1055,7 +1048,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
                         .disabled(!supports_logs)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Log))
-                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log)),
+                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log)).tooltip(|window, cx| Tooltip::with_meta("Set Log Message", None, "Set log message to display (instead of stopping) when a breakpoint is hit", window, cx))
                     )
                     .when(!has_logs && !self.is_selected, |this| this.invisible()),
             )
@@ -1072,7 +1065,8 @@ impl RenderOnce for BreakpointOptionsStrip {
                         ))
                         .disabled(!supports_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::Condition))
-                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition)),
+                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
+                        .tooltip(|window, cx| Tooltip::with_meta("Set Condition", None, "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met", window, cx))
                     )
                     .when(!has_condition && !self.is_selected, |this| this.invisible()),
             )
@@ -1089,7 +1083,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                         ))
                         .disabled(!supports_hit_condition)
                         .toggle_state(self.is_toggled(ActiveBreakpointStripMode::HitCondition))
-                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition)),
+                        .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition)).tooltip(|window, cx| Tooltip::with_meta("Set Hit Condition", None, "Set expression that controls how many hits of the breakpoint are ignored.", window, cx))
                     )
                     .when(!has_hit_condition && !self.is_selected, |this| {
                         this.invisible()
