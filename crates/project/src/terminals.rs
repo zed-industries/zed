@@ -18,6 +18,7 @@ use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettings},
 };
 use util::ResultExt;
+use zlog::info;
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -487,9 +488,15 @@ impl Project {
             terminal_settings::ActivateScript::Nushell => "activate.nu",
             terminal_settings::ActivateScript::PowerShell => "activate.ps1",
         };
+
+        let line_ending = match std::env::consts::OS {
+            "windows" => "\r",
+            _ => "\n",
+        };
+
         match venv_settings.venv_name.is_empty() {
             false => Some(format!(
-                "{activate_keyword} {activate_script_name} {name}",
+                "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
                 name = venv_settings.venv_name
             )),
             true => {
@@ -502,10 +509,6 @@ impl Project {
                     .to_string_lossy()
                     .to_string();
                 let quoted = shlex::try_quote(&path).ok()?;
-                let line_ending = match std::env::consts::OS {
-                    "windows" => "\r",
-                    _ => "\n",
-                };
                 smol::block_on(self.fs.metadata(path.as_ref()))
                     .ok()
                     .flatten()?;
