@@ -4270,6 +4270,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "bitflags 2.9.0",
  "client",
  "collections",
  "command_palette_hooks",

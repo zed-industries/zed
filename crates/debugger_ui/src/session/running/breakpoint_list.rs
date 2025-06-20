@@ -5,11 +5,11 @@ use std::{
     time::Duration,
 };
 
-use dap::ExceptionBreakpointsFilter;
+use dap::{Capabilities, ExceptionBreakpointsFilter};
 use editor::Editor;
 use gpui::{
-    Action, AppContext, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy, Stateful,
-    Task, UniformListScrollHandle, WeakEntity, uniform_list,
+    Action, AppContext, Component, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
+    Stateful, Task, UniformListScrollHandle, WeakEntity, uniform_list,
 };
 use language::Point;
 use project::{
@@ -21,11 +21,11 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div, FluentBuilder as _,
-    Icon, IconButton, IconName, IconSize, Indicator, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ListItem, ParentElement, Render, Scrollbar, ScrollbarState,
-    SharedString, StatefulInteractiveElement, Styled, Toggleable, Tooltip, Window, div, h_flex, px,
-    v_flex,
+    AnyElement, App, ButtonCommon, ButtonSize, Clickable, Color, Context, Disableable, Div,
+    FluentBuilder as _, Icon, IconButton, IconName, IconSize, Indicator, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
+    Tooltip, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -294,20 +294,29 @@ impl BreakpointList {
         }))
     }
 
-    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_ix = self.selected_ix;
         let focus_handle = self.focus_handle.clone();
+        let supported_breakpoint_properties = self
+            .session
+            .as_ref()
+            .map(|session| SupportedBreakpointProperties::from(session.read(cx).capabilities()))
+            .unwrap_or_else(SupportedBreakpointProperties::empty);
         uniform_list(
             "breakpoint-list",
             self.breakpoints.len(),
-            cx.processor(move |this, range: Range<usize>, window, cx| {
+            cx.processor(move |this, range: Range<usize>, _, _| {
                 range
                     .clone()
                     .zip(&mut this.breakpoints[range])
                     .map(|(ix, breakpoint)| {
                         breakpoint
-                            .render(ix, focus_handle.clone(), window, cx)
-                            .toggle_state(Some(ix) == selected_ix)
+                            .render(
+                                supported_breakpoint_properties,
+                                ix,
+                                Some(ix) == selected_ix,
+                                focus_handle.clone(),
+                            )
                             .into_any_element()
                     })
                     .collect()
@@ -442,8 +451,7 @@ impl BreakpointList {
 }
 
 impl Render for BreakpointList {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        // let old_len = self.breakpoints.len();
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
         let weak = cx.weak_entity();
@@ -528,7 +536,7 @@ impl Render for BreakpointList {
             .on_action(cx.listener(Self::unset_breakpoint))
             .size_full()
             .m_0p5()
-            .child(self.render_list(window, cx))
+            .child(self.render_list(cx))
             .children(self.render_vertical_scrollbar(cx))
     }
 }
@@ -543,7 +551,9 @@ struct LineBreakpoint {
 impl LineBreakpoint {
     fn render(
         &mut self,
+        props: SupportedBreakpointProperties,
         ix: usize,
+        is_selected: bool,
         focus_handle: FocusHandle,
         weak: WeakEntity<BreakpointList>,
     ) -> ListItem {
@@ -594,6 +604,7 @@ impl LineBreakpoint {
             })
             .child(Indicator::icon(Icon::new(icon_name)).color(Color::Debugger))
             .on_mouse_down(MouseButton::Left, move |_, _, _| {});
+
         ListItem::new(SharedString::from(format!(
             "breakpoint-ui-item-{:?}/{}:{}",
             self.dir, self.name, self.line
@@ -613,21 +624,26 @@ impl LineBreakpoint {
             cx.stop_propagation();
         })
         .child(
-            v_flex()
+            h_flex()
+                .w_full()
+                .mr_4()
                 .py_1()
                 .gap_1()
                 .min_h(px(26.))
-                .justify_center()
+                .justify_between()
                 .id(SharedString::from(format!(
                     "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
                     self.dir, self.name, self.line
                 )))
-                .on_click(move |_, window, cx| {
-                    weak.update(cx, |breakpoint_list, cx| {
-                        breakpoint_list.select_ix(Some(ix), cx);
-                        breakpoint_list.go_to_line_breakpoint(path.clone(), row, window, cx);
-                    })
-                    .ok();
+                .on_click({
+                    let weak = weak.clone();
+                    move |_, window, cx| {
+                        weak.update(cx, |breakpoint_list, cx| {
+                            breakpoint_list.select_ix(Some(ix), cx);
+                            breakpoint_list.go_to_line_breakpoint(path.clone(), row, window, cx);
+                        })
+                        .ok();
+                    }
                 })
                 .cursor_pointer()
                 .child(
@@ -644,8 +660,17 @@ impl LineBreakpoint {
                                 .size(LabelSize::Small)
                                 .line_height_style(ui::LineHeightStyle::UiLabel)
                         })),
-                ),
+                )
+                .child(BreakpointOptionsStrip {
+                    props,
+                    breakpoint: BreakpointEntry {
+                        kind: BreakpointEntryKind::LineBreakpoint(self.clone()),
+                        weak: weak,
+                    },
+                    is_selected,
+                }),
         )
+        .toggle_state(is_selected)
     }
 }
 #[derive(Clone, Debug)]
@@ -659,6 +684,7 @@ impl ExceptionBreakpoint {
     fn render(
         &mut self,
         ix: usize,
+        is_selected: bool,
         focus_handle: FocusHandle,
         list: WeakEntity<BreakpointList>,
     ) -> ListItem {
@@ -737,6 +763,7 @@ impl ExceptionBreakpoint {
                     el.tooltip(Tooltip::text(description))
                 }),
         )
+        .toggle_state(is_selected)
     }
 }
 #[derive(Clone, Debug)]
@@ -754,18 +781,170 @@ struct BreakpointEntry {
 impl BreakpointEntry {
     fn render(
         &mut self,
+        props: SupportedBreakpointProperties,
         ix: usize,
+        is_selected: bool,
         focus_handle: FocusHandle,
-        _: &mut Window,
-        _: &mut App,
     ) -> ListItem {
         match &mut self.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
-                line_breakpoint.render(ix, focus_handle, self.weak.clone())
+                line_breakpoint.render(props, ix, is_selected, focus_handle, self.weak.clone())
             }
             BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
-                exception_breakpoint.render(ix, focus_handle, self.weak.clone())
+                exception_breakpoint.render(ix, is_selected, focus_handle, self.weak.clone())
             }
         }
+    }
+
+    fn id(&self) -> SharedString {
+        match &self.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => format!(
+                "source-breakpoint-control-strip-{:?}:{}",
+                line_breakpoint.breakpoint.path, line_breakpoint.breakpoint.row
+            )
+            .into(),
+            BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => format!(
+                "exception-breakpoint-control-strip--{}",
+                exception_breakpoint.id
+            )
+            .into(),
+        }
+    }
+
+    fn has_log(&self) -> bool {
+        match &self.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                line_breakpoint.breakpoint.message.is_some()
+            }
+            _ => false,
+        }
+    }
+
+    fn has_condition(&self) -> bool {
+        match &self.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                line_breakpoint.breakpoint.condition.is_some()
+            }
+            // We don't support conditions on exception breakpoints
+            BreakpointEntryKind::ExceptionBreakpoint(_) => false,
+        }
+    }
+
+    fn has_hit_condition(&self) -> bool {
+        match &self.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                line_breakpoint.breakpoint.hit_condition.is_some()
+            }
+            _ => false,
+        }
+    }
+}
+bitflags::bitflags! {
+    #[derive(Clone, Copy)]
+    pub struct SupportedBreakpointProperties: u32 {
+        const LOG = 1 << 0;
+        const CONDITION = 1 << 1;
+        const HIT_CONDITION = 1 << 2;
+        // Conditions for exceptions can be set only when exception filters are supported.
+        const EXCEPTION_FILTER_OPTIONS = 1 << 3;
+    }
+}
+
+impl From<&Capabilities> for SupportedBreakpointProperties {
+    fn from(caps: &Capabilities) -> Self {
+        let mut this = Self::empty();
+        for (prop, offset) in [
+            (caps.supports_log_points, Self::LOG),
+            (caps.supports_conditional_breakpoints, Self::CONDITION),
+            (
+                caps.supports_hit_conditional_breakpoints,
+                Self::HIT_CONDITION,
+            ),
+            (
+                caps.supports_exception_options,
+                Self::EXCEPTION_FILTER_OPTIONS,
+            ),
+        ] {
+            if prop.unwrap_or_default() {
+                this.insert(offset);
+            }
+        }
+        this
+    }
+}
+
+impl SupportedBreakpointProperties {
+    fn for_exception_breakpoints(self) -> Self {
+        self & (Self::EXCEPTION_FILTER_OPTIONS | Self::CONDITION)
+    }
+}
+#[derive(IntoElement)]
+struct BreakpointOptionsStrip {
+    props: SupportedBreakpointProperties,
+    breakpoint: BreakpointEntry,
+    is_selected: bool,
+}
+
+impl RenderOnce for BreakpointOptionsStrip {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let id = self.breakpoint.id();
+        let supports_logs = self.props.contains(SupportedBreakpointProperties::LOG);
+        let supports_condition = self
+            .props
+            .contains(SupportedBreakpointProperties::CONDITION);
+        let supports_hit_condition = self
+            .props
+            .contains(SupportedBreakpointProperties::HIT_CONDITION);
+        let has_logs = self.breakpoint.has_log();
+        let has_condition = self.breakpoint.has_condition();
+        let has_hit_condition = self.breakpoint.has_hit_condition();
+        let style_for_toggle = |is_enabled| {
+            if is_enabled {
+                ui::ButtonStyle::Filled
+            } else {
+                ui::ButtonStyle::Subtle
+            }
+        };
+        h_flex()
+            .gap_2()
+            .child(
+                div()
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("{id}-log-toggle")),
+                            IconName::ListTodo,
+                        )
+                        .style(style_for_toggle(has_logs))
+                        .disabled(!supports_logs)
+                        .toggle_state(true),
+                    )
+                    .when(!has_logs && !self.is_selected, |this| this.invisible()),
+            )
+            .child(
+                div()
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("{id}-condition-toggle")),
+                            IconName::ListTodo,
+                        )
+                        .style(style_for_toggle(has_condition))
+                        .disabled(!supports_condition),
+                    )
+                    .when(!has_condition && !self.is_selected, |this| this.invisible()),
+            )
+            .child(
+                div()
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!("{id}-hit-condition-toggle")),
+                            IconName::ListTodo,
+                        )
+                        .style(style_for_toggle(has_hit_condition))
+                        .disabled(!supports_hit_condition),
+                    )
+                    .when(!has_hit_condition && !self.is_selected, |this| {
+                        this.invisible()
+                    }),
+            )
     }
 }
