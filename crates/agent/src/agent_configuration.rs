@@ -20,7 +20,7 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
-    project_settings::ProjectSettings,
+    project_settings::{ContextServerSettings, ProjectSettings},
 };
 use settings::{Settings, update_settings_file};
 use ui::{
@@ -771,12 +771,16 @@ impl AgentConfiguration {
                                                         context_server_id.clone();
 
                                                     move |settings, _| {
-                                                        if let Some(context_server) = settings
+                                                        settings
                                                             .context_servers
-                                                            .get_mut(&context_server_id.0)
-                                                        {
-                                                            context_server.set_enabled(is_enabled);
-                                                        }
+                                                            .entry(context_server_id.0)
+                                                            .or_insert_with(|| {
+                                                                ContextServerSettings::Extension {
+                                                                    enabled: is_enabled,
+                                                                    settings: serde_json::json!({}),
+                                                                }
+                                                            })
+                                                            .set_enabled(is_enabled);
                                                     }
                                                 },
                                             );
