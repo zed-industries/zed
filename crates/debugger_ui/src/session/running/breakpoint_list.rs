@@ -1002,7 +1002,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
-                            IconName::ListTodo,
+                            IconName::ScrollText,
                         )
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
                         .disabled(!supports_logs)
@@ -1016,7 +1016,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-condition-toggle")),
-                            IconName::ListTodo,
+                            IconName::SplitAlt,
                         )
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::Condition,
@@ -1033,7 +1033,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-hit-condition-toggle")),
-                            IconName::ListTodo,
+                            IconName::ArrowDown10,
                         )
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::HitCondition,
