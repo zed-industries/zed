@@ -48,9 +48,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).file());
-            let provider = all_language_settings(file, cx)
-                .edit_predictions
-                .provider;
+            let provider = all_language_settings(file, cx).edit_predictions.provider;
             assign_edit_prediction_provider(
                 editor,
                 provider,
@@ -75,12 +73,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             let mut status = client.status();
             while let Some(_status) = status.next().await {
                 cx.update(|cx| {
-                    assign_edit_prediction_providers(
-                        &editors,
-                        &client,
-                        user_store.clone(),
-                        cx,
-                    );
+                    assign_edit_prediction_providers(&editors, &client, user_store.clone(), cx);
                 })
                 .log_err();
             }
@@ -93,12 +86,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let client = client.clone();
         let user_store = user_store.clone();
         move |cx| {
-            assign_edit_prediction_providers(
-                &editors,
-                &client,
-                user_store.clone(),
-                cx,
-            );
+            assign_edit_prediction_providers(&editors, &client, user_store.clone(), cx);
 
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
@@ -110,8 +98,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 .unwrap_or(false);
 
             if provider_changed {
-
-
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
                     from = provider,
@@ -120,34 +106,27 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 );
 
                 provider = new_provider;
-                assign_edit_prediction_providers(
-                    &editors,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
+                assign_edit_prediction_providers(&editors, &client, user_store.clone(), cx);
 
-            if provider_changed {
-                    match provider {
-                        EditPredictionProvider::Zed => {
-                            let Some(window) = cx.active_window() else {
-                                return;
-                            };
+                match provider {
+                    EditPredictionProvider::Zed => {
+                        let Some(window) = cx.active_window() else {
+                            return;
+                        };
 
-                            window
-                                .update(cx, |_, window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(zed_actions::OpenZedPredictOnboarding),
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        }
-                        EditPredictionProvider::None
-                        | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
+                        window
+                            .update(cx, |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(zed_actions::OpenZedPredictOnboarding),
+                                    cx,
+                                );
+                            })
+                            .ok();
                     }
-                }
+                    EditPredictionProvider::None
+                    | EditPredictionProvider::Copilot
+                    | EditPredictionProvider::Supermaven => {}
+                };
             }
         }
     })
@@ -175,12 +154,10 @@ fn assign_edit_prediction_providers(
                     .read(cx)
                     .as_singleton()
                     .and_then(|buffer| buffer.read(cx).file());
-                let provider = all_language_settings(file, cx)
-                    .edit_predictions
-                    .provider;
+                let provider = all_language_settings(file, cx).edit_predictions.provider;
 
                 // Apply provider; Editor will ignore if unchanged internally
-                    assign_edit_prediction_provider(
+                assign_edit_prediction_provider(
                     editor,
                     provider,
                     &client,
