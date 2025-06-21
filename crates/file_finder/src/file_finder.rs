@@ -939,21 +939,32 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
             );
-            let worktree = self.project.read(cx).visible_worktrees(cx).next();
-            let filename = query.raw_query.to_string();
-            let path = Path::new(&filename);
 
+            let filename = query.raw_query.to_string();
+            let mut path = Path::new(&filename);
             // add option of creating new file only if path is relative
-            if let Some(worktree) = worktree {
-                let worktree = worktree.read(cx);
-                if path.is_relative()
-                    && worktree.entry_for_path(&path).is_none()
-                    && !filename.ends_with("/")
-                {
-                    self.matches.matches.push(Match::CreateNew(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: Arc::from(path),
-                    }));
+            if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
+                let worktree_id = project.worktree_id;
+                let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+                let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+                if let Some(worktree) = worktree {
+                    let worktree = worktree.read(cx);
+                    let root = worktree
+                        .abs_path()
+                        .file_name()
+                        .map_or(String::new(), |f| f.to_string_lossy().to_string());
+                    if worktree_count > 1 && path.starts_with(&root) {
+                        path = path.strip_prefix(root).unwrap();
+                    }
+                    if path.is_relative()
+                        && worktree.entry_for_path(&path).is_none()
+                        && !filename.ends_with("/")
+                    {
+                        self.matches.matches.push(Match::CreateNew(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: Arc::from(path),
+                        }));
+                    }
                 }
             }
 
