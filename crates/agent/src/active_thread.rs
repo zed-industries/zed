@@ -24,7 +24,7 @@ use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
-    ListAlignment, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
+    ListAlignment, ListOffset, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
     StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
     UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
     pulsating_between,
@@ -48,8 +48,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -1873,6 +1873,14 @@ impl ActiveThread {
                 }
             });
 
+        let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUpAlt)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Scroll To Top"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_top(cx);
+            }));
+
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -1982,11 +1990,14 @@ impl ActiveThread {
                                     );
                                 })),
                         )
-                        .child(open_as_markdown),
+                        .child(open_as_markdown)
+                        .child(scroll_to_top),
                 )
                 .into_any_element(),
             None => feedback_container
-                .child(h_flex().child(open_as_markdown))
+                .child(h_flex()
+                    .child(open_as_markdown))
+                    .child(scroll_to_top)
                 .into_any_element(),
         };
 
@@ -3474,6 +3485,11 @@ impl ActiveThread {
             .entry((message_id, ix))
             .or_insert(true);
         *is_expanded = !*is_expanded;
+    }
+
+    pub fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset::default());
+        cx.notify();
     }
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
