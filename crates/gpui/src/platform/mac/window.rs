@@ -22,6 +22,7 @@ use cocoa::{
         NSUserDefaults,
     },
 };
+
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
@@ -79,6 +80,13 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+
+#[derive(PartialEq)]
+pub enum UserTabbingPreference {
+    Never,
+    Always,
+    InFullScreen,
+}
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -516,6 +524,7 @@ impl MacWindow {
             show,
             display_id,
             window_min_size,
+            allows_automatic_window_tabbing,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -523,7 +532,12 @@ impl MacWindow {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
-            let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+            let allows_automatic_window_tabbing = allows_automatic_window_tabbing.unwrap_or(false);
+            if allows_automatic_window_tabbing {
+                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
+            } else {
+                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+            }
 
             let mut style_mask;
             if let Some(titlebar) = titlebar.as_ref() {
@@ -722,6 +736,24 @@ impl MacWindow {
                 }
             }
 
+            let app = NSApplication::sharedApplication(nil);
+            let main_window: id = msg_send![app, mainWindow];
+
+            if !main_window.is_null() && main_window != native_window {
+                let main_window_is_fullscreen = main_window
+                    .styleMask()
+                    .contains(NSWindowStyleMask::NSFullScreenWindowMask);
+                let user_tabbing_preference = Self::get_user_tabbing_preference()
+                    .unwrap_or(UserTabbingPreference::InFullScreen);
+                let should_add_as_tab = user_tabbing_preference == UserTabbingPreference::Always
+                    || user_tabbing_preference == UserTabbingPreference::InFullScreen
+                        && main_window_is_fullscreen;
+
+                if allows_automatic_window_tabbing && should_add_as_tab {
+                    let _: () = msg_send![main_window, addTabbedWindow: native_window ordered: 1];
+                }
+            }
+
             if focus && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
@@ -774,6 +806,33 @@ impl MacWindow {
             }
 
             window_handles
+        }
+    }
+
+    pub fn get_user_tabbing_preference() -> Option<UserTabbingPreference> {
+        unsafe {
+            let defaults: id = NSUserDefaults::standardUserDefaults();
+            let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
+            let key = NSString::alloc(nil).init_str("AppleWindowTabbingMode");
+
+            let dict: id = msg_send![defaults, persistentDomainForName: domain];
+            let value: id = if !dict.is_null() {
+                msg_send![dict, objectForKey: key]
+            } else {
+                nil
+            };
+
+            let value_str = if !value.is_null() {
+                CStr::from_ptr(NSString::UTF8String(value)).to_string_lossy()
+            } else {
+                "".into()
+            };
+
+            match value_str.as_ref() {
+                "never" => Some(UserTabbingPreference::Never),
+                "always" => Some(UserTabbingPreference::Always),
+                _ => Some(UserTabbingPreference::InFullScreen),
+            }
         }
     }
 }
