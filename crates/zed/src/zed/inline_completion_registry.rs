@@ -110,18 +110,18 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 
                 match provider {
                     EditPredictionProvider::Zed => {
-                        let Some(window) = cx.active_window() else {
-                            return;
-                        };
-
-                        window
-                            .update(cx, |_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(zed_actions::OpenZedPredictOnboarding),
-                                    cx,
-                                );
-                            })
-                            .ok();
+                        if !tos_accepted {
+                            if let Some(window) = cx.active_window() {
+                                window
+                                    .update(cx, |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(zed_actions::OpenZedPredictOnboarding),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        }
                     }
                     EditPredictionProvider::None
                     | EditPredictionProvider::Copilot
