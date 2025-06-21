@@ -80,6 +80,7 @@
     "inactive_opacity": 1.0
   },
   // Layout mode of the bottom dock. Defaults to "contained"
+  //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
@@ -94,11 +95,9 @@
     // workspace when the centered layout is used.
     "right_padding": 0.2
   },
-  // All settings related to the image viewer.
+  // Image viewer settings
   "image_viewer": {
-    // The unit for image file sizes.
-    // By default we're setting it to binary.
-    // The second option is decimal.
+    // The unit for image file sizes: "binary" (KiB, MiB) or decimal (KB, MB)
     "unit": "binary"
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
@@ -119,7 +118,14 @@
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
-  // Whether to restore last closed project when fresh Zed instance is opened.
+  // Whether to restore last closed project when fresh Zed instance is opened
+  // May take 3 values:
+  //  1. All workspaces open during last session
+  //         "restore_on_startup": "last_session"
+  //  2. The workspace opened
+  //         "restore_on_startup": "last_workspace",
+  //  3. Do not restore previous workspaces
+  //         "restore_on_startup": "none",
   "restore_on_startup": "last_session",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
@@ -132,7 +138,9 @@
   "restore_on_file_reopen": true,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
-  // Size of the drop target in the editor.
+  // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
+  // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
+  //              If you drop onto the left/right quarter of the pane a new horizontal split will be used
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
   // May take 3 values:
@@ -485,7 +493,7 @@
   },
   // Whether the editor will scroll beyond the last line.
   "scroll_beyond_last_line": "one_page",
-  // The number of lines to keep above/below the cursor when scrolling.
+  // The number of lines to keep above/below the cursor when scrolling with the keyboard
   "vertical_scroll_margin": 3,
   // Whether to scroll when clicking near the edge of the visible text area.
   "autoscroll_on_clicks": false,
@@ -701,23 +709,23 @@
     "default_width": 360,
     // Style of the git status indicator in the panel.
     //
+    // Choices: label_color, icon
     // Default: icon
     "status_style": "icon",
-    // What branch name to use if init.defaultBranch
-    // is not set
+    // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
     "fallback_branch_name": "main",
-    // Whether to sort entries in the panel by path
-    // or by status (the default).
+    // Whether to sort entries in the panel by path or by status (the default).
     //
     // Default: false
     "sort_by_path": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
+      // Choices: always, auto, never, system
       // Default: inherits editor scrollbar settings
-      "show": null
+      // "show": null
     }
   },
   "message_editor": {
@@ -995,8 +1003,7 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving
-  //
+  // Whether or not to perform a buffer format before saving: [on, off, prettier, language_server]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
@@ -1177,6 +1184,12 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
+    // Copilot-specific settings
+    // "copilot": {
+    //   "enterprise_uri": "",
+    //   "proxy": "",
+    //   "proxy_no_verify": false
+    // },
     // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true
@@ -1342,6 +1355,8 @@
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks
     // "font_fallbacks": ["FiraCode Nerd Fonts"],
+    // The weight of the editor font in standard CSS units from 100 to 900.
+    // "font_weight": 400
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
@@ -1798,6 +1813,7 @@
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
+    "dock": "bottom",
     "button": true
   }
 }
