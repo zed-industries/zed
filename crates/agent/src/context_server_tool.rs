@@ -30,6 +30,20 @@ impl ContextServerTool {
 
 impl Tool for ContextServerTool {
     fn name(&self) -> String {
+        let raw_name = format!("{}_{}", self.server_id, self.tool.name);
+
+        let sanitized: String = raw_name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+
+        match sanitized.len() {
+            1..=64 => sanitized,
+            _ => sanitized.chars().take(64).collect(),
+        }
+    }
+
+    fn ui_name(&self) -> String {
         self.tool.name.clone()
     }
 
