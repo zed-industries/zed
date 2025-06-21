@@ -619,6 +619,13 @@ pub trait InteractiveElement: Sized {
         FocusableWrapper { element: self }
     }
 
+    /// Set index of the tab stop order.
+    fn tab_index(mut self, index: isize) -> Self {
+        self.interactivity().focusable = true;
+        self.interactivity().tab_index = Some(index);
+        self
+    }
+
     /// Set the keymap context for this element. This will be used to determine
     /// which action to dispatch from the keymap.
     fn key_context<C, E>(mut self, key_context: C) -> Self
@@ -1463,6 +1470,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) tab_index: Option<isize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1522,12 +1530,17 @@ impl Interactivity {
                 // as frames contain an element with this id.
                 if self.focusable && self.tracked_focus_handle.is_none() {
                     if let Some(element_state) = element_state.as_mut() {
-                        self.tracked_focus_handle = Some(
-                            element_state
-                                .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone(),
-                        );
+                        let mut handle = element_state
+                            .focus_handle
+                            .get_or_insert_with(|| cx.focus_handle())
+                            .clone()
+                            .tab_stop(false);
+
+                        if let Some(index) = self.tab_index {
+                            handle = handle.tab_index(index).tab_stop(true);
+                        }
+
+                        self.tracked_focus_handle = Some(handle);
                     }
                 }
 
@@ -1728,6 +1741,10 @@ impl Interactivity {
 
                 if style.visibility == Visibility::Hidden {
                     return ((), element_state);
+                }
+
+                if let Some(focus_handle) = &self.tracked_focus_handle {
+                    window.next_frame.tab_handles.insert(focus_handle);
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
@@ -2927,7 +2944,7 @@ where
     }
 }
 
-impl<E: FocusableElement> FocusableElement for Stateful<E> {}
+impl<E: InteractiveElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
 where
