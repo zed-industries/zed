@@ -43,7 +43,14 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
-            let provider = all_language_settings(None, cx).edit_predictions.provider;
+            let file = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file());
+            let provider = all_language_settings(file, cx)
+                .edit_predictions
+                .provider;
             assign_edit_prediction_provider(
                 editor,
                 provider,
@@ -70,7 +77,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 cx.update(|cx| {
                     assign_edit_prediction_providers(
                         &editors,
-                        provider,
                         &client,
                         user_store.clone(),
                         cx,
@@ -105,7 +111,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 provider = new_provider;
                 assign_edit_prediction_providers(
                     &editors,
-                    provider,
                     &client,
                     user_store.clone(),
                     cx,
@@ -146,7 +151,6 @@ fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
 
 fn assign_edit_prediction_providers(
     editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
-    provider: EditPredictionProvider,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     cx: &mut App,
@@ -154,6 +158,15 @@ fn assign_edit_prediction_providers(
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
+                let file = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|buffer| buffer.read(cx).file());
+                let provider = all_language_settings(file, cx)
+                    .edit_predictions
+                    .provider;
+
                 assign_edit_prediction_provider(
                     editor,
                     provider,
