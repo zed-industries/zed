@@ -55,6 +55,11 @@ impl NodeRuntime {
         })))
     }
 
+    pub async fn runtime_type(&self) -> RuntimeType {
+        let instance = self.instance().await;
+        instance.runtime_type()
+    }
+
     pub fn unavailable() -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http: Arc::new(http_client::BlockedHttpClient),
@@ -220,34 +225,85 @@ impl NodeRuntime {
             .npm_package_installed_version(local_package_directory, name)
             .await
     }
-
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
-        let http = self.0.lock().await.http.clone();
-        let output = self
-            .instance()
-            .await
-            .run_npm_subcommand(
-                None,
-                http.proxy(),
-                "info",
-                &[
-                    name,
-                    "--json",
-                    "--fetch-retry-mintimeout",
-                    "2000",
-                    "--fetch-retry-maxtimeout",
-                    "5000",
-                    "--fetch-timeout",
-                    "5000",
-                ],
-            )
-            .await?;
+        let instance = self.instance().await;
+        match instance.runtime_type() {
+            RuntimeType::Node => {
+                let http = self.0.lock().await.http.clone();
+                let output = self
+                    .instance()
+                    .await
+                    .run_npm_subcommand(
+                        None,
+                        http.proxy(),
+                        "info",
+                        &[
+                            name,
+                            "--json",
+                            "--fetch-retry-mintimeout",
+                            "2000",
+                            "--fetch-retry-maxtimeout",
+                            "5000",
+                            "--fetch-timeout",
+                            "5000",
+                        ],
+                    )
+                    .await?;
 
-        let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
-        info.dist_tags
-            .latest
-            .or_else(|| info.versions.pop())
-            .with_context(|| format!("no version found for npm package {name}"))
+                let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+                info.dist_tags
+                    .latest
+                    .or_else(|| info.versions.pop())
+                    .with_context(|| format!("no version found for npm package {name}"))
+            }
+            RuntimeType::Bun => {
+                // For Bun, ensure we have a package.json in a temp directory and use local bun info
+                let temp_dir = std::env::temp_dir().join("zed_bun_info");
+                if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+                    return Err(anyhow!("Failed to create temp directory: {}", e));
+                }
+
+                let package_json_path = temp_dir.join("package.json");
+                if !package_json_path.exists() {
+                    if let Err(e) = std::fs::write(&package_json_path, "{}") {
+                        return Err(anyhow!("Failed to create temp package.json: {}", e));
+                    }
+                }
+
+                // Use local bun info (no --global flag)
+                let output = self
+                    .instance()
+                    .await
+                    .run_npm_subcommand(
+                        Some(&temp_dir),
+                        None,
+                        "info",
+                        &["--json", "--dry-run", name],
+                    )
+                    .await?;
+
+                let output_str =
+                    String::from_utf8(output.stdout).context("error parsing bun info output")?;
+
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "kebab-case")]
+                struct BunPackageInfo {
+                    version: Option<String>,
+                    dist_tags: Option<std::collections::HashMap<String, String>>,
+                }
+
+                let info: BunPackageInfo = serde_json::from_str(&output_str)
+                    .context("error parsing bun info JSON output")?;
+
+                let version = info
+                    .dist_tags
+                    .and_then(|mut tags| tags.remove("latest"))
+                    .or(info.version)
+                    .with_context(|| format!("no version found for npm package {name}"))?;
+
+                Ok(version)
+            }
+        }
     }
 
     pub async fn npm_install_packages(
@@ -264,20 +320,29 @@ impl NodeRuntime {
             .map(|(name, version)| format!("{name}@{version}"))
             .collect();
 
-        let mut arguments: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
-        arguments.extend_from_slice(&[
-            "--save-exact",
-            "--fetch-retry-mintimeout",
-            "2000",
-            "--fetch-retry-maxtimeout",
-            "5000",
-            "--fetch-timeout",
-            "5000",
-        ]);
-
-        // This is also wrong because the directory is wrong.
-        self.run_npm_subcommand(directory, "install", &arguments)
-            .await?;
+        let package_args: Vec<_> = packages.iter().map(|p| p.as_str()).collect();
+        let instance = self.instance().await;
+        match instance.runtime_type() {
+            RuntimeType::Node => {
+                let mut arguments = package_args;
+                arguments.extend_from_slice(&[
+                    "--save-exact",
+                    "--fetch-retry-mintimeout",
+                    "2000",
+                    "--fetch-retry-maxtimeout",
+                    "5000",
+                    "--fetch-timeout",
+                    "5000",
+                ]);
+                self.run_npm_subcommand(directory, "install", &arguments)
+                    .await?;
+            }
+            RuntimeType::Bun => {
+                // For Bun, use 'add' instead of 'install'
+                self.run_npm_subcommand(directory, "add", &package_args)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -337,6 +402,7 @@ pub struct NpmInfoDistTags {
 trait NodeRuntimeTrait: Send + Sync {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait>;
     fn binary_path(&self) -> Result<PathBuf>;
+    fn runtime_type(&self) -> RuntimeType;
 
     async fn run_npm_subcommand(
         &self,
@@ -512,6 +578,10 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         Box::new(self.clone())
     }
 
+    fn runtime_type(&self) -> RuntimeType {
+        RuntimeType::Node
+    }
+
     fn binary_path(&self) -> Result<PathBuf> {
         Ok(self.installation_path.join(Self::NODE_PATH))
     }
@@ -588,38 +658,96 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeType {
+    Node,
+    Bun,
+}
+
 #[derive(Debug, Clone)]
 pub struct SystemNodeRuntime {
     node: PathBuf,
     npm: PathBuf,
     global_node_modules: PathBuf,
     scratch_dir: PathBuf,
+    runtime_type: RuntimeType,
 }
 
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
+    const MIN_BUN_VERSION: semver::Version = Version::new(1, 2, 17);
+
+    fn default_bun_global_path() -> PathBuf {
+        // Standard Bun global installation path: ~/.bun/install/global
+        let home = std::env::var_os("HOME").expect("HOME environment variable not set");
+        PathBuf::from(home)
+            .join(".bun")
+            .join("install")
+            .join("global")
+    }
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
-        let output = util::command::new_smol_command(&node)
-            .arg("--version")
-            .output()
-            .await
-            .with_context(|| format!("running node from {:?}", node))?;
-        if !output.status.success() {
-            anyhow::bail!(
-                "failed to run node --version. stdout: {}, stderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-        }
-        let version_str = String::from_utf8_lossy(&output.stdout);
-        let version = semver::Version::parse(version_str.trim().trim_start_matches('v'))?;
-        if version < Self::MIN_VERSION {
-            anyhow::bail!(
-                "node at {} is too old. want: {}, got: {}",
-                node.to_string_lossy(),
-                Self::MIN_VERSION,
-                version
-            )
+        let runtime_type = if let Some(name) = node.file_name().and_then(|n| n.to_str()) {
+            if name.contains("node") {
+                RuntimeType::Node
+            } else if name.contains("bun") {
+                RuntimeType::Bun
+            } else {
+                bail!("unsupported node runtime: {}", name)
+            }
+        } else {
+            bail!("invalid node path")
+        };
+
+        match runtime_type {
+            RuntimeType::Node => {
+                let output = util::command::new_smol_command(&node)
+                    .arg("--version")
+                    .output()
+                    .await
+                    .with_context(|| format!("running node from {:?}", node))?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "failed to run node --version. stdout: {}, stderr: {}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr),
+                    );
+                }
+                let version_str = String::from_utf8_lossy(&output.stdout);
+                let version = semver::Version::parse(version_str.trim().trim_start_matches('v'))?;
+                if version < Self::MIN_VERSION {
+                    anyhow::bail!(
+                        "node at {} is too old. want: {}, got: {}",
+                        node.to_string_lossy(),
+                        Self::MIN_VERSION,
+                        version
+                    )
+                }
+            }
+            RuntimeType::Bun => {
+                let output = util::command::new_smol_command(&node)
+                    .arg("--version")
+                    .output()
+                    .await
+                    .with_context(|| format!("running bun from {:?}", node))?;
+                if !output.status.success() {
+                    anyhow::bail!(
+                        "failed to run bun --version. stdout: {}, stderr: {}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr),
+                    );
+                }
+                let version_str = String::from_utf8_lossy(&output.stdout);
+                let version = semver::Version::parse(version_str.trim())?;
+                if version < Self::MIN_BUN_VERSION {
+                    anyhow::bail!(
+                        "bun at {} is too old for enhanced features. want: {}, got: {}. Please upgrade with `bun upgrade`",
+                        node.to_string_lossy(),
+                        Self::MIN_BUN_VERSION,
+                        version
+                    );
+                }
+                log::info!("running bun {} from {:?}", version, node);
+            }
         }
 
         let scratch_dir = paths::data_dir().join("node");
@@ -631,10 +759,20 @@ impl SystemNodeRuntime {
             npm,
             global_node_modules: PathBuf::default(),
             scratch_dir,
+            runtime_type,
         };
-        let output = this.run_npm_subcommand(None, None, "root", &["-g"]).await?;
-        this.global_node_modules =
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+        match this.runtime_type {
+            RuntimeType::Node => {
+                let output = this.run_npm_subcommand(None, None, "root", &["-g"]).await?;
+                this.global_node_modules =
+                    PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+            RuntimeType::Bun => {
+                // Try to get the global bin directory from bun
+                // For Bun, we use local installation like Node.js, so no global setup needed
+                this.global_node_modules = Self::default_bun_global_path();
+            }
+        }
 
         Ok(this)
     }
@@ -674,6 +812,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         Ok(self.node.clone())
     }
 
+    fn runtime_type(&self) -> RuntimeType {
+        self.runtime_type
+    }
+
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
@@ -681,25 +823,116 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
-        let mut command = util::command::new_smol_command(self.npm.clone());
-        let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
-        command
-            .env_clear()
-            .env("PATH", path)
-            .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
-            .arg(subcommand)
-            .args(["--cache".into(), self.scratch_dir.join("cache")])
-            .args(args);
-        configure_npm_command(&mut command, directory, proxy);
-        let output = command.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(output)
+        match self.runtime_type {
+            RuntimeType::Node => {
+                let node_ca_certs =
+                    env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
+                let mut command = util::command::new_smol_command(self.npm.clone());
+                let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
+                command
+                    .env_clear()
+                    .env("PATH", path)
+                    .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
+                    .arg(subcommand)
+                    .args(["--cache".into(), self.scratch_dir.join("cache")])
+                    .args(args);
+                configure_npm_command(&mut command, directory, proxy);
+                let output = command.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(output)
+            }
+            RuntimeType::Bun => {
+                let mut command = util::command::new_smol_command(self.npm.clone());
+                let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
+                command.env_clear().env("PATH", path);
+
+                // Preserve essential environment variables for bun
+                for (key, value) in env::vars() {
+                    if key == "HOME" || key == NODE_CA_CERTS_ENV_VAR {
+                        command.env(key, value);
+                    }
+                }
+                command.env(
+                    "BUN_INSTALL_CACHE_DIR",
+                    self.scratch_dir.join("cache").to_string_lossy().to_string(),
+                );
+
+                match subcommand {
+                    "install" => {
+                        // For bun, "install" without packages means install all dependencies
+                        // If there are package arguments, use "add" instead
+                        if args.is_empty() {
+                            command.arg("install");
+                        } else {
+                            // Convert npm install <packages> to bun add <packages>
+                            command.arg("add");
+
+                            let mut filtered_args: Vec<&str> = Vec::new();
+                            let mut i = 0;
+                            while i < args.len() {
+                                let arg = args[i];
+                                match arg {
+                                    // Skip npm-specific flags and their values
+                                    "--save-exact" => {
+                                        // bun uses --exact but it's not always needed, skip it
+                                        i += 1;
+                                    }
+                                    "--fetch-retry-mintimeout"
+                                    | "--fetch-retry-maxtimeout"
+                                    | "--fetch-timeout" => {
+                                        // Skip the flag and its value (next argument)
+                                        i += 1; // skip the flag
+                                        if i < args.len() {
+                                            i += 1; // skip the value
+                                        }
+                                    }
+                                    arg if arg.starts_with("--fetch-") => {
+                                        // Skip fetch-related flags
+                                        i += 1;
+                                    }
+                                    _ => {
+                                        // Keep package names and other arguments
+                                        if !arg.is_empty() {
+                                            filtered_args.push(arg);
+                                        }
+                                        i += 1;
+                                    }
+                                }
+                            }
+
+                            command.args(&filtered_args);
+                        }
+                    }
+                    "run-script" => {
+                        command.arg("run").args(args);
+                    }
+                    "info" => {
+                        // Bun v1.2.17+ supports native `bun info` command
+                        // This replaces the older `bun pm view` command
+                        command.arg("info").args(args);
+                    }
+                    _ => {
+                        // For other commands, pass through as-is
+                        command.arg(subcommand).args(args);
+                    }
+                }
+
+                configure_bun_command(&mut command, directory, proxy);
+                let output = command.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "failed to execute bun {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(output)
+            }
+        }
     }
 
     async fn npm_package_installed_version(
@@ -750,6 +983,11 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait> {
         Box::new(self.clone())
     }
+
+    fn runtime_type(&self) -> RuntimeType {
+        RuntimeType::Node
+    }
+
     fn binary_path(&self) -> Result<PathBuf> {
         bail!("{}", self.error_message)
     }
@@ -806,6 +1044,51 @@ fn configure_npm_command(
             command.env("SYSTEMROOT", val);
         }
         // Without ComSpec, the post-install will always fail.
+        if let Some(val) = env::var("ComSpec")
+            .context("Missing environment variable: ComSpec!")
+            .log_err()
+        {
+            command.env("ComSpec", val);
+        }
+    }
+}
+
+fn configure_bun_command(
+    command: &mut smol::process::Command,
+    directory: Option<&Path>,
+    proxy: Option<&Url>,
+) {
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+        // Bun doesn't use --prefix, it just uses the current directory
+    }
+
+    if let Some(proxy) = proxy {
+        // Apply the same proxy logic as npm but without npm-specific flags
+        let proxy = proxy
+            .to_string()
+            .to_ascii_lowercase()
+            .replace("localhost", "127.0.0.1");
+
+        // Bun uses environment variables for proxy configuration, not command line args
+        command.env("http_proxy", &proxy);
+        command.env("HTTP_PROXY", &proxy);
+        command.env("https_proxy", &proxy);
+        command.env("HTTPS_PROXY", &proxy);
+        // Remove NO_PROXY for consistency with proxy usage
+        command.env_remove("NO_PROXY");
+        command.env_remove("no_proxy");
+    }
+
+    #[cfg(windows)]
+    {
+        // Same Windows environment variables needed for Bun
+        if let Some(val) = env::var("SYSTEMROOT")
+            .context("Missing environment variable: SYSTEMROOT!")
+            .log_err()
+        {
+            command.env("SYSTEMROOT", val);
+        }
         if let Some(val) = env::var("ComSpec")
             .context("Missing environment variable: ComSpec!")
             .log_err()

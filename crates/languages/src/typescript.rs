@@ -11,7 +11,7 @@ use language::{
     ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, RuntimeType};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::{fs, io::BufReader, lock::RwLock, stream::StreamExt};
@@ -486,14 +486,6 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
-fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![
-        "--max-old-space-size=8192".into(),
-        server_path.into(),
-        "--stdio".into(),
-    ]
-}
-
 fn replace_test_name_parameters(test_name: &str) -> String {
     let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
 
@@ -794,6 +786,17 @@ impl EsLintLspAdapter {
     fn build_destination_path(container_dir: &Path) -> PathBuf {
         container_dir.join(format!("vscode-eslint-{}", Self::CURRENT_VERSION))
     }
+
+    async fn eslint_server_binary_arguments(&self, server_path: &Path) -> Vec<OsString> {
+        match self.node.runtime_type().await {
+            RuntimeType::Node => vec![
+                "--max-old-space-size=8192".into(),
+                server_path.into(),
+                "--stdio".into(),
+            ],
+            RuntimeType::Bun => vec![server_path.into(), "--stdio".into()],
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -965,7 +968,7 @@ impl LspAdapter for EsLintLspAdapter {
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
+            arguments: self.eslint_server_binary_arguments(&server_path).await,
         })
     }
 
@@ -979,7 +982,7 @@ impl LspAdapter for EsLintLspAdapter {
         Some(LanguageServerBinary {
             path: self.node.binary_path().await.ok()?,
             env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
+            arguments: self.eslint_server_binary_arguments(&server_path).await,
         })
     }
 }
