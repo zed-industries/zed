@@ -5306,16 +5306,6 @@ impl ProjectItem for Buffer {
 }
 
 impl Completion {
-    pub fn filter_text(&self) -> &str {
-        match &self.source {
-            CompletionSource::Lsp { lsp_completion, .. } => lsp_completion
-                .filter_text
-                .as_deref()
-                .unwrap_or_else(|| self.label.filter_text()),
-            _ => self.label.filter_text(),
-        }
-    }
-
     pub fn kind(&self) -> Option<CompletionItemKind> {
         self.source
             // `lsp::CompletionListItemDefaults` has no `kind` field
