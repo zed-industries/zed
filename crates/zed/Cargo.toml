@@ -85,6 +85,7 @@ libc.workspace = true
 log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true
+svg_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }

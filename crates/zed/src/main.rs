@@ -587,6 +587,7 @@ pub fn main() {
         jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        svg_preview::init(cx);
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
