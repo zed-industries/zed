@@ -28,6 +28,7 @@ pub fn make_app() -> Command {
                 .arg(Arg::new("renderer").required(true))
                 .about("Check whether a renderer is supported by this preprocessor"),
         )
+        .subcommand(Command::new("dump").about("Dump all actions to JSON"))
 }
 
 fn main() -> Result<()> {
@@ -38,6 +39,8 @@ fn main() -> Result<()> {
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
         handle_supports(sub_args);
+    } else if matches.subcommand_matches("dump").is_some() {
+        handle_dump()?;
     } else {
         handle_preprocessing()?;
     }
@@ -118,6 +121,11 @@ fn handle_supports(sub_args: &ArgMatches) -> ! {
     } else {
         process::exit(1);
     }
+}
+
+fn handle_dump() -> Result<()> {
+    serde_json::to_writer_pretty(io::stdout(), &*ALL_ACTIONS)?;
+    Ok(())
 }
 
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error>) {
@@ -238,6 +246,7 @@ where
 struct ActionDef {
     name: &'static str,
     human_name: String,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
     deprecated_aliases: &'static [&'static str],
 }
 
