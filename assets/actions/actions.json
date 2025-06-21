@@ -2380,6 +2380,10 @@
     "human_name": "terminal panel: toggle focus"
   },
   {
+    "name": "test::ToggleTestPanel",
+    "human_name": "test: toggle test panel"
+  },
+  {
     "name": "theme_selector::Reload",
     "human_name": "theme selector: reload"
   },

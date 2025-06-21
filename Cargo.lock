@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "actions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command_palette",
+ "gpui",
+ "serde",
+ "serde_json",
+ "util",
+ "workspace-hack",
+ "zed",
+]
+
+[[package]]
 name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
