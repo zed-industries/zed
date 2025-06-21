@@ -28,7 +28,7 @@ impl PlatformTitleBar {
 
     #[cfg(not(target_os = "windows"))]
     pub fn height(window: &mut Window) -> Pixels {
-        (1.75 * window.rem_size()).max(px(34.))
+        (1.75 * window.rem_size()).max(px(38.))
     }
 
     #[cfg(target_os = "windows")]
@@ -62,6 +62,7 @@ impl Render for PlatformTitleBar {
         let supported_controls = window.window_controls();
         let decorations = window.window_decorations();
         let height = Self::height(window);
+        let tab_height = px(28.);
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
@@ -69,7 +70,8 @@ impl Render for PlatformTitleBar {
         h_flex()
             .window_control_area(WindowControlArea::Drag)
             .w_full()
-            .h(height)
+            .h(height + tab_height)
+            .pb(tab_height)
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()

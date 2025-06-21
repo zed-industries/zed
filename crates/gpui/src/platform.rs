@@ -1108,6 +1108,9 @@ pub struct WindowOptions {
 
     /// Whether to allow automatic window tabbing. macOS only.
     pub allows_automatic_window_tabbing: Option<bool>,
+
+    /// Whether to use a toolbar as titlebar, which increases the height. macOS only.
+    pub use_toolbar: Option<bool>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1148,6 +1151,7 @@ pub(crate) struct WindowParams {
 
     pub window_min_size: Option<Size<Pixels>>,
     pub allows_automatic_window_tabbing: Option<bool>,
+    pub use_toolbar: Option<bool>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1199,6 +1203,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             allows_automatic_window_tabbing: None,
+            use_toolbar: None,
         }
     }
 }
