@@ -2,6 +2,7 @@ use editor::{DisplayPoint, Editor, movement, scroll::Autoscroll};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
+use text::SelectionGoal;
 
 use crate::motion::MotionKind;
 use crate::{Vim, motion::Motion, state::Mode};
@@ -58,10 +59,12 @@ impl Vim {
 
                     // collapse to block cursor
                     if selection.tail() < selection.head() {
-                        selection.set_tail(movement::left(map, selection.head()), selection.goal);
+                        selection
+                            .set_tail(movement::left(map, selection.head()), SelectionGoal::None);
                     } else {
-                        selection.set_tail(selection.head(), selection.goal);
-                        selection.set_head(movement::right(map, selection.head()), selection.goal);
+                        selection.set_tail(selection.head(), SelectionGoal::None);
+                        selection
+                            .set_head(movement::right(map, selection.head()), SelectionGoal::None);
                     }
 
                     // create a classifier
@@ -76,9 +79,9 @@ impl Vim {
                                 is_boundary(left, right, &classifier)
                             });
 
-                        selection.set_head(new_head, selection.goal);
+                        selection.set_head(new_head, SelectionGoal::None);
                         if let Some(new_tail) = new_tail {
-                            selection.set_tail(new_tail, selection.goal);
+                            selection.set_tail(new_tail, SelectionGoal::None);
                         }
 
                         if selection.head() == last_selection.head()
@@ -111,10 +114,12 @@ impl Vim {
 
                     // collapse to block cursor
                     if selection.tail() < selection.head() {
-                        selection.set_tail(movement::left(map, selection.head()), selection.goal);
+                        selection
+                            .set_tail(movement::left(map, selection.head()), SelectionGoal::None);
                     } else {
-                        selection.set_tail(selection.head(), selection.goal);
-                        selection.set_head(movement::right(map, selection.head()), selection.goal);
+                        selection.set_tail(selection.head(), SelectionGoal::None);
+                        selection
+                            .set_head(movement::right(map, selection.head()), SelectionGoal::None);
                     }
 
                     // flip the selection
@@ -133,9 +138,9 @@ impl Vim {
                             |left, right| is_boundary(left, right, &classifier),
                         );
 
-                        selection.set_head(new_head, selection.goal);
+                        selection.set_head(new_head, SelectionGoal::None);
                         if let Some(new_tail) = new_tail {
-                            selection.set_tail(new_tail, selection.goal);
+                            selection.set_tail(new_tail, SelectionGoal::None);
                         }
 
                         if selection.head() == last_selection.head()
