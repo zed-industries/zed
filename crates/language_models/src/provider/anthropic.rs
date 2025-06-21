@@ -1,8 +1,8 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 use anthropic::{
-    AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
-    ToolResultPart, Usage,
+    AnthropicAuth, AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent,
+    ToolResultContent, ToolResultPart, Usage,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
@@ -11,7 +11,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    Animation, AnimationExt, AnyView, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement, Styled, Subscription, Task, TextStyle, Transformation, WhiteSpace, Window, div,
+    percentage,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -28,10 +31,14 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui::{Button, Icon, IconName, Label, List, Tooltip, Vector, VectorName, prelude::*};
+
 use util::ResultExt;
+use workspace::{ModalView, Workspace};
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
@@ -103,11 +110,12 @@ const ANTHROPIC_API_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    oauth: Option<AnthropicAuth>,
     _subscription: Subscription,
 }
 
 impl State {
-    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
@@ -121,6 +129,7 @@ impl State {
             this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
+                this.oauth = None;
                 cx.notify();
             })
         })
@@ -140,47 +149,175 @@ impl State {
 
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
+                this.oauth = None;
                 cx.notify();
             })
         })
     }
 
-    fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
-    }
-
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    fn set_oauth(&mut self, oauth: AnthropicAuth, cx: &mut Context<Self>) -> Task<Result<()>> {
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
             .api_url
             .clone();
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let oauth_json = format!(
+            r#"{{"refresh_token":"{}","access_token":"{}","expires":{}}}"#,
+            oauth.refresh_token, oauth.access_token, oauth.expires
+        );
 
         cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
-                (api_key, true)
-            } else {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
+            if let Err(err) = credentials_provider
+                .write_credentials(&api_url, "OAuth", oauth_json.as_bytes(), &cx)
+                .await
+            {
+                log::error!("Failed to store OAuth credentials: {}", err);
+                return Err(anyhow::anyhow!("Failed to store credentials"));
+            }
 
             this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
+                this.oauth = Some(oauth);
+                this.api_key = None;
+                this.api_key_from_env = false;
                 cx.notify();
             })?;
 
             Ok(())
+        })
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.api_key.is_some() || self.oauth.is_some()
+    }
+
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let settings = AllLanguageModelSettings::get_global(cx).anthropic.clone();
+
+        if self.is_authenticated() {
+            if let Some(oauth) = &self.oauth {
+                if oauth.is_expired() {
+                    let oauth = oauth.clone();
+                    let http_client = cx.http_client().clone();
+                    return cx.spawn(async move |this, cx| {
+                        let mut oauth_auth = oauth;
+                        match oauth_auth.access_token(&*http_client).await {
+                            Ok(Some(_)) => {
+                                this.update(cx, |this, cx| {
+                                    let settings = AllLanguageModelSettings::get_global(cx)
+                                        .anthropic
+                                        .clone();
+                                    this.oauth = Some(oauth_auth.clone());
+
+                                    let credentials_provider =
+                                        <dyn CredentialsProvider>::global(cx);
+                                    let oauth_json = format!(
+                                        r#"{{"refresh_token":"{}","access_token":"{}","expires":{}}}"#,
+                                        oauth_auth.refresh_token, oauth_auth.access_token, oauth_auth.expires
+                                    );
+                                    cx.spawn(async move |_, cx| {
+                                        credentials_provider
+                                            .write_credentials(
+                                                &settings.api_url,
+                                                "OAuth",
+                                                oauth_json.as_bytes(),
+                                                &cx,
+                                            )
+                                            .await
+                                            .log_err();
+                                        Ok::<(), anyhow::Error>(())
+                                    })
+                                    .detach();
+
+                                    cx.notify();
+                                })?;
+                                Ok(())
+                            }
+                            Ok(None) | Err(_) => {
+                                this.update(cx, |this, cx| {
+                                    this.oauth = None;
+                                    cx.notify();
+                                })?;
+                                Err(AuthenticateError::CredentialsNotFound)
+                            }
+                        }
+                    });
+                }
+                return Task::ready(Ok(()));
+            }
+
+            if self.api_key.is_some() {
+                return Task::ready(Ok(()));
+            }
+        }
+
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+
+        cx.spawn(async move |this, cx| {
+            if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
+                if !api_key.trim().is_empty() {
+                    this.update(cx, |this, cx| {
+                        this.api_key = Some(api_key);
+                        this.api_key_from_env = true;
+                        this.oauth = None;
+                        cx.notify();
+                    })?;
+                    return Ok(());
+                }
+            }
+
+            if let Ok(Some((username, credential_data))) = credentials_provider
+                .read_credentials(&settings.api_url, &cx)
+                .await
+            {
+                match username.as_str() {
+                    "OAuth" => {
+                        let oauth_str = String::from_utf8(credential_data)
+                            .context("Invalid OAuth data format")?;
+
+                        let oauth_value = serde_json::from_str::<serde_json::Value>(&oauth_str)
+                            .context("Invalid OAuth JSON format")?;
+
+                        let (refresh_token, access_token, expires) = (
+                            oauth_value["refresh_token"]
+                                .as_str()
+                                .ok_or_else(|| anyhow::anyhow!("Missing refresh_token"))?,
+                            oauth_value["access_token"]
+                                .as_str()
+                                .ok_or_else(|| anyhow::anyhow!("Missing access_token"))?,
+                            oauth_value["expires"]
+                                .as_u64()
+                                .ok_or_else(|| anyhow::anyhow!("Missing expires"))?,
+                        );
+
+                        if !refresh_token.is_empty() && !access_token.is_empty() {
+                            let oauth = AnthropicAuth::new(refresh_token, access_token, expires);
+                            this.update(cx, |this, cx| {
+                                this.oauth = Some(oauth);
+                                this.api_key = None;
+                                this.api_key_from_env = false;
+                                cx.notify();
+                            })?;
+                            return Ok(());
+                        }
+                    }
+                    "Bearer" => {
+                        let api_key_str =
+                            String::from_utf8(credential_data).context("Invalid API key format")?;
+                        if !api_key_str.trim().is_empty() {
+                            this.update(cx, |this, cx| {
+                                this.api_key = Some(api_key_str);
+                                this.api_key_from_env = false;
+                                this.oauth = None;
+                                cx.notify();
+                            })?;
+                            return Ok(());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            Err(AuthenticateError::CredentialsNotFound)
         })
     }
 }
@@ -190,6 +327,7 @@ impl AnthropicLanguageModelProvider {
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
+            oauth: None,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -306,7 +444,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        self.state.update(cx, |state, cx| state.reset_auth(cx))
     }
 }
 
@@ -396,15 +534,36 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
+        let Ok((api_key, api_url, oauth)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (state.api_key.clone(), settings.api_url.clone())
+            (
+                state.api_key.clone(),
+                settings.api_url.clone(),
+                state.oauth.clone(),
+            )
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         async move {
-            let api_key = api_key.context("Missing Anthropic API Key")?;
+            let api_key = match (api_key, oauth) {
+                (Some(key), _) => key,
+                (None, Some(mut oauth)) => {
+                    // TODO: When OAuth token is refreshed by access_token(), we should update the state
+                    // to persist the new tokens. However, this requires an entity context (Context<State>)
+                    // which isn't available in this async closure. The proper solution would be to:
+                    // 1. Move the OAuth refresh logic to a method that has access to Context<State>
+                    // 2. Use cx.spawn() to handle the async refresh with proper state updates
+                    // 3. Call set_oauth() to persist the refreshed tokens
+                    // For now, the tokens are refreshed in memory but not persisted to storage
+                    oauth
+                        .access_token(http_client.as_ref())
+                        .await?
+                        .ok_or_else(|| anyhow!("Failed to get OAuth access token"))?
+                }
+                (None, None) => return Err(anyhow!("No authentication configured").into()),
+            };
+
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.map_err(|err| match err {
@@ -458,7 +617,23 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn api_key(&self, cx: &App) -> Option<String> {
-        self.state.read(cx).api_key.clone()
+        let state = self.state.read(cx);
+        if let Some(api_key) = &state.api_key {
+            Some(api_key.clone())
+        } else if let Some(oauth) = &state.oauth {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+
+            if oauth.expires > now {
+                Some(oauth.access_token.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     fn max_token_count(&self) -> u64 {
@@ -911,7 +1086,7 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 
 struct ConfigurationView {
     api_key_editor: Entity<Editor>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
@@ -971,16 +1146,37 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.clone();
+        self.load_credentials_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(task) = state.update(cx, |state, cx| state.reset_auth(cx)).ok() {
+                task.await.log_err();
+            }
+            this.update(cx, |this, cx| {
+                this.load_credentials_task = None;
+                cx.notify();
+            })
+            .ok();
+        }));
         self.api_key_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
-
-        let state = self.state.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
-        })
-        .detach_and_log_err(cx);
-
         cx.notify();
+    }
+
+    fn initiate_claude_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.read(cx);
+        if let Some(oauth) = &state.oauth {
+            if !oauth.is_expired() {
+                return;
+            }
+        }
+
+        if let Some(workspace) = window.root::<Workspace>().flatten() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    ClaudeSignIn::new(self.state.clone(), window, cx)
+                });
+            });
+        }
     }
 
     fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1009,58 +1205,140 @@ impl ConfigurationView {
     }
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
+        let state = self.state.read(cx);
+        (state.api_key.is_none() && !state.api_key_from_env)
+            && (state.oauth.is_none()
+                || state
+                    .oauth
+                    .as_ref()
+                    .map(|oauth| oauth.is_expired())
+                    .unwrap_or(true))
+    }
+
+    fn get_auth_status_message(&self, cx: &mut Context<Self>) -> (String, bool) {
+        let state = self.state.read(cx);
+
+        if state.api_key_from_env {
+            (
+                format!("API key set in {ANTHROPIC_API_KEY_VAR} environment variable."),
+                true,
+            )
+        } else if let Some(oauth) = &state.oauth {
+            if oauth.is_expired() {
+                ("OAuth token expired.".to_string(), false)
+            } else {
+                ("Signed in with Claude.".to_string(), true)
+            }
+        } else if state.api_key.is_some() {
+            ("API key configured.".to_string(), true)
+        } else {
+            ("No authentication configured.".to_string(), false)
+        }
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_from_env;
-
         if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(Icon::new(IconName::Spinner).with_animation(
+                    "spin",
+                    Animation::new(Duration::from_secs(1)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                ))
+                .child(Label::new("Loading credentials..."))
+                .into_any()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
+                .gap_6()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Anthropic's AI models in Zed, you can either add an API key or sign in with your Claude account:"))
                 .child(
-                    List::new()
+                    v_flex()
+                        .gap_4()
                         .child(
-                            InstructionListItem::new(
-                                "Create one by visiting",
-                                Some("Anthropic's settings"),
-                                Some("https://console.anthropic.com/settings/keys")
-                            )
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    List::new()
+                                        .child(
+                                            InstructionListItem::new(
+                                                "Get your API key from",
+                                                Some("console.anthropic.com/settings/keys"),
+                                                Some("https://console.anthropic.com/settings/keys")
+                                            )
+                                        )
+                                        .child(
+                                            InstructionListItem::text_only("Paste your API key below and press Enter to start using Claude")
+                                        )
+                                )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .my_2()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(cx.theme().colors().editor_background)
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .rounded_sm()
+                                        .child(self.render_api_key_editor(cx)),
+                                )
+                                .child(
+                                    Label::new(
+                                        format!("Or set the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed"),
+                                    )
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                            v_flex()
+                                .gap_3()
+                                .mt_4()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .h_px()
+                                                .bg(cx.theme().colors().border_variant)
+                                        )
+                                        .child(
+                                            Label::new("or")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small)
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .h_px()
+                                                .bg(cx.theme().colors().border_variant)
+                                        )
+                                )
+                                .child(
+                                    Button::new("sign-in-claude", "Sign in with Claude")
+                                        .icon(Some(IconName::AiClaude))
+                                        .icon_position(IconPosition::Start)
+                                        .style(ButtonStyle::Subtle)
+                                        .full_width()
+                                        .on_click(cx.listener(|this, _, window, cx| this.initiate_claude_sign_in(window, cx)))
+                                )
                         )
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
-                .child(
-                    Label::new(
-                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
                 )
                 .into_any()
         } else {
             h_flex()
                 .mt_1()
-                .p_1()
+                .p_2()
                 .justify_between()
                 .rounded_md()
                 .border_1()
@@ -1068,16 +1346,15 @@ impl Render for ConfigurationView {
                 .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
-                        .gap_1()
+                        .gap_2()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("API key set in {ANTHROPIC_API_KEY_VAR} environment variable.")
-                        } else {
-                            "API key configured.".to_string()
-                        })),
+                        .child({
+                            let (message, _) = self.get_auth_status_message(cx);
+                            Label::new(message).color(Color::Muted)
+                        }),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-credentials", "Reset Credentials")
                         .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
@@ -1090,6 +1367,497 @@ impl Render for ConfigurationView {
                 )
                 .into_any()
         }
+    }
+}
+
+pub struct ClaudeSignIn {
+    status: ClaudeSignInStatus,
+    focus_handle: FocusHandle,
+    state: Entity<State>,
+    verification_code_input: Entity<Editor>,
+    _subscription: Option<Subscription>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ClaudeSignInStatus {
+    ShowSignInButton,
+    ShowCodeInput { verification_url: String },
+    Verifying,
+    Success,
+    Error(String),
+}
+
+impl Focusable for ClaudeSignIn {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for ClaudeSignIn {}
+
+impl ModalView for ClaudeSignIn {
+    fn on_before_dismiss(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
+
+impl ClaudeSignIn {
+    pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let status = ClaudeSignInStatus::ShowSignInButton;
+
+        let verification_code_input = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Paste verification code here...", cx);
+            editor
+        });
+
+        let this = Self {
+            status,
+            focus_handle: cx.focus_handle(),
+            state: state.clone(),
+            verification_code_input,
+            _subscription: None,
+        };
+
+        this
+    }
+
+    fn start_oauth_flow(&mut self, cx: &mut Context<Self>) {
+        self.status = ClaudeSignInStatus::Verifying;
+        cx.notify();
+
+        cx.spawn(
+            async move |this, cx| match AnthropicAuth::authorize().await {
+                Ok(authorize_result) => {
+                    if authorize_result.url.is_empty() {
+                        this.update(cx, |this, cx| {
+                            this.status = ClaudeSignInStatus::Error(
+                                "Invalid authorization response".to_string(),
+                            );
+                            cx.notify();
+                        })
+                        .ok();
+                        return;
+                    }
+
+                    // Automatically open the URL when we get it
+                    let url = authorize_result.url.clone();
+                    cx.update(|cx| {
+                        cx.open_url(&url);
+                    })
+                    .ok();
+
+                    this.update(cx, |this, cx| {
+                        this.status = ClaudeSignInStatus::ShowCodeInput {
+                            verification_url: authorize_result.url,
+                        };
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(err) => {
+                    let error_message = if err.to_string().contains("network") {
+                        "Network error. Please check your connection and try again.".to_string()
+                    } else if err.to_string().contains("timeout") {
+                        "Request timed out. Please try again.".to_string()
+                    } else {
+                        "Failed to start authentication. Please try again.".to_string()
+                    };
+
+                    this.update(cx, |this, cx| {
+                        this.status = ClaudeSignInStatus::Error(error_message);
+                        cx.notify();
+                    })
+                    .ok();
+                    log::error!("Failed to initiate OAuth flow: {}", err);
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn verify_code(&mut self, code: String, cx: &mut Context<Self>) {
+        let code = code.trim().to_string();
+
+        if code.is_empty() {
+            self.status = ClaudeSignInStatus::Error("Please enter a verification code".to_string());
+            cx.notify();
+            return;
+        }
+
+        if code.len() < 4 {
+            self.status = ClaudeSignInStatus::Error("Verification code is too short".to_string());
+            cx.notify();
+            return;
+        }
+
+        let state = self.state.clone();
+        self.status = ClaudeSignInStatus::Verifying;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let http_client = match cx.update(|cx| cx.http_client().clone()) {
+                Ok(client) => client,
+                Err(_) => {
+                    this.update(cx, |this, cx| {
+                        this.status = ClaudeSignInStatus::Error("Connection error".to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+
+            match AnthropicAuth::exchange(&*http_client, &code, "verifier").await {
+                Ok(oauth_auth) => {
+                    match state.update(cx, |state, cx| state.set_oauth(oauth_auth, cx)) {
+                        Ok(save_task) => {
+                            if let Err(_) = save_task.await {
+                                this.update(cx, |this, cx| {
+                                    this.status = ClaudeSignInStatus::Error(
+                                        "Failed to save credentials".to_string(),
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                                return;
+                            }
+
+                            state.update(cx, |_, cx| cx.notify()).ok();
+                            this.update(cx, |this, cx| {
+                                this.status = ClaudeSignInStatus::Success;
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                        Err(_) => {
+                            this.update(cx, |this, cx| {
+                                this.status = ClaudeSignInStatus::Error(
+                                    "Failed to save authentication".to_string(),
+                                );
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }
+                }
+                Err(err) => {
+                    let error_message = match err.to_string().to_lowercase() {
+                        s if s.contains("invalid") => {
+                            "Invalid verification code. Please try again."
+                        }
+                        s if s.contains("expired") => "Code expired. Please restart sign-in.",
+                        s if s.contains("network") => "Network error. Check your connection.",
+                        _ => "Authentication failed. Please try again.",
+                    };
+
+                    this.update(cx, |this, cx| {
+                        this.status = ClaudeSignInStatus::Error(error_message.to_string());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn render_success_modal(cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_6()
+            .items_center()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Vector::new(VectorName::ZedXClaude, rems(6.), rems(3.))
+                            .color(Color::Custom(cx.theme().colors().icon))
+                    )
+            )
+            .child(Headline::new("Welcome to Claude in Zed!").size(HeadlineSize::Large))
+            .child(
+                Label::new("Your Claude account is connected and ready to use. You can now access Claude's powerful AI models directly in your editor.")
+                    .size(LabelSize::Default)
+                    .color(Color::Muted)
+            )
+            .child(
+                Button::new("claude-success-done", "Start Using Claude")
+                    .full_width()
+                    .style(ButtonStyle::Filled)
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(DismissEvent);
+                    })),
+            )
+    }
+
+    fn render_error_modal(error: String, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_6()
+            .items_center()
+            .child(
+                div().flex().items_center().justify_center().child(
+                    Vector::new(VectorName::ZedXClaude, rems(6.), rems(3.))
+                        .color(Color::Custom(cx.theme().colors().icon)),
+                ),
+            )
+            .child(Headline::new("Something went wrong").size(HeadlineSize::Large))
+            .child(
+                Label::new(error)
+                    .size(LabelSize::Default)
+                    .color(Color::Muted),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        Button::new("claude-error-retry", "Try Again")
+                            .full_width()
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.status = ClaudeSignInStatus::ShowSignInButton;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("claude-error-cancel", "Cancel")
+                            .full_width()
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(DismissEvent);
+                            })),
+                    ),
+            )
+    }
+
+    fn render_sign_in_button(cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_6()
+            .items_center()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Vector::new(VectorName::ZedXClaude, rems(6.), rems(3.))
+                            .color(Color::Custom(cx.theme().colors().icon))
+                    )
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(Headline::new("Sign in to Claude").size(HeadlineSize::Large))
+                    .child(
+                        Label::new("Connect your Claude account to unlock Anthropic's most advanced AI models right inside Zed.")
+                            .size(LabelSize::Default)
+                            .color(Color::Muted)
+                    )
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .w_full()
+                    .child(
+                        Button::new("go-to-claude", "Continue with Claude")
+                            .style(ButtonStyle::Filled)
+                            .full_width()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.start_oauth_flow(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("claude-cancel", "Cancel")
+                            .full_width()
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(DismissEvent);
+                            })),
+                    )
+            )
+    }
+
+    fn render_code_input_modal(
+        &self,
+        verification_url: &str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let verification_url = verification_url.to_string();
+
+        v_flex()
+            .gap_6()
+            .items_center()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Vector::new(VectorName::ZedXClaude, rems(6.), rems(3.))
+                            .color(Color::Custom(cx.theme().colors().icon))
+                    )
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Headline::new("Enter your verification code").size(HeadlineSize::Large))
+                    .child(
+                        Label::new("A browser window should have opened with your verification code. Copy the code and paste it below to complete the setup.")
+                            .size(LabelSize::Default)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .w_full()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px_2()
+                            .py_1()
+                            .bg(cx.theme().colors().editor_background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_sm()
+                            .child(self.render_verification_code_editor(cx)),
+                    )
+                    .child(
+                        Button::new("verify-code", "Complete Setup")
+                            .style(ButtonStyle::Filled)
+                            .full_width()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let code = this
+                                    .verification_code_input
+                                    .read(cx)
+                                    .text(cx);
+                                if !code.trim().is_empty() {
+                                    this.verify_code(code.trim().to_string(), cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("open-browser-again", "Reopen Browser")
+                            .style(ButtonStyle::Subtle)
+                            .icon(Some(IconName::ExternalLink))
+                            .icon_size(IconSize::Small)
+                            .full_width()
+                            .on_click({
+                                let verification_url = verification_url.clone();
+                                cx.listener(move |_, _, _, cx| {
+                                    cx.open_url(&verification_url);
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new("code-cancel", "Cancel")
+                            .full_width()
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(DismissEvent);
+                            })),
+                    ),
+            )
+    }
+
+    fn render_verifying_modal(cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_6()
+            .items_center()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Vector::new(VectorName::ZedXClaude, rems(6.), rems(3.))
+                            .color(Color::Custom(cx.theme().colors().icon))
+                    )
+            )
+            .child(
+                Icon::new(IconName::Spinner)
+                    .size(IconSize::XLarge)
+                    .with_animation(
+                        "claude_verify_loading",
+                        Animation::new(Duration::from_secs(1)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ),
+            )
+            .child(Headline::new("Connecting to Claude...").size(HeadlineSize::Large))
+            .child(
+                Label::new("We're securely connecting your Claude account to Zed. This will just take a moment.")
+                    .size(LabelSize::Default)
+                    .color(Color::Muted),
+            )
+    }
+
+    fn render_verification_code_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.ui_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            white_space: WhiteSpace::Normal,
+            ..Default::default()
+        };
+        EditorElement::new(
+            &self.verification_code_input,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+}
+
+impl Render for ClaudeSignIn {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match &self.status {
+            ClaudeSignInStatus::ShowSignInButton => {
+                Self::render_sign_in_button(cx).into_any_element()
+            }
+            ClaudeSignInStatus::ShowCodeInput { verification_url } => self
+                .render_code_input_modal(verification_url, cx)
+                .into_any_element(),
+            ClaudeSignInStatus::Verifying => Self::render_verifying_modal(cx).into_any_element(),
+            ClaudeSignInStatus::Success => Self::render_success_modal(cx).into_any_element(),
+            ClaudeSignInStatus::Error(error) => {
+                Self::render_error_modal(error.clone(), cx).into_any_element()
+            }
+        };
+
+        div()
+            .id("claude-sign-in-modal")
+            .track_focus(&self.focus_handle(cx))
+            .elevation_3(cx)
+            .w(rems(24.))
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_xl()
+            .shadow_2xl()
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _| {
+                window.focus(&this.focus_handle);
+            }))
+            .child(v_flex().p_6().gap_4().items_center().child(content))
     }
 }
 

@@ -1,16 +1,181 @@
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use oauth2::PkceCodeChallenge;
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
+use url::Url;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnthropicAuth {
+    pub refresh_token: String,
+    pub access_token: String,
+    pub expires: u64,
+}
+
+impl AnthropicAuth {
+    const CLIENT_ID: &'static str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+    pub fn new(refresh: impl Into<String>, access: impl Into<String>, expires: u64) -> Self {
+        Self {
+            refresh_token: refresh.into(),
+            access_token: access.into(),
+            expires,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.expires <= now
+    }
+
+    pub async fn authorize() -> Result<AuthorizeResult> {
+        // TODO: remove this to use something simpler or check other implementation to find out what can be used here.
+        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+
+        let mut url = Url::parse("https://claude.ai/oauth/authorize")?;
+        url.query_pairs_mut()
+            .append_pair("code", "true")
+            .append_pair("client_id", Self::CLIENT_ID)
+            .append_pair("response_type", "code")
+            .append_pair(
+                "redirect_uri",
+                "https://console.anthropic.com/oauth/code/callback",
+            )
+            .append_pair("scope", "org:create_api_key user:profile user:inference")
+            .append_pair("code_challenge", pkce_challenge.as_str())
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("state", pkce_verifier.secret());
+
+        Ok(AuthorizeResult {
+            url: url.to_string(),
+            verifier: pkce_verifier.secret().to_string(),
+        })
+    }
+
+    pub async fn exchange(
+        client: &dyn HttpClient,
+        code: &str,
+        verifier: &str,
+    ) -> Result<AnthropicAuth, AnthropicError> {
+        let splits: Vec<&str> = code.split('#').collect();
+
+        let request_body = serde_json::json!({
+            "code": splits[0],
+            "state": splits.get(1).unwrap_or(&""),
+            "grant_type": "authorization_code",
+            "client_id": Self::CLIENT_ID,
+            "redirect_uri": "https://console.anthropic.com/oauth/code/callback",
+            "code_verifier": verifier,
+        });
+
+        let request = HttpRequest::builder()
+            .method(Method::POST)
+            .uri("https://console.anthropic.com/v1/oauth/token")
+            .header("Content-Type", "application/json")
+            .body(
+                serde_json::to_string(&request_body)
+                    .map_err(|e| AnthropicError::Other(anyhow::anyhow!(e)))?
+                    .into(),
+            )
+            .map_err(|e| AnthropicError::Other(anyhow::anyhow!(e)))?;
+
+        let response = client
+            .send(request)
+            .await
+            .map_err(|e| AnthropicError::Other(anyhow::anyhow!(e)))?;
+
+        if !response.status().is_success() {
+            let error_msg = format!(
+                "OAuth token exchange failed with status: {}",
+                response.status()
+            );
+            return Err(AnthropicError::Other(anyhow::anyhow!(error_msg)));
+        }
+
+        let mut body = String::new();
+        response
+            .into_body()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| AnthropicError::Other(anyhow::anyhow!(e)))?;
+        let json: TokenResponse =
+            serde_json::from_str(&body).map_err(|e| AnthropicError::Other(anyhow::anyhow!(e)))?;
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| AnthropicError::Other(anyhow::anyhow!(e)))?
+            .as_millis() as u64;
+
+        Ok(AnthropicAuth::new(
+            json.refresh_token,
+            json.access_token,
+            now + (json.expires_in * 1000),
+        ))
+    }
+
+    pub async fn access_token(&mut self, client: &dyn HttpClient) -> Result<Option<String>> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+
+        if self.expires > now {
+            return Ok(Some(self.access_token.clone()));
+        }
+
+        let request_body = serde_json::json!({
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "client_id": Self::CLIENT_ID,
+        });
+
+        let request = HttpRequest::builder()
+            .method(Method::POST)
+            .uri("https://console.anthropic.com/v1/oauth/token")
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&request_body)?.into())?;
+
+        let response = client.send(request).await?;
+
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+
+        let mut body = String::new();
+        response.into_body().read_to_string(&mut body).await?;
+        let json: TokenResponse = serde_json::from_str(&body)?;
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+
+        self.refresh_token = json.refresh_token;
+        self.access_token = json.access_token.clone();
+        self.expires = now + (json.expires_in * 1000);
+
+        Ok(Some(json.access_token))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthorizeResult {
+    pub url: String,
+    pub verifier: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    refresh_token: String,
+    access_token: String,
+    expires_in: u64,
+}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

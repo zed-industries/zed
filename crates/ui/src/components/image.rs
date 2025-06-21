@@ -14,6 +14,7 @@ use crate::prelude::*;
 pub enum VectorName {
     ZedLogo,
     ZedXCopilot,
+    ZedXClaude,
     Grid,
     AiGrid,
     DebuggerGrid,
