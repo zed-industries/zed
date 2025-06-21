@@ -31,6 +31,7 @@ parking_lot.workspace = true
 paths.workspace = true
 prost.workspace = true
 release_channel.workspace = true
+remote_path.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace =  true
 serde.workspace = true

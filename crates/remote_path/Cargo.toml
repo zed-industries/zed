@@ -1,0 +1,20 @@
+[package]
+name = "remote_path"
+description = "Cross-platform remote path handling for the Zed app and zed.dev server"
+edition.workspace = true
+version = "0.1.0"
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/remote_path.rs"
+doctest = false
+
+[features]
+default = []
+
+[dependencies]
+workspace-hack.workspace = true

@@ -1,5 +1,6 @@
 use crate::{Envelope, PeerId};
 use anyhow::{Context as _, Result};
+use remote_path::{PathStyle, RemotePathBuf};
 use serde::Serialize;
 use std::{
     any::{Any, TypeId},
@@ -130,7 +131,7 @@ pub trait ToProto {
 impl FromProto for PathBuf {
     #[cfg(target_os = "windows")]
     fn from_proto(proto: String) -> Self {
-        proto.split("/").collect()
+        proto.replace('/', "\\").into()
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -148,10 +149,7 @@ impl FromProto for Arc<Path> {
 impl ToProto for PathBuf {
     #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
-        self.components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/")
+        self.to_string_lossy().replace('\\', "/")
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -163,15 +161,30 @@ impl ToProto for PathBuf {
 impl ToProto for &Path {
     #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
-        self.components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/")
+        self.to_string_lossy().replace('\\', "/")
     }
 
     #[cfg(not(target_os = "windows"))]
     fn to_proto(self) -> String {
         self.to_string_lossy().to_string()
+    }
+}
+
+impl ToProto for RemotePathBuf {
+    #[cfg(target_os = "windows")]
+    fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.to_string(),
+            PathStyle::Windows => self.as_path().to_proto(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.as_path().to_proto(),
+            PathStyle::Windows => self.to_string(),
+        }
     }
 }
 

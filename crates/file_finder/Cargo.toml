@@ -23,6 +23,7 @@ gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
+remote_path.workspace = true
 schemars.workspace = true
 search.workspace = true
 settings.workspace = true

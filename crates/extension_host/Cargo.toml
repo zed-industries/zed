@@ -36,6 +36,7 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 remote.workspace = true
+remote_path.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 semantic_version.workspace = true

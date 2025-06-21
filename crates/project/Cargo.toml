@@ -63,6 +63,7 @@ prettier.workspace = true
 rand.workspace = true
 regex.workspace = true
 remote.workspace = true
+remote_path.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
