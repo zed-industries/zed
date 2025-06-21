@@ -1061,7 +1061,6 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 return Ok(());
             }
             let desc = &*glyphrundescription;
-            let utf16_length_per_glyph = desc.stringLength as usize / glyph_count;
             let context =
                 &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext);
 
@@ -1088,12 +1087,24 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             } else {
                 context.text_system.select_font(&font_struct)
             };
+
+            let glyph_ids = std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count);
+            let glyph_advances = std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count);
+            let cluster_map =
+                std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize);
+            let mut last_glyph_index = 0;
             let mut glyphs = Vec::with_capacity(glyph_count);
-            for index in 0..glyph_count {
-                let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
+            for index in 0..desc.stringLength as usize {
                 context
                     .index_converter
                     .advance_to_utf16_ix(context.utf16_index);
+                context.utf16_index += 1;
+                let glyph_index = cluster_map[index];
+                if index != 0 && last_glyph_index == glyph_index {
+                    last_glyph_index = glyph_index;
+                    continue;
+                }
+                let id = GlyphId(glyph_ids[glyph_index as usize] as u32);
                 let is_emoji = color_font
                     && is_color_glyph(font_face, id, &context.text_system.components.factory);
                 glyphs.push(ShapedGlyph {
@@ -1102,8 +1113,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     index: context.index_converter.utf8_ix,
                     is_emoji,
                 });
-                context.utf16_index += utf16_length_per_glyph;
-                context.width += *glyphrun.glyphAdvances.add(index);
+                context.width += glyph_advances[index];
             }
             context.runs.push(ShapedRun { font_id, glyphs });
         }
