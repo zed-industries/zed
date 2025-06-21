@@ -1009,6 +1009,47 @@ struct RendererContext<'t, 'a, 'b> {
     width: f32,
 }
 
+#[derive(Debug)]
+struct ClusterAnalyzer<'t> {
+    utf16_idx: usize,
+    glyph_idx: usize,
+    cluster_map: &'t [u16],
+}
+
+impl<'t> ClusterAnalyzer<'t> {
+    pub fn new(cluster_map: &'t [u16]) -> Self {
+        ClusterAnalyzer {
+            utf16_idx: 0,
+            glyph_idx: 0,
+            cluster_map,
+        }
+    }
+
+    pub fn next(&mut self) -> (usize, usize, bool) {
+        println!("\nChecking: {:#?}", self);
+        let init_utf16_idx = self.utf16_idx;
+        for glyph_idx in self.cluster_map[self.utf16_idx..].iter() {
+            println!("Comparing: {} with {}", *glyph_idx as usize, self.glyph_idx);
+            if *glyph_idx as usize == self.glyph_idx {
+                self.utf16_idx += 1;
+                if self.utf16_idx >= self.cluster_map.len() {
+                    return (
+                        self.utf16_idx - init_utf16_idx,
+                        *glyph_idx as usize - self.glyph_idx,
+                        false,
+                    );
+                }
+            } else {
+                break;
+            }
+        }
+        let utf16_len = self.utf16_idx - init_utf16_idx;
+        let glyph_count = self.cluster_map[self.utf16_idx] - self.glyph_idx as u16;
+        self.glyph_idx = self.cluster_map[self.utf16_idx] as usize;
+        (utf16_len, glyph_count as usize, true)
+    }
+}
+
 #[allow(non_snake_case)]
 impl IDWritePixelSnapping_Impl for TextRenderer_Impl {
     fn IsPixelSnappingDisabled(
@@ -1517,3 +1558,19 @@ const BRUSH_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     b: 1.0,
     a: 1.0,
 };
+
+#[cfg(test)]
+mod tests {
+    use crate::platform::windows::direct_write::ClusterAnalyzer;
+
+    #[test]
+    fn test_cluster_map() {
+        // 👨‍👩‍👧‍👦👩‍💻
+        let cluster_map = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 4, 4, 4];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map);
+        let next = analyzer.next();
+        assert_eq!(next, (11, 4, true));
+        let next = analyzer.next();
+        assert_eq!(next, (5, 0, false));
+    }
+}
