@@ -67,12 +67,13 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action(
                     "Open Recent...",
                     zed_actions::OpenRecent {
-                        create_new_window: true,
+                        create_new_window: false,
                     },
                 ),
                 MenuItem::action(
                     "Open Remote...",
                     zed_actions::OpenRemote {
+                        create_new_window: false,
                         from_existing_connection: false,
                     },
                 ),
@@ -200,6 +201,30 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic),
                 MenuItem::action("Previous Problem", editor::actions::GoToPreviousDiagnostic),
+            ],
+        },
+        Menu {
+            name: "Run".into(),
+            items: vec![
+                MenuItem::action(
+                    "Spawn Task",
+                    zed_actions::Spawn::ViaModal {
+                        reveal_target: None,
+                    },
+                ),
+                MenuItem::action("Start Debugger", debugger_ui::Start),
+                MenuItem::separator(),
+                MenuItem::action("Edit tasks.json...", crate::zed::OpenProjectTasks),
+                MenuItem::action("Edit debug.json...", zed_actions::OpenProjectDebugTasks),
+                MenuItem::separator(),
+                MenuItem::action("Continue", debugger_ui::Continue),
+                MenuItem::action("Step Over", debugger_ui::StepOver),
+                MenuItem::action("Step Into", debugger_ui::StepInto),
+                MenuItem::action("Step Out", debugger_ui::StepOut),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Breakpoint", editor::actions::ToggleBreakpoint),
+                MenuItem::action("Edit Breakpoint", editor::actions::EditLogBreakpoint),
+                MenuItem::action("Clear all Breakpoints", debugger_ui::ClearAllBreakpoints),
             ],
         },
         Menu {

@@ -1,6 +1,6 @@
 use crate::{
     AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
-    display_map::ToDisplayPoint,
+    display_map::{HighlightKey, ToDisplayPoint},
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
@@ -304,6 +304,7 @@ impl EditorTestContext {
         fs.set_head_for_repo(
             &Self::root_path().join(".git"),
             &[(path.into(), diff_base.to_string())],
+            "deadbeef",
         );
         self.cx.run_until_parked();
     }
@@ -508,7 +509,7 @@ impl EditorTestContext {
             let snapshot = editor.snapshot(window, cx);
             editor
                 .background_highlights
-                .get(&TypeId::of::<Tag>())
+                .get(&HighlightKey::Type(TypeId::of::<Tag>()))
                 .map(|h| h.1.clone())
                 .unwrap_or_default()
                 .iter()

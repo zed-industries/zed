@@ -43,7 +43,7 @@ pub struct WindowsWindowState {
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub last_reported_modifiers: Option<Modifiers>,
-    pub suppress_next_char_msg: bool,
+    pub last_reported_capslock: Option<Capslock>,
     pub system_key_handled: bool,
     pub hovered: bool,
 
@@ -103,7 +103,7 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let last_reported_modifiers = None;
-        let suppress_next_char_msg = false;
+        let last_reported_capslock = None;
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
@@ -123,7 +123,7 @@ impl WindowsWindowState {
             callbacks,
             input_handler,
             last_reported_modifiers,
-            suppress_next_char_msg,
+            last_reported_capslock,
             system_key_handled,
             hovered,
             renderer,
@@ -192,40 +192,6 @@ impl WindowsWindowState {
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.logical_size
-    }
-
-    fn title_bar_padding(&self) -> Pixels {
-        // using USER_DEFAULT_SCREEN_DPI because GPUI handles the scale with the scale factor
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
-        px(padding as f32)
-    }
-
-    fn title_bar_top_offset(&self) -> Pixels {
-        if self.is_maximized() {
-            self.title_bar_padding() * 2
-        } else {
-            px(0.)
-        }
-    }
-
-    fn title_bar_height(&self) -> Pixels {
-        // todo(windows) this is hardcoded to match the ui title bar
-        //               in the future the ui title bar component will report the size
-        px(32.) + self.title_bar_top_offset()
-    }
-
-    pub(crate) fn caption_button_width(&self) -> Pixels {
-        // todo(windows) this is hardcoded to match the ui title bar
-        //               in the future the ui title bar component will report the size
-        px(36.)
-    }
-
-    pub(crate) fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
-        let height = self.title_bar_height();
-        let mut rect = RECT::default();
-        unsafe { GetClientRect(self.hwnd, &mut rect) }?;
-        rect.bottom = rect.top + ((height.0 * self.scale_factor).round() as i32);
-        Ok(rect)
     }
 }
 
@@ -350,6 +316,7 @@ pub(crate) struct Callbacks {
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
+    pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
@@ -595,6 +562,10 @@ impl PlatformWindow for WindowsWindow {
         current_modifiers()
     }
 
+    fn capslock(&self) -> Capslock {
+        current_capslock()
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
@@ -797,6 +768,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.0.state.borrow_mut().callbacks.close = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        self.0.state.borrow_mut().callbacks.hit_test_window_control = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
@@ -1290,7 +1265,7 @@ mod windows_renderer {
     use std::num::NonZeroIsize;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::get_window_long;
+    use crate::{get_window_long, show_error};
 
     pub(super) fn init(
         context: &BladeContext,
@@ -1302,7 +1277,12 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
-        BladeRenderer::new(context, &raw, config)
+        BladeRenderer::new(context, &raw, config).inspect_err(|err| {
+            show_error(
+                "Error: Zed failed to initialize BladeRenderer",
+                err.to_string(),
+            )
+        })
     }
 
     struct RawWindow {

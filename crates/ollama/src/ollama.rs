@@ -3,7 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -35,18 +35,18 @@ impl Default for KeepAlive {
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
     pub supports_vision: Option<bool>,
     pub supports_thinking: Option<bool>,
 }
 
-fn get_max_tokens(name: &str) -> usize {
+fn get_max_tokens(name: &str) -> u64 {
     /// Default context length for unknown models.
-    const DEFAULT_TOKENS: usize = 4096;
+    const DEFAULT_TOKENS: u64 = 4096;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
-    const MAXIMUM_TOKENS: usize = 16384;
+    const MAXIMUM_TOKENS: u64 = 16384;
 
     match name.split(':').next().unwrap() {
         "phi" | "tinyllama" | "granite-code" => 2048,
@@ -67,7 +67,7 @@ impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
-        max_tokens: Option<usize>,
+        max_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_vision: Option<bool>,
         supports_thinking: Option<bool>,
@@ -93,7 +93,7 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
 }
@@ -165,7 +165,7 @@ impl ChatRequest {
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 #[derive(Serialize, Default, Debug)]
 pub struct ChatOptions {
-    pub num_ctx: Option<usize>,
+    pub num_ctx: Option<u64>,
     pub num_predict: Option<isize>,
     pub stop: Option<Vec<String>>,
     pub temperature: Option<f32>,
@@ -183,6 +183,8 @@ pub struct ChatResponseDelta {
     pub done_reason: Option<String>,
     #[allow(unused)]
     pub done: bool,
+    pub prompt_eval_count: Option<u64>,
+    pub eval_count: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -355,36 +357,6 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     );
     let details: ModelShow = serde_json::from_str(body.as_str())?;
     Ok(details)
-}
-
-/// Sends an empty request to Ollama to trigger loading the model
-pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
-    let uri = format!("{api_url}/api/generate");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(
-            serde_json::json!({
-                "model": model,
-                "keep_alive": "15m",
-            })
-            .to_string(),
-        ))?;
-
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        anyhow::bail!(
-            "Failed to connect to Ollama API: {} {}",
-            response.status(),
-            body,
-        );
-    }
 }
 
 #[cfg(test)]

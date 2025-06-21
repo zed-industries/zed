@@ -8,11 +8,11 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
-    OllamaToolCall, get_models, preload_model, show_model, stream_chat_completion,
+    OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,7 @@ pub struct AvailableModel {
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
@@ -243,15 +243,6 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         models
     }
 
-    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let id = model.id().0.to_string();
-        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
-            .detach_and_log_err(cx);
-    }
-
     fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated()
     }
@@ -386,7 +377,7 @@ impl LanguageModel for OllamaLanguageModel {
         format!("ollama/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -394,7 +385,7 @@ impl LanguageModel for OllamaLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         // There is no endpoint for this _yet_ in Ollama
         // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
         let token_count = request
@@ -404,7 +395,7 @@ impl LanguageModel for OllamaLanguageModel {
             .sum::<usize>()
             / 4;
 
-        async move { Ok(token_count) }.boxed()
+        async move { Ok(token_count as u64) }.boxed()
     }
 
     fn stream_completion(
@@ -415,6 +406,7 @@ impl LanguageModel for OllamaLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_ollama_request(request);
@@ -424,7 +416,7 @@ impl LanguageModel for OllamaLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
             settings.api_url.clone()
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
@@ -515,6 +507,12 @@ fn map_to_language_model_completion_events(
             };
 
             if delta.done {
+                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: delta.prompt_eval_count.unwrap_or(0),
+                    output_tokens: delta.eval_count.unwrap_or(0),
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })));
                 if state.used_tools {
                     state.used_tools = false;
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));

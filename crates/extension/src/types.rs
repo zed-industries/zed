@@ -5,6 +5,8 @@ mod slash_command;
 
 use std::ops::Range;
 
+use util::redact::should_redact;
+
 pub use context_server::*;
 pub use dap::*;
 pub use lsp::*;
@@ -14,7 +16,6 @@ pub use slash_command::*;
 pub type EnvVars = Vec<(String, String)>;
 
 /// A command.
-#[derive(Debug)]
 pub struct Command {
     /// The command to execute.
     pub command: String,
@@ -22,6 +23,22 @@ pub struct Command {
     pub args: Vec<String>,
     /// The environment variables to set for the command.
     pub env: EnvVars,
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let filtered_env = self
+            .env
+            .iter()
+            .map(|(k, v)| (k, if should_redact(k) { "[REDACTED]" } else { v }))
+            .collect::<Vec<_>>();
+
+        f.debug_struct("Command")
+            .field("command", &self.command)
+            .field("args", &self.args)
+            .field("env", &filtered_env)
+            .finish()
+    }
 }
 
 /// A label containing some code.

@@ -14,7 +14,7 @@ Zed supports auto-formatting SQL using external tools like [`sql-formatter`](htt
 npm install -g sql-formatter
 ```
 
-2. Ensure `shfmt` is available in your path and check the version:
+2. Ensure `sql-formatter` is available in your path and check the version:
 
 ```sh
 which sql-formatter
@@ -42,7 +42,7 @@ You can add this to Zed project settings (`.zed/settings.json`) or via your Zed 
 
 ### Advanced Formatting
 
-Sql-formatter also allows more precise control by providing [sql-formatter configuration options](https://github.com/sql-formatter-org/sql-formatter#configuration-options). To provide these, create a `sql-formatter.json` file in your project:
+Sql-formatter also allows more precise control by providing [sql-formatter configuration options](https://github.com/sql-formatter-org/sql-formatter#configuration-options). To provide these, create a `.sql-formatter.json` file in your project:
 
 ```json
 {
@@ -53,7 +53,7 @@ Sql-formatter also allows more precise control by providing [sql-formatter confi
 }
 ```
 
-When using a `sql-formatter.json` file you can use a more simplified set of Zed settings since the language need not be specified inline:
+When using a `.sql-formatter.json` file you can use a more simplified set of Zed settings since the language need not be specified inline:
 
 ```json
   "languages": {

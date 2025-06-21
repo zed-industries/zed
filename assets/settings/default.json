@@ -101,12 +101,17 @@
     // The second option is decimal.
     "unit": "binary"
   },
-  // The key to use for adding multiple cursors
-  // Currently "alt" or "cmd_or_ctrl"  (also aliased as
-  // "cmd" and "ctrl") are supported.
+  // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+  //
+  // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+  //    "alt"
+  // 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+  //    "cmd_or_ctrl" (alias: "cmd", "ctrl")
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
+  // Whether to enable helix mode and key bindings.
+  "helix_mode": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
@@ -214,6 +219,8 @@
   "show_signature_help_after_edits": false,
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
+  // Whether to allow drag and drop text selection in buffer.
+  "drag_and_drop_selection": true,
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -302,6 +309,8 @@
   //    "all"
   // 4. Draw whitespaces at boundaries only:
   //    "boundary"
+  // 5. Draw whitespaces only after non-whitespace characters:
+  //    "trailing"
   // For a whitespace to be on a boundary, any of the following conditions need to be met:
   // - It is a tab
   // - It is adjacent to an edge (start or end)
@@ -393,6 +402,13 @@
     // 3. Never show the minimap:
     //    "never" (default)
     "show": "never",
+    // Where to show the minimap in the editor.
+    // This setting can take two values:
+    // 1. Show the minimap on the focused editor only:
+    //    "active_editor" (default)
+    // 2. Show the minimap on all open editors:
+    //    "all_editors"
+    "display_in": "active_editor",
     // When to show the minimap thumb.
     // This setting can take two values:
     // 1. Show the minimap thumb if the mouse is over the minimap:
@@ -419,7 +435,9 @@
     // 1. `null` to inherit the editor `current_line_highlight` setting (default)
     // 2. "line" or "all" to highlight the current line in the minimap.
     // 3. "gutter" or "none" to not highlight the current line in the minimap.
-    "current_line_highlight": null
+    "current_line_highlight": null,
+    // Maximum number of columns to display in the minimap.
+    "max_width_columns": 80
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
@@ -440,7 +458,9 @@
     // Whether to show breakpoints in the gutter.
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
-    "folds": true
+    "folds": true,
+    // Minimum number of characters to reserve space for in the gutter.
+    "min_line_number_digits": 4
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.
@@ -533,6 +553,9 @@
       "function": false
     }
   },
+  // Whether to resize all the panels in a dock when resizing the dock.
+  // Can be a combination of "left", "right" and "bottom".
+  "resize_all_panels_in_dock": ["left"],
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
@@ -596,7 +619,9 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
-    }
+    },
+    // Whether to hide the root entry when only one folder is open in the window.
+    "hide_root": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -768,7 +793,6 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
-          "create_file": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
@@ -1025,12 +1049,33 @@
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
+  // How to render LSP `textDocument/documentColor` colors in the editor.
+  //
+  // Possible values:
+  //
+  // 1. Do not query and render document colors.
+  //      "lsp_document_colors": "none",
+  // 2. Render document colors as inlay hints near the color text (default).
+  //      "lsp_document_colors": "inlay",
+  // 3. Draw a border around the color text.
+  //      "lsp_document_colors": "border",
+  // 4. Draw a background behind the color text..
+  //      "lsp_document_colors": "background",
+  "lsp_document_colors": "inlay",
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.
     "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
+    // Settings for using LSP pull diagnostics mechanism in Zed.
+    "lsp_pull_diagnostics": {
+      // Whether to pull for diagnostics or not.
+      "enabled": true,
+      // Minimum time to wait before pulling diagnostics from the language server(s).
+      // 0 turns the debounce off.
+      "debounce_ms": 50
+    },
     // Settings for inline diagnostics
     "inline": {
       // Whether to show diagnostics inline or not
@@ -1454,12 +1499,15 @@
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Git Commit": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "preferred_line_length": 72
     },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
-      }
+      },
+      "debuggers": ["Delve"]
     },
     "GraphQL": {
       "prettier": {
@@ -1524,18 +1572,18 @@
     "Plain Text": {
       "allow_rewrap": "anywhere"
     },
+    "Python": {
+      "debuggers": ["Debugpy"]
+    },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
+    },
+    "Rust": {
+      "debuggers": ["CodeLLDB"]
     },
     "SCSS": {
       "prettier": {
         "allowed": true
-      }
-    },
-    "SQL": {
-      "prettier": {
-        "allowed": true,
-        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Starlark": {

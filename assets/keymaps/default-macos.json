@@ -138,7 +138,8 @@
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
-      "cmd-alt-g b": "editor::ToggleGitBlame",
+      "cmd-alt-g b": "git::Blame",
+      "cmd-alt-g m": "git::OpenModifiedFiles",
       "cmd-i": "editor::ShowSignatureHelp",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint",
@@ -181,8 +182,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-tab": "editor::NextEditPrediction",
-      "alt-shift-tab": "editor::PreviousEditPrediction",
-      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
+      "alt-shift-tab": "editor::PreviousEditPrediction"
     }
   },
   {
@@ -253,7 +253,6 @@
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd-s": "workspace::Save",
-      "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
@@ -280,6 +279,7 @@
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
+      "cmd->": "assistant::QuoteSelection",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-enter": "agent::ContinueThread",
@@ -584,9 +584,9 @@
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
-      "alt-cmd-o": "projects::OpenRecent",
-      "ctrl-cmd-o": "projects::OpenRemote",
-      "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true }],
+      "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
@@ -719,14 +719,16 @@
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
-      "tab": "editor::AcceptEditPrediction"
+      "tab": "editor::AcceptEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
     "context": "Editor && edit_prediction_conflict",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-tab": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
@@ -862,7 +864,10 @@
       "right": "variable_list::ExpandSelectedEntry",
       "enter": "variable_list::EditVariable",
       "cmd-c": "variable_list::CopyVariableValue",
-      "cmd-alt-c": "variable_list::CopyVariableName"
+      "cmd-alt-c": "variable_list::CopyVariableName",
+      "delete": "variable_list::RemoveWatch",
+      "backspace": "variable_list::RemoveWatch",
+      "alt-enter": "variable_list::AddWatch"
     }
   },
   {
@@ -967,7 +972,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
+      "space": "menu::Confirm",
+      "cmd-up": "collab_panel::MoveChannelUp",
+      "cmd-down": "collab_panel::MoveChannelDown"
     }
   },
   {
@@ -1131,7 +1138,8 @@
     "context": "DebugConsole > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "menu::Confirm"
+      "enter": "menu::Confirm",
+      "alt-enter": "console::WatchExpression"
     }
   },
   {

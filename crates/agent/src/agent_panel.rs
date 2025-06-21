@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
-    ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
-    make_lsp_adapter_delegate, render_remaining_tokens,
+    AgentPanelDelegate, AssistantContext, ContextEditor, ContextEvent, ContextSummary,
+    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
+    render_remaining_tokens,
 };
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
@@ -29,7 +29,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -44,7 +44,7 @@ use ui::{
     Banner, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
     PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
-use util::{ResultExt as _, maybe};
+use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
@@ -57,7 +57,7 @@ use zed_llm_client::{CompletionIntent, UsageLimit};
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryStore, RecentEntry};
+use crate::history_store::{HistoryEntryId, HistoryStore};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
 use crate::thread_history::{HistoryEntryElement, ThreadHistory};
@@ -257,6 +257,7 @@ impl ActiveView {
 
     pub fn prompt_editor(
         context_editor: Entity<ContextEditor>,
+        history_store: Entity<HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
@@ -321,6 +322,19 @@ impl ActiveView {
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
                         })
+                    }
+                    ContextEvent::PathChanged { old_path, new_path } => {
+                        history_store.update(cx, |history_store, cx| {
+                            if let Some(old_path) = old_path {
+                                history_store
+                                    .replace_recently_opened_text_thread(old_path, new_path, cx);
+                            } else {
+                                history_store.push_recently_opened_entry(
+                                    HistoryEntryId::Context(new_path.clone()),
+                                    cx,
+                                );
+                            }
+                        });
                     }
                     _ => {}
                 }
@@ -505,9 +519,14 @@ impl AgentPanel {
         });
 
         let message_editor_subscription =
-            cx.subscribe(&message_editor, |_, _, event, cx| match event {
+            cx.subscribe(&message_editor, |this, _, event, cx| match event {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => {
+                    this.thread.update(cx, |thread, cx| {
+                        thread.scroll_to_bottom(cx);
+                    });
                 }
             });
 
@@ -516,8 +535,7 @@ impl AgentPanel {
             HistoryStore::new(
                 thread_store.clone(),
                 context_store.clone(),
-                [RecentEntry::Thread(thread_id, thread.clone())],
-                window,
+                [HistoryEntryId::Thread(thread_id)],
                 cx,
             )
         });
@@ -544,7 +562,13 @@ impl AgentPanel {
                     editor.insert_default_prompt(window, cx);
                     editor
                 });
-                ActiveView::prompt_editor(context_editor, language_registry.clone(), window, cx)
+                ActiveView::prompt_editor(
+                    context_editor,
+                    history_store.clone(),
+                    language_registry.clone(),
+                    window,
+                    cx,
+                )
             }
         };
 
@@ -581,86 +605,9 @@ impl AgentPanel {
             let panel = weak_panel.clone();
             let assistant_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
-                    let recently_opened = panel
-                        .update(cx, |this, cx| {
-                            this.history_store.update(cx, |history_store, cx| {
-                                history_store.recently_opened_entries(cx)
-                            })
-                        })
-                        .unwrap_or_default();
-
-                    if !recently_opened.is_empty() {
-                        menu = menu.header("Recently Opened");
-
-                        for entry in recently_opened.iter() {
-                            if let RecentEntry::Context(context) = entry {
-                                if context.read(cx).path().is_none() {
-                                    log::error!(
-                                        "bug: text thread in recent history list was never saved"
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            let summary = entry.summary(cx);
-
-                            menu = menu.entry_with_end_slot_on_hover(
-                                summary,
-                                None,
-                                {
-                                    let panel = panel.clone();
-                                    let entry = entry.clone();
-                                    move |window, cx| {
-                                        panel
-                                            .update(cx, {
-                                                let entry = entry.clone();
-                                                move |this, cx| match entry {
-                                                    RecentEntry::Thread(_, thread) => {
-                                                        this.open_thread(thread, window, cx)
-                                                    }
-                                                    RecentEntry::Context(context) => {
-                                                        let Some(path) = context.read(cx).path()
-                                                        else {
-                                                            return;
-                                                        };
-                                                        this.open_saved_prompt_editor(
-                                                            path.clone(),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx)
-                                                    }
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                },
-                                IconName::Close,
-                                "Close Entry".into(),
-                                {
-                                    let panel = panel.clone();
-                                    let entry = entry.clone();
-                                    move |_window, cx| {
-                                        panel
-                                            .update(cx, |this, cx| {
-                                                this.history_store.update(
-                                                    cx,
-                                                    |history_store, cx| {
-                                                        history_store.remove_recently_opened_entry(
-                                                            &entry, cx,
-                                                        );
-                                                    },
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-                        }
-
-                        menu = menu.separator();
+                    if let Some(panel) = panel.upgrade() {
+                        menu = Self::populate_recently_opened_menu_section(menu, panel, cx);
                     }
-
                     menu.action("View All", Box::new(OpenHistory))
                         .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
                         .fixed_width(px(320.).into())
@@ -860,9 +807,14 @@ impl AgentPanel {
         self.message_editor.focus_handle(cx).focus(window);
 
         let message_editor_subscription =
-            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+            cx.subscribe(&self.message_editor, |this, _, event, cx| match event {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => {
+                    this.thread.update(cx, |thread, cx| {
+                        thread.scroll_to_bottom(cx);
+                    });
                 }
             });
 
@@ -898,6 +850,7 @@ impl AgentPanel {
         self.set_active_view(
             ActiveView::prompt_editor(
                 context_editor.clone(),
+                self.history_store.clone(),
                 self.language_registry.clone(),
                 window,
                 cx,
@@ -984,7 +937,13 @@ impl AgentPanel {
             )
         });
         self.set_active_view(
-            ActiveView::prompt_editor(editor.clone(), self.language_registry.clone(), window, cx),
+            ActiveView::prompt_editor(
+                editor.clone(),
+                self.history_store.clone(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
             window,
             cx,
         );
@@ -1068,9 +1027,14 @@ impl AgentPanel {
         self.message_editor.focus_handle(cx).focus(window);
 
         let message_editor_subscription =
-            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+            cx.subscribe(&self.message_editor, |this, _, event, cx| match event {
                 MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
                     cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => {
+                    this.thread.update(cx, |thread, cx| {
+                        thread.scroll_to_bottom(cx);
+                    });
                 }
             });
 
@@ -1219,8 +1183,17 @@ impl AgentPanel {
         let fs = self.fs.clone();
 
         self.set_active_view(ActiveView::Configuration, window, cx);
-        self.configuration =
-            Some(cx.new(|cx| AgentConfiguration::new(fs, context_server_store, tools, window, cx)));
+        self.configuration = Some(cx.new(|cx| {
+            AgentConfiguration::new(
+                fs,
+                context_server_store,
+                tools,
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+        }));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
@@ -1383,16 +1356,6 @@ impl AgentPanel {
                     }
                 }
             }
-            ActiveView::TextThread { context_editor, .. } => {
-                let context = context_editor.read(cx).context();
-                // When switching away from an unsaved text thread, delete its entry.
-                if context.read(cx).path().is_none() {
-                    let context = context.clone();
-                    self.history_store.update(cx, |store, cx| {
-                        store.remove_recently_opened_entry(&RecentEntry::Context(context), cx);
-                    });
-                }
-            }
             _ => {}
         }
 
@@ -1400,13 +1363,14 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
                     let id = thread.read(cx).id().clone();
-                    store.push_recently_opened_entry(RecentEntry::Thread(id, thread), cx);
+                    store.push_recently_opened_entry(HistoryEntryId::Thread(id), cx);
                 }
             }),
             ActiveView::TextThread { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
-                    let context = context_editor.read(cx).context().clone();
-                    store.push_recently_opened_entry(RecentEntry::Context(context), cx)
+                    if let Some(path) = context_editor.read(cx).context().read(cx).path() {
+                        store.push_recently_opened_entry(HistoryEntryId::Context(path.clone()), cx)
+                    }
                 })
             }
             _ => {}
@@ -1424,6 +1388,70 @@ impl AgentPanel {
         }
 
         self.focus_handle(cx).focus(window);
+    }
+
+    fn populate_recently_opened_menu_section(
+        mut menu: ContextMenu,
+        panel: Entity<Self>,
+        cx: &mut Context<ContextMenu>,
+    ) -> ContextMenu {
+        let entries = panel
+            .read(cx)
+            .history_store
+            .read(cx)
+            .recently_opened_entries(cx);
+
+        if entries.is_empty() {
+            return menu;
+        }
+
+        menu = menu.header("Recently Opened");
+
+        for entry in entries {
+            let title = entry.title().clone();
+            let id = entry.id();
+
+            menu = menu.entry_with_end_slot_on_hover(
+                title,
+                None,
+                {
+                    let panel = panel.downgrade();
+                    let id = id.clone();
+                    move |window, cx| {
+                        let id = id.clone();
+                        panel
+                            .update(cx, move |this, cx| match id {
+                                HistoryEntryId::Thread(id) => this
+                                    .open_thread_by_id(&id, window, cx)
+                                    .detach_and_log_err(cx),
+                                HistoryEntryId::Context(path) => this
+                                    .open_saved_prompt_editor(path.clone(), window, cx)
+                                    .detach_and_log_err(cx),
+                            })
+                            .ok();
+                    }
+                },
+                IconName::Close,
+                "Close Entry".into(),
+                {
+                    let panel = panel.downgrade();
+                    let id = id.clone();
+                    move |_window, cx| {
+                        panel
+                            .update(cx, |this, cx| {
+                                this.history_store.update(cx, |history_store, cx| {
+                                    history_store.remove_recently_opened_entry(&id, cx);
+                                });
+                            })
+                            .ok();
+                    }
+                },
+            );
+        }
+
+        menu = menu.separator();
+
+        menu
     }
 }
 
@@ -1653,24 +1681,7 @@ impl AgentPanel {
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
         let editor_empty = self.message_editor.read(cx).is_editor_fully_empty(cx);
-        let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
-            maybe!({
-                let amount = user_store.model_request_usage_amount()?;
-                let limit = user_store.model_request_usage_limit()?.variant?;
-
-                Some(RequestUsage {
-                    amount: amount as i32,
-                    limit: match limit {
-                        proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
-                        }
-                        proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
-                        }
-                    },
-                })
-            })
-        });
+        let usage = user_store.model_request_usage();
 
         let account_url = zed_urls::account_url(cx);
 
@@ -1791,7 +1802,7 @@ impl AgentPanel {
                         .action("Add Custom Server…", Box::new(AddContextServer))
                         .separator();
 
-                    if let Some(usage) = last_usage {
+                    if let Some(usage) = usage {
                         menu = menu
                             .header_with_link("Prompt Usage", "Manage", account_url.clone())
                             .custom_entry(
@@ -2349,24 +2360,6 @@ impl AgentPanel {
         self.thread.clone().into_any_element()
     }
 
-    fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
-        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
-            return Some(ConfigurationError::NoProvider);
-        };
-
-        if !model.provider.is_authenticated(cx) {
-            return Some(ConfigurationError::ProviderNotAuthenticated);
-        }
-
-        if model.provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
-                model.provider,
-            ));
-        }
-
-        None
-    }
-
     fn render_thread_empty_state(
         &self,
         window: &mut Window,
@@ -2376,7 +2369,9 @@ impl AgentPanel {
             .history_store
             .update(cx, |this, cx| this.recent_entries(6, cx));
 
-        let configuration_error = self.configuration_error(cx);
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let configuration_error =
+            model_registry.configuration_error(model_registry.default_model(), cx);
         let no_error = configuration_error.is_none();
         let focus_handle = self.focus_handle(cx);
 
@@ -2393,11 +2388,7 @@ impl AgentPanel {
                         .justify_center()
                         .items_center()
                         .gap_1()
-                        .child(
-                            h_flex().child(
-                                Headline::new("Welcome to the Agent Panel")
-                            ),
-                        )
+                        .child(h_flex().child(Headline::new("Welcome to the Agent Panel")))
                         .when(no_error, |parent| {
                             parent
                                 .child(
@@ -2421,7 +2412,10 @@ impl AgentPanel {
                                             cx,
                                         ))
                                         .on_click(|_event, window, cx| {
-                                            window.dispatch_action(NewThread::default().boxed_clone(), cx)
+                                            window.dispatch_action(
+                                                NewThread::default().boxed_clone(),
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .child(
@@ -2438,7 +2432,10 @@ impl AgentPanel {
                                             cx,
                                         ))
                                         .on_click(|_event, window, cx| {
-                                            window.dispatch_action(ToggleContextPicker.boxed_clone(), cx)
+                                            window.dispatch_action(
+                                                ToggleContextPicker.boxed_clone(),
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .child(
@@ -2455,7 +2452,10 @@ impl AgentPanel {
                                             cx,
                                         ))
                                         .on_click(|_event, window, cx| {
-                                            window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
+                                            window.dispatch_action(
+                                                ToggleModelSelector.boxed_clone(),
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .child(
@@ -2472,51 +2472,50 @@ impl AgentPanel {
                                             cx,
                                         ))
                                         .on_click(|_event, window, cx| {
-                                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                                            window.dispatch_action(
+                                                OpenConfiguration.boxed_clone(),
+                                                cx,
+                                            )
                                         }),
                                 )
                         })
-                        .map(|parent| {
-                            match configuration_error_ref {
-                                Some(ConfigurationError::ProviderNotAuthenticated)
-                                | Some(ConfigurationError::NoProvider) => {
-                                    parent
-                                        .child(
-                                            h_flex().child(
-                                                Label::new("To start using the agent, configure at least one LLM provider.")
-                                                    .color(Color::Muted)
-                                                    .mb_2p5()
-                                            )
-                                        )
-                                        .child(
-                                            Button::new("settings", "Configure a Provider")
-                                                .icon(IconName::Settings)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
-                                                .icon_color(Color::Muted)
-                                                .full_width()
-                                                .key_binding(KeyBinding::for_action_in(
-                                                    &OpenConfiguration,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                ))
-                                                .on_click(|_event, window, cx| {
-                                                    window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
-                                                }),
-                                        )
-                                }
-                                Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                                    parent.children(
-                                        provider.render_accept_terms(
-                                            LanguageModelProviderTosView::ThreadFreshStart,
+                        .map(|parent| match configuration_error_ref {
+                            Some(
+                                err @ (ConfigurationError::ModelNotFound
+                                | ConfigurationError::ProviderNotAuthenticated(_)
+                                | ConfigurationError::NoProvider),
+                            ) => parent
+                                .child(h_flex().child(
+                                    Label::new(err.to_string()).color(Color::Muted).mb_2p5(),
+                                ))
+                                .child(
+                                    Button::new("settings", "Configure a Provider")
+                                        .icon(IconName::Settings)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .full_width()
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &OpenConfiguration,
+                                            &focus_handle,
+                                            window,
                                             cx,
-                                        ),
-                                    )
-                                }
-                                None => parent,
+                                        ))
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(
+                                                OpenConfiguration.boxed_clone(),
+                                                cx,
+                                            )
+                                        }),
+                                ),
+                            Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
+                                parent.children(provider.render_accept_terms(
+                                    LanguageModelProviderTosView::ThreadFreshStart,
+                                    cx,
+                                ))
                             }
-                        })
+                            None => parent,
+                        }),
                 )
             })
             .when(!recent_history.is_empty(), |parent| {
@@ -2551,7 +2550,8 @@ impl AgentPanel {
                                             &self.focus_handle(cx),
                                             window,
                                             cx,
-                                        ).map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.))),
                                     )
                                     .on_click(move |_event, window, cx| {
                                         window.dispatch_action(OpenHistory.boxed_clone(), cx);
@@ -2561,79 +2561,68 @@ impl AgentPanel {
                     .child(
                         v_flex()
                             .gap_1()
-                            .children(
-                                recent_history.into_iter().enumerate().map(|(index, entry)| {
+                            .children(recent_history.into_iter().enumerate().map(
+                                |(index, entry)| {
                                     // TODO: Add keyboard navigation.
-                                    let is_hovered = self.hovered_recent_history_item == Some(index);
+                                    let is_hovered =
+                                        self.hovered_recent_history_item == Some(index);
                                     HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
                                         .hovered(is_hovered)
-                                        .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                                            if *is_hovered {
-                                                this.hovered_recent_history_item = Some(index);
-                                            } else if this.hovered_recent_history_item == Some(index) {
-                                                this.hovered_recent_history_item = None;
-                                            }
-                                            cx.notify();
-                                        }))
+                                        .on_hover(cx.listener(
+                                            move |this, is_hovered, _window, cx| {
+                                                if *is_hovered {
+                                                    this.hovered_recent_history_item = Some(index);
+                                                } else if this.hovered_recent_history_item
+                                                    == Some(index)
+                                                {
+                                                    this.hovered_recent_history_item = None;
+                                                }
+                                                cx.notify();
+                                            },
+                                        ))
                                         .into_any_element()
-                                }),
-                            )
+                                },
+                            )),
                     )
-                    .map(|parent| {
-                        match configuration_error_ref {
-                            Some(ConfigurationError::ProviderNotAuthenticated)
-                            | Some(ConfigurationError::NoProvider) => {
-                                parent
-                                    .child(
-                                        Banner::new()
-                                            .severity(ui::Severity::Warning)
-                                            .child(
-                                                Label::new(
-                                                    "Configure at least one LLM provider to start using the panel.",
-                                                )
-                                                .size(LabelSize::Small),
+                    .map(|parent| match configuration_error_ref {
+                        Some(
+                            err @ (ConfigurationError::ModelNotFound
+                            | ConfigurationError::ProviderNotAuthenticated(_)
+                            | ConfigurationError::NoProvider),
+                        ) => parent.child(
+                            Banner::new()
+                                .severity(ui::Severity::Warning)
+                                .child(Label::new(err.to_string()).size(LabelSize::Small))
+                                .action_slot(
+                                    Button::new("settings", "Configure Provider")
+                                        .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenConfiguration,
+                                                &focus_handle,
+                                                window,
+                                                cx,
                                             )
-                                            .action_slot(
-                                                Button::new("settings", "Configure Provider")
-                                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                                    .label_size(LabelSize::Small)
-                                                    .key_binding(
-                                                        KeyBinding::for_action_in(
-                                                            &OpenConfiguration,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                                    )
-                                                    .on_click(|_event, window, cx| {
-                                                        window.dispatch_action(
-                                                            OpenConfiguration.boxed_clone(),
-                                                            cx,
-                                                        )
-                                                    }),
-                                            ),
-                                    )
-                            }
-                            Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                                parent
-                                    .child(
-                                        Banner::new()
-                                            .severity(ui::Severity::Warning)
-                                            .child(
-                                                h_flex()
-                                                    .w_full()
-                                                    .children(
-                                                        provider.render_accept_terms(
-                                                            LanguageModelProviderTosView::ThreadtEmptyState,
-                                                            cx,
-                                                        ),
-                                                    ),
-                                            ),
-                                    )
-                            }
-                            None => parent,
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(|_event, window, cx| {
+                                            window.dispatch_action(
+                                                OpenConfiguration.boxed_clone(),
+                                                cx,
+                                            )
+                                        }),
+                                ),
+                        ),
+                        Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
+                            parent.child(Banner::new().severity(ui::Severity::Warning).child(
+                                h_flex().w_full().children(provider.render_accept_terms(
+                                    LanguageModelProviderTosView::ThreadtEmptyState,
+                                    cx,
+                                )),
+                            ))
                         }
+                        None => parent,
                     })
             })
     }

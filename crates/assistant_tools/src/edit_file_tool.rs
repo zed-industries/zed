@@ -1,6 +1,6 @@
 use crate::{
     Templates,
-    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
+    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
@@ -10,7 +10,7 @@ use assistant_tool::{
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, scroll::Autoscroll};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
@@ -69,13 +69,13 @@ pub struct EditFileToolInput {
     /// start each path with one of the project's root directories.
     ///
     /// The following examples assume we have two root directories in the project:
-    /// - backend
-    /// - frontend
+    /// - /a/b/backend
+    /// - /c/d/frontend
     ///
     /// <example>
     /// `backend/src/main.rs`
     ///
-    /// Notice how the file path starts with root-1. Without that, the path
+    /// Notice how the file path starts with `backend`. Without that, the path
     /// would be ambiguous and the call would fail!
     /// </example>
     ///
@@ -201,8 +201,14 @@ impl Tool for EditFileTool {
         let card_clone = card.clone();
         let action_log_clone = action_log.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let edit_agent =
-                EditAgent::new(model, project.clone(), action_log_clone, Templates::new());
+            let edit_format = EditFormat::from_model(model.clone())?;
+            let edit_agent = EditAgent::new(
+                model,
+                project.clone(),
+                action_log_clone,
+                Templates::new(),
+                edit_format,
+            );
 
             let buffer = project
                 .update(cx, |project, cx| {
@@ -333,14 +339,18 @@ impl Tool for EditFileTool {
                 );
                 anyhow::ensure!(
                     ambiguous_ranges.is_empty(),
-                    // TODO: Include ambiguous_ranges, converted to line numbers.
-                    //       This would work best if we add `line_hint` parameter
-                    //       to edit_file_tool
-                    formatdoc! {"
-                        <old_text> matches more than one position in the file. Read the
-                        relevant sections of {input_path} again and extend <old_text> so
-                        that I can perform the requested edits.
-                    "}
+                    {
+                        let line_numbers = ambiguous_ranges
+                            .iter()
+                            .map(|range| range.start.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        formatdoc! {"
+                            <old_text> matches more than one position in the file (lines: {line_numbers}). Read the
+                            relevant sections of {input_path} again and extend <old_text> so
+                            that I can perform the requested edits.
+                        "}
+                    }
                 );
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text("No edits were made.".into()),
@@ -800,11 +810,30 @@ impl ToolCard for EditFileToolCard {
                                         if let Some(active_editor) = item.downcast::<Editor>() {
                                             active_editor
                                                 .update_in(cx, |editor, window, cx| {
-                                                    editor.go_to_singleton_buffer_point(
-                                                        language::Point::new(0, 0),
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    let snapshot =
+                                                        editor.buffer().read(cx).snapshot(cx);
+                                                    let first_hunk = editor
+                                                        .diff_hunks_in_ranges(
+                                                            &[editor::Anchor::min()
+                                                                ..editor::Anchor::max()],
+                                                            &snapshot,
+                                                        )
+                                                        .next();
+                                                    if let Some(first_hunk) = first_hunk {
+                                                        let first_hunk_start =
+                                                            first_hunk.multi_buffer_range().start;
+                                                        editor.change_selections(
+                                                            Some(Autoscroll::fit()),
+                                                            window,
+                                                            cx,
+                                                            |selections| {
+                                                                selections.select_anchor_ranges([
+                                                                    first_hunk_start
+                                                                        ..first_hunk_start,
+                                                                ]);
+                                                            },
+                                                        )
+                                                    }
                                                 })
                                                 .log_err();
                                         }

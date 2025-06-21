@@ -97,7 +97,7 @@ impl std::fmt::Display for SystemIdHeader {
 
 pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
-        .route("/user", get(get_authenticated_user))
+        .route("/user", get(update_or_create_authenticated_user))
         .route("/users/look_up", get(look_up_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
@@ -157,7 +157,7 @@ struct AuthenticatedUserResponse {
     feature_flags: Vec<String>,
 }
 
-async fn get_authenticated_user(
+async fn update_or_create_authenticated_user(
     Query(params): Query<AuthenticatedUserParams>,
     Extension(app): Extension<Arc<AppState>>,
 ) -> Result<Json<AuthenticatedUserResponse>> {
@@ -165,7 +165,7 @@ async fn get_authenticated_user(
 
     let user = app
         .db
-        .get_or_create_user_by_github_account(
+        .update_or_create_user_by_github_account(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),

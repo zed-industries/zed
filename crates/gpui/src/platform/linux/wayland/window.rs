@@ -21,18 +21,21 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::platform::{
-    PlatformAtlas, PlatformInputHandler, PlatformWindow,
-    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
-    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
-};
 use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
-    size,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowParams, px, size,
+};
+use crate::{
+    Capslock,
+    platform::{
+        PlatformAtlas, PlatformInputHandler, PlatformWindow,
+        blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+        linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+    },
 };
 
 #[derive(Default)]
@@ -861,6 +864,10 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().client.get_client().borrow().modifiers
     }
 
+    fn capslock(&self) -> Capslock {
+        self.borrow().client.get_client().borrow().capslock
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.borrow_mut().input_handler = Some(input_handler);
     }
@@ -976,6 +983,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.0.callbacks.borrow_mut().close = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {

@@ -3,6 +3,7 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
+mod agent_profile;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -33,9 +34,11 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{App, actions, impl_actions};
+use gpui::{App, Entity, actions, impl_actions};
 use language::LanguageRegistry;
-use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
+use language_model::{
+    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -43,7 +46,7 @@ use settings::{Settings as _, SettingsStore};
 use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
-use crate::agent_configuration::{AddContextServerModal, ManageProfilesModal};
+use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
@@ -115,6 +118,28 @@ impl ManageProfiles {
 
 impl_actions!(agent, [NewThread, ManageProfiles]);
 
+#[derive(Clone)]
+pub(crate) enum ModelUsageContext {
+    Thread(Entity<Thread>),
+    InlineAssistant,
+}
+
+impl ModelUsageContext {
+    pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        match self {
+            Self::Thread(thread) => thread.read(cx).configured_model(),
+            Self::InlineAssistant => {
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            }
+        }
+    }
+
+    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.configured_model(cx)
+            .map(|configured_model| configured_model.model)
+    }
+}
+
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -137,7 +162,7 @@ pub fn init(
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry, cx);
+    context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
 
     register_slash_commands(cx);
     inline_assistant::init(
@@ -153,7 +178,10 @@ pub fn init(
         cx,
     );
     indexed_docs::init(cx);
-    cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(move |workspace, window, cx| {
+        ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
+    })
+    .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
 }
 
