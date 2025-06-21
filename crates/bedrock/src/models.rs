@@ -498,7 +498,9 @@ impl Model {
                 | Model::Claude3Haiku
                 | Model::Claude3Sonnet
                 | Model::Claude3_7Sonnet
-                | Model::ClaudeSonnet4,
+                | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking,
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
