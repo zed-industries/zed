@@ -1144,35 +1144,64 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             let glyph_advances = std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count);
             let cluster_map =
                 std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize);
-            let mut last_glyph_index = 0;
-            let mut glyphs = Vec::with_capacity(glyph_count);
-            println!(
-                "Position: {}, string len: {}",
-                desc.textPosition, desc.stringLength
-            );
-            println!("Cluster map: {:?}", cluster_map);
-            println!("Glyph IDs: {:?}", glyph_ids);
             let index_offset = desc.textPosition as usize;
-            for index in 0..desc.stringLength as usize {
-                let glyph_index = cluster_map[index] as usize;
-                if index != 0 && last_glyph_index == glyph_index {
-                    continue;
-                }
-                last_glyph_index = glyph_index;
+
+            let mut cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
+            let mut utf16_idx = 0;
+            let mut glyph_idx = 0;
+            let mut glyphs = Vec::with_capacity(glyph_count);
+            while let (utf16_len, glyph_count, has_more) = cluster_analyzer.next() {
                 context
                     .index_converter
-                    .advance_to_utf16_ix(index + index_offset);
-                let id = GlyphId(glyph_ids[glyph_index] as u32);
-                let is_emoji = color_font
-                    && is_color_glyph(font_face, id, &context.text_system.components.factory);
-                glyphs.push(ShapedGlyph {
-                    id,
-                    position: point(px(context.width), px(0.0)),
-                    index: context.index_converter.utf8_ix,
-                    is_emoji,
-                });
-                context.width += glyph_advances[glyph_index];
+                    .advance_to_utf16_ix(index_offset + utf16_idx);
+                utf16_idx += utf16_len;
+                for glyph_id in glyph_ids[glyph_idx..(glyph_idx + glyph_count)].iter() {
+                    let id = GlyphId(*glyph_id as u32);
+                    let is_emoji = color_font
+                        && is_color_glyph(font_face, id, &context.text_system.components.factory);
+                    glyphs.push(ShapedGlyph {
+                        id,
+                        position: point(px(context.width), px(0.0)),
+                        index: context.index_converter.utf8_ix,
+                        is_emoji,
+                    });
+                }
+                context.width += glyph_advances[glyph_idx];
+                glyph_idx += glyph_count;
+
+                if !has_more {
+                    break;
+                }
             }
+            // let mut last_glyph_index = 0;
+            // let mut glyphs = Vec::with_capacity(glyph_count);
+            // println!(
+            //     "Position: {}, string len: {}",
+            //     desc.textPosition, desc.stringLength
+            // );
+            // println!("Cluster map: {:?}", cluster_map);
+            // println!("Glyph IDs: {:?}", glyph_ids);
+            // let index_offset = desc.textPosition as usize;
+            // for index in 0..desc.stringLength as usize {
+            //     let glyph_index = cluster_map[index] as usize;
+            //     if index != 0 && last_glyph_index == glyph_index {
+            //         continue;
+            //     }
+            //     last_glyph_index = glyph_index;
+            //     context
+            //         .index_converter
+            //         .advance_to_utf16_ix(index + index_offset);
+            //     let id = GlyphId(glyph_ids[glyph_index] as u32);
+            //     let is_emoji = color_font
+            //         && is_color_glyph(font_face, id, &context.text_system.components.factory);
+            //     glyphs.push(ShapedGlyph {
+            //         id,
+            //         position: point(px(context.width), px(0.0)),
+            //         index: context.index_converter.utf8_ix,
+            //         is_emoji,
+            //     });
+            //     context.width += glyph_advances[glyph_index];
+            // }
             context.runs.push(ShapedRun { font_id, glyphs });
         }
         Ok(())
