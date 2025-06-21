@@ -211,7 +211,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         "Select Theme...".into()
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
@@ -251,7 +251,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .log_err();
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

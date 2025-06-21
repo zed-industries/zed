@@ -122,11 +122,11 @@ impl PickerDelegate for PickerPromptDelegate {
         self.prompt.clone()
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -197,7 +197,7 @@ impl PickerDelegate for PickerPromptDelegate {
     }
 
     fn confirm(&mut self, _: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(option) = self.matches.get(self.selected_index()) else {
+        let Some(option) = self.matches.get(self.selected_index(cx)) else {
             return;
         };
 

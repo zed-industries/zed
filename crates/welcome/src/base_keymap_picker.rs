@@ -101,11 +101,11 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         "Select a base keymap...".into()
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

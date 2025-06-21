@@ -317,7 +317,7 @@ impl FileFinder {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
             if let Some(workspace) = delegate.workspace.upgrade() {
-                if let Some(m) = delegate.matches.get(delegate.selected_index()) {
+                if let Some(m) = delegate.matches.get(delegate.selected_index(cx)) {
                     let path = match &m {
                         Match::History { path, .. } => {
                             let worktree_id = path.project.worktree_id;
@@ -1253,11 +1253,11 @@ impl PickerDelegate for FileFinderDelegate {
         "Search project files...".into()
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -1395,7 +1395,7 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
-        if let Some(m) = self.matches.get(self.selected_index()) {
+        if let Some(m) = self.matches.get(self.selected_index(cx)) {
             if let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, |workspace, cx| {
                     let split_or_open =

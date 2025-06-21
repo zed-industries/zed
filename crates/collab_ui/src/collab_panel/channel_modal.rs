@@ -256,14 +256,14 @@ impl PickerDelegate for ChannelModalDelegate {
         "Search collaborator by username...".into()
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         match self.mode {
             Mode::ManageMembers => self.matching_member_indices.len(),
             Mode::InviteMembers => self.matching_users.len(),
         }
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

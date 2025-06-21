@@ -243,11 +243,11 @@ const MAX_TAGS_LINE_LEN: usize = 30;
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -396,7 +396,7 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
-        let current_match_index = self.selected_index();
+        let current_match_index = self.selected_index(cx);
         let task = self
             .matches
             .get(current_match_index)
@@ -591,9 +591,9 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         _: String,
         _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
-        let task_index = self.matches.get(self.selected_index())?.candidate_id;
+        let task_index = self.matches.get(self.selected_index(cx))?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
         Some(task.resolved.command_label.clone())

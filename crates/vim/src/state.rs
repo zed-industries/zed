@@ -1130,11 +1130,11 @@ pub struct RegistersViewDelegate {
 impl PickerDelegate for RegistersViewDelegate {
     type ListItem = Div;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -1347,11 +1347,11 @@ pub struct MarksViewDelegate {
 impl PickerDelegate for MarksViewDelegate {
     type ListItem = Div;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

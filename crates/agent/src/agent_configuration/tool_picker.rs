@@ -138,11 +138,11 @@ impl ToolPickerDelegate {
 impl PickerDelegate for ToolPickerDelegate {
     type ListItem = AnyElement;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.filtered_items.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 

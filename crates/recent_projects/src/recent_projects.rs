@@ -206,11 +206,11 @@ impl PickerDelegate for RecentProjectsDelegate {
         ))
     }
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_match_index
     }
 
@@ -275,7 +275,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some((selected_match, workspace)) = self
             .matches
-            .get(self.selected_index())
+            .get(self.selected_index(cx))
             .zip(self.workspace.upgrade())
         {
             let (candidate_workspace_id, candidate_workspace_location) =
@@ -448,7 +448,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                         .into_any_element();
 
-                    if self.selected_index() == ix {
+                    if self.selected_index(cx) == ix {
                         el.end_slot::<AnyElement>(delete_button)
                     } else {
                         el.end_hover_slot::<AnyElement>(delete_button)

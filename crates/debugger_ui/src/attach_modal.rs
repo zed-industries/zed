@@ -129,11 +129,11 @@ impl ModalView for AttachModal {}
 impl PickerDelegate for AttachModalDelegate {
     type ListItem = ListItem;
 
-    fn match_count(&self) -> usize {
+    fn match_count(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.matches.len()
     }
 
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, _: &mut Context<Picker<Self>>) -> usize {
         self.selected_index
     }
 
@@ -209,7 +209,7 @@ impl PickerDelegate for AttachModalDelegate {
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate = self
             .matches
-            .get(self.selected_index())
+            .get(self.selected_index(cx))
             .and_then(|current_match| {
                 let ix = current_match.candidate_id;
                 self.candidates.get(ix)

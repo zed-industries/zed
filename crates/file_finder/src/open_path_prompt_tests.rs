@@ -357,7 +357,7 @@ fn confirm_completion(
 ) -> String {
     picker
         .update_in(cx, |f, window, cx| {
-            if f.delegate.selected_index() != select {
+            if f.delegate.selected_index(cx) != select {
                 f.delegate.set_selected_index(select, window, cx);
             }
             f.delegate.confirm_completion(query.to_string(), window, cx)
