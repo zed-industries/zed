@@ -1201,6 +1201,49 @@ mod tests {
                 ],
             })
         );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "await.as_deref_mut()".to_string(),
+                        filter_text: Some("as_deref_mut".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some("fn(&mut self) -> IterMut<'_, T>".to_string()),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel {
+                text: "await.as_deref_mut()".to_string(),
+                filter_range: 6..18,
+                runs: vec![],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "inner_value".to_string(),
+                        filter_text: Some("value".to_string()),
+                        detail: Some("String".to_string()),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel {
+                text: "inner_value: String".to_string(),
+                filter_range: 6..11,
+                runs: vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+            })
+        );
     }
 
     #[gpui::test]
