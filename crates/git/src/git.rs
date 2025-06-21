@@ -42,6 +42,8 @@ actions!(
         // repo-wide
         StageAll,
         UnstageAll,
+        StashAll,
+        StashPop,
         RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,
