@@ -502,11 +502,7 @@ impl LanguageModel for AnthropicModel {
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
-    
-    fn supports_max_mode(&self) -> bool {
-        true
-    }
-    
+
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         self.model
             .cache_configuration()
