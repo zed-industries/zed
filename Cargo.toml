@@ -582,7 +582,7 @@ tree-sitter = { version = "0.25.6", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
-tree-sitter-css = "0.23"
+tree-sitter-css = { git = "https://github.com/mantou132/tree-sitter-css", rev = "62bb39a376ee8aa0ceb6cab27474b7c7136913b9" }
 tree-sitter-diff = "0.1.0"
 tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
