@@ -898,6 +898,7 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            allows_automatic_window_tabbing,
         } = options;
 
         let bounds = window_bounds
@@ -914,6 +915,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                allows_automatic_window_tabbing,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
