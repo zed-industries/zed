@@ -546,6 +546,22 @@ impl InlineValueProvider for GoInlineValueProvider {
         variables
     }
 }
+
+pub struct DartInlineValueProvider;
+
+impl InlineValueProvider for DartInlineValueProvider {
+    fn provide(
+        &self,
+        _node: language::Node,
+        _source: &str,
+        _max_row: usize,
+    ) -> Vec<InlineValueLocation> {
+        // TODO: Implement this with tree-sitter-dart to provide actual inline values.
+        // For now, returning an empty Vec fixes the "provider not found" crash.
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
