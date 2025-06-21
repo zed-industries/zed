@@ -938,7 +938,7 @@ impl ExtensionImports for WasmState {
                         })?)
                     }
                     "context_servers" => {
-                        let settings = key
+                        let mut settings = key
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .context_servers
@@ -946,6 +946,27 @@ impl ExtensionImports for WasmState {
                             })
                             .cloned()
                             .context("Failed to get context server configuration")?;
+
+                        settings = match settings.clone() {
+                            project::project_settings::ContextServerSettings::Extension { settings: s } => {
+                                let mut s = s;
+                                if let Some(map) = s.as_object_mut(){
+                                    for (_, v) in map.iter_mut() {
+                                        if v.is_string(){
+                                            if let Some(ss) = v.as_str() {
+                                                if ss.starts_with("$ZED_ENV"){
+                                                    if let Ok(value) = env::var(&ss[1..]) {
+                                                        *v = serde_json::Value::String(value);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                project::project_settings::ContextServerSettings::Extension { settings: s }
+                            },
+                            s => s
+                        };
 
                         match settings {
                             project::project_settings::ContextServerSettings::Custom {
