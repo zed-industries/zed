@@ -564,7 +564,7 @@ mod tests {
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
-                    (VariableName::CurrentText, "<?php echo 'hey';".into()),
+                    (VariableName::CurrentText, "use std; fn this_is_a_rust_file() { }".into()),
                     (VariableName::Symbol, "this_is_a_rust_file".into()),
                 ]),
                 project_env: HashMap::default(),
