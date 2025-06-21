@@ -11,6 +11,7 @@ pub enum IconName {
     Ai,
     AiAnthropic,
     AiBedrock,
+    AiClaude,
     AiDeepSeek,
     AiEdit,
     AiGoogle,

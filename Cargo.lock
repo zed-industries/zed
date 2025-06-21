@@ -361,11 +361,13 @@ dependencies = [
  "chrono",
  "futures 0.3.31",
  "http_client",
+ "oauth2",
  "schemars",
  "serde",
  "serde_json",
  "strum 0.27.1",
  "thiserror 2.0.12",
+ "url",
  "workspace-hack",
 ]
 
@@ -7783,6 +7785,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.2",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -8942,6 +8945,7 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
+ "workspace",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -10554,6 +10558,26 @@ dependencies = [
  "rmpv",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "oauth2"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "getrandom 0.2.15",
+ "http 1.3.1",
+ "rand 0.8.5",
+ "reqwest 0.12.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "sha2",
+ "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]
@@ -13307,6 +13331,7 @@ dependencies = [
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.6.0",
+ "hyper-rustls 0.27.5",
  "hyper-util",
  "ipnet",
  "js-sys",
@@ -13315,17 +13340,23 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls 0.23.26",
+ "rustls-pemfile 2.2.0",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper 1.0.2",
  "tokio",
+ "tokio-rustls 0.26.2",
  "tower 0.5.2",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
  "windows-registry 0.4.0",
 ]
 
@@ -19413,7 +19444,9 @@ dependencies = [
  "heck 0.4.1",
  "hmac",
  "hyper 0.14.32",
+ "hyper 1.6.0",
  "hyper-rustls 0.27.5",
+ "hyper-util",
  "idna",
  "indexmap",
  "inout",
@@ -19463,6 +19496,7 @@ dependencies = [
  "regex",
  "regex-automata 0.4.9",
  "regex-syntax 0.8.5",
+ "reqwest 0.12.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "ring",
  "rust_decimal",
  "rustc-hash 1.1.0",
@@ -19492,7 +19526,6 @@ dependencies = [
  "subtle",
  "syn 1.0.109",
  "syn 2.0.101",
- "sync_wrapper 1.0.2",
  "thiserror 2.0.12",
  "time",
  "time-macros",
