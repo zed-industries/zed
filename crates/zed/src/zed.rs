@@ -20,16 +20,15 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
-    image_cache, point, px, retain_all,
+    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -86,7 +85,6 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
-        OpenProjectDebugTasks,
         OpenTasks,
         OpenDebugTasks,
         ResetDatabase,
@@ -481,6 +479,7 @@ fn initialize_panels(
             workspace_handle.clone(),
             cx.clone(),
         );
+        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         let (
             project_panel,
@@ -490,6 +489,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -498,6 +498,7 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         )?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
@@ -508,20 +509,7 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-            cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |_, window, cx| {
-                cx.spawn_in(
-                    window,
-                    async move |workspace: gpui::WeakEntity<Workspace>,
-                                cx: &mut AsyncWindowContext| {
-                        let debug_panel = DebugPanel::load(workspace.clone(), cx).await?;
-                        workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.add_panel(debug_panel, window, cx);
-                        })?;
-                        anyhow::Ok(())
-                    },
-                )
-                .detach()
-            });
+            workspace.add_panel(debug_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
@@ -582,7 +570,10 @@ fn register_actions(
             window.toggle_fullscreen();
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
-            OpenListener::global(cx).open_urls(vec![action.url.clone()])
+            OpenListener::global(cx).open(RawOpenRequest {
+                urls: vec![action.url.clone()],
+                ..Default::default()
+            })
         })
         .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, window, cx| {
@@ -1219,19 +1210,27 @@ pub fn handle_keymap_file_changes(
     cx: &mut App,
 ) {
     BaseKeymap::register(cx);
-    VimModeSetting::register(cx);
+    vim_mode_setting::init(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
+    let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
+        let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
 
-        if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
+        if new_base_keymap != old_base_keymap
+            || new_vim_enabled != old_vim_enabled
+            || new_helix_enabled != old_helix_enabled
+        {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
+            old_helix_enabled = new_helix_enabled;
+
             base_keymap_tx.unbounded_send(()).unwrap();
         }
     })
@@ -1419,7 +1418,7 @@ pub fn load_default_keymap(cx: &mut App) {
         cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
     }
 
-    if VimModeSetting::get_global(cx).0 {
+    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
         cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
     }
 }
@@ -1512,7 +1511,7 @@ fn open_project_tasks_file(
 
 fn open_project_debug_tasks_file(
     workspace: &mut Workspace,
-    _: &OpenProjectDebugTasks,
+    _: &zed_actions::OpenProjectDebugTasks,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -1760,10 +1759,11 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, separator};
+    use util::path;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
+        item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
@@ -2863,8 +2863,8 @@ mod tests {
             opened_paths,
             vec![
                 None,
-                Some(separator!(".git/HEAD").to_string()),
-                Some(separator!("excluded_dir/file").to_string()),
+                Some(path!(".git/HEAD").to_string()),
+                Some(path!("excluded_dir/file").to_string()),
             ],
             "Excluded files should get opened, excluded dir should not get opened"
         );
@@ -2890,7 +2890,7 @@ mod tests {
                 opened_buffer_paths.sort();
                 assert_eq!(
                     opened_buffer_paths,
-                    vec![separator!(".git/HEAD").to_string(), separator!("excluded_dir/file").to_string()],
+                    vec![path!(".git/HEAD").to_string(), path!("excluded_dir/file").to_string()],
                     "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
                 );
             });
@@ -3356,7 +3356,15 @@ mod tests {
                     editor.newline(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
-                    editor.save(true, project.clone(), window, cx)
+                    editor.save(
+                        SaveOptions {
+                            format: true,
+                            autosave: false,
+                        },
+                        project.clone(),
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -4284,7 +4292,12 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(app_state.fs.clone(), app_state.client.http_client(), cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client(),
+                copilot::copilot_chat::CopilotChatConfiguration::default(),
+                cx,
+            );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
             language_models::init(

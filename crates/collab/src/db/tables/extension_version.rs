@@ -27,6 +27,7 @@ pub struct Model {
     pub provides_slash_commands: bool,
     pub provides_indexed_docs_providers: bool,
     pub provides_snippets: bool,
+    pub provides_debug_adapters: bool,
 }
 
 impl Model {
@@ -66,6 +67,10 @@ impl Model {
 
         if self.provides_snippets {
             provides.insert(ExtensionProvides::Snippets);
+        }
+
+        if self.provides_debug_adapters {
+            provides.insert(ExtensionProvides::DebugAdapters);
         }
 
         provides

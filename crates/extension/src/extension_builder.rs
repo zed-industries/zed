@@ -12,6 +12,7 @@ use std::{
     env, fs, mem,
     path::{Path, PathBuf},
     process::Stdio,
+    str::FromStr,
     sync::Arc,
 };
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
@@ -97,6 +98,22 @@ impl ExtensionBuilder {
             log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
+        for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
+            let debug_adapter_relative_schema_path =
+                meta.schema_path.clone().unwrap_or_else(|| {
+                    Path::new("debug_adapter_schemas")
+                        .join(Path::new(debug_adapter_name.as_ref()).with_extension("json"))
+                });
+            let debug_adapter_schema_path = extension_dir.join(debug_adapter_relative_schema_path);
+
+            let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
+                .with_context(|| {
+                    format!("failed to read debug adapter schema for `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`")
+                })?;
+            _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(|| {
+                format!("Debug adapter schema for `{debug_adapter_name}` (path: `{debug_adapter_schema_path:?}`) is not a valid JSON")
+            })?;
+        }
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
             let snake_cased_grammar_name = grammar_name.to_snake_case();
             if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {

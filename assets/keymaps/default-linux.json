@@ -10,8 +10,10 @@
       "pagedown": "menu::SelectLast",
       "ctrl-n": "menu::SelectNext",
       "tab": "menu::SelectNext",
+      "down": "menu::SelectNext",
       "ctrl-p": "menu::SelectPrevious",
       "shift-tab": "menu::SelectPrevious",
+      "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
       "ctrl-escape": "menu::Cancel",
@@ -115,6 +117,7 @@
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "git::Blame",
+      "alt-g m": "git::OpenModifiedFiles",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
@@ -891,7 +894,10 @@
       "right": "variable_list::ExpandSelectedEntry",
       "enter": "variable_list::EditVariable",
       "ctrl-c": "variable_list::CopyVariableValue",
-      "ctrl-alt-c": "variable_list::CopyVariableName"
+      "ctrl-alt-c": "variable_list::CopyVariableName",
+      "delete": "variable_list::RemoveWatch",
+      "backspace": "variable_list::RemoveWatch",
+      "alt-enter": "variable_list::AddWatch"
     }
   },
   {
@@ -1034,7 +1040,8 @@
     "context": "DebugConsole > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "menu::Confirm"
+      "enter": "menu::Confirm",
+      "alt-enter": "console::WatchExpression"
     }
   },
   {

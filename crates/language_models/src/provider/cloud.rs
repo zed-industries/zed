@@ -1,6 +1,6 @@
 use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Context as _, Result, anyhow};
-use client::{Client, UserStore, zed_urls};
+use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
+    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter,
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
@@ -73,9 +73,9 @@ pub struct AvailableModel {
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,
     /// The maximum number of output tokens allowed by the model.
-    pub max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u64>,
     /// The maximum number of completion tokens allowed by the model (o1-* only)
-    pub max_completion_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u64>,
     /// Override this model with a different Anthropic model for tool calls.
     pub tool_override: Option<String>,
     /// Indicates whether this custom model supports caching.
@@ -530,7 +530,7 @@ pub struct CloudLanguageModel {
 
 struct PerformLlmCompletionResponse {
     response: Response<AsyncBody>,
-    usage: Option<RequestUsage>,
+    usage: Option<ModelRequestUsage>,
     tool_use_limit_reached: bool,
     includes_status_messages: bool,
 }
@@ -581,7 +581,7 @@ impl CloudLanguageModel {
                 let usage = if includes_status_messages {
                     None
                 } else {
-                    RequestUsage::from_headers(response.headers()).ok()
+                    ModelRequestUsage::from_headers(response.headers()).ok()
                 };
 
                 return Ok(PerformLlmCompletionResponse {
@@ -715,8 +715,8 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
-    fn max_token_count(&self) -> usize {
-        self.model.max_token_count
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count as u64
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -737,7 +737,7 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
             zed_llm_client::LanguageModelProvider::OpenAi => {
@@ -786,7 +786,7 @@ impl LanguageModel for CloudLanguageModel {
                         let response_body: CountTokensResponse =
                             serde_json::from_str(&response_body)?;
 
-                        Ok(response_body.tokens)
+                        Ok(response_body.tokens as u64)
                     } else {
                         Err(anyhow!(ApiError {
                             status,
@@ -821,7 +821,7 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     self.model.id.to_string(),
                     1.0,
-                    self.model.max_output_tokens as u32,
+                    self.model.max_output_tokens as u64,
                     if self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
@@ -1002,7 +1002,7 @@ where
 }
 
 fn usage_updated_event<T>(
-    usage: Option<RequestUsage>,
+    usage: Option<ModelRequestUsage>,
 ) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
     futures::stream::iter(usage.map(|usage| {
         Ok(CloudCompletionEvent::Status(

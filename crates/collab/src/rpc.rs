@@ -14,7 +14,7 @@ use crate::{
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, Project, ProjectId, RejoinedProject, RemoveChannelMemberResult, ReplicaId,
+        NotificationId, ProjectId, RejoinedProject, RemoveChannelMemberResult,
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -323,6 +323,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
@@ -1890,28 +1891,16 @@ async fn join_project(
 
     let db = session.db().await;
     let (project, replica_id) = &mut *db
-        .join_project(project_id, session.connection_id, session.user_id())
+        .join_project(
+            project_id,
+            session.connection_id,
+            session.user_id(),
+            request.committer_name.clone(),
+            request.committer_email.clone(),
+        )
         .await?;
     drop(db);
     tracing::info!(%project_id, "join remote project");
-    join_project_internal(response, session, project, replica_id)
-}
-
-trait JoinProjectInternalResponse {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
-}
-impl JoinProjectInternalResponse for Response<proto::JoinProject> {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
-        Response::<proto::JoinProject>::send(self, result)
-    }
-}
-
-fn join_project_internal(
-    response: impl JoinProjectInternalResponse,
-    session: Session,
-    project: &mut Project,
-    replica_id: &ReplicaId,
-) -> Result<()> {
     let collaborators = project
         .collaborators
         .iter()
@@ -1939,6 +1928,8 @@ fn join_project_internal(
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
             is_host: false,
+            committer_name: request.committer_name.clone(),
+            committer_email: request.committer_email.clone(),
         }),
     };
 
@@ -2567,7 +2558,6 @@ async fn get_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
-            email: user.email_address,
             name: user.name,
         })
         .collect();
@@ -2601,7 +2591,6 @@ async fn fuzzy_search_users(
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
             name: user.name,
-            email: user.email_address,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;

@@ -24,6 +24,7 @@ chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
+derive_more.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -36,6 +37,7 @@ paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
@@ -48,7 +50,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tiny_http = "0.8"
+tiny_http.workspace = true
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true
@@ -56,15 +58,17 @@ worktree.workspace = true
 telemetry.workspace = true
 tokio.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

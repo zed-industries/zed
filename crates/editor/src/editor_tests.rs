@@ -15,15 +15,15 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    BackgroundExecutor, DismissEvent, SemanticVersion, TestAppContext, UpdateGlobal,
+    BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
-    Override, Point,
+    DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
+    LanguageName, Override, Point,
     language_settings::{
         AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
         LanguageSettingsContent, LspInsertMode, PrettierSettings,
@@ -56,7 +56,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseInactiveItems, NavigationEntry, OpenOptions, ViewId,
-    item::{FollowEvent, FollowableItem, Item, ItemHandle},
+    item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
 };
 
 #[gpui::test]
@@ -9041,7 +9041,15 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         );
         let save = editor
             .update_in(cx, |editor, window, cx| {
-                editor.save(true, project.clone(), window, cx)
+                editor.save(
+                    SaveOptions {
+                        format: true,
+                        autosave: false,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.executor().start_waiting();
@@ -9073,7 +9081,15 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         );
         let save = editor
             .update_in(cx, |editor, window, cx| {
-                editor.save(true, project.clone(), window, cx)
+                editor.save(
+                    SaveOptions {
+                        format: true,
+                        autosave: false,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -9083,22 +9099,6 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             editor.update(cx, |editor, cx| editor.text(cx)),
             "one\ntwo\nthree\n"
         );
-    }
-
-    // For non-dirty buffer, no formatting request should be sent
-    {
-        assert!(!cx.read(|cx| editor.is_dirty(cx)));
-
-        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
-            panic!("Should not be invoked on non-dirty buffer");
-        });
-        let save = editor
-            .update_in(cx, |editor, window, cx| {
-                editor.save(true, project.clone(), window, cx)
-            })
-            .unwrap();
-        cx.executor().start_waiting();
-        save.await;
     }
 
     // Set rust language override and assert overridden tabsize is sent to language server
@@ -9128,7 +9128,15 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
             });
         let save = editor
             .update_in(cx, |editor, window, cx| {
-                editor.save(true, project.clone(), window, cx)
+                editor.save(
+                    SaveOptions {
+                        format: true,
+                        autosave: false,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
             })
             .unwrap();
         cx.executor().start_waiting();
@@ -9296,7 +9304,15 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let save = multi_buffer_editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .unwrap();
 
@@ -9338,6 +9354,170 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
         assert!(!buffer.is_dirty());
         assert_eq!(buffer.text(), sample_text_3,)
     });
+}
+
+#[gpui::test]
+async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file1.rs": "fn main() { println!(\"hello\"); }",
+            "file2.rs": "fn test() { println!(\"test\"); }",
+            "file3.rs": "fn other() { println!(\"other\"); }\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    // Open three buffers
+    let buffer_1 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "file1.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "file2.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_3 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "file3.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Create a multi-buffer with all three buffers
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer_3.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+            cx,
+        );
+        multi_buffer
+    });
+
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Edit only the first buffer
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
+            s.select_ranges(Some(10..10))
+        });
+        editor.insert("// edited", window, cx);
+    });
+
+    // Verify that only buffer 1 is dirty
+    buffer_1.update(cx, |buffer, _| assert!(buffer.is_dirty()));
+    buffer_2.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+    buffer_3.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+
+    // Get write counts after file creation (files were created with initial content)
+    // We expect each file to have been written once during creation
+    let write_count_after_creation_1 = fs.write_count_for_path(path!("/dir/file1.rs"));
+    let write_count_after_creation_2 = fs.write_count_for_path(path!("/dir/file2.rs"));
+    let write_count_after_creation_3 = fs.write_count_for_path(path!("/dir/file3.rs"));
+
+    // Perform autosave
+    let save_task = editor.update_in(cx, |editor, window, cx| {
+        editor.save(
+            SaveOptions {
+                format: true,
+                autosave: true,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save_task.await.unwrap();
+
+    // Only the dirty buffer should have been saved
+    assert_eq!(
+        fs.write_count_for_path(path!("/dir/file1.rs")) - write_count_after_creation_1,
+        1,
+        "Buffer 1 was dirty, so it should have been written once during autosave"
+    );
+    assert_eq!(
+        fs.write_count_for_path(path!("/dir/file2.rs")) - write_count_after_creation_2,
+        0,
+        "Buffer 2 was clean, so it should not have been written during autosave"
+    );
+    assert_eq!(
+        fs.write_count_for_path(path!("/dir/file3.rs")) - write_count_after_creation_3,
+        0,
+        "Buffer 3 was clean, so it should not have been written during autosave"
+    );
+
+    // Verify buffer states after autosave
+    buffer_1.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+    buffer_2.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+    buffer_3.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+
+    // Now perform a manual save (format = true)
+    let save_task = editor.update_in(cx, |editor, window, cx| {
+        editor.save(
+            SaveOptions {
+                format: true,
+                autosave: false,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save_task.await.unwrap();
+
+    // During manual save, clean buffers don't get written to disk
+    // They just get did_save called for language server notifications
+    assert_eq!(
+        fs.write_count_for_path(path!("/dir/file1.rs")) - write_count_after_creation_1,
+        1,
+        "Buffer 1 should only have been written once total (during autosave, not manual save)"
+    );
+    assert_eq!(
+        fs.write_count_for_path(path!("/dir/file2.rs")) - write_count_after_creation_2,
+        0,
+        "Buffer 2 should not have been written at all"
+    );
+    assert_eq!(
+        fs.write_count_for_path(path!("/dir/file3.rs")) - write_count_after_creation_3,
+        0,
+        "Buffer 3 should not have been written at all"
+    );
 }
 
 #[gpui::test]
@@ -9383,7 +9563,15 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .unwrap();
     fake_server
@@ -9426,7 +9614,15 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     );
     let save = editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -9441,12 +9637,20 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     // For non-dirty buffer, no formatting request should be sent
     let save = editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .unwrap();
     let _pending_format_request = fake_server
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
-            panic!("Should not be invoked on non-dirty buffer");
+            panic!("Should not be invoked");
         })
         .next();
     cx.executor().start_waiting();
@@ -9469,7 +9673,15 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
     let save = editor
         .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .unwrap();
     fake_server
@@ -9553,7 +9765,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -9599,7 +9811,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
             editor.perform_format(
                 project,
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -9777,7 +9989,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -9813,7 +10025,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -11738,7 +11950,7 @@ async fn test_completion(cx: &mut TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), window, cx)
             .unwrap()
     });
-    cx.assert_editor_state("editor.closeˇ");
+    cx.assert_editor_state("editor.clobberˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 }
@@ -13485,7 +13697,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         let mut highlighted_ranges = editor.background_highlights_in_range(
             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
             &snapshot,
-            cx.theme().colors(),
+            cx.theme(),
         );
         // Enforce a consistent ordering based on color without relying on the ordering of the
         // highlight's `TypeId` which is non-executor.
@@ -13515,7 +13727,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             editor.background_highlights_in_range(
                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                 &snapshot,
-                cx.theme().colors(),
+                cx.theme(),
             ),
             &[(
                 DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
@@ -15256,7 +15468,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
         {
             assert_eq!(
                 completion_menu_entries(&menu),
-                &["bg-red", "bg-blue", "bg-yellow"]
+                &["bg-blue", "bg-red", "bg-yellow"]
             );
         } else {
             panic!("expected completion menu to be open");
@@ -15355,7 +15567,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffers,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
                 window,
                 cx,
             )
@@ -15375,7 +15587,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         editor.perform_format(
             project.clone(),
             FormatTrigger::Manual,
-            FormatTarget::Buffers,
+            FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
             window,
             cx,
         )
@@ -20122,7 +20334,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |c| c.editor_document_highlight_read_background,
+            |theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });
@@ -20200,7 +20412,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
-            |c| c.editor_document_highlight_read_background,
+            |theme| theme.colors().editor_document_highlight_read_background,
             cx,
         );
     });
@@ -21910,6 +22122,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let fake_server = fake_servers.next().await.unwrap();
+    let server_id = fake_server.server.server_id();
     let mut first_request = fake_server
         .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
             let new_result_id = counter.fetch_add(1, atomic::Ordering::Release) + 1;
@@ -21941,7 +22154,10 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .expect("created a singleton buffer")
                 .read(cx)
                 .remote_id();
-            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id, cx);
+            let buffer_result_id = project
+                .lsp_store()
+                .read(cx)
+                .result_id(server_id, buffer_id, cx);
             assert_eq!(expected, buffer_result_id);
         });
     };
@@ -22052,4 +22268,186 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
         final_count, 4,
         "Should have 4 cursors after moving and adding another"
     );
+}
+
+#[gpui::test]
+async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
+    let expected_color = Rgba {
+        r: 0.33,
+        g: 0.33,
+        b: 0.33,
+        a: 0.33,
+    };
+
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "first.rs": "fn main() { let a = 5; }",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/a/first.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let fake_language_server = fake_servers.next().await.unwrap();
+    let requests_made = Arc::new(AtomicUsize::new(0));
+    let closure_requests_made = Arc::clone(&requests_made);
+    let mut color_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
+            let requests_made = Arc::clone(&closure_requests_made);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
+                );
+                requests_made.fetch_add(1, atomic::Ordering::Release);
+                Ok(vec![lsp::ColorInformation {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: lsp::Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    },
+                    color: lsp::Color {
+                        red: 0.33,
+                        green: 0.33,
+                        blue: 0.33,
+                        alpha: 0.33,
+                    },
+                }])
+            }
+        });
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        2,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per editor open and once after the language server startup"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(500));
+    let save = editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "Should have an initial inlay"
+        );
+
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input("dirty", window, cx);
+        editor.save(
+            SaveOptions {
+                format: true,
+                autosave: true,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save.await.unwrap();
+
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per save and once per formatting after save"
+    );
+
+    drop(editor);
+    let close = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+            })
+        })
+        .unwrap();
+    close.await.unwrap();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After saving and closing the editor, no extra requests should be made"
+    );
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.navigate_backward(window, cx);
+            })
+        })
+        .unwrap();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        5,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After navigating back to an editor and reopening it, another color request should be made"
+    );
+    let editor = workspace
+        .update(cx, |workspace, _, cx| {
+            workspace
+                .active_item(cx)
+                .expect("Should have reopened the editor again after navigating back")
+                .downcast::<Editor>()
+                .expect("Should be an editor")
+        })
+        .unwrap();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "Should have an initial inlay"
+        );
+    });
+}
+
+#[track_caller]
+fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
+    editor
+        .all_inlays(cx)
+        .into_iter()
+        .filter_map(|inlay| inlay.get_color())
+        .map(Rgba::from)
+        .collect()
 }

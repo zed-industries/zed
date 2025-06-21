@@ -24,7 +24,7 @@ use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
-    ListAlignment, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
+    ListAlignment, ListOffset, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
     StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
     UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
     pulsating_between,
@@ -48,14 +48,18 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
 use zed_llm_client::CompletionIntent;
+
+const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
+const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const EDIT_PREVIOUS_MESSAGE_MAX_LINES: usize = 6;
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -333,8 +337,6 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         ..Default::default()
     }
 }
-
-const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -750,7 +752,7 @@ struct EditingMessageState {
     editor: Entity<Editor>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    last_estimated_token_count: Option<usize>,
+    last_estimated_token_count: Option<u64>,
     _subscriptions: [Subscription; 2],
     _update_token_count_task: Option<Task<()>>,
 }
@@ -857,7 +859,7 @@ impl ActiveThread {
     }
 
     /// Returns the editing message id and the estimated token count in the content
-    pub fn editing_message_id(&self) -> Option<(MessageId, usize)> {
+    pub fn editing_message_id(&self) -> Option<(MessageId, u64)> {
         self.editing_message
             .as_ref()
             .map(|(id, state)| (*id, state.last_estimated_token_count.unwrap_or(0)))
@@ -1327,6 +1329,8 @@ impl ActiveThread {
             self.context_store.downgrade(),
             self.thread_store.downgrade(),
             self.text_thread_store.downgrade(),
+            EDIT_PREVIOUS_MESSAGE_MIN_LINES,
+            EDIT_PREVIOUS_MESSAGE_MAX_LINES,
             window,
             cx,
         );
@@ -1605,6 +1609,7 @@ impl ActiveThread {
 
                         this.thread.update(cx, |thread, cx| {
                             thread.advance_prompt_id();
+                            thread.cancel_last_completion(Some(window.window_handle()), cx);
                             thread.send_to_model(
                                 model.model,
                                 CompletionIntent::UserPrompt,
@@ -1617,6 +1622,14 @@ impl ActiveThread {
                     })
                     .log_err();
             }));
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.focus_handle(cx).focus(window);
+                }
+            });
+        }
     }
 
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
@@ -1680,7 +1693,10 @@ impl ActiveThread {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight { max_lines: 4 },
+                editor::EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: 4,
+                },
                 buffer,
                 None,
                 window,
@@ -1857,6 +1873,14 @@ impl ActiveThread {
                 }
             });
 
+        let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUpAlt)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Scroll To Top"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_top(cx);
+            }));
+
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -1966,11 +1990,14 @@ impl ActiveThread {
                                     );
                                 })),
                         )
-                        .child(open_as_markdown),
+                        .child(open_as_markdown)
+                        .child(scroll_to_top),
                 )
                 .into_any_element(),
             None => feedback_container
-                .child(h_flex().child(open_as_markdown))
+                .child(h_flex()
+                    .child(open_as_markdown))
+                    .child(scroll_to_top)
                 .into_any_element(),
         };
 
@@ -3084,6 +3111,7 @@ impl ActiveThread {
                                 .pr_1()
                                 .gap_1()
                                 .justify_between()
+                                .flex_wrap()
                                 .bg(cx.theme().colors().editor_background)
                                 .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
@@ -3459,6 +3487,11 @@ impl ActiveThread {
         *is_expanded = !*is_expanded;
     }
 
+    pub fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset::default());
+        cx.notify();
+    }
+
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         self.list_state.reset(self.messages.len());
         cx.notify();
@@ -3706,7 +3739,7 @@ mod tests {
     use util::path;
     use workspace::CollaboratorId;
 
-    use crate::{ContextLoadResult, thread_store};
+    use crate::{ContextLoadResult, thread::MessageSegment, thread_store};
 
     use super::*;
 
@@ -3838,6 +3871,114 @@ mod tests {
             let text = editor.update(cx, |editor, cx| editor.text(cx));
             assert_eq!(text, "modified @foo.txt");
         });
+    }
+
+    #[gpui::test]
+    async fn test_editing_message_cancels_previous_completion(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+
+        let (cx, active_thread, _, thread, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        cx.update(|_, cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.set_default_model(
+                    Some(ConfiguredModel {
+                        provider: Arc::new(FakeLanguageModelProvider),
+                        model: model.clone(),
+                    }),
+                    cx,
+                );
+            });
+        });
+
+        // Track thread events to verify cancellation
+        let cancellation_events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let new_request_events = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let _subscription = cx.update(|_, cx| {
+            let cancellation_events = cancellation_events.clone();
+            let new_request_events = new_request_events.clone();
+            cx.subscribe(
+                &thread,
+                move |_thread, event: &ThreadEvent, _cx| match event {
+                    ThreadEvent::CompletionCanceled => {
+                        cancellation_events.lock().unwrap().push(());
+                    }
+                    ThreadEvent::NewRequest => {
+                        new_request_events.lock().unwrap().push(());
+                    }
+                    _ => {}
+                },
+            )
+        });
+
+        // Insert a user message and start streaming a response
+        let message = thread.update(cx, |thread, cx| {
+            let message_id = thread.insert_user_message(
+                "Hello, how are you?",
+                ContextLoadResult::default(),
+                None,
+                vec![],
+                cx,
+            );
+            thread.advance_prompt_id();
+            thread.send_to_model(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                cx.active_window(),
+                cx,
+            );
+            thread.message(message_id).cloned().unwrap()
+        });
+
+        cx.run_until_parked();
+
+        // Verify that a completion is in progress
+        assert!(cx.read(|cx| thread.read(cx).is_generating()));
+        assert_eq!(new_request_events.lock().unwrap().len(), 1);
+
+        // Edit the message while the completion is still running
+        active_thread.update_in(cx, |active_thread, window, cx| {
+            active_thread.start_editing_message(
+                message.id,
+                message.segments.as_slice(),
+                message.creases.as_slice(),
+                window,
+                cx,
+            );
+            let editor = active_thread
+                .editing_message
+                .as_ref()
+                .unwrap()
+                .1
+                .editor
+                .clone();
+            editor.update(cx, |editor, cx| {
+                editor.set_text("What is the weather like?", window, cx);
+            });
+            active_thread.confirm_editing_message(&Default::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify that the previous completion was cancelled
+        assert_eq!(cancellation_events.lock().unwrap().len(), 1);
+
+        // Verify that a new request was started after cancellation
+        assert_eq!(new_request_events.lock().unwrap().len(), 2);
+
+        // Verify that the edited message contains the new text
+        let edited_message =
+            thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
+        match &edited_message.segments[0] {
+            MessageSegment::Text(text) => {
+                assert_eq!(text, "What is the weather like?");
+            }
+            _ => panic!("Expected text segment"),
+        }
     }
 
     fn init_test_settings(cx: &mut TestAppContext) {

@@ -148,22 +148,18 @@ fn handle_get_min_max_info_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let lock = state_ptr.state.borrow();
-    if let Some(min_size) = lock.min_size {
-        let scale_factor = lock.scale_factor;
-        let boarder_offset = lock.border_offset;
-        drop(lock);
-
-        unsafe {
-            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x =
-                min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
-            minmax_info.ptMinTrackSize.y =
-                min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
-        }
-        Some(0)
-    } else {
-        None
+    let min_size = lock.min_size?;
+    let scale_factor = lock.scale_factor;
+    let boarder_offset = lock.border_offset;
+    drop(lock);
+    unsafe {
+        let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+        minmax_info.ptMinTrackSize.x =
+            min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+        minmax_info.ptMinTrackSize.y =
+            min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
     }
+    Some(0)
 }
 
 fn handle_size_msg(
@@ -884,7 +880,33 @@ fn handle_hit_test_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.is_movable {
+    if !state_ptr.is_movable || state_ptr.state.borrow().is_fullscreen() {
+        return None;
+    }
+
+    let mut lock = state_ptr.state.borrow_mut();
+    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
+        drop(lock);
+        let area = callback();
+        state_ptr
+            .state
+            .borrow_mut()
+            .callbacks
+            .hit_test_window_control = Some(callback);
+        if let Some(area) = area {
+            return match area {
+                WindowControlArea::Drag => Some(HTCAPTION as _),
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max => Some(HTMAXBUTTON as _),
+                WindowControlArea::Min => Some(HTMINBUTTON as _),
+            };
+        }
+    } else {
+        drop(lock);
+    }
+
+    if !state_ptr.hide_title_bar {
+        // If the OS draws the title bar, we don't need to handle hit test messages.
         return None;
     }
 
@@ -920,25 +942,6 @@ fn handle_hit_test_msg(
     if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
     {
         return Some(HTTOP as _);
-    }
-
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
-        drop(lock);
-        let area = callback();
-        state_ptr
-            .state
-            .borrow_mut()
-            .callbacks
-            .hit_test_window_control = Some(callback);
-        if let Some(area) = area {
-            return match area {
-                WindowControlArea::Drag => Some(HTCAPTION as _),
-                WindowControlArea::Close => Some(HTCLOSE as _),
-                WindowControlArea::Max => Some(HTMAXBUTTON as _),
-                WindowControlArea::Min => Some(HTMINBUTTON as _),
-            };
-        }
     }
 
     Some(HTCLIENT as _)
@@ -1232,6 +1235,21 @@ where
             state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                capslock: current_capslock(),
+            }))
+        }
+        VK_CAPITAL => {
+            let capslock = current_capslock();
+            if state
+                .last_reported_capslock
+                .is_some_and(|prev_capslock| prev_capslock == capslock)
+            {
+                return None;
+            }
+            state.last_reported_capslock = Some(capslock);
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
             }))
         }
         vkey => {
@@ -1362,6 +1380,12 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+#[inline]
+pub(crate) fn current_capslock() -> Capslock {
+    let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
+    Capslock { on: on }
 }
 
 fn get_client_area_insets(

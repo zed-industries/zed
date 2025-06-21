@@ -216,6 +216,8 @@ You can use GitHub Copilot Chat with the Zed assistant by choosing it via the mo
 
 Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
 
+> **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
+
 ### Google AI {#google-ai}
 
 > ✅ Supports tool use
@@ -431,24 +433,12 @@ You must provide the model's Context Window in the `max_tokens` parameter; this 
 OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
 Custom models will be listed in the model dropdown in the Agent Panel.
 
-### OpenRouter {#openrouter}
-
-> ✅ Supports tool use
-
-OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
-
-1. Visit [OpenRouter](https://openrouter.ai) and create an account
-2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys)
-3. Open the settings view (`agent: open configuration`) and go to the OpenRouter section
-4. Enter your OpenRouter API key
-
-The OpenRouter API key will be saved in your keychain.
-
-Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
-
 ### OpenAI API Compatible {#openai-api-compatible}
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
+
+You can add a custom API URL for OpenAI either via the UI or by editing the your `settings.json`.
+Here are a few model examples you can plug in by using this feature:
 
 #### X.ai Grok
 
@@ -469,6 +459,78 @@ Example configuration for using X.ai Grok with Zed:
     },
   }
 ```
+
+#### Vercel's v0
+
+To use Vercel's v0 models with Zed, ensure you have created a [v0 API key first](https://v0.dev/chat/settings/keys).
+Once that's done, insert that into the OpenAI API key section, and add this API endpoint:
+
+```json
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.v0.dev/v1",
+      "version": "1"
+    },
+  }
+```
+
+### OpenRouter {#openrouter}
+
+> ✅ Supports tool use
+
+OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
+
+1. Visit [OpenRouter](https://openrouter.ai) and create an account
+2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys)
+3. Open the settings view (`agent: open configuration`) and go to the OpenRouter section
+4. Enter your OpenRouter API key
+
+The OpenRouter API key will be saved in your keychain.
+
+Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
+
+#### Custom Models {#openrouter-custom-models}
+
+You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+      "available_models": [
+        {
+          "name": "google/gemini-2.0-flash-thinking-exp",
+          "display_name": "Gemini 2.0 Flash (Thinking)",
+          "max_tokens": 200000,
+          "max_output_tokens": 8192,
+          "supports_tools": true,
+          "supports_images": true,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 8000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The available configuration options for each model are:
+
+- `name`: The model identifier used by OpenRouter (required)
+- `display_name`: A human-readable name shown in the UI (optional)
+- `max_tokens`: The model's context window size (required)
+- `max_output_tokens`: Maximum tokens the model can generate (optional)
+- `max_completion_tokens`: Maximum completion tokens (optional)
+- `supports_tools`: Whether the model supports tool/function calling (optional)
+- `supports_images`: Whether the model supports image inputs (optional)
+- `mode`: Special mode configuration for thinking models (optional)
+
+You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
+
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ## Advanced Configuration {#advanced-configuration}
 

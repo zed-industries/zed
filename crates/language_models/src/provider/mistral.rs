@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,9 +43,9 @@ pub struct MistralSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
 }
@@ -322,11 +322,11 @@ impl LanguageModel for MistralLanguageModel {
         format!("mistral/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -334,7 +334,7 @@ impl LanguageModel for MistralLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         cx.background_spawn(async move {
             let messages = request
                 .messages
@@ -351,7 +351,7 @@ impl LanguageModel for MistralLanguageModel {
                 })
                 .collect::<Vec<_>>();
 
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
         })
         .boxed()
     }
@@ -386,7 +386,7 @@ impl LanguageModel for MistralLanguageModel {
 pub fn into_mistral(
     request: LanguageModelRequest,
     model: String,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> mistral::Request {
     let stream = true;
 
@@ -699,6 +699,15 @@ impl MistralEventMapper {
                     }
                 }
             }
+        }
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
         }
 
         if let Some(finish_reason) = choice.finish_reason.as_deref() {

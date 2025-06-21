@@ -45,11 +45,14 @@ impl DebugAdapter for RubyDebugAdapter {
         Some(SharedString::new_static("Ruby").into())
     }
 
-    fn request_kind(&self, _: &serde_json::Value) -> Result<StartDebuggingRequestArgumentsRequest> {
+    async fn request_kind(
+        &self,
+        _: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
         Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
@@ -83,7 +86,7 @@ impl DebugAdapter for RubyDebugAdapter {
         })
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         match zed_scenario.request {
             DebugRequest::Launch(launch) => {
                 let config = RubyDebugConfig {
@@ -174,8 +177,15 @@ impl DebugAdapter for RubyDebugAdapter {
 
         arguments.extend(ruby_config.args);
 
+        let mut configuration = definition.config.clone();
+        if let Some(configuration) = configuration.as_object_mut() {
+            configuration
+                .entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+        }
+
         Ok(DebugAdapterBinary {
-            command: rdbg_path.to_string_lossy().to_string(),
+            command: Some(rdbg_path.to_string_lossy().to_string()),
             arguments,
             connection: Some(dap::adapters::TcpArguments {
                 host,
@@ -189,8 +199,8 @@ impl DebugAdapter for RubyDebugAdapter {
             ),
             envs: ruby_config.env.into_iter().collect(),
             request_args: StartDebuggingRequestArguments {
-                request: self.request_kind(&definition.config)?,
-                configuration: definition.config.clone(),
+                request: self.request_kind(&definition.config).await?,
+                configuration,
             },
         })
     }

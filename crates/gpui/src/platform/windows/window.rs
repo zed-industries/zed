@@ -43,6 +43,7 @@ pub struct WindowsWindowState {
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub last_reported_modifiers: Option<Modifiers>,
+    pub last_reported_capslock: Option<Capslock>,
     pub system_key_handled: bool,
     pub hovered: bool,
 
@@ -102,6 +103,7 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let last_reported_modifiers = None;
+        let last_reported_capslock = None;
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
@@ -121,6 +123,7 @@ impl WindowsWindowState {
             callbacks,
             input_handler,
             last_reported_modifiers,
+            last_reported_capslock,
             system_key_handled,
             hovered,
             renderer,
@@ -557,6 +560,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn modifiers(&self) -> Modifiers {
         current_modifiers()
+    }
+
+    fn capslock(&self) -> Capslock {
+        current_capslock()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -1258,7 +1265,7 @@ mod windows_renderer {
     use std::num::NonZeroIsize;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::get_window_long;
+    use crate::{get_window_long, show_error};
 
     pub(super) fn init(
         context: &BladeContext,
@@ -1270,7 +1277,12 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
-        BladeRenderer::new(context, &raw, config)
+        BladeRenderer::new(context, &raw, config).inspect_err(|err| {
+            show_error(
+                "Error: Zed failed to initialize BladeRenderer",
+                err.to_string(),
+            )
+        })
     }
 
     struct RawWindow {

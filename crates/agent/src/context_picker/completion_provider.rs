@@ -214,6 +214,7 @@ fn search(
                         &entry_candidates,
                         &query,
                         false,
+                        true,
                         100,
                         &Arc::new(AtomicBool::default()),
                         executor,
@@ -1066,7 +1067,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, rc::Rc};
-    use util::{path, separator};
+    use util::path;
     use workspace::{AppState, Item};
 
     #[test]
@@ -1217,14 +1218,14 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            separator!("a/one.txt"),
-            separator!("a/two.txt"),
-            separator!("a/three.txt"),
-            separator!("a/four.txt"),
-            separator!("b/five.txt"),
-            separator!("b/six.txt"),
-            separator!("b/seven.txt"),
-            separator!("b/eight.txt"),
+            path!("a/one.txt"),
+            path!("a/two.txt"),
+            path!("a/three.txt"),
+            path!("a/four.txt"),
+            path!("b/five.txt"),
+            path!("b/six.txt"),
+            path!("b/seven.txt"),
+            path!("b/eight.txt"),
         ];
 
         let mut opened_editors = Vec::new();

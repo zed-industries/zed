@@ -50,8 +50,21 @@ impl From<Role> for String {
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
+    #[serde(default)]
+    pub mode: ModelMode,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
 }
 
 impl Model {
@@ -61,6 +74,8 @@ impl Model {
             Some("Auto Router"),
             Some(2000000),
             Some(true),
+            Some(false),
+            Some(ModelMode::Default),
         )
     }
 
@@ -71,14 +86,18 @@ impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
-        max_tokens: Option<usize>,
+        max_tokens: Option<u64>,
         supports_tools: Option<bool>,
+        supports_images: Option<bool>,
+        mode: Option<ModelMode>,
     ) -> Self {
         Self {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
             supports_tools,
+            supports_images,
+            mode: mode.unwrap_or(ModelMode::Default),
         }
     }
 
@@ -90,11 +109,11 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
 
-    pub fn max_output_tokens(&self) -> Option<u32> {
+    pub fn max_output_tokens(&self) -> Option<u64> {
         None
     }
 
@@ -113,7 +132,7 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     pub temperature: f32,
@@ -123,6 +142,14 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Reasoning>,
+    pub usage: RequestUsage,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct RequestUsage {
+    pub include: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,23 +177,131 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Reasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
-        content: Option<String>,
+        content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: MessageContent,
     },
     System {
-        content: String,
+        content: MessageContent,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Plain(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        Self::Plain(String::new())
+    }
+
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            Self::Plain(text) if text.is_empty() => {
+                *self = Self::Multipart(vec![part]);
+            }
+            Self::Plain(text) => {
+                let text_part = MessagePart::Text {
+                    text: std::mem::take(text),
+                };
+                *self = Self::Multipart(vec![text_part, part]);
+            }
+            Self::Multipart(parts) => parts.push(part),
+        }
+    }
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(parts: Vec<MessagePart>) -> Self {
+        if parts.len() == 1 {
+            if let MessagePart::Text { text } = &parts[0] {
+                return Self::Plain(text.clone());
+            }
+        }
+        Self::Multipart(parts)
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(text: String) -> Self {
+        Self::Plain(text)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(text: &str) -> Self {
+        Self::Plain(text.to_string())
+    }
+}
+
+impl MessageContent {
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Plain(text) => Some(text),
+            Self::Multipart(parts) if parts.len() == 1 => {
+                if let MessagePart::Text { text } = &parts[0] {
+                    Some(text)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn to_text(&self) -> String {
+        match self {
+            Self::Plain(text) => text.clone(),
+            Self::Multipart(parts) => parts
+                .iter()
+                .filter_map(|part| {
+                    if let MessagePart::Text { text } = part {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessagePart {
+    Text {
+        text: String,
+    },
+    #[serde(rename = "image_url")]
+    Image {
+        image_url: String,
     },
 }
 
@@ -193,6 +328,7 @@ pub struct FunctionContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
@@ -212,9 +348,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -263,9 +399,17 @@ pub struct ModelEntry {
     pub created: usize,
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_length: Option<usize>,
+    pub context_length: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_parameters: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<ModelArchitecture>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelArchitecture {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_modalities: Vec<String>,
 }
 
 pub async fn complete(
@@ -470,6 +614,23 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
                 ),
                 max_tokens: entry.context_length.unwrap_or(2000000),
                 supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
+                supports_images: Some(
+                    entry
+                        .architecture
+                        .as_ref()
+                        .map(|arch| arch.input_modalities.contains(&"image".to_string()))
+                        .unwrap_or(false),
+                ),
+                mode: if entry
+                    .supported_parameters
+                    .contains(&"reasoning".to_string())
+                {
+                    ModelMode::Thinking {
+                        budget_tokens: Some(4_096),
+                    }
+                } else {
+                    ModelMode::Default
+                },
             })
             .collect();
 
