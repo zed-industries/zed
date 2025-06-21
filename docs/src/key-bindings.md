@@ -59,7 +59,7 @@ Each keypress is a sequence of modifiers followed by a key. The modifiers are:
 - `cmd-`, `win-` or `super-` for the platform modifier (Command on macOS, Windows key on Windows, and the Super key on Linux).
 - `alt-` for alt (option on macOS)
 - `shift-` The shift key
-- `fn-` The function key
+- `fn-` or `mod3-` for the function key on macOS or the Mod3 `xkb` modifier on Linux
 - `secondary-` Equivalent to `cmd` when Zed is running on macOS and `ctrl` when on Windows and Linux
 
 The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the cyrillic character, or the latin character that key generates with `cmd` pressed.
