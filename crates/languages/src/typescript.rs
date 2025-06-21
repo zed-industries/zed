@@ -373,18 +373,6 @@ impl ContextProvider for TypeScriptContextProvider {
                 ],
                 ..TaskTemplate::default()
             });
-            task_templates.0.push(TaskTemplate {
-                label: format!(
-                    "execute selection {}",
-                    VariableName::CurrentText.template_value()
-                ),
-                command: "node".to_owned(),
-                args: vec![
-                    "-e".to_owned(),
-                    format!("\"{}\"", VariableName::CurrentText.template_value()),
-                ],
-                ..TaskTemplate::default()
-            });
 
             match package_json_data.await {
                 Ok(package_json) => {
