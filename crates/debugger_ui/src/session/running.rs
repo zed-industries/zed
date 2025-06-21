@@ -697,8 +697,13 @@ impl RunningState {
             )
         });
 
-        let breakpoint_list =
-            BreakpointList::new(Some(session.clone()), workspace.clone(), &project, cx);
+        let breakpoint_list = BreakpointList::new(
+            Some(session.clone()),
+            workspace.clone(),
+            &project,
+            window,
+            cx,
+        );
 
         let _subscriptions = vec![
             cx.observe(&module_list, |_, _, cx| cx.notify()),
