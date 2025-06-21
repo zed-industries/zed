@@ -376,6 +376,7 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
+    use_toolbar: Option<bool>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -543,6 +544,7 @@ impl MacWindow {
             display_id,
             window_min_size,
             allows_automatic_window_tabbing,
+            use_toolbar,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -674,6 +676,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
+                use_toolbar,
             })));
 
             (*native_window).set_ivar(
@@ -754,6 +757,13 @@ impl MacWindow {
                         NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
                     );
                 }
+            }
+
+            let use_toolbar = use_toolbar.unwrap_or(false);
+            if use_toolbar {
+                let identifier = NSString::alloc(nil).init_str("Toolbar");
+                let toolbar = NSToolbar::alloc(nil).initWithIdentifier_(identifier);
+                native_window.setToolbar_(toolbar);
             }
 
             let app = NSApplication::sharedApplication(nil);
