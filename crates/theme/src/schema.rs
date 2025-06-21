@@ -219,6 +219,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "element.disabled")]
     pub element_disabled: Option<String>,
 
+    /// Background Color. Used for the background of selections in a UI element.
+    #[serde(rename = "element.selection_background")]
+    pub element_selection_background: Option<String>,
+
     /// Background Color. Used for the area that shows where a dragged element will be dropped.
     #[serde(rename = "drop_target.background")]
     pub drop_target_background: Option<String>,
@@ -724,6 +728,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             element_disabled: self
                 .element_disabled
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            element_selection_background: self
+                .element_selection_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             drop_target_background: self
