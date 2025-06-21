@@ -20,7 +20,7 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
-    project_settings::ProjectSettings,
+    project_settings::{ContextServerSettings, ProjectSettings},
 };
 use settings::{Settings, update_settings_file};
 use ui::{
@@ -741,24 +741,59 @@ impl AgentConfiguration {
                                         let context_server_manager =
                                             self.context_server_store.clone();
                                         let context_server_id = context_server_id.clone();
+                                        let fs = self.fs.clone();
 
-                                        move |state, _window, cx| match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    this.stop_server(&context_server_id, cx)
-                                                        .log_err();
-                                                });
-                                            }
-                                            ToggleState::Selected => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    if let Some(server) =
-                                                        this.get_server(&context_server_id)
-                                                    {
-                                                        this.start_server(server, cx);
+                                        move |state, _window, cx| {
+                                            let is_enabled = match state {
+                                                ToggleState::Unselected
+                                                | ToggleState::Indeterminate => {
+                                                    context_server_manager.update(
+                                                        cx,
+                                                        |this, cx| {
+                                                            this.stop_server(
+                                                                &context_server_id,
+                                                                cx,
+                                                            )
+                                                            .log_err();
+                                                        },
+                                                    );
+                                                    false
+                                                }
+                                                ToggleState::Selected => {
+                                                    context_server_manager.update(
+                                                        cx,
+                                                        |this, cx| {
+                                                            if let Some(server) =
+                                                                this.get_server(&context_server_id)
+                                                            {
+                                                                this.start_server(server, cx);
+                                                            }
+                                                        },
+                                                    );
+                                                    true
+                                                }
+                                            };
+                                            update_settings_file::<ProjectSettings>(
+                                                fs.clone(),
+                                                cx,
+                                                {
+                                                    let context_server_id =
+                                                        context_server_id.clone();
+
+                                                    move |settings, _| {
+                                                        settings
+                                                            .context_servers
+                                                            .entry(context_server_id.0)
+                                                            .or_insert_with(|| {
+                                                                ContextServerSettings::Extension {
+                                                                    enabled: is_enabled,
+                                                                    settings: serde_json::json!({}),
+                                                                }
+                                                            })
+                                                            .set_enabled(is_enabled);
                                                     }
-                                                })
-                                            }
+                                                },
+                                            );
                                         }
                                     }),
                             ),
