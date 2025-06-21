@@ -201,7 +201,7 @@ members = [
     "tooling/workspace-hack",
     "tooling/xtask",
 ]
-default-members = ["crates/zed"]
+default-members = ["crates/zed", "crates/actions"]
 
 [workspace.package]
 publish = false
