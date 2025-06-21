@@ -1099,12 +1099,12 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     .index_converter
                     .advance_to_utf16_ix(context.utf16_index);
                 context.utf16_index += 1;
-                let glyph_index = cluster_map[index];
+                let glyph_index = cluster_map[index] as usize;
                 if index != 0 && last_glyph_index == glyph_index {
                     last_glyph_index = glyph_index;
                     continue;
                 }
-                let id = GlyphId(glyph_ids[glyph_index as usize] as u32);
+                let id = GlyphId(glyph_ids[glyph_index] as u32);
                 let is_emoji = color_font
                     && is_color_glyph(font_face, id, &context.text_system.components.factory);
                 glyphs.push(ShapedGlyph {
@@ -1113,7 +1113,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     index: context.index_converter.utf8_ix,
                     is_emoji,
                 });
-                context.width += glyph_advances[index];
+                context.width += glyph_advances[glyph_index];
             }
             context.runs.push(ShapedRun { font_id, glyphs });
         }
