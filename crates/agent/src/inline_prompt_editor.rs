@@ -870,7 +870,7 @@ impl PromptEditor<BufferCodegen> {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     min_lines: 1,
-                    max_lines: Self::MAX_LINES as usize,
+                    max_lines: Some(Self::MAX_LINES as usize),
                 },
                 prompt_buffer,
                 None,
@@ -1049,7 +1049,7 @@ impl PromptEditor<TerminalCodegen> {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     min_lines: 1,
-                    max_lines: Self::MAX_LINES as usize,
+                    max_lines: Some(Self::MAX_LINES as usize),
                 },
                 prompt_buffer,
                 None,
