@@ -70,8 +70,15 @@ impl Render for PlatformTitleBar {
         h_flex()
             .window_control_area(WindowControlArea::Drag)
             .w_full()
-            .h(height + tab_height)
-            .pb(tab_height)
+            .map(|this| {
+                if window.has_system_tabs() && window.is_fullscreen() {
+                    this.h(height + tab_height).pt(tab_height)
+                } else if window.has_system_tabs() {
+                    this.h(height + tab_height).pb(tab_height)
+                } else {
+                    this.h(height)
+                }
+            })
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
