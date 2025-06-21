@@ -1,12 +1,12 @@
 # Visual Customization
 
-Various aspects of Zed's visual layout can be configured via Zed settings.json which you can access via {#action zed::openSettings} ({#kb zed::openSettings}).
+Various aspects of Zed's visual layout can be configured via Zed settings.json which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}).
 
 See [Configuring Zed](./configuring-zed.md) for additional information and other non-visual settings.
 
 ## Themes
 
-Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::extensions} from the command palette or menu.
+Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
 
 You can preview/choose amongsts your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 

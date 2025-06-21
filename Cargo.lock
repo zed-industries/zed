@@ -8160,13 +8160,11 @@ dependencies = [
 name = "inline_completion"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "client",
  "gpui",
  "language",
  "project",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
