@@ -124,8 +124,10 @@ pub fn os_version() -> String {
             file
         } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
             file
+        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
+            file
         } else {
-            log::error!("Failed to load /etc/os-release, /usr/lib/os-release");
+            log::error!("Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release");
             "".to_string()
         };
         let mut name = "unknown";
