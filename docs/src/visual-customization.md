@@ -37,7 +37,6 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 ## Fonts
 
 ```json
-{
   // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS)
   "ui_font_family": "Zed Plex Sans",
   "ui_font_weight": 400, // Font weight in standard CSS units from 100 to 900.
@@ -60,21 +59,20 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 
   // Agent Panel Font Settings
   "agent_font_size": 15
-}
 ```
 
 ### Font ligatures
 
 By default Zed enable font ligatures which will visually combines certain adjacent characters.
 
-For example `=>` will be displayed as `→` and `!=` will be `≠`.  This is purely cosmetic and the individual characters remain unchanged.
+For example `=>` will be displayed as `→` and `!=` will be `≠`. This is purely cosmetic and the individual characters remain unchanged.
 
 To disable this behavior use:
 
 ```json
 {
   "buffer_font_features": {
-    "calt": false  // Disable ligatures
+    "calt": false // Disable ligatures
   }
 }
 ```
@@ -141,11 +139,6 @@ To disable this behavior use:
 }
 ```
 
-```json
-```
-
-##
-
 <!--
 TBD: Centered layout related settings
 ```json
@@ -161,8 +154,8 @@ TBD: Centered layout related settings
 -->
 
 ## Editor
+
 ```json
-{
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
 
@@ -210,13 +203,11 @@ TBD: Centered layout related settings
     "coloring": "fixed",              // disabled, fixed, indent_aware
     "background_coloring": "disabled" // disabled, indent_aware
   }
-}
 ```
 
 ### Git Blame {#editor-blame}
 
 ```json
-{
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
@@ -226,29 +217,24 @@ TBD: Centered layout related settings
     },
     "hunk_style": "staged_hollow"  // staged_hollow, unstaged_hollow
   }
-}
 ```
 
 ### Editor Toolbar
 
 ```json
-{
   // Editor toolbar related settings
   "toolbar": {
-    "breadcrumbs": true,      // Whether to show breadcrumbs.
-    "quick_actions": true,    // Whether to show quick action buttons.
-    "selections_menu": true,  // Whether to show the Selections menu
-    "agent_review": true,     // Whether to show agent review buttons
-    "code_actions": false     // Whether to show code action buttons
-
+    "breadcrumbs": true, // Whether to show breadcrumbs.
+    "quick_actions": true, // Whether to show quick action buttons.
+    "selections_menu": true, // Whether to show the Selections menu
+    "agent_review": true, // Whether to show agent review buttons
+    "code_actions": false // Whether to show code action buttons
   }
-}
 ```
 
 ### Editor Scrollbar and Minimap {#editor-scrollbar}
 
 ```json
-{
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor (auto, system, always, never)
@@ -284,8 +270,7 @@ TBD: Centered layout related settings
   // Scroll sensitivity multiplier
   "scroll_sensitivity": 1.0,
   // Scroll sensitivity multiplier for fast scrolling (hold alt while scrolling)
-  "fast_scroll_sensitivity": 4.0
-}
+  "fast_scroll_sensitivity": 4.0,
 ```
 
 ### Editor Tabs
@@ -308,7 +293,6 @@ TBD: Centered layout related settings
     // Show diagnostics in file icon (off, errors, all). Requires file_icons=true
     "show_diagnostics": "off"
   }
-}
 ```
 
 ### Multibuffer
@@ -316,14 +300,13 @@ TBD: Centered layout related settings
 ```json
 {
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 5,
+  "expand_excerpt_lines": 5
 }
 ```
 
 ### Editor Completions, Snippets, Actions, Diagnostics {#editor-lsp}
 
 ```json
-{
   "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom
   "show_completions_on_input": true,     // Show completions while typing
   "show_completion_documentation": true, // Show documentation in completions
@@ -341,19 +324,16 @@ TBD: Centered layout related settings
 
   // How to render LSP `textDocument/documentColor` colors in the editor.
   "lsp_document_colors": "inlay",        // none, inlay, border, background
-}
 ```
 
 ### Edit Predictions {#editor-ai}
 
 ```json
-{
   "edit_predictions": {
     "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
     "enabled_in_text_threads": true // Show/hide predictions in agent text threads
   },
-  "show_edit_predictions": true,    // Show/hide predictions in editor
-}
+  "show_edit_predictions": true     // Show/hide predictions in editor
 ```
 
 ### Editor Inlay Hints
@@ -390,15 +370,13 @@ TBD: Centered layout related settings
 ## File Finder
 
 ```json
-{
-  // Settings related to the file finder.
+  // File Finder Settings
   "file_finder": {
     "file_icons": true,         // Show/hide file icons
     "modal_max_width": "small", // Horizontal size: small, medium, large, xlarge, full
     "git_status": true,         // Show the git status for each entry
     "include_ignored": null     // gitignored files in results: true, false, null
-  }
-}
+  },
 ```
 
 ## Project Panel
@@ -406,7 +384,7 @@ TBD: Centered layout related settings
 Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
 
 ```json
-{
+  // Project Panel Settings
   "project_panel": {
     "button": true,                 // Show/hide button in the status bar
     "default_width": 240,           // Default panel width
@@ -429,14 +407,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     },
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false
-  }
-}
+  }.
 ```
 
 ## Agent Panel
 
 ```json
-{
   "agent": {
     "version": "2",
     "enabled": true,        // Enable/disable the agent
@@ -446,7 +422,6 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "default_height": 320,  // Default height (bottom dockeed)
   },
   "agent_font_size": 16
-}
 ```
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
@@ -454,7 +429,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 ## Terminal Panel
 
 ```json
-{
+  // Terminal Panel Settings
   "terminal": {
     "dock": "bottom",                   // Where to dock: left, right, bottom
     "button": true,                     // Show/hide status bar icon
@@ -474,7 +449,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
     // Terminal scrollbar
     "scrollbar": {
       "show": null                       // Show/hide: (auto, system, always, never)
-    }
+    },
     // Terminal Font Settings
     "font_family": "Zed Plex Mono",
     "font_size": 15,
@@ -484,43 +459,32 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 
     "max_scroll_history_lines": 10000,   // Scrollback history (0=disable, max=100000)
   }
-}
 ```
 
 See [Terminal settings](./configuring-zed#terminal) for additional non-visual customization options.
 
-### Git Panel
+### Other Panels
 
 ```json
-{
+  // Git Panel
   "git_panel": {
-    "button": true,                     // Show/hide status bar icon
-    "dock": "left",                     // Where to dock: left, right
-    "default_width": 360,               // Default width of the git panel.
-    "status_style": "icon",             //
-    "sort_by_path": false,              // Sort by path (false) or status (true)
+    "button": true,               // Show/hide status bar icon
+    "dock": "left",               // Where to dock: left, right
+    "default_width": 360,         // Default width of the git panel.
+    "status_style": "icon",       // label_color, icon
+    "sort_by_path": false,        // Sort by path (false) or status (true)
     "scrollbar": {
-      "show": null                      // Show/hide: (auto, system, always, never)
+      "show": null                // Show/hide: (auto, system, always, never)
     }
-  }
-}
-```
+  },
 
-### Debugger Panel
-
-```json
-{
+  // Debugger Panel
   "debugger": {
-    "dock": "bottom", // Where to dock: left, right, bottom
-    "button": true    // Show/hide status bar icon
-  }
-}
-```
+    "dock": "bottom",             // Where to dock: left, right, bottom
+    "button": true                // Show/hide status bar icon
+  },
 
-### Outline Panel
-
-```json
-{
+  // Outline Panel
   "outline_panel": {
     "button": true,               // Show/hide status bar icon
     "default_width": 300,         // Default width of the git panel
@@ -538,7 +502,6 @@ See [Terminal settings](./configuring-zed#terminal) for additional non-visual cu
       "show": null                // Show/hide: (auto, system, always, never)
     }
   }
-}
 ```
 
 ## Collaboration Panels
