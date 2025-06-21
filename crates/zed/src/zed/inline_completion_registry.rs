@@ -93,13 +93,24 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let client = client.clone();
         let user_store = user_store.clone();
         move |cx| {
+            assign_edit_prediction_providers(
+                &editors,
+                &client,
+                user_store.clone(),
+                cx,
+            );
+
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
-            if new_provider != provider {
-                let tos_accepted = user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false);
+            let provider_changed = new_provider != provider;
+
+            let tos_accepted = user_store
+                .read(cx)
+                .current_user_has_accepted_terms()
+                .unwrap_or(false);
+
+            if provider_changed {
+
 
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
@@ -116,7 +127,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
 
-                if !tos_accepted {
+            if provider_changed {
                     match provider {
                         EditPredictionProvider::Zed => {
                             let Some(window) = cx.active_window() else {
@@ -155,6 +166,7 @@ fn assign_edit_prediction_providers(
     user_store: Entity<UserStore>,
     cx: &mut App,
 ) {
+    // Iterate over editors and update only when the provider actually changes for that editor
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
@@ -167,7 +179,8 @@ fn assign_edit_prediction_providers(
                     .edit_predictions
                     .provider;
 
-                assign_edit_prediction_provider(
+                // Apply provider; Editor will ignore if unchanged internally
+                    assign_edit_prediction_provider(
                     editor,
                     provider,
                     &client,
