@@ -4284,6 +4284,11 @@ impl Window {
         self.platform_window.titlebar_double_click();
     }
 
+    /// Returns the number of tabbed windows in this window.
+    pub fn has_system_tabs(&self) -> bool {
+        self.platform_window.has_system_tabs()
+    }
+
     /// Toggles the inspector mode on this window.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn toggle_inspector(&mut self, cx: &mut App) {
