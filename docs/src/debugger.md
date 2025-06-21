@@ -35,11 +35,20 @@ These adapters enable Zed to provide a consistent debugging experience across mu
 
 ## Getting Started
 
-For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
+Zed supports zero-configuration debugging of tests and main functions in several popular languages:
 
-For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+- Rust
+- Go
+- Python
+- JavaScript and TypeScript
 
-You can then use the `New Session Modal` to select a configuration and start debugging.
+If you use one of these languages, the easiest way to get started with debugging in Zed is by opening the definition of the test or function you want to debug, clicking on the triangular "play" icon in the gutter, and selecting the debug task from the list that appears.
+
+You can also see a contextual list of debug tasks for the current location by opening the new process modal with the `debugger: start` action (bound by default to <kbd>f4</kbd>).
+
+The new process modal can also be used to manually start a debugging session. This is especially useful for languages like C, C++, and Swift that don't have zero-configuration debugging support in Zed. To start a basic debugging session manually from the modal, go to the "Launch" tab, then select a debug adapter from the dropdown menu and fill in the command line and working directory for the process you want to debug. You can pass environment variables to the debuggee process by using syntax like `ENV=var prog arg1 arg2` in the command line field.
+
+For more advanced use-cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory. These handwritten debug configurations also appear in the new process modal.
 
 ### Launching & Attaching
 
@@ -212,9 +221,11 @@ requirements.txt
 ]
 ```
 
-#### Rust/C++/C
+#### Rust/C++/C Examples
 
-##### Using pre-built binary
+Either CodeLLDB or GDB can be used for these languages. GDB is not supported on ARM Macs.
+
+##### Debug a Pre-Built Binary
 
 ```json
 [
@@ -222,24 +233,33 @@ requirements.txt
     "label": "Debug native binary",
     "program": "$ZED_WORKTREE_ROOT/build/binary",
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB"
   }
 ]
 ```
 
-##### Build binary then debug
+##### Using a Build Task
 
 ```json
 [
   {
-    "label": "Build & Debug native binary",
+    "label": "Build & Debug Rust binary",
     "build": {
       "command": "cargo",
       "args": ["build"]
     },
     "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB"
+  },
+  {
+    "label": "Build & Debug C++ binary",
+    "build": {
+      "command": "make"
+    },
+    "program": "$ZED_WORKTREE_ROOT/build/binary",
+    "request": "launch",
+    "adapter": "GDB"
   }
 ]
 ```
