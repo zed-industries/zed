@@ -2791,6 +2791,7 @@ impl EditorElement {
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
+                // TODO: add edit button on the right side of each row in the context menu
                 if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                     deployed_from,
                     actions,

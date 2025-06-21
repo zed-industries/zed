@@ -193,7 +193,7 @@ impl DapStore {
                 let user_installed_path = ProjectSettings::get_global(cx)
                     .dap
                     .get(&adapter.name())
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                    .and_then(|s| s.binary.as_ref().map(PathBuf::from)));
 
                 let delegate = self.delegate(&worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
@@ -220,7 +220,7 @@ impl DapStore {
                     }
 
                     Ok(binary)
-                })
+                }
             }
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {

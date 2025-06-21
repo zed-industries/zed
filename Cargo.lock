@@ -4304,6 +4304,7 @@ dependencies = [
  "tasks_ui",
  "telemetry",
  "terminal_view",
+ "text",
  "theme",
  "tree-sitter",
  "tree-sitter-json",
