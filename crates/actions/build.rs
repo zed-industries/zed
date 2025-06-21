@@ -13,29 +13,32 @@ struct ActionDef {
 }
 
 fn main() -> Result<()> {
-    // call a zed:: function so everything in `zed` crate is linked and
-    // all actions in the actual app are registered
-    zed::stdout_is_a_pty();
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        // call a zed:: function so everything in `zed` crate is linked and
+        // all actions in the actual app are registered
+        zed::stdout_is_a_pty();
 
-    let actions = dump_all_gpui_actions();
+        let actions = dump_all_gpui_actions();
 
-    let out_dir = env::var("CARGO_MANIFEST_DIR")?;
-    let assets_path = Path::new(&out_dir)
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("assets/actions");
+        let out_dir = env::var("CARGO_MANIFEST_DIR")?;
+        let assets_path = Path::new(&out_dir)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("assets/actions");
 
-    // Create the actions directory if it doesn't exist
-    fs::create_dir_all(&assets_path)?;
+        // Create the actions directory if it doesn't exist
+        fs::create_dir_all(&assets_path)?;
 
-    let json_path = assets_path.join("actions.json");
-    let json_content = serde_json::to_string_pretty(&actions)?;
-    fs::write(&json_path, json_content)?;
+        let json_path = assets_path.join("actions.json");
+        let json_content = serde_json::to_string_pretty(&actions)?;
+        fs::write(&json_path, json_content)?;
 
-    println!("cargo:rerun-if-changed=build.rs");
-    // println!("cargo:rerun-if-changed=../../assets/actions/actions.json");
+        println!("cargo:rerun-if-changed=build.rs");
+        // println!("cargo:rerun-if-changed=../../assets/actions/actions.json");
+    }
 
     Ok(())
 }
