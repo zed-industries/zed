@@ -1013,40 +1013,49 @@ struct RendererContext<'t, 'a, 'b> {
 struct ClusterAnalyzer<'t> {
     utf16_idx: usize,
     glyph_idx: usize,
+    glyph_count: usize,
     cluster_map: &'t [u16],
 }
 
 impl<'t> ClusterAnalyzer<'t> {
-    pub fn new(cluster_map: &'t [u16]) -> Self {
+    pub fn new(cluster_map: &'t [u16], glyph_count: usize) -> Self {
         ClusterAnalyzer {
             utf16_idx: 0,
             glyph_idx: 0,
+            glyph_count,
             cluster_map,
         }
     }
 
     pub fn next(&mut self) -> (usize, usize, bool) {
-        println!("\nChecking: {:#?}", self);
-        let init_utf16_idx = self.utf16_idx;
-        for glyph_idx in self.cluster_map[self.utf16_idx..].iter() {
-            println!("Comparing: {} with {}", *glyph_idx as usize, self.glyph_idx);
-            if *glyph_idx as usize == self.glyph_idx {
-                self.utf16_idx += 1;
-                if self.utf16_idx >= self.cluster_map.len() {
-                    return (
-                        self.utf16_idx - init_utf16_idx,
-                        *glyph_idx as usize - self.glyph_idx,
-                        false,
-                    );
-                }
-            } else {
-                break;
-            }
+        let start_utf16_idx = self.utf16_idx;
+        let current_glyph = self.cluster_map[start_utf16_idx] as usize;
+
+        // Find the end of current cluster (where glyph index changes)
+        let mut end_utf16_idx = start_utf16_idx + 1;
+        while end_utf16_idx < self.cluster_map.len()
+            && self.cluster_map[end_utf16_idx] as usize == current_glyph
+        {
+            end_utf16_idx += 1;
         }
-        let utf16_len = self.utf16_idx - init_utf16_idx;
-        let glyph_count = self.cluster_map[self.utf16_idx] - self.glyph_idx as u16;
-        self.glyph_idx = self.cluster_map[self.utf16_idx] as usize;
-        (utf16_len, glyph_count as usize, true)
+
+        let utf16_len = end_utf16_idx - start_utf16_idx;
+
+        // Calculate glyph count for this cluster
+        let next_glyph = if end_utf16_idx < self.cluster_map.len() {
+            self.cluster_map[end_utf16_idx] as usize
+        } else {
+            self.glyph_count
+        };
+
+        let glyph_count = next_glyph - current_glyph;
+        let has_more = end_utf16_idx < self.cluster_map.len();
+
+        // Update state for next call
+        self.utf16_idx = end_utf16_idx;
+        self.glyph_idx = next_glyph;
+
+        (utf16_len, glyph_count, has_more)
     }
 }
 
@@ -1562,15 +1571,32 @@ const BRUSH_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
 #[cfg(test)]
 mod tests {
     use crate::platform::windows::direct_write::ClusterAnalyzer;
-
     #[test]
     fn test_cluster_map() {
+        let cluster_map = [0];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
+        let next = analyzer.next();
+        assert_eq!(next, (1, 1, false));
+
+        let cluster_map = [0, 1, 2];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 3);
+        let next = analyzer.next();
+        assert_eq!(next, (1, 1, true));
+        let next = analyzer.next();
+        assert_eq!(next, (1, 1, true));
+        let next = analyzer.next();
+        assert_eq!(next, (1, 1, false));
         // 👨‍👩‍👧‍👦👩‍💻
         let cluster_map = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 4, 4, 4];
-        let mut analyzer = ClusterAnalyzer::new(&cluster_map);
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 5);
         let next = analyzer.next();
         assert_eq!(next, (11, 4, true));
         let next = analyzer.next();
-        assert_eq!(next, (5, 0, false));
+        assert_eq!(next, (5, 1, false));
+        // 👩‍💻
+        let cluster_map = [0, 0, 0, 0, 0];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
+        let next = analyzer.next();
+        assert_eq!(next, (5, 1, false));
     }
 }
