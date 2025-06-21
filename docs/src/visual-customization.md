@@ -6,7 +6,7 @@ See [Configuring Zed](./configuring-zed.md) for additional information and other
 
 ## Themes
 
-Use may install zed extensions providing [./themes.md](Themes) and [Icon Themes](Icon Themes) via {#action zed::extensions} from the command palette or menu.
+Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::extensions} from the command palette or menu.
 
 You can preview/choose amongsts your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 
@@ -214,7 +214,7 @@ TBD: Centered layout related settings
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
       "delay": 0,                  // Show after delay (ms)
-      "min_column": 0,             // Minmum column to inline display blame
+      "min_column": 0,             // Minimum column to inline display blame
       "show_commit_summary": false // Show/hide commit summary
     },
     "hunk_style": "staged_hollow"  // staged_hollow, unstaged_hollow
@@ -246,7 +246,7 @@ TBD: Centered layout related settings
     "search_results": true,   // Show buffer search results in the scrollbar.
     "selected_text": true,    // Show selected text occurrences in the scrollbar.
     "selected_symbol": true,  // Show selected symbol occurrences in the scrollbar.
-    "diagnostics": "all",     // Show diagnostics (none, errror, warning, infomation, all)
+    "diagnostics": "all",     // Show diagnostics (none, error, warning, information, all)
     "axes": {
       "horizontal": true,     // Show/hide the horizontal scrollbar
       "vertical": true        // Show/hide the vertical scrollbar
@@ -259,7 +259,7 @@ TBD: Centered layout related settings
     "display_in": "active_editor",  // Where to show (active_editor, all_editor)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
-    "max_width_columns": 80         // Maxium width of minimap
+    "max_width_columns": 80         // Maximum width of minimap
     "current_line_highlight": null  // Highlight current line (null, line, gutter)
   },
 
@@ -443,7 +443,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
     // Default cursor shape for the terminal (block, bar, underline, hollow)
     "cursor_shape": "block",
 
-    // Environment variables to add to terminal's process enivornment
+    // Environment variables to add to terminal's process environment
     "env": {
       // "KEY": "value"
     },
@@ -463,7 +463,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
   }
 ```
 
-See [Terminal settings](./configuring-zed#terminal) for additional non-visual customization options.
+See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual customization options.
 
 ### Other Panels
 
@@ -525,7 +525,7 @@ See [Terminal settings](./configuring-zed#terminal) for additional non-visual cu
     "default_width": 240          // Default width of the chat panel
   },
 
-  // Notifcation Panel
+  // Notification Panel
   "notification_panel": {
     // Whether to show the notification panel button in the status bar.
     "button": true,
