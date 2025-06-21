@@ -579,3 +579,25 @@ The Debugger supports the following theme options:
 
 - `debugger.accent`: Color used to accent breakpoint & breakpoint-related symbols
 - `editor.debugger_active_line.background`: Background color of active debug line
+
+## Troubleshooting
+
+If you're running into problems with the debugger, please [open a GitHub issue](FIXME) or [schedule an onboarding call](FIXME) with us so we can help understand and fix your issue.
+
+There are also some features you can use to gather more information about the problem:
+
+- When you have a session running in the debug panel, you can run the `dev: copy debug adapter arguments` action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
+- You can also use the `dev: open debug adapter logs` action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
+- If you need to temporarily use an external debug adapter binary instead of Zed's automatically-installed binaries, you can use the `dap.$ADAPTER.binary` setting in `.zed/settings.json`:
+
+```json
+{
+  "dap": {
+    "CodeLLDB": {
+      "binary": "/Users/name/.swiftly/bin/lldb-dap"
+    }
+  }
+}
+```
+
+Note that this should be a path to a *debug adapter* (like `lldb-dap`) not a *debugger* (like `lldb` itself).
