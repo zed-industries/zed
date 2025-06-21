@@ -233,10 +233,18 @@ impl super::LspAdapter for GoLspAdapter {
                 let text = format!("{label} {detail}");
                 let source = Rope::from(format!("import {text}").as_str());
                 let runs = language.highlight_text(&source, 7..7 + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(0..label.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..label.len(),
+                    filter_range,
                 });
             }
             Some((
@@ -250,10 +258,18 @@ impl super::LspAdapter for GoLspAdapter {
                     name_offset,
                     language.highlight_text(&source, 4..4 + text.len()),
                 );
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(0..label.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..label.len(),
+                    filter_range,
                 });
             }
             Some((lsp::CompletionItemKind::STRUCT, _)) => {
@@ -263,10 +279,18 @@ impl super::LspAdapter for GoLspAdapter {
                     name_offset,
                     language.highlight_text(&source, 5..5 + text.len()),
                 );
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(0..label.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..label.len(),
+                    filter_range,
                 });
             }
             Some((lsp::CompletionItemKind::INTERFACE, _)) => {
@@ -276,10 +300,18 @@ impl super::LspAdapter for GoLspAdapter {
                     name_offset,
                     language.highlight_text(&source, 5..5 + text.len()),
                 );
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(0..label.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..label.len(),
+                    filter_range,
                 });
             }
             Some((lsp::CompletionItemKind::FIELD, detail)) => {
@@ -290,10 +322,18 @@ impl super::LspAdapter for GoLspAdapter {
                     name_offset,
                     language.highlight_text(&source, 16..16 + text.len()),
                 );
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(0..label.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..label.len(),
+                    filter_range,
                 });
             }
             Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
@@ -304,8 +344,16 @@ impl super::LspAdapter for GoLspAdapter {
                         name_offset,
                         language.highlight_text(&source, 5..5 + text.len()),
                     );
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter_text| {
+                            text.find(filter_text)
+                                .map(|start| start..start + filter_text.len())
+                        })
+                        .unwrap_or(0..label.len());
                     return Some(CodeLabel {
-                        filter_range: 0..label.len(),
+                        filter_range,
                         text,
                         runs,
                     });

@@ -310,10 +310,15 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} }}"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..name.len(),
+                    filter_range,
                 });
             }
             (
@@ -330,10 +335,15 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} = ();"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..name.len(),
+                    filter_range,
                 });
             }
             (
@@ -367,9 +377,13 @@ impl LspAdapter for RustLspAdapter {
                         text.push(' ');
                         text.push_str(&detail);
                     }
-
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
                     return Some(CodeLabel {
-                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                        filter_range,
                         text,
                         runs,
                     });
@@ -378,12 +392,18 @@ impl LspAdapter for RustLspAdapter {
                     .as_ref()
                     .map_or(false, |detail| detail.starts_with("macro_rules! "))
                 {
-                    let source = Rope::from(completion.label.as_str());
-                    let runs = language.highlight_text(&source, 0..completion.label.len());
-
+                    let text = completion.label.clone();
+                    let len = text.len();
+                    let source = Rope::from(text.as_str());
+                    let runs = language.highlight_text(&source, 0..len);
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..len);
                     return Some(CodeLabel {
-                        filter_range: 0..completion.label.len(),
-                        text: completion.label.clone(),
+                        filter_range,
+                        text,
                         runs,
                     });
                 }
@@ -406,7 +426,7 @@ impl LspAdapter for RustLspAdapter {
                     label.push(' ');
                     label.push_str(detail);
                 }
-                let mut label = CodeLabel::plain(label, None);
+                let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                 if let Some(highlight_name) = highlight_name {
                     let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name)?;
                     label.runs.push((
@@ -1179,6 +1199,49 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "await.as_deref_mut()".to_string(),
+                        filter_text: Some("as_deref_mut".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some("fn(&mut self) -> IterMut<'_, T>".to_string()),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel {
+                text: "await.as_deref_mut()".to_string(),
+                filter_range: 6..18,
+                runs: vec![],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "inner_value".to_string(),
+                        filter_text: Some("value".to_string()),
+                        detail: Some("String".to_string()),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel {
+                text: "inner_value: String".to_string(),
+                filter_range: 6..11,
+                runs: vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
             })
         );
     }

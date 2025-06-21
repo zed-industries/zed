@@ -668,11 +668,15 @@ impl LspAdapter for TypeScriptLspAdapter {
         } else {
             item.label.clone()
         };
-
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..len);
         Some(language::CodeLabel {
             text,
             runs: vec![(0..len, highlight_id)],
-            filter_range: 0..len,
+            filter_range,
         })
     }
 
