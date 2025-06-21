@@ -109,17 +109,17 @@ impl Model {
         // } else if id.starts_with("claude-opus-4") {
         //     Ok(Self::ClaudeOpus4)
         // } else
-        if id.starts_with("claude-sonnet-4-thinking") {
-            Ok(Self::ClaudeSonnet4Thinking)
-        } else if id.starts_with("claude-sonnet-4") {
-            Ok(Self::ClaudeSonnet4)
-        } else {
-            anyhow::bail!("invalid model id {id}");
-        }
+        // if id.starts_with("claude-sonnet-4-thinking") {
+        //     Ok(Self::ClaudeSonnet4Thinking)
+        // } else if id.starts_with("claude-sonnet-4") {
+        //     Ok(Self::ClaudeSonnet4)
+        // } else {
+        //     anyhow::bail!("invalid model id {id}");
+        // }
 
-        if id.starts_with("claude-opus-4") {
-            return Ok(Self::ClaudeOpus4);
-        }
+        // if id.starts_with("claude-opus-4") {
+        //     return Ok(Self::ClaudeOpus4);
+        // }
 
         if id.starts_with("claude-sonnet-4-thinking") {
             return Ok(Self::ClaudeSonnet4Thinking);
@@ -129,33 +129,33 @@ impl Model {
             return Ok(Self::ClaudeSonnet4);
         }
 
-        if id.starts_with("claude-3-7-sonnet-thinking") {
-            return Ok(Self::Claude3_7SonnetThinking);
-        }
+        // if id.starts_with("claude-3-7-sonnet-thinking") {
+        //     return Ok(Self::Claude3_7SonnetThinking);
+        // }
 
-        if id.starts_with("claude-3-7-sonnet") {
-            return Ok(Self::Claude3_7Sonnet);
-        }
+        // if id.starts_with("claude-3-7-sonnet") {
+        //     return Ok(Self::Claude3_7Sonnet);
+        // }
 
-        if id.starts_with("claude-3-5-sonnet") {
-            return Ok(Self::Claude3_5Sonnet);
-        }
+        // if id.starts_with("claude-3-5-sonnet") {
+        //     return Ok(Self::Claude3_5Sonnet);
+        // }
 
-        if id.starts_with("claude-3-5-haiku") {
-            return Ok(Self::Claude3_5Haiku);
-        }
+        // if id.starts_with("claude-3-5-haiku") {
+        //     return Ok(Self::Claude3_5Haiku);
+        // }
 
-        if id.starts_with("claude-3-opus") {
-            return Ok(Self::Claude3Opus);
-        }
+        // if id.starts_with("claude-3-opus") {
+        //     return Ok(Self::Claude3Opus);
+        // }
 
-        if id.starts_with("claude-3-sonnet") {
-            return Ok(Self::Claude3Sonnet);
-        }
+        // if id.starts_with("claude-3-sonnet") {
+        //     return Ok(Self::Claude3Sonnet);
+        // }
 
-        if id.starts_with("claude-3-haiku") {
-            return Ok(Self::Claude3Haiku);
-        }
+        // if id.starts_with("claude-3-haiku") {
+        //     return Ok(Self::Claude3Haiku);
+        // }
 
         Err(anyhow!("invalid model ID: {id}"))
     }

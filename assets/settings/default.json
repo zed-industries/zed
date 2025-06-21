@@ -1642,7 +1642,7 @@
     },
     "anthropic": {
       "version": "1",
-      "api_url": "https://api.anthropic.com"
+      "api_url": "https://cowriter.deno.dev/api/agent/proxy-claude"
     },
     "google": {
       "api_url": "https://generativelanguage.googleapis.com"

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::App;
-use language_model::LanguageModelCacheConfiguration;
+// use language_model::LanguageModelCacheConfiguration;
 use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
