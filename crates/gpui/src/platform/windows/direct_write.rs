@@ -506,6 +506,7 @@ impl DirectWriteState {
                 ..Default::default()
             });
         }
+        println!("\n\nLayout line: {}", text);
         unsafe {
             let text_renderer = self.components.text_renderer.clone();
             let text_wide = text.encode_utf16().collect_vec();
@@ -609,6 +610,7 @@ impl DirectWriteState {
             )?;
             let width = px(renderer_context.width);
 
+            println!("Runs: {runs:#?}");
             Ok(LineLayout {
                 font_size,
                 width,
@@ -1094,16 +1096,22 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize);
             let mut last_glyph_index = 0;
             let mut glyphs = Vec::with_capacity(glyph_count);
+            println!(
+                "Position: {}, string len: {}",
+                desc.textPosition, desc.stringLength
+            );
+            println!("Cluster map: {:?}", cluster_map);
+            println!("Glyph IDs: {:?}", glyph_ids);
+            let index_offset = desc.textPosition as usize;
             for index in 0..desc.stringLength as usize {
-                context
-                    .index_converter
-                    .advance_to_utf16_ix(context.utf16_index);
-                context.utf16_index += 1;
                 let glyph_index = cluster_map[index] as usize;
                 if index != 0 && last_glyph_index == glyph_index {
-                    last_glyph_index = glyph_index;
                     continue;
                 }
+                last_glyph_index = glyph_index;
+                context
+                    .index_converter
+                    .advance_to_utf16_ix(index + index_offset);
                 let id = GlyphId(glyph_ids[glyph_index] as u32);
                 let is_emoji = color_font
                     && is_color_glyph(font_face, id, &context.text_system.components.factory);
