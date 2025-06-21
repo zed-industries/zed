@@ -334,6 +334,16 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             conclude_drag_operation as extern "C" fn(&Object, Sel, id),
         );
 
+        decl.add_method(
+            sel!(addTitlebarAccessoryViewController:),
+            add_titlebar_accessory_view_controller as extern "C" fn(&Object, Sel, id),
+        );
+
+        decl.add_method(
+            sel!(removeTitlebarAccessoryViewController:),
+            remove_titlebar_accessory_view_controller as extern "C" fn(&Object, Sel, id),
+        );
+
         decl.register()
     }
 }
@@ -358,7 +368,6 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
-    use_toolbar: Option<bool>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -366,6 +375,7 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    has_system_tabs: bool,
 }
 
 impl MacWindowState {
@@ -656,7 +666,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
-                use_toolbar,
+                has_system_tabs: false,
             })));
 
             (*native_window).set_ivar(
@@ -711,6 +721,12 @@ impl MacWindow {
                 WindowKind::Normal => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
+
+                    // Set tabbing identifier so "Merge All Windows" menu works
+                    if allows_automatic_window_tabbing {
+                        let tabbing_id = NSString::alloc(nil).init_str("zed-window");
+                        let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                    }
                 }
                 WindowKind::PopUp => {
                     // Use a tracking area to allow receiving MouseMoved events even when
@@ -1232,6 +1248,10 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
+    fn has_system_tabs(&self) -> bool {
+        self.0.lock().has_system_tabs
+    }
+
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
@@ -1734,7 +1754,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = window_state.lock();
+    let mut lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
@@ -1758,6 +1778,13 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
+
+            // This is required because the removeTitlebarAccessoryViewController hook does not catch all events.
+            // We execute this async, because otherwise the window might still report the wrong state.
+            unsafe {
+                update_tab_bar_state(&mut lock);
+            }
+
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
                 callback(is_active);
@@ -2154,6 +2181,30 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     );
 }
 
+extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view_controller: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.has_system_tabs = true;
+
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), addTitlebarAccessoryViewController: view_controller];
+    }
+}
+
+extern "C" fn remove_titlebar_accessory_view_controller(
+    this: &Object,
+    _: Sel,
+    view_controller: id,
+) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.has_system_tabs = false;
+
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), removeTitlebarAccessoryViewController: view_controller];
+    }
+}
+
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
@@ -2215,5 +2266,19 @@ unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
         let screen_number = device_description.objectForKey_(screen_number_key);
         let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
         screen_number as CGDirectDisplayID
+    }
+}
+
+unsafe fn update_tab_bar_state(lock: &mut MacWindowState) {
+    let tabbed_windows: id = msg_send![lock.native_window, tabbedWindows];
+    let tabbed_windows_count: NSUInteger = if !tabbed_windows.is_null() {
+        msg_send![tabbed_windows, count]
+    } else {
+        0
+    };
+
+    let should_have_tabs = tabbed_windows_count >= 2;
+    if lock.has_system_tabs != should_have_tabs {
+        lock.has_system_tabs = should_have_tabs;
     }
 }
