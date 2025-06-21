@@ -248,55 +248,63 @@ impl Render for BufferSearchBar {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
             .child(
-                h_flex()
-                    .gap_1()
-                    .items_start()
+                input_base_styles()
+                    .id("editor-scroll")
+                    .track_scroll(&self.editor_scroll_handle)
+                    .flex_1()
                     .child(
-                        input_base_styles()
-                            .id("editor-scroll")
-                            .track_scroll(&self.editor_scroll_handle)
-                            .flex_1()
-                            .child(self.render_text_input(&self.query_editor, color_override, cx)),
-                    )
-                    .when(!hide_inline_icons, |div| {
-                        div.child(
-                            h_flex()
-                                .gap_1()
-                                .h_8()
-                                .items_center()
-                                .children(supported_options.case.then(|| {
-                                    self.render_search_option_button(
-                                        SearchOptions::CASE_SENSITIVE,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_case_sensitive(
-                                                &ToggleCaseSensitive,
-                                                window,
-                                                cx,
+                        h_flex()
+                            .gap_1()
+                            .items_start()
+                            .w_full()
+                            .child(div().flex_1().child(self.render_text_input(
+                                &self.query_editor,
+                                color_override,
+                                cx,
+                            )))
+                            .when(!hide_inline_icons, |div| {
+                                div.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .children(supported_options.case.then(|| {
+                                            self.render_search_option_button(
+                                                SearchOptions::CASE_SENSITIVE,
+                                                focus_handle.clone(),
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.toggle_case_sensitive(
+                                                        &ToggleCaseSensitive,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }),
                                             )
-                                        }),
-                                    )
-                                }))
-                                .children(supported_options.word.then(|| {
-                                    self.render_search_option_button(
-                                        SearchOptions::WHOLE_WORD,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_whole_word(&ToggleWholeWord, window, cx)
-                                        }),
-                                    )
-                                }))
-                                .children(supported_options.regex.then(|| {
-                                    self.render_search_option_button(
-                                        SearchOptions::REGEX,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_regex(&ToggleRegex, window, cx)
-                                        }),
-                                    )
-                                })),
-                        )
-                    }),
+                                        }))
+                                        .children(supported_options.word.then(|| {
+                                            self.render_search_option_button(
+                                                SearchOptions::WHOLE_WORD,
+                                                focus_handle.clone(),
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.toggle_whole_word(
+                                                        &ToggleWholeWord,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }),
+                                            )
+                                        }))
+                                        .children(supported_options.regex.then(|| {
+                                            self.render_search_option_button(
+                                                SearchOptions::REGEX,
+                                                focus_handle.clone(),
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.toggle_regex(&ToggleRegex, window, cx)
+                                                }),
+                                            )
+                                        })),
+                                )
+                            }),
+                    ),
             )
             .child(
                 h_flex()
@@ -526,16 +534,27 @@ impl Render for BufferSearchBar {
                 !narrow_mode && !supported_options.find_in_results,
                 |div| {
                     div.child(
-                        h_flex().absolute().right_0().child(
-                            IconButton::new(SharedString::from("Close"), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
-                                })
-                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                    this.dismiss(&Dismiss, window, cx)
-                                })),
-                        ),
+                        h_flex()
+                            .absolute()
+                            .right_0()
+                            .top_0()
+                            .h_8()
+                            .items_center()
+                            .child(
+                                IconButton::new(SharedString::from("Close"), IconName::Close)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::for_action(
+                                            "Close Search Bar",
+                                            &Dismiss,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                        this.dismiss(&Dismiss, window, cx)
+                                    })),
+                            ),
                     )
                     .w_full()
                 },
