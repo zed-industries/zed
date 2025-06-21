@@ -474,8 +474,8 @@ jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46
 json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
-jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
-jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-protocol = { version = "0.6.0" }
+jupyter-websocket-client = { version = "0.11.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -487,7 +487,7 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+nbformat = { version = "0.10.0" }
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -528,7 +528,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
+runtimelib = {  version = "0.25.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
