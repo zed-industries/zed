@@ -1142,9 +1142,12 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
 
             let glyph_ids = std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count);
             let glyph_advances = std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count);
+            let glyph_offsets = std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count);
             let cluster_map =
                 std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize);
             let index_offset = desc.textPosition as usize;
+            println!("glyph advances: {:?}", glyph_advances);
+            println!("glyph offsets: {:?}", glyph_offsets);
 
             let mut cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
             let mut utf16_idx = 0;
@@ -1155,18 +1158,27 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     .index_converter
                     .advance_to_utf16_ix(index_offset + utf16_idx);
                 utf16_idx += utf16_len;
-                for glyph_id in glyph_ids[glyph_idx..(glyph_idx + glyph_count)].iter() {
+                // if glyph_count > 1 {
+                // println!(
+                //     "Offsets: {:?}",
+                //     &glyph_offsets[glyph_idx..(glyph_idx + glyph_count)]
+                // );
+                // }
+                for (i, glyph_id) in glyph_ids[glyph_idx..(glyph_idx + glyph_count)]
+                    .iter()
+                    .enumerate()
+                {
                     let id = GlyphId(*glyph_id as u32);
                     let is_emoji = color_font
                         && is_color_glyph(font_face, id, &context.text_system.components.factory);
                     glyphs.push(ShapedGlyph {
                         id,
-                        position: point(px(context.width), px(0.0)),
+                        position: point(px(context.width + glyph_offsets[glyph_idx + i].advanceOffset), px(0.0)),
                         index: context.index_converter.utf8_ix,
                         is_emoji,
                     });
+                    context.width += glyph_advances[glyph_idx + i];
                 }
-                context.width += glyph_advances[glyph_idx];
                 glyph_idx += glyph_count;
 
                 if !has_more {
