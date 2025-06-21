@@ -86,9 +86,11 @@ pub enum Operator {
     },
     FindForward {
         before: bool,
+        multiline: bool,
     },
     FindBackward {
         after: bool,
+        multiline: bool,
     },
     Sneak {
         first_char: Option<char>,
@@ -994,12 +996,12 @@ impl Operator {
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
             Operator::Literal { .. } => "^V",
-            Operator::FindForward { before: false } => "f",
-            Operator::FindForward { before: true } => "t",
+            Operator::FindForward { before: false, .. } => "f",
+            Operator::FindForward { before: true, .. } => "t",
             Operator::Sneak { .. } => "s",
             Operator::SneakBackward { .. } => "S",
-            Operator::FindBackward { after: false } => "F",
-            Operator::FindBackward { after: true } => "T",
+            Operator::FindBackward { after: false, .. } => "F",
+            Operator::FindBackward { after: true, .. } => "T",
             Operator::AddSurrounds { .. } => "ys",
             Operator::ChangeSurrounds { .. } => "cs",
             Operator::DeleteSurrounds => "ds",
