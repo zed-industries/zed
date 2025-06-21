@@ -542,6 +542,7 @@ mod tests {
             (VariableName::Column, "5678".to_string()),
             (VariableName::File, "test_file".to_string()),
             (VariableName::SelectedText, "test_selected_text".to_string()),
+            (VariableName::CurrentText, "test_current_text".to_string()),
             (VariableName::Symbol, long_value.clone()),
             (VariableName::WorktreeRoot, "/test_root/".to_string()),
             (
@@ -569,6 +570,7 @@ mod tests {
                 format!("arg1 {}", VariableName::SelectedText.template_value()),
                 format!("arg2 {}", VariableName::Column.template_value()),
                 format!("arg3 {}", VariableName::Symbol.template_value()),
+                format!("arg4 {}", VariableName::CurrentText.template_value()),
             ],
             env: HashMap::from_iter([
                 ("test_env_key".to_string(), "test_env_var".to_string()),
@@ -645,13 +647,14 @@ mod tests {
                     "arg1 $ZED_SELECTED_TEXT",
                     "arg2 $ZED_COLUMN",
                     "arg3 $ZED_SYMBOL",
+                    "arg4 $ZED_CURRENT_TEXT",
                 ],
                 "Args should not be substituted with variables"
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
                 format!(
-                    "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
+                    "{} arg1 test_selected_text arg2 5678 arg3 {long_value} arg4 test_current_text",
                     spawn_in_terminal.command
                 ),
                 "Command label args should be substituted with variables and those should not be shortened"
