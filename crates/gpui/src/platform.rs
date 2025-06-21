@@ -25,6 +25,7 @@ mod test;
 mod windows;
 
 #[cfg(all(
+    feature = "screen-capture",
     any(target_os = "linux", target_os = "freebsd"),
     any(feature = "wayland", feature = "x11"),
 ))]
