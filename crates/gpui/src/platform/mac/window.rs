@@ -361,6 +361,12 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             remove_titlebar_accessory_view_controller as extern "C" fn(&Object, Sel, id),
         );
 
+        decl.add_method(
+            sel!(window:willUseFullScreenPresentationOptions:),
+            window_will_use_fullscreen_presentation_options
+                as extern "C" fn(&Object, Sel, id, NSUInteger) -> NSUInteger,
+        );
+
         decl.register()
     }
 }
@@ -1779,6 +1785,16 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
             lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
     }
+}
+
+extern "C" fn window_will_use_fullscreen_presentation_options(
+    _this: &Object,
+    _sel: Sel,
+    _window: id,
+    _proposed_options: NSUInteger,
+) -> NSUInteger {
+    // NSApplicationPresentationAutoHideToolbar | NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationFullScreen
+    (1 << 11) | (1 << 2) | (1 << 10)
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
