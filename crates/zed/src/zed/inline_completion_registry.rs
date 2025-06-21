@@ -1,6 +1,6 @@
 use client::{Client, UserStore};
 use collections::HashMap;
-use copilot::{Copilot, CopilotCompletionProvider};
+use copilot::{Copilot, CopilotCompletionProvider, Status};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
@@ -234,6 +234,17 @@ fn assign_edit_prediction_provider(
                         });
                     }
                 }
+
+                if matches!(
+                    copilot.read(cx).status(),
+                    Status::Disabled
+                        | Status::SignedOut {
+                            awaiting_signing_in: false
+                        }
+                ) {
+                    copilot::initiate_sign_in(window, cx);
+                }
+
                 let provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
