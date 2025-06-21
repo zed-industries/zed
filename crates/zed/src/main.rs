@@ -380,6 +380,22 @@ pub fn main() {
             .detach();
         }
     });
+    app.new_window_for_tab(move |cx| {
+        for workspace in workspace::local_workspace_windows(cx) {
+            workspace
+                .update(cx, |_view, window, cx| {
+                    if window.is_window_active() {
+                        window.dispatch_action(
+                            Box::new(zed_actions::OpenRecent {
+                                create_new_window: true,
+                            }),
+                            cx,
+                        );
+                    }
+                })
+                .log_err();
+        }
+    });
 
     app.run(move |cx| {
         menu::init();

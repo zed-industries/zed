@@ -226,6 +226,24 @@ impl Application {
     pub fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         self.0.borrow().path_for_auxiliary_executable(name)
     }
+
+    /// Creates a new window to show as a tab in a tabbed window.
+    /// On macOS, the system automatically calls this method to create a window for a new tab when the user clicks the plus button in a tabbed window.
+    pub fn new_window_for_tab<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let this = Rc::downgrade(&self.0);
+        self.0
+            .borrow_mut()
+            .platform
+            .new_window_for_tab(Box::new(move || {
+                if let Some(app) = this.upgrade() {
+                    callback(&mut app.borrow_mut());
+                }
+            }));
+        self
+    }
 }
 
 type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
