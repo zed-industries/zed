@@ -310,9 +310,11 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} }}"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
-                let filter_range =
-                    CodeLabel::filter_range(&text, completion.filter_text.as_deref())
-                        .unwrap_or(0..name.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
@@ -333,9 +335,11 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} = ();"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
-                let filter_range =
-                    CodeLabel::filter_range(&text, completion.filter_text.as_deref())
-                        .unwrap_or(0..name.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
@@ -373,9 +377,11 @@ impl LspAdapter for RustLspAdapter {
                         text.push(' ');
                         text.push_str(&detail);
                     }
-                    let filter_range =
-                        CodeLabel::filter_range(&text, completion.filter_text.as_deref())
-                            .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
                     return Some(CodeLabel {
                         filter_range,
                         text,
@@ -386,16 +392,18 @@ impl LspAdapter for RustLspAdapter {
                     .as_ref()
                     .map_or(false, |detail| detail.starts_with("macro_rules! "))
                 {
-                    let source = Rope::from(completion.label.as_str());
-                    let runs = language.highlight_text(&source, 0..completion.label.len());
-                    let filter_range = CodeLabel::filter_range(
-                        &completion.label,
-                        completion.filter_text.as_deref(),
-                    )
-                    .unwrap_or(0..completion.label.len());
+                    let text = completion.label.clone();
+                    let len = text.len();
+                    let source = Rope::from(text.as_str());
+                    let runs = language.highlight_text(&source, 0..len);
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..len);
                     return Some(CodeLabel {
                         filter_range,
-                        text: completion.label.clone(),
+                        text,
                         runs,
                     });
                 }

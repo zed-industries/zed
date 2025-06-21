@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{CodeLabel, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
@@ -195,8 +195,11 @@ impl LspAdapter for VtslsLspAdapter {
         } else {
             item.label.clone()
         };
-        let filter_range =
-            CodeLabel::filter_range(&text, item.filter_text.as_deref()).unwrap_or(0..len);
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..len);
         Some(language::CodeLabel {
             text,
             runs: vec![(0..len, highlight_id)],
