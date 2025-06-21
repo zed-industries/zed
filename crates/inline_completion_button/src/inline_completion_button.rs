@@ -51,6 +51,7 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
+    provider_kind: EditPredictionProvider,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -65,9 +66,7 @@ enum SupermavenButtonStatus {
 
 impl Render for InlineCompletionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let all_language_settings = all_language_settings(None, cx);
-
-        match all_language_settings.edit_predictions.provider {
+        match self.provider_kind {
             EditPredictionProvider::None => div(),
 
             EditPredictionProvider::Copilot => {
@@ -384,6 +383,7 @@ impl InlineCompletionButton {
             language: None,
             file: None,
             edit_prediction_provider: None,
+            provider_kind: EditPredictionProvider::None,
             popover_menu_handle,
             fs,
             user_store,
@@ -823,6 +823,9 @@ impl InlineCompletionButton {
         };
         self.editor_show_predictions = editor.edit_predictions_enabled();
         self.edit_prediction_provider = editor.edit_prediction_provider();
+        self.provider_kind = all_language_settings(self.file.as_ref(), cx)
+            .edit_predictions
+            .provider;
         self.language = language.cloned();
         self.file = file;
         self.editor_focus_handle = Some(editor.focus_handle(cx));
@@ -851,6 +854,7 @@ impl StatusItemView for InlineCompletionButton {
         } else {
             self.language = None;
             self.editor_subscription = None;
+            self.provider_kind = EditPredictionProvider::None;
             self.editor_enabled = None;
         }
         cx.notify();
