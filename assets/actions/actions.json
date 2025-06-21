@@ -1,0 +1,3774 @@
+[
+  {
+    "name": "activity_indicator::ShowErrorMessage",
+    "human_name": "activity indicator: show error message"
+  },
+  {
+    "name": "agent::AcceptSuggestedContext",
+    "human_name": "agent: accept suggested context"
+  },
+  {
+    "name": "agent::AddContextServer",
+    "human_name": "agent: add context server"
+  },
+  {
+    "name": "agent::Chat",
+    "human_name": "agent: chat"
+  },
+  {
+    "name": "agent::ChatWithFollow",
+    "human_name": "agent: chat with follow"
+  },
+  {
+    "name": "agent::ContinueThread",
+    "human_name": "agent: continue thread"
+  },
+  {
+    "name": "agent::ContinueWithBurnMode",
+    "human_name": "agent: continue with burn mode"
+  },
+  {
+    "name": "agent::CycleNextInlineAssist",
+    "human_name": "agent: cycle next inline assist"
+  },
+  {
+    "name": "agent::CyclePreviousInlineAssist",
+    "human_name": "agent: cycle previous inline assist"
+  },
+  {
+    "name": "agent::DeleteRecentlyOpenThread",
+    "human_name": "agent: delete recently open thread"
+  },
+  {
+    "name": "agent::ExpandMessageEditor",
+    "human_name": "agent: expand message editor"
+  },
+  {
+    "name": "agent::FocusDown",
+    "human_name": "agent: focus down"
+  },
+  {
+    "name": "agent::FocusLeft",
+    "human_name": "agent: focus left"
+  },
+  {
+    "name": "agent::FocusRight",
+    "human_name": "agent: focus right"
+  },
+  {
+    "name": "agent::FocusUp",
+    "human_name": "agent: focus up"
+  },
+  {
+    "name": "agent::Follow",
+    "human_name": "agent: follow"
+  },
+  {
+    "name": "agent::Keep",
+    "human_name": "agent: keep"
+  },
+  {
+    "name": "agent::KeepAll",
+    "human_name": "agent: keep all"
+  },
+  {
+    "name": "agent::ManageProfiles",
+    "human_name": "agent: manage profiles"
+  },
+  {
+    "name": "agent::NewTextThread",
+    "human_name": "agent: new text thread"
+  },
+  {
+    "name": "agent::NewThread",
+    "human_name": "agent: new thread"
+  },
+  {
+    "name": "agent::OpenActiveThreadAsMarkdown",
+    "human_name": "agent: open active thread as markdown"
+  },
+  {
+    "name": "agent::OpenAgentDiff",
+    "human_name": "agent: open agent diff"
+  },
+  {
+    "name": "agent::OpenConfiguration",
+    "human_name": "agent: open configuration"
+  },
+  {
+    "name": "agent::OpenHistory",
+    "human_name": "agent: open history"
+  },
+  {
+    "name": "agent::OpenOnboardingModal",
+    "human_name": "agent: open onboarding modal"
+  },
+  {
+    "name": "agent::OpenRulesLibrary",
+    "human_name": "agent: open rules library",
+    "deprecated_aliases": [
+      "assistant::OpenRulesLibrary",
+      "assistant::DeployPromptLibrary"
+    ]
+  },
+  {
+    "name": "agent::Reject",
+    "human_name": "agent: reject"
+  },
+  {
+    "name": "agent::RejectAll",
+    "human_name": "agent: reject all"
+  },
+  {
+    "name": "agent::RemoveAllContext",
+    "human_name": "agent: remove all context"
+  },
+  {
+    "name": "agent::RemoveFocusedContext",
+    "human_name": "agent: remove focused context"
+  },
+  {
+    "name": "agent::RemoveSelectedThread",
+    "human_name": "agent: remove selected thread"
+  },
+  {
+    "name": "agent::ResetOnboarding",
+    "human_name": "agent: reset onboarding"
+  },
+  {
+    "name": "agent::ResetTrialEndUpsell",
+    "human_name": "agent: reset trial end upsell"
+  },
+  {
+    "name": "agent::ResetTrialUpsell",
+    "human_name": "agent: reset trial upsell"
+  },
+  {
+    "name": "agent::ToggleBurnMode",
+    "human_name": "agent: toggle burn mode"
+  },
+  {
+    "name": "agent::ToggleContextPicker",
+    "human_name": "agent: toggle context picker"
+  },
+  {
+    "name": "agent::ToggleFocus",
+    "human_name": "agent: toggle focus",
+    "deprecated_aliases": [
+      "assistant::ToggleFocus"
+    ]
+  },
+  {
+    "name": "agent::ToggleModelSelector",
+    "human_name": "agent: toggle model selector",
+    "deprecated_aliases": [
+      "assistant::ToggleModelSelector",
+      "assistant2::ToggleModelSelector"
+    ]
+  },
+  {
+    "name": "agent::ToggleNavigationMenu",
+    "human_name": "agent: toggle navigation menu"
+  },
+  {
+    "name": "agent::ToggleOptionsMenu",
+    "human_name": "agent: toggle options menu"
+  },
+  {
+    "name": "agent::ToggleProfileSelector",
+    "human_name": "agent: toggle profile selector"
+  },
+  {
+    "name": "assistant::Assist",
+    "human_name": "assistant: assist"
+  },
+  {
+    "name": "assistant::ConfirmCommand",
+    "human_name": "assistant: confirm command"
+  },
+  {
+    "name": "assistant::CopyCode",
+    "human_name": "assistant: copy code"
+  },
+  {
+    "name": "assistant::CycleMessageRole",
+    "human_name": "assistant: cycle message role"
+  },
+  {
+    "name": "assistant::InlineAssist",
+    "human_name": "assistant: inline assist"
+  },
+  {
+    "name": "assistant::InsertIntoEditor",
+    "human_name": "assistant: insert into editor"
+  },
+  {
+    "name": "assistant::QuoteSelection",
+    "human_name": "assistant: quote selection"
+  },
+  {
+    "name": "assistant::ShowConfiguration",
+    "human_name": "assistant: show configuration"
+  },
+  {
+    "name": "assistant::Split",
+    "human_name": "assistant: split"
+  },
+  {
+    "name": "auto_update::Check",
+    "human_name": "auto update: check"
+  },
+  {
+    "name": "auto_update::DismissErrorMessage",
+    "human_name": "auto update: dismiss error message"
+  },
+  {
+    "name": "auto_update::ViewReleaseNotes",
+    "human_name": "auto update: view release notes"
+  },
+  {
+    "name": "auto_update::ViewReleaseNotesLocally",
+    "human_name": "auto update: view release notes locally"
+  },
+  {
+    "name": "buffer_search::Deploy",
+    "human_name": "buffer search: deploy"
+  },
+  {
+    "name": "buffer_search::DeployReplace",
+    "human_name": "buffer search: deploy replace"
+  },
+  {
+    "name": "buffer_search::Dismiss",
+    "human_name": "buffer search: dismiss"
+  },
+  {
+    "name": "buffer_search::FocusEditor",
+    "human_name": "buffer search: focus editor"
+  },
+  {
+    "name": "channel_modal::RemoveMember",
+    "human_name": "channel modal: remove member"
+  },
+  {
+    "name": "channel_modal::SelectNextControl",
+    "human_name": "channel modal: select next control"
+  },
+  {
+    "name": "channel_modal::ToggleMemberAdmin",
+    "human_name": "channel modal: toggle member admin"
+  },
+  {
+    "name": "channel_modal::ToggleMode",
+    "human_name": "channel modal: toggle mode"
+  },
+  {
+    "name": "chat_panel::ToggleFocus",
+    "human_name": "chat panel: toggle focus"
+  },
+  {
+    "name": "cli::Install",
+    "human_name": "cli: install"
+  },
+  {
+    "name": "cli::RegisterZedScheme",
+    "human_name": "cli: register zed scheme"
+  },
+  {
+    "name": "client::Reconnect",
+    "human_name": "client: reconnect"
+  },
+  {
+    "name": "client::SignIn",
+    "human_name": "client: sign in"
+  },
+  {
+    "name": "client::SignOut",
+    "human_name": "client: sign out"
+  },
+  {
+    "name": "collab::CopyLink",
+    "human_name": "collab: copy link"
+  },
+  {
+    "name": "collab::Deafen",
+    "human_name": "collab: deafen"
+  },
+  {
+    "name": "collab::LeaveCall",
+    "human_name": "collab: leave call"
+  },
+  {
+    "name": "collab::LeaveCall",
+    "human_name": "collab: leave call"
+  },
+  {
+    "name": "collab::Mute",
+    "human_name": "collab: mute"
+  },
+  {
+    "name": "collab::OpenChannelNotes",
+    "human_name": "collab: open channel notes"
+  },
+  {
+    "name": "collab::ScreenShare",
+    "human_name": "collab: screen share"
+  },
+  {
+    "name": "collab::ShareProject",
+    "human_name": "collab: share project"
+  },
+  {
+    "name": "collab::SwitchBranch",
+    "human_name": "collab: switch branch"
+  },
+  {
+    "name": "collab::ToggleDeafen",
+    "human_name": "collab: toggle deafen"
+  },
+  {
+    "name": "collab::ToggleMute",
+    "human_name": "collab: toggle mute"
+  },
+  {
+    "name": "collab::ToggleProjectMenu",
+    "human_name": "collab: toggle project menu"
+  },
+  {
+    "name": "collab::ToggleScreenSharing",
+    "human_name": "collab: toggle screen sharing"
+  },
+  {
+    "name": "collab::ToggleUserMenu",
+    "human_name": "collab: toggle user menu"
+  },
+  {
+    "name": "collab_panel::CollapseSelectedChannel",
+    "human_name": "collab panel: collapse selected channel"
+  },
+  {
+    "name": "collab_panel::ExpandSelectedChannel",
+    "human_name": "collab panel: expand selected channel"
+  },
+  {
+    "name": "collab_panel::InsertSpace",
+    "human_name": "collab panel: insert space"
+  },
+  {
+    "name": "collab_panel::MoveChannelDown",
+    "human_name": "collab panel: move channel down"
+  },
+  {
+    "name": "collab_panel::MoveChannelUp",
+    "human_name": "collab panel: move channel up"
+  },
+  {
+    "name": "collab_panel::MoveSelected",
+    "human_name": "collab panel: move selected"
+  },
+  {
+    "name": "collab_panel::Remove",
+    "human_name": "collab panel: remove"
+  },
+  {
+    "name": "collab_panel::Secondary",
+    "human_name": "collab panel: secondary"
+  },
+  {
+    "name": "collab_panel::StartMoveChannel",
+    "human_name": "collab panel: start move channel"
+  },
+  {
+    "name": "collab_panel::ToggleFocus",
+    "human_name": "collab panel: toggle focus"
+  },
+  {
+    "name": "command_palette::Toggle",
+    "human_name": "command palette: toggle"
+  },
+  {
+    "name": "console::WatchExpression",
+    "human_name": "console: watch expression"
+  },
+  {
+    "name": "context_server::Restart",
+    "human_name": "context server: restart"
+  },
+  {
+    "name": "copilot::NextSuggestion",
+    "human_name": "copilot: next suggestion"
+  },
+  {
+    "name": "copilot::PreviousSuggestion",
+    "human_name": "copilot: previous suggestion"
+  },
+  {
+    "name": "copilot::Reinstall",
+    "human_name": "copilot: reinstall"
+  },
+  {
+    "name": "copilot::SignIn",
+    "human_name": "copilot: sign in"
+  },
+  {
+    "name": "copilot::SignOut",
+    "human_name": "copilot: sign out"
+  },
+  {
+    "name": "copilot::Suggest",
+    "human_name": "copilot: suggest"
+  },
+  {
+    "name": "debug_panel::ToggleFocus",
+    "human_name": "debug panel: toggle focus"
+  },
+  {
+    "name": "debugger::ClearAllBreakpoints",
+    "human_name": "debugger: clear all breakpoints"
+  },
+  {
+    "name": "debugger::Continue",
+    "human_name": "debugger: continue"
+  },
+  {
+    "name": "debugger::Detach",
+    "human_name": "debugger: detach"
+  },
+  {
+    "name": "debugger::EvaluateSelectedText",
+    "human_name": "debugger: evaluate selected text"
+  },
+  {
+    "name": "debugger::FocusBreakpointList",
+    "human_name": "debugger: focus breakpoint list"
+  },
+  {
+    "name": "debugger::FocusConsole",
+    "human_name": "debugger: focus console"
+  },
+  {
+    "name": "debugger::FocusFrames",
+    "human_name": "debugger: focus frames"
+  },
+  {
+    "name": "debugger::FocusLoadedSources",
+    "human_name": "debugger: focus loaded sources"
+  },
+  {
+    "name": "debugger::FocusModules",
+    "human_name": "debugger: focus modules"
+  },
+  {
+    "name": "debugger::FocusTerminal",
+    "human_name": "debugger: focus terminal"
+  },
+  {
+    "name": "debugger::FocusVariables",
+    "human_name": "debugger: focus variables"
+  },
+  {
+    "name": "debugger::OpenOnboardingModal",
+    "human_name": "debugger: open onboarding modal"
+  },
+  {
+    "name": "debugger::OpenProjectDebugTasks",
+    "human_name": "debugger: open project debug tasks"
+  },
+  {
+    "name": "debugger::Pause",
+    "human_name": "debugger: pause"
+  },
+  {
+    "name": "debugger::RerunLastSession",
+    "human_name": "debugger: rerun last session"
+  },
+  {
+    "name": "debugger::ResetOnboarding",
+    "human_name": "debugger: reset onboarding"
+  },
+  {
+    "name": "debugger::Restart",
+    "human_name": "debugger: restart"
+  },
+  {
+    "name": "debugger::RunToCursor",
+    "human_name": "debugger: run to cursor"
+  },
+  {
+    "name": "debugger::ShowStackTrace",
+    "human_name": "debugger: show stack trace"
+  },
+  {
+    "name": "debugger::Start",
+    "human_name": "debugger: start"
+  },
+  {
+    "name": "debugger::StepBack",
+    "human_name": "debugger: step back"
+  },
+  {
+    "name": "debugger::StepInto",
+    "human_name": "debugger: step into"
+  },
+  {
+    "name": "debugger::StepOut",
+    "human_name": "debugger: step out"
+  },
+  {
+    "name": "debugger::StepOver",
+    "human_name": "debugger: step over"
+  },
+  {
+    "name": "debugger::Stop",
+    "human_name": "debugger: stop"
+  },
+  {
+    "name": "debugger::ToggleEnableBreakpoint",
+    "human_name": "debugger: toggle enable breakpoint"
+  },
+  {
+    "name": "debugger::ToggleExpandItem",
+    "human_name": "debugger: toggle expand item"
+  },
+  {
+    "name": "debugger::ToggleIgnoreBreakpoints",
+    "human_name": "debugger: toggle ignore breakpoints"
+  },
+  {
+    "name": "debugger::ToggleSessionPicker",
+    "human_name": "debugger: toggle session picker"
+  },
+  {
+    "name": "debugger::ToggleThreadPicker",
+    "human_name": "debugger: toggle thread picker"
+  },
+  {
+    "name": "debugger::UnsetBreakpoint",
+    "human_name": "debugger: unset breakpoint"
+  },
+  {
+    "name": "dev::CopyDebugAdapterArguments",
+    "human_name": "dev: copy debug adapter arguments"
+  },
+  {
+    "name": "dev::OpenDebugAdapterLogs",
+    "human_name": "dev: open debug adapter logs"
+  },
+  {
+    "name": "dev::OpenKeyContextView",
+    "human_name": "dev: open key context view"
+  },
+  {
+    "name": "dev::OpenLanguageServerLogs",
+    "human_name": "dev: open language server logs"
+  },
+  {
+    "name": "dev::OpenSyntaxTreeView",
+    "human_name": "dev: open syntax tree view"
+  },
+  {
+    "name": "dev::OpenThemePreview",
+    "human_name": "dev: open theme preview"
+  },
+  {
+    "name": "dev::ToggleInspector",
+    "human_name": "dev: toggle inspector"
+  },
+  {
+    "name": "diagnostics::Deploy",
+    "human_name": "diagnostics: deploy"
+  },
+  {
+    "name": "diagnostics::ToggleDiagnosticsRefresh",
+    "human_name": "diagnostics: toggle diagnostics refresh"
+  },
+  {
+    "name": "diagnostics::ToggleWarnings",
+    "human_name": "diagnostics: toggle warnings"
+  },
+  {
+    "name": "edit_prediction::ClearHistory",
+    "human_name": "edit prediction: clear history"
+  },
+  {
+    "name": "edit_prediction::RateCompletions",
+    "human_name": "edit prediction: rate completions"
+  },
+  {
+    "name": "edit_prediction::ResetOnboarding",
+    "human_name": "edit prediction: reset onboarding"
+  },
+  {
+    "name": "edit_prediction::ToggleMenu",
+    "human_name": "edit prediction: toggle menu"
+  },
+  {
+    "name": "editor::AcceptEditPrediction",
+    "human_name": "editor: accept edit prediction"
+  },
+  {
+    "name": "editor::AcceptPartialCopilotSuggestion",
+    "human_name": "editor: accept partial copilot suggestion"
+  },
+  {
+    "name": "editor::AcceptPartialEditPrediction",
+    "human_name": "editor: accept partial edit prediction"
+  },
+  {
+    "name": "editor::AddSelectionAbove",
+    "human_name": "editor: add selection above"
+  },
+  {
+    "name": "editor::AddSelectionBelow",
+    "human_name": "editor: add selection below"
+  },
+  {
+    "name": "editor::ApplyAllDiffHunks",
+    "human_name": "editor: apply all diff hunks"
+  },
+  {
+    "name": "editor::ApplyDiffHunk",
+    "human_name": "editor: apply diff hunk"
+  },
+  {
+    "name": "editor::AutoIndent",
+    "human_name": "editor: auto indent"
+  },
+  {
+    "name": "editor::Backspace",
+    "human_name": "editor: backspace"
+  },
+  {
+    "name": "editor::Backtab",
+    "human_name": "editor: backtab"
+  },
+  {
+    "name": "editor::Cancel",
+    "human_name": "editor: cancel"
+  },
+  {
+    "name": "editor::CancelFlycheck",
+    "human_name": "editor: cancel flycheck"
+  },
+  {
+    "name": "editor::CancelLanguageServerWork",
+    "human_name": "editor: cancel language server work"
+  },
+  {
+    "name": "editor::ClearFlycheck",
+    "human_name": "editor: clear flycheck"
+  },
+  {
+    "name": "editor::ComposeCompletion",
+    "human_name": "editor: compose completion"
+  },
+  {
+    "name": "editor::ConfirmCodeAction",
+    "human_name": "editor: confirm code action"
+  },
+  {
+    "name": "editor::ConfirmCompletion",
+    "human_name": "editor: confirm completion"
+  },
+  {
+    "name": "editor::ConfirmCompletionInsert",
+    "human_name": "editor: confirm completion insert"
+  },
+  {
+    "name": "editor::ConfirmCompletionReplace",
+    "human_name": "editor: confirm completion replace"
+  },
+  {
+    "name": "editor::ConfirmRename",
+    "human_name": "editor: confirm rename"
+  },
+  {
+    "name": "editor::ContextMenuFirst",
+    "human_name": "editor: context menu first"
+  },
+  {
+    "name": "editor::ContextMenuLast",
+    "human_name": "editor: context menu last"
+  },
+  {
+    "name": "editor::ContextMenuNext",
+    "human_name": "editor: context menu next"
+  },
+  {
+    "name": "editor::ContextMenuPrevious",
+    "human_name": "editor: context menu previous"
+  },
+  {
+    "name": "editor::ConvertToKebabCase",
+    "human_name": "editor: convert to kebab case"
+  },
+  {
+    "name": "editor::ConvertToLowerCamelCase",
+    "human_name": "editor: convert to lower camel case"
+  },
+  {
+    "name": "editor::ConvertToLowerCase",
+    "human_name": "editor: convert to lower case"
+  },
+  {
+    "name": "editor::ConvertToOppositeCase",
+    "human_name": "editor: convert to opposite case"
+  },
+  {
+    "name": "editor::ConvertToRot13",
+    "human_name": "editor: convert to rot13"
+  },
+  {
+    "name": "editor::ConvertToRot47",
+    "human_name": "editor: convert to rot47"
+  },
+  {
+    "name": "editor::ConvertToSnakeCase",
+    "human_name": "editor: convert to snake case"
+  },
+  {
+    "name": "editor::ConvertToTitleCase",
+    "human_name": "editor: convert to title case"
+  },
+  {
+    "name": "editor::ConvertToUpperCamelCase",
+    "human_name": "editor: convert to upper camel case"
+  },
+  {
+    "name": "editor::ConvertToUpperCase",
+    "human_name": "editor: convert to upper case"
+  },
+  {
+    "name": "editor::Copy",
+    "human_name": "editor: copy"
+  },
+  {
+    "name": "editor::CopyAndTrim",
+    "human_name": "editor: copy and trim"
+  },
+  {
+    "name": "editor::CopyFileLocation",
+    "human_name": "editor: copy file location"
+  },
+  {
+    "name": "editor::CopyFileName",
+    "human_name": "editor: copy file name"
+  },
+  {
+    "name": "editor::CopyFileNameWithoutExtension",
+    "human_name": "editor: copy file name without extension"
+  },
+  {
+    "name": "editor::CopyHighlightJson",
+    "human_name": "editor: copy highlight json"
+  },
+  {
+    "name": "editor::CopyPermalinkToLine",
+    "human_name": "editor: copy permalink to line"
+  },
+  {
+    "name": "editor::Cut",
+    "human_name": "editor: cut"
+  },
+  {
+    "name": "editor::CutToEndOfLine",
+    "human_name": "editor: cut to end of line"
+  },
+  {
+    "name": "editor::Delete",
+    "human_name": "editor: delete"
+  },
+  {
+    "name": "editor::DeleteLine",
+    "human_name": "editor: delete line"
+  },
+  {
+    "name": "editor::DeleteToBeginningOfLine",
+    "human_name": "editor: delete to beginning of line"
+  },
+  {
+    "name": "editor::DeleteToEndOfLine",
+    "human_name": "editor: delete to end of line"
+  },
+  {
+    "name": "editor::DeleteToNextSubwordEnd",
+    "human_name": "editor: delete to next subword end"
+  },
+  {
+    "name": "editor::DeleteToNextWordEnd",
+    "human_name": "editor: delete to next word end"
+  },
+  {
+    "name": "editor::DeleteToPreviousSubwordStart",
+    "human_name": "editor: delete to previous subword start"
+  },
+  {
+    "name": "editor::DeleteToPreviousWordStart",
+    "human_name": "editor: delete to previous word start"
+  },
+  {
+    "name": "editor::DisableBreakpoint",
+    "human_name": "editor: disable breakpoint"
+  },
+  {
+    "name": "editor::DisplayCursorNames",
+    "human_name": "editor: display cursor names"
+  },
+  {
+    "name": "editor::DuplicateLineDown",
+    "human_name": "editor: duplicate line down"
+  },
+  {
+    "name": "editor::DuplicateLineUp",
+    "human_name": "editor: duplicate line up"
+  },
+  {
+    "name": "editor::DuplicateSelection",
+    "human_name": "editor: duplicate selection"
+  },
+  {
+    "name": "editor::EditLogBreakpoint",
+    "human_name": "editor: edit log breakpoint"
+  },
+  {
+    "name": "editor::EnableBreakpoint",
+    "human_name": "editor: enable breakpoint"
+  },
+  {
+    "name": "editor::ExpandAllDiffHunks",
+    "human_name": "editor: expand all diff hunks",
+    "deprecated_aliases": [
+      "editor::ExpandAllHunkDiffs"
+    ]
+  },
+  {
+    "name": "editor::ExpandExcerpts",
+    "human_name": "editor: expand excerpts"
+  },
+  {
+    "name": "editor::ExpandExcerptsDown",
+    "human_name": "editor: expand excerpts down"
+  },
+  {
+    "name": "editor::ExpandExcerptsUp",
+    "human_name": "editor: expand excerpts up"
+  },
+  {
+    "name": "editor::ExpandMacroRecursively",
+    "human_name": "editor: expand macro recursively"
+  },
+  {
+    "name": "editor::FindAllReferences",
+    "human_name": "editor: find all references"
+  },
+  {
+    "name": "editor::FindNextMatch",
+    "human_name": "editor: find next match"
+  },
+  {
+    "name": "editor::FindPreviousMatch",
+    "human_name": "editor: find previous match"
+  },
+  {
+    "name": "editor::Fold",
+    "human_name": "editor: fold"
+  },
+  {
+    "name": "editor::FoldAll",
+    "human_name": "editor: fold all"
+  },
+  {
+    "name": "editor::FoldAtLevel",
+    "human_name": "editor: fold at level"
+  },
+  {
+    "name": "editor::FoldFunctionBodies",
+    "human_name": "editor: fold function bodies"
+  },
+  {
+    "name": "editor::FoldRecursive",
+    "human_name": "editor: fold recursive"
+  },
+  {
+    "name": "editor::FoldSelectedRanges",
+    "human_name": "editor: fold selected ranges"
+  },
+  {
+    "name": "editor::Format",
+    "human_name": "editor: format"
+  },
+  {
+    "name": "editor::FormatSelections",
+    "human_name": "editor: format selections"
+  },
+  {
+    "name": "editor::GoToDeclaration",
+    "human_name": "editor: go to declaration"
+  },
+  {
+    "name": "editor::GoToDeclarationSplit",
+    "human_name": "editor: go to declaration split"
+  },
+  {
+    "name": "editor::GoToDefinition",
+    "human_name": "editor: go to definition"
+  },
+  {
+    "name": "editor::GoToDefinitionSplit",
+    "human_name": "editor: go to definition split"
+  },
+  {
+    "name": "editor::GoToDiagnostic",
+    "human_name": "editor: go to diagnostic"
+  },
+  {
+    "name": "editor::GoToHunk",
+    "human_name": "editor: go to hunk"
+  },
+  {
+    "name": "editor::GoToImplementation",
+    "human_name": "editor: go to implementation"
+  },
+  {
+    "name": "editor::GoToImplementationSplit",
+    "human_name": "editor: go to implementation split"
+  },
+  {
+    "name": "editor::GoToNextChange",
+    "human_name": "editor: go to next change"
+  },
+  {
+    "name": "editor::GoToParentModule",
+    "human_name": "editor: go to parent module"
+  },
+  {
+    "name": "editor::GoToPreviousChange",
+    "human_name": "editor: go to previous change"
+  },
+  {
+    "name": "editor::GoToPreviousDiagnostic",
+    "human_name": "editor: go to previous diagnostic"
+  },
+  {
+    "name": "editor::GoToPreviousHunk",
+    "human_name": "editor: go to previous hunk"
+  },
+  {
+    "name": "editor::GoToTypeDefinition",
+    "human_name": "editor: go to type definition"
+  },
+  {
+    "name": "editor::GoToTypeDefinitionSplit",
+    "human_name": "editor: go to type definition split"
+  },
+  {
+    "name": "editor::HalfPageDown",
+    "human_name": "editor: half page down"
+  },
+  {
+    "name": "editor::HalfPageUp",
+    "human_name": "editor: half page up"
+  },
+  {
+    "name": "editor::HandleInput",
+    "human_name": "editor: handle input"
+  },
+  {
+    "name": "editor::Hover",
+    "human_name": "editor: hover"
+  },
+  {
+    "name": "editor::Indent",
+    "human_name": "editor: indent"
+  },
+  {
+    "name": "editor::InsertUuidV4",
+    "human_name": "editor: insert uuid v4"
+  },
+  {
+    "name": "editor::InsertUuidV7",
+    "human_name": "editor: insert uuid v7"
+  },
+  {
+    "name": "editor::JoinLines",
+    "human_name": "editor: join lines"
+  },
+  {
+    "name": "editor::KillRingCut",
+    "human_name": "editor: kill ring cut"
+  },
+  {
+    "name": "editor::KillRingYank",
+    "human_name": "editor: kill ring yank"
+  },
+  {
+    "name": "editor::LineDown",
+    "human_name": "editor: line down"
+  },
+  {
+    "name": "editor::LineUp",
+    "human_name": "editor: line up"
+  },
+  {
+    "name": "editor::MoveDown",
+    "human_name": "editor: move down"
+  },
+  {
+    "name": "editor::MoveDownByLines",
+    "human_name": "editor: move down by lines"
+  },
+  {
+    "name": "editor::MoveLeft",
+    "human_name": "editor: move left"
+  },
+  {
+    "name": "editor::MoveLineDown",
+    "human_name": "editor: move line down"
+  },
+  {
+    "name": "editor::MoveLineUp",
+    "human_name": "editor: move line up"
+  },
+  {
+    "name": "editor::MovePageDown",
+    "human_name": "editor: move page down"
+  },
+  {
+    "name": "editor::MovePageUp",
+    "human_name": "editor: move page up"
+  },
+  {
+    "name": "editor::MoveRight",
+    "human_name": "editor: move right"
+  },
+  {
+    "name": "editor::MoveToBeginning",
+    "human_name": "editor: move to beginning"
+  },
+  {
+    "name": "editor::MoveToBeginningOfLine",
+    "human_name": "editor: move to beginning of line"
+  },
+  {
+    "name": "editor::MoveToEnclosingBracket",
+    "human_name": "editor: move to enclosing bracket"
+  },
+  {
+    "name": "editor::MoveToEnd",
+    "human_name": "editor: move to end"
+  },
+  {
+    "name": "editor::MoveToEndOfExcerpt",
+    "human_name": "editor: move to end of excerpt"
+  },
+  {
+    "name": "editor::MoveToEndOfLine",
+    "human_name": "editor: move to end of line"
+  },
+  {
+    "name": "editor::MoveToEndOfParagraph",
+    "human_name": "editor: move to end of paragraph"
+  },
+  {
+    "name": "editor::MoveToEndOfPreviousExcerpt",
+    "human_name": "editor: move to end of previous excerpt"
+  },
+  {
+    "name": "editor::MoveToNextSubwordEnd",
+    "human_name": "editor: move to next subword end"
+  },
+  {
+    "name": "editor::MoveToNextWordEnd",
+    "human_name": "editor: move to next word end"
+  },
+  {
+    "name": "editor::MoveToPreviousSubwordStart",
+    "human_name": "editor: move to previous subword start"
+  },
+  {
+    "name": "editor::MoveToPreviousWordStart",
+    "human_name": "editor: move to previous word start"
+  },
+  {
+    "name": "editor::MoveToStartOfExcerpt",
+    "human_name": "editor: move to start of excerpt"
+  },
+  {
+    "name": "editor::MoveToStartOfNextExcerpt",
+    "human_name": "editor: move to start of next excerpt"
+  },
+  {
+    "name": "editor::MoveToStartOfParagraph",
+    "human_name": "editor: move to start of paragraph"
+  },
+  {
+    "name": "editor::MoveUp",
+    "human_name": "editor: move up"
+  },
+  {
+    "name": "editor::MoveUpByLines",
+    "human_name": "editor: move up by lines"
+  },
+  {
+    "name": "editor::Newline",
+    "human_name": "editor: newline"
+  },
+  {
+    "name": "editor::NewlineAbove",
+    "human_name": "editor: newline above"
+  },
+  {
+    "name": "editor::NewlineBelow",
+    "human_name": "editor: newline below"
+  },
+  {
+    "name": "editor::NextEditPrediction",
+    "human_name": "editor: next edit prediction"
+  },
+  {
+    "name": "editor::NextScreen",
+    "human_name": "editor: next screen"
+  },
+  {
+    "name": "editor::OpenContextMenu",
+    "human_name": "editor: open context menu"
+  },
+  {
+    "name": "editor::OpenDocs",
+    "human_name": "editor: open docs"
+  },
+  {
+    "name": "editor::OpenExcerpts",
+    "human_name": "editor: open excerpts"
+  },
+  {
+    "name": "editor::OpenExcerptsSplit",
+    "human_name": "editor: open excerpts split"
+  },
+  {
+    "name": "editor::OpenGitBlameCommit",
+    "human_name": "editor: open git blame commit"
+  },
+  {
+    "name": "editor::OpenPermalinkToLine",
+    "human_name": "editor: open permalink to line"
+  },
+  {
+    "name": "editor::OpenProposedChangesEditor",
+    "human_name": "editor: open proposed changes editor"
+  },
+  {
+    "name": "editor::OpenSelectedFilename",
+    "human_name": "editor: open selected filename",
+    "deprecated_aliases": [
+      "editor::OpenFile"
+    ]
+  },
+  {
+    "name": "editor::OpenSelectionsInMultibuffer",
+    "human_name": "editor: open selections in multibuffer"
+  },
+  {
+    "name": "editor::OpenUrl",
+    "human_name": "editor: open url"
+  },
+  {
+    "name": "editor::OrganizeImports",
+    "human_name": "editor: organize imports"
+  },
+  {
+    "name": "editor::Outdent",
+    "human_name": "editor: outdent"
+  },
+  {
+    "name": "editor::PageDown",
+    "human_name": "editor: page down"
+  },
+  {
+    "name": "editor::PageUp",
+    "human_name": "editor: page up"
+  },
+  {
+    "name": "editor::Paste",
+    "human_name": "editor: paste"
+  },
+  {
+    "name": "editor::PreviousEditPrediction",
+    "human_name": "editor: previous edit prediction"
+  },
+  {
+    "name": "editor::Redo",
+    "human_name": "editor: redo"
+  },
+  {
+    "name": "editor::RedoSelection",
+    "human_name": "editor: redo selection"
+  },
+  {
+    "name": "editor::ReloadFile",
+    "human_name": "editor: reload file"
+  },
+  {
+    "name": "editor::Rename",
+    "human_name": "editor: rename"
+  },
+  {
+    "name": "editor::RestartLanguageServer",
+    "human_name": "editor: restart language server"
+  },
+  {
+    "name": "editor::RevealInFileManager",
+    "human_name": "editor: reveal in file manager"
+  },
+  {
+    "name": "editor::ReverseLines",
+    "human_name": "editor: reverse lines"
+  },
+  {
+    "name": "editor::RevertFile",
+    "human_name": "editor: revert file"
+  },
+  {
+    "name": "editor::Rewrap",
+    "human_name": "editor: rewrap"
+  },
+  {
+    "name": "editor::RunFlycheck",
+    "human_name": "editor: run flycheck"
+  },
+  {
+    "name": "editor::ScrollCursorBottom",
+    "human_name": "editor: scroll cursor bottom"
+  },
+  {
+    "name": "editor::ScrollCursorCenter",
+    "human_name": "editor: scroll cursor center"
+  },
+  {
+    "name": "editor::ScrollCursorCenterTopBottom",
+    "human_name": "editor: scroll cursor center top bottom"
+  },
+  {
+    "name": "editor::ScrollCursorTop",
+    "human_name": "editor: scroll cursor top"
+  },
+  {
+    "name": "editor::SelectAll",
+    "human_name": "editor: select all"
+  },
+  {
+    "name": "editor::SelectAllMatches",
+    "human_name": "editor: select all matches"
+  },
+  {
+    "name": "editor::SelectDown",
+    "human_name": "editor: select down"
+  },
+  {
+    "name": "editor::SelectDownByLines",
+    "human_name": "editor: select down by lines"
+  },
+  {
+    "name": "editor::SelectEnclosingSymbol",
+    "human_name": "editor: select enclosing symbol"
+  },
+  {
+    "name": "editor::SelectLargerSyntaxNode",
+    "human_name": "editor: select larger syntax node"
+  },
+  {
+    "name": "editor::SelectLeft",
+    "human_name": "editor: select left"
+  },
+  {
+    "name": "editor::SelectLine",
+    "human_name": "editor: select line"
+  },
+  {
+    "name": "editor::SelectNext",
+    "human_name": "editor: select next"
+  },
+  {
+    "name": "editor::SelectPageDown",
+    "human_name": "editor: select page down"
+  },
+  {
+    "name": "editor::SelectPageUp",
+    "human_name": "editor: select page up"
+  },
+  {
+    "name": "editor::SelectPrevious",
+    "human_name": "editor: select previous"
+  },
+  {
+    "name": "editor::SelectRight",
+    "human_name": "editor: select right"
+  },
+  {
+    "name": "editor::SelectSmallerSyntaxNode",
+    "human_name": "editor: select smaller syntax node"
+  },
+  {
+    "name": "editor::SelectToBeginning",
+    "human_name": "editor: select to beginning"
+  },
+  {
+    "name": "editor::SelectToBeginningOfLine",
+    "human_name": "editor: select to beginning of line"
+  },
+  {
+    "name": "editor::SelectToEnd",
+    "human_name": "editor: select to end"
+  },
+  {
+    "name": "editor::SelectToEndOfExcerpt",
+    "human_name": "editor: select to end of excerpt"
+  },
+  {
+    "name": "editor::SelectToEndOfLine",
+    "human_name": "editor: select to end of line"
+  },
+  {
+    "name": "editor::SelectToEndOfParagraph",
+    "human_name": "editor: select to end of paragraph"
+  },
+  {
+    "name": "editor::SelectToEndOfPreviousExcerpt",
+    "human_name": "editor: select to end of previous excerpt"
+  },
+  {
+    "name": "editor::SelectToNextSubwordEnd",
+    "human_name": "editor: select to next subword end"
+  },
+  {
+    "name": "editor::SelectToNextWordEnd",
+    "human_name": "editor: select to next word end"
+  },
+  {
+    "name": "editor::SelectToPreviousSubwordStart",
+    "human_name": "editor: select to previous subword start"
+  },
+  {
+    "name": "editor::SelectToPreviousWordStart",
+    "human_name": "editor: select to previous word start"
+  },
+  {
+    "name": "editor::SelectToStartOfExcerpt",
+    "human_name": "editor: select to start of excerpt"
+  },
+  {
+    "name": "editor::SelectToStartOfNextExcerpt",
+    "human_name": "editor: select to start of next excerpt"
+  },
+  {
+    "name": "editor::SelectToStartOfParagraph",
+    "human_name": "editor: select to start of paragraph"
+  },
+  {
+    "name": "editor::SelectUp",
+    "human_name": "editor: select up"
+  },
+  {
+    "name": "editor::SelectUpByLines",
+    "human_name": "editor: select up by lines"
+  },
+  {
+    "name": "editor::SetMark",
+    "human_name": "editor: set mark"
+  },
+  {
+    "name": "editor::ShowCharacterPalette",
+    "human_name": "editor: show character palette"
+  },
+  {
+    "name": "editor::ShowCompletions",
+    "human_name": "editor: show completions"
+  },
+  {
+    "name": "editor::ShowEditPrediction",
+    "human_name": "editor: show edit prediction"
+  },
+  {
+    "name": "editor::ShowSignatureHelp",
+    "human_name": "editor: show signature help"
+  },
+  {
+    "name": "editor::ShowWordCompletions",
+    "human_name": "editor: show word completions"
+  },
+  {
+    "name": "editor::ShuffleLines",
+    "human_name": "editor: shuffle lines"
+  },
+  {
+    "name": "editor::SortLinesCaseInsensitive",
+    "human_name": "editor: sort lines case insensitive"
+  },
+  {
+    "name": "editor::SortLinesCaseSensitive",
+    "human_name": "editor: sort lines case sensitive"
+  },
+  {
+    "name": "editor::SpawnNearestTask",
+    "human_name": "editor: spawn nearest task"
+  },
+  {
+    "name": "editor::SplitSelectionIntoLines",
+    "human_name": "editor: split selection into lines"
+  },
+  {
+    "name": "editor::StopLanguageServer",
+    "human_name": "editor: stop language server"
+  },
+  {
+    "name": "editor::SwapSelectionEnds",
+    "human_name": "editor: swap selection ends"
+  },
+  {
+    "name": "editor::SwitchSourceHeader",
+    "human_name": "editor: switch source header"
+  },
+  {
+    "name": "editor::Tab",
+    "human_name": "editor: tab"
+  },
+  {
+    "name": "editor::ToggleAutoSignatureHelp",
+    "human_name": "editor: toggle auto signature help"
+  },
+  {
+    "name": "editor::ToggleBreakpoint",
+    "human_name": "editor: toggle breakpoint"
+  },
+  {
+    "name": "editor::ToggleCase",
+    "human_name": "editor: toggle case"
+  },
+  {
+    "name": "editor::ToggleCodeActions",
+    "human_name": "editor: toggle code actions"
+  },
+  {
+    "name": "editor::ToggleComments",
+    "human_name": "editor: toggle comments"
+  },
+  {
+    "name": "editor::ToggleDiagnostics",
+    "human_name": "editor: toggle diagnostics"
+  },
+  {
+    "name": "editor::ToggleEditPrediction",
+    "human_name": "editor: toggle edit prediction"
+  },
+  {
+    "name": "editor::ToggleFold",
+    "human_name": "editor: toggle fold"
+  },
+  {
+    "name": "editor::ToggleFoldRecursive",
+    "human_name": "editor: toggle fold recursive"
+  },
+  {
+    "name": "editor::ToggleGitBlameInline",
+    "human_name": "editor: toggle git blame inline"
+  },
+  {
+    "name": "editor::ToggleIndentGuides",
+    "human_name": "editor: toggle indent guides"
+  },
+  {
+    "name": "editor::ToggleInlayHints",
+    "human_name": "editor: toggle inlay hints"
+  },
+  {
+    "name": "editor::ToggleInlineDiagnostics",
+    "human_name": "editor: toggle inline diagnostics"
+  },
+  {
+    "name": "editor::ToggleInlineValues",
+    "human_name": "editor: toggle inline values"
+  },
+  {
+    "name": "editor::ToggleLineNumbers",
+    "human_name": "editor: toggle line numbers"
+  },
+  {
+    "name": "editor::ToggleMinimap",
+    "human_name": "editor: toggle minimap"
+  },
+  {
+    "name": "editor::ToggleRelativeLineNumbers",
+    "human_name": "editor: toggle relative line numbers"
+  },
+  {
+    "name": "editor::ToggleSelectedDiffHunks",
+    "human_name": "editor: toggle selected diff hunks",
+    "deprecated_aliases": [
+      "editor::ToggleHunkDiff"
+    ]
+  },
+  {
+    "name": "editor::ToggleSelectionMenu",
+    "human_name": "editor: toggle selection menu"
+  },
+  {
+    "name": "editor::ToggleSoftWrap",
+    "human_name": "editor: toggle soft wrap"
+  },
+  {
+    "name": "editor::ToggleTabBar",
+    "human_name": "editor: toggle tab bar"
+  },
+  {
+    "name": "editor::Transpose",
+    "human_name": "editor: transpose"
+  },
+  {
+    "name": "editor::Undo",
+    "human_name": "editor: undo"
+  },
+  {
+    "name": "editor::UndoSelection",
+    "human_name": "editor: undo selection"
+  },
+  {
+    "name": "editor::UnfoldAll",
+    "human_name": "editor: unfold all"
+  },
+  {
+    "name": "editor::UnfoldLines",
+    "human_name": "editor: unfold lines"
+  },
+  {
+    "name": "editor::UnfoldRecursive",
+    "human_name": "editor: unfold recursive"
+  },
+  {
+    "name": "editor::UniqueLinesCaseInsensitive",
+    "human_name": "editor: unique lines case insensitive"
+  },
+  {
+    "name": "editor::UniqueLinesCaseSensitive",
+    "human_name": "editor: unique lines case sensitive"
+  },
+  {
+    "name": "feedback::FileBugReport",
+    "human_name": "feedback: file bug report"
+  },
+  {
+    "name": "feedback::GiveFeedback",
+    "human_name": "feedback: give feedback"
+  },
+  {
+    "name": "file_finder::SelectPrevious",
+    "human_name": "file finder: select previous"
+  },
+  {
+    "name": "file_finder::Toggle",
+    "human_name": "file finder: toggle"
+  },
+  {
+    "name": "file_finder::ToggleFilterMenu",
+    "human_name": "file finder: toggle filter menu"
+  },
+  {
+    "name": "file_finder::ToggleSplitMenu",
+    "human_name": "file finder: toggle split menu"
+  },
+  {
+    "name": "git::Add",
+    "human_name": "git: add"
+  },
+  {
+    "name": "git::Amend",
+    "human_name": "git: amend"
+  },
+  {
+    "name": "git::Blame",
+    "human_name": "git: blame",
+    "deprecated_aliases": [
+      "editor::ToggleGitBlame"
+    ]
+  },
+  {
+    "name": "git::Branch",
+    "human_name": "git: branch",
+    "deprecated_aliases": [
+      "branches::OpenRecent"
+    ]
+  },
+  {
+    "name": "git::Cancel",
+    "human_name": "git: cancel"
+  },
+  {
+    "name": "git::CheckoutBranch",
+    "human_name": "git: checkout branch"
+  },
+  {
+    "name": "git::Commit",
+    "human_name": "git: commit"
+  },
+  {
+    "name": "git::Diff",
+    "human_name": "git: diff"
+  },
+  {
+    "name": "git::ExpandCommitEditor",
+    "human_name": "git: expand commit editor"
+  },
+  {
+    "name": "git::Fetch",
+    "human_name": "git: fetch"
+  },
+  {
+    "name": "git::FetchFrom",
+    "human_name": "git: fetch from"
+  },
+  {
+    "name": "git::ForcePush",
+    "human_name": "git: force push"
+  },
+  {
+    "name": "git::GenerateCommitMessage",
+    "human_name": "git: generate commit message"
+  },
+  {
+    "name": "git::Init",
+    "human_name": "git: init"
+  },
+  {
+    "name": "git::OpenModifiedFiles",
+    "human_name": "git: open modified files"
+  },
+  {
+    "name": "git::Pull",
+    "human_name": "git: pull"
+  },
+  {
+    "name": "git::Push",
+    "human_name": "git: push"
+  },
+  {
+    "name": "git::PushTo",
+    "human_name": "git: push to"
+  },
+  {
+    "name": "git::ResetOnboarding",
+    "human_name": "git: reset onboarding"
+  },
+  {
+    "name": "git::Restore",
+    "human_name": "git: restore",
+    "deprecated_aliases": [
+      "editor::RevertSelectedHunks"
+    ]
+  },
+  {
+    "name": "git::RestoreFile",
+    "human_name": "git: restore file",
+    "deprecated_aliases": [
+      "editor::RevertFile"
+    ]
+  },
+  {
+    "name": "git::RestoreTrackedFiles",
+    "human_name": "git: restore tracked files"
+  },
+  {
+    "name": "git::SelectRepo",
+    "human_name": "git: select repo"
+  },
+  {
+    "name": "git::StageAll",
+    "human_name": "git: stage all"
+  },
+  {
+    "name": "git::StageAndNext",
+    "human_name": "git: stage and next"
+  },
+  {
+    "name": "git::StageFile",
+    "human_name": "git: stage file"
+  },
+  {
+    "name": "git::Switch",
+    "human_name": "git: switch"
+  },
+  {
+    "name": "git::ToggleStaged",
+    "human_name": "git: toggle staged"
+  },
+  {
+    "name": "git::TrashUntrackedFiles",
+    "human_name": "git: trash untracked files"
+  },
+  {
+    "name": "git::Uncommit",
+    "human_name": "git: uncommit"
+  },
+  {
+    "name": "git::UnstageAll",
+    "human_name": "git: unstage all"
+  },
+  {
+    "name": "git::UnstageAndNext",
+    "human_name": "git: unstage and next"
+  },
+  {
+    "name": "git::UnstageFile",
+    "human_name": "git: unstage file"
+  },
+  {
+    "name": "git_onboarding::OpenGitIntegrationOnboarding",
+    "human_name": "git onboarding: open git integration onboarding"
+  },
+  {
+    "name": "git_panel::Close",
+    "human_name": "git panel: close"
+  },
+  {
+    "name": "git_panel::FocusChanges",
+    "human_name": "git panel: focus changes"
+  },
+  {
+    "name": "git_panel::FocusEditor",
+    "human_name": "git panel: focus editor"
+  },
+  {
+    "name": "git_panel::GenerateCommitMessage",
+    "human_name": "git panel: generate commit message"
+  },
+  {
+    "name": "git_panel::OpenMenu",
+    "human_name": "git panel: open menu"
+  },
+  {
+    "name": "git_panel::ToggleFillCoAuthors",
+    "human_name": "git panel: toggle fill co authors"
+  },
+  {
+    "name": "git_panel::ToggleFocus",
+    "human_name": "git panel: toggle focus"
+  },
+  {
+    "name": "go_to_line::Toggle",
+    "human_name": "go to line: toggle"
+  },
+  {
+    "name": "icon_theme_selector::Toggle",
+    "human_name": "icon theme selector: toggle"
+  },
+  {
+    "name": "jj::BookmarkList",
+    "human_name": "jj: bookmark list"
+  },
+  {
+    "name": "journal::NewJournalEntry",
+    "human_name": "journal: new journal entry"
+  },
+  {
+    "name": "language_selector::Toggle",
+    "human_name": "language selector: toggle"
+  },
+  {
+    "name": "markdown::Copy",
+    "human_name": "markdown: copy"
+  },
+  {
+    "name": "markdown::CopyAsMarkdown",
+    "human_name": "markdown: copy as markdown"
+  },
+  {
+    "name": "markdown::OpenPreview",
+    "human_name": "markdown: open preview"
+  },
+  {
+    "name": "markdown::OpenPreviewToTheSide",
+    "human_name": "markdown: open preview to the side"
+  },
+  {
+    "name": "menu::Cancel",
+    "human_name": "menu: cancel"
+  },
+  {
+    "name": "menu::Confirm",
+    "human_name": "menu: confirm"
+  },
+  {
+    "name": "menu::EndSlot",
+    "human_name": "menu: end slot"
+  },
+  {
+    "name": "menu::Restart",
+    "human_name": "menu: restart"
+  },
+  {
+    "name": "menu::SecondaryConfirm",
+    "human_name": "menu: secondary confirm"
+  },
+  {
+    "name": "menu::SelectFirst",
+    "human_name": "menu: select first"
+  },
+  {
+    "name": "menu::SelectLast",
+    "human_name": "menu: select last"
+  },
+  {
+    "name": "menu::SelectNext",
+    "human_name": "menu: select next"
+  },
+  {
+    "name": "menu::SelectPrevious",
+    "human_name": "menu: select previous"
+  },
+  {
+    "name": "notebook::AddCodeBlock",
+    "human_name": "notebook: add code block"
+  },
+  {
+    "name": "notebook::AddMarkdownBlock",
+    "human_name": "notebook: add markdown block"
+  },
+  {
+    "name": "notebook::ClearOutputs",
+    "human_name": "notebook: clear outputs"
+  },
+  {
+    "name": "notebook::MoveCellDown",
+    "human_name": "notebook: move cell down"
+  },
+  {
+    "name": "notebook::MoveCellUp",
+    "human_name": "notebook: move cell up"
+  },
+  {
+    "name": "notebook::OpenNotebook",
+    "human_name": "notebook: open notebook"
+  },
+  {
+    "name": "notebook::RunAll",
+    "human_name": "notebook: run all"
+  },
+  {
+    "name": "notification_panel::ToggleFocus",
+    "human_name": "notification panel: toggle focus"
+  },
+  {
+    "name": "outline::Toggle",
+    "human_name": "outline: toggle"
+  },
+  {
+    "name": "outline_panel::CollapseAllEntries",
+    "human_name": "outline panel: collapse all entries"
+  },
+  {
+    "name": "outline_panel::CollapseSelectedEntry",
+    "human_name": "outline panel: collapse selected entry"
+  },
+  {
+    "name": "outline_panel::ExpandAllEntries",
+    "human_name": "outline panel: expand all entries"
+  },
+  {
+    "name": "outline_panel::ExpandSelectedEntry",
+    "human_name": "outline panel: expand selected entry"
+  },
+  {
+    "name": "outline_panel::FoldDirectory",
+    "human_name": "outline panel: fold directory"
+  },
+  {
+    "name": "outline_panel::OpenSelectedEntry",
+    "human_name": "outline panel: open selected entry"
+  },
+  {
+    "name": "outline_panel::RevealInFileManager",
+    "human_name": "outline panel: reveal in file manager"
+  },
+  {
+    "name": "outline_panel::SelectParent",
+    "human_name": "outline panel: select parent"
+  },
+  {
+    "name": "outline_panel::ToggleActiveEditorPin",
+    "human_name": "outline panel: toggle active editor pin"
+  },
+  {
+    "name": "outline_panel::ToggleFocus",
+    "human_name": "outline panel: toggle focus"
+  },
+  {
+    "name": "outline_panel::UnfoldDirectory",
+    "human_name": "outline panel: unfold directory"
+  },
+  {
+    "name": "pane::ActivateItem",
+    "human_name": "pane: activate item"
+  },
+  {
+    "name": "pane::ActivateLastItem",
+    "human_name": "pane: activate last item"
+  },
+  {
+    "name": "pane::ActivateNextItem",
+    "human_name": "pane: activate next item"
+  },
+  {
+    "name": "pane::ActivatePreviousItem",
+    "human_name": "pane: activate previous item"
+  },
+  {
+    "name": "pane::AlternateFile",
+    "human_name": "pane: alternate file"
+  },
+  {
+    "name": "pane::CloseActiveItem",
+    "human_name": "pane: close active item"
+  },
+  {
+    "name": "pane::CloseAllItems",
+    "human_name": "pane: close all items"
+  },
+  {
+    "name": "pane::CloseCleanItems",
+    "human_name": "pane: close clean items"
+  },
+  {
+    "name": "pane::CloseInactiveItems",
+    "human_name": "pane: close inactive items"
+  },
+  {
+    "name": "pane::CloseItemsToTheLeft",
+    "human_name": "pane: close items to the left"
+  },
+  {
+    "name": "pane::CloseItemsToTheRight",
+    "human_name": "pane: close items to the right"
+  },
+  {
+    "name": "pane::DeploySearch",
+    "human_name": "pane: deploy search"
+  },
+  {
+    "name": "pane::GoBack",
+    "human_name": "pane: go back"
+  },
+  {
+    "name": "pane::GoForward",
+    "human_name": "pane: go forward"
+  },
+  {
+    "name": "pane::JoinAll",
+    "human_name": "pane: join all"
+  },
+  {
+    "name": "pane::JoinIntoNext",
+    "human_name": "pane: join into next"
+  },
+  {
+    "name": "pane::ReopenClosedItem",
+    "human_name": "pane: reopen closed item"
+  },
+  {
+    "name": "pane::RevealInProjectPanel",
+    "human_name": "pane: reveal in project panel"
+  },
+  {
+    "name": "pane::SplitDown",
+    "human_name": "pane: split down"
+  },
+  {
+    "name": "pane::SplitHorizontal",
+    "human_name": "pane: split horizontal"
+  },
+  {
+    "name": "pane::SplitLeft",
+    "human_name": "pane: split left"
+  },
+  {
+    "name": "pane::SplitRight",
+    "human_name": "pane: split right"
+  },
+  {
+    "name": "pane::SplitUp",
+    "human_name": "pane: split up"
+  },
+  {
+    "name": "pane::SplitVertical",
+    "human_name": "pane: split vertical"
+  },
+  {
+    "name": "pane::SwapItemLeft",
+    "human_name": "pane: swap item left"
+  },
+  {
+    "name": "pane::SwapItemRight",
+    "human_name": "pane: swap item right"
+  },
+  {
+    "name": "pane::TogglePinTab",
+    "human_name": "pane: toggle pin tab"
+  },
+  {
+    "name": "pane::TogglePreviewTab",
+    "human_name": "pane: toggle preview tab"
+  },
+  {
+    "name": "pane::UnpinAllTabs",
+    "human_name": "pane: unpin all tabs"
+  },
+  {
+    "name": "panel::NextPanelTab",
+    "human_name": "panel: next panel tab"
+  },
+  {
+    "name": "panel::PreviousPanelTab",
+    "human_name": "panel: previous panel tab"
+  },
+  {
+    "name": "picker::ConfirmCompletion",
+    "human_name": "picker: confirm completion"
+  },
+  {
+    "name": "picker::ConfirmInput",
+    "human_name": "picker: confirm input"
+  },
+  {
+    "name": "project_panel::CollapseAllEntries",
+    "human_name": "project panel: collapse all entries"
+  },
+  {
+    "name": "project_panel::CollapseSelectedEntry",
+    "human_name": "project panel: collapse selected entry"
+  },
+  {
+    "name": "project_panel::Copy",
+    "human_name": "project panel: copy"
+  },
+  {
+    "name": "project_panel::Cut",
+    "human_name": "project panel: cut"
+  },
+  {
+    "name": "project_panel::Delete",
+    "human_name": "project panel: delete"
+  },
+  {
+    "name": "project_panel::Duplicate",
+    "human_name": "project panel: duplicate"
+  },
+  {
+    "name": "project_panel::ExpandSelectedEntry",
+    "human_name": "project panel: expand selected entry"
+  },
+  {
+    "name": "project_panel::FoldDirectory",
+    "human_name": "project panel: fold directory"
+  },
+  {
+    "name": "project_panel::NewDirectory",
+    "human_name": "project panel: new directory"
+  },
+  {
+    "name": "project_panel::NewFile",
+    "human_name": "project panel: new file"
+  },
+  {
+    "name": "project_panel::NewSearchInDirectory",
+    "human_name": "project panel: new search in directory"
+  },
+  {
+    "name": "project_panel::Open",
+    "human_name": "project panel: open"
+  },
+  {
+    "name": "project_panel::OpenPermanent",
+    "human_name": "project panel: open permanent"
+  },
+  {
+    "name": "project_panel::OpenWithSystem",
+    "human_name": "project panel: open with system"
+  },
+  {
+    "name": "project_panel::Paste",
+    "human_name": "project panel: paste"
+  },
+  {
+    "name": "project_panel::RemoveFromProject",
+    "human_name": "project panel: remove from project"
+  },
+  {
+    "name": "project_panel::Rename",
+    "human_name": "project panel: rename"
+  },
+  {
+    "name": "project_panel::RevealInFileManager",
+    "human_name": "project panel: reveal in file manager"
+  },
+  {
+    "name": "project_panel::SelectNextDiagnostic",
+    "human_name": "project panel: select next diagnostic"
+  },
+  {
+    "name": "project_panel::SelectNextDirectory",
+    "human_name": "project panel: select next directory"
+  },
+  {
+    "name": "project_panel::SelectNextGitEntry",
+    "human_name": "project panel: select next git entry"
+  },
+  {
+    "name": "project_panel::SelectParent",
+    "human_name": "project panel: select parent"
+  },
+  {
+    "name": "project_panel::SelectPrevDiagnostic",
+    "human_name": "project panel: select prev diagnostic"
+  },
+  {
+    "name": "project_panel::SelectPrevDirectory",
+    "human_name": "project panel: select prev directory"
+  },
+  {
+    "name": "project_panel::SelectPrevGitEntry",
+    "human_name": "project panel: select prev git entry"
+  },
+  {
+    "name": "project_panel::ToggleFocus",
+    "human_name": "project panel: toggle focus"
+  },
+  {
+    "name": "project_panel::ToggleHideGitIgnore",
+    "human_name": "project panel: toggle hide git ignore"
+  },
+  {
+    "name": "project_panel::Trash",
+    "human_name": "project panel: trash"
+  },
+  {
+    "name": "project_panel::UnfoldDirectory",
+    "human_name": "project panel: unfold directory"
+  },
+  {
+    "name": "project_search::NextField",
+    "human_name": "project search: next field"
+  },
+  {
+    "name": "project_search::SearchInNew",
+    "human_name": "project search: search in new"
+  },
+  {
+    "name": "project_search::ToggleFilters",
+    "human_name": "project search: toggle filters"
+  },
+  {
+    "name": "project_search::ToggleFocus",
+    "human_name": "project search: toggle focus"
+  },
+  {
+    "name": "project_symbols::Toggle",
+    "human_name": "project symbols: toggle"
+  },
+  {
+    "name": "projects::OpenRecent",
+    "human_name": "projects: open recent"
+  },
+  {
+    "name": "projects::OpenRemote",
+    "human_name": "projects: open remote"
+  },
+  {
+    "name": "repl::ClearOutputs",
+    "human_name": "repl: clear outputs"
+  },
+  {
+    "name": "repl::Interrupt",
+    "human_name": "repl: interrupt"
+  },
+  {
+    "name": "repl::RefreshKernelspecs",
+    "human_name": "repl: refresh kernelspecs"
+  },
+  {
+    "name": "repl::Restart",
+    "human_name": "repl: restart"
+  },
+  {
+    "name": "repl::Run",
+    "human_name": "repl: run"
+  },
+  {
+    "name": "repl::RunInPlace",
+    "human_name": "repl: run in place"
+  },
+  {
+    "name": "repl::Sessions",
+    "human_name": "repl: sessions"
+  },
+  {
+    "name": "repl::Shutdown",
+    "human_name": "repl: shutdown"
+  },
+  {
+    "name": "rules_library::DeleteRule",
+    "human_name": "rules library: delete rule"
+  },
+  {
+    "name": "rules_library::DuplicateRule",
+    "human_name": "rules library: duplicate rule"
+  },
+  {
+    "name": "rules_library::NewRule",
+    "human_name": "rules library: new rule"
+  },
+  {
+    "name": "rules_library::ToggleDefaultRule",
+    "human_name": "rules library: toggle default rule"
+  },
+  {
+    "name": "search::FocusSearch",
+    "human_name": "search: focus search"
+  },
+  {
+    "name": "search::NextHistoryQuery",
+    "human_name": "search: next history query"
+  },
+  {
+    "name": "search::PreviousHistoryQuery",
+    "human_name": "search: previous history query"
+  },
+  {
+    "name": "search::ReplaceAll",
+    "human_name": "search: replace all"
+  },
+  {
+    "name": "search::ReplaceNext",
+    "human_name": "search: replace next"
+  },
+  {
+    "name": "search::SelectAllMatches",
+    "human_name": "search: select all matches"
+  },
+  {
+    "name": "search::SelectNextMatch",
+    "human_name": "search: select next match"
+  },
+  {
+    "name": "search::SelectPreviousMatch",
+    "human_name": "search: select previous match"
+  },
+  {
+    "name": "search::ToggleCaseSensitive",
+    "human_name": "search: toggle case sensitive"
+  },
+  {
+    "name": "search::ToggleIncludeIgnored",
+    "human_name": "search: toggle include ignored"
+  },
+  {
+    "name": "search::ToggleRegex",
+    "human_name": "search: toggle regex"
+  },
+  {
+    "name": "search::ToggleReplace",
+    "human_name": "search: toggle replace"
+  },
+  {
+    "name": "search::ToggleSelection",
+    "human_name": "search: toggle selection"
+  },
+  {
+    "name": "search::ToggleWholeWord",
+    "human_name": "search: toggle whole word"
+  },
+  {
+    "name": "snippets::ConfigureSnippets",
+    "human_name": "snippets: configure snippets"
+  },
+  {
+    "name": "snippets::OpenFolder",
+    "human_name": "snippets: open folder"
+  },
+  {
+    "name": "supermaven::SignOut",
+    "human_name": "supermaven: sign out"
+  },
+  {
+    "name": "tab_switcher::CloseSelectedItem",
+    "human_name": "tab switcher: close selected item"
+  },
+  {
+    "name": "tab_switcher::Toggle",
+    "human_name": "tab switcher: toggle"
+  },
+  {
+    "name": "tab_switcher::ToggleAll",
+    "human_name": "tab switcher: toggle all"
+  },
+  {
+    "name": "task::Rerun",
+    "human_name": "task: rerun"
+  },
+  {
+    "name": "task::Spawn",
+    "human_name": "task: spawn"
+  },
+  {
+    "name": "terminal::Clear",
+    "human_name": "terminal: clear"
+  },
+  {
+    "name": "terminal::Copy",
+    "human_name": "terminal: copy"
+  },
+  {
+    "name": "terminal::Paste",
+    "human_name": "terminal: paste"
+  },
+  {
+    "name": "terminal::RerunTask",
+    "human_name": "terminal: rerun task"
+  },
+  {
+    "name": "terminal::ScrollLineDown",
+    "human_name": "terminal: scroll line down"
+  },
+  {
+    "name": "terminal::ScrollLineUp",
+    "human_name": "terminal: scroll line up"
+  },
+  {
+    "name": "terminal::ScrollPageDown",
+    "human_name": "terminal: scroll page down"
+  },
+  {
+    "name": "terminal::ScrollPageUp",
+    "human_name": "terminal: scroll page up"
+  },
+  {
+    "name": "terminal::ScrollToBottom",
+    "human_name": "terminal: scroll to bottom"
+  },
+  {
+    "name": "terminal::ScrollToTop",
+    "human_name": "terminal: scroll to top"
+  },
+  {
+    "name": "terminal::SearchTest",
+    "human_name": "terminal: search test"
+  },
+  {
+    "name": "terminal::SendKeystroke",
+    "human_name": "terminal: send keystroke"
+  },
+  {
+    "name": "terminal::SendText",
+    "human_name": "terminal: send text"
+  },
+  {
+    "name": "terminal::ShowCharacterPalette",
+    "human_name": "terminal: show character palette"
+  },
+  {
+    "name": "terminal::ToggleViMode",
+    "human_name": "terminal: toggle vi mode"
+  },
+  {
+    "name": "terminal_panel::ToggleFocus",
+    "human_name": "terminal panel: toggle focus"
+  },
+  {
+    "name": "theme_selector::Reload",
+    "human_name": "theme selector: reload"
+  },
+  {
+    "name": "theme_selector::Toggle",
+    "human_name": "theme selector: toggle"
+  },
+  {
+    "name": "toast::RunAction",
+    "human_name": "toast: run action"
+  },
+  {
+    "name": "toolchain::Select",
+    "human_name": "toolchain: select"
+  },
+  {
+    "name": "variable_list::AddWatch",
+    "human_name": "variable list: add watch"
+  },
+  {
+    "name": "variable_list::CollapseSelectedEntry",
+    "human_name": "variable list: collapse selected entry"
+  },
+  {
+    "name": "variable_list::CopyVariableName",
+    "human_name": "variable list: copy variable name"
+  },
+  {
+    "name": "variable_list::CopyVariableValue",
+    "human_name": "variable list: copy variable value"
+  },
+  {
+    "name": "variable_list::EditVariable",
+    "human_name": "variable list: edit variable"
+  },
+  {
+    "name": "variable_list::ExpandSelectedEntry",
+    "human_name": "variable list: expand selected entry"
+  },
+  {
+    "name": "variable_list::RemoveWatch",
+    "human_name": "variable list: remove watch"
+  },
+  {
+    "name": "vim::AngleBrackets",
+    "human_name": "vim: angle brackets"
+  },
+  {
+    "name": "vim::AnyBrackets",
+    "human_name": "vim: any brackets"
+  },
+  {
+    "name": "vim::AnyQuotes",
+    "human_name": "vim: any quotes"
+  },
+  {
+    "name": "vim::Argument",
+    "human_name": "vim: argument"
+  },
+  {
+    "name": "vim::ArgumentRequired",
+    "human_name": "vim: argument required"
+  },
+  {
+    "name": "vim::AutoIndent",
+    "human_name": "vim: auto indent"
+  },
+  {
+    "name": "vim::BackQuotes",
+    "human_name": "vim: back quotes"
+  },
+  {
+    "name": "vim::Backspace",
+    "human_name": "vim: backspace"
+  },
+  {
+    "name": "vim::ChangeCase",
+    "human_name": "vim: change case"
+  },
+  {
+    "name": "vim::ChangeListNewer",
+    "human_name": "vim: change list newer"
+  },
+  {
+    "name": "vim::ChangeListOlder",
+    "human_name": "vim: change list older"
+  },
+  {
+    "name": "vim::ChangeToEndOfLine",
+    "human_name": "vim: change to end of line"
+  },
+  {
+    "name": "vim::Class",
+    "human_name": "vim: class"
+  },
+  {
+    "name": "vim::ClearExchange",
+    "human_name": "vim: clear exchange"
+  },
+  {
+    "name": "vim::ClearOperators",
+    "human_name": "vim: clear operators"
+  },
+  {
+    "name": "vim::ColumnLeft",
+    "human_name": "vim: column left"
+  },
+  {
+    "name": "vim::ColumnRight",
+    "human_name": "vim: column right"
+  },
+  {
+    "name": "vim::Comment",
+    "human_name": "vim: comment"
+  },
+  {
+    "name": "vim::ConvertToLowerCase",
+    "human_name": "vim: convert to lower case"
+  },
+  {
+    "name": "vim::ConvertToRot13",
+    "human_name": "vim: convert to rot13"
+  },
+  {
+    "name": "vim::ConvertToRot47",
+    "human_name": "vim: convert to rot47"
+  },
+  {
+    "name": "vim::ConvertToUpperCase",
+    "human_name": "vim: convert to upper case"
+  },
+  {
+    "name": "vim::CountCommand",
+    "human_name": "vim: count command"
+  },
+  {
+    "name": "vim::CurlyBrackets",
+    "human_name": "vim: curly brackets"
+  },
+  {
+    "name": "vim::CurrentLine",
+    "human_name": "vim: current line"
+  },
+  {
+    "name": "vim::Decrement",
+    "human_name": "vim: decrement"
+  },
+  {
+    "name": "vim::DeleteLeft",
+    "human_name": "vim: delete left"
+  },
+  {
+    "name": "vim::DeleteRight",
+    "human_name": "vim: delete right"
+  },
+  {
+    "name": "vim::DeleteToEndOfLine",
+    "human_name": "vim: delete to end of line"
+  },
+  {
+    "name": "vim::DoubleQuotes",
+    "human_name": "vim: double quotes"
+  },
+  {
+    "name": "vim::Down",
+    "human_name": "vim: down"
+  },
+  {
+    "name": "vim::EndOfDocument",
+    "human_name": "vim: end of document"
+  },
+  {
+    "name": "vim::EndOfLine",
+    "human_name": "vim: end of line"
+  },
+  {
+    "name": "vim::EndOfLineDownward",
+    "human_name": "vim: end of line downward"
+  },
+  {
+    "name": "vim::EndOfParagraph",
+    "human_name": "vim: end of paragraph"
+  },
+  {
+    "name": "vim::EndRepeat",
+    "human_name": "vim: end repeat"
+  },
+  {
+    "name": "vim::Enter",
+    "human_name": "vim: enter"
+  },
+  {
+    "name": "vim::EntireFile",
+    "human_name": "vim: entire file"
+  },
+  {
+    "name": "vim::Exchange",
+    "human_name": "vim: exchange"
+  },
+  {
+    "name": "vim::FindCommand",
+    "human_name": "vim: find command"
+  },
+  {
+    "name": "vim::FirstNonWhitespace",
+    "human_name": "vim: first non whitespace"
+  },
+  {
+    "name": "vim::GoToColumn",
+    "human_name": "vim: go to column"
+  },
+  {
+    "name": "vim::GoToPercentage",
+    "human_name": "vim: go to percentage"
+  },
+  {
+    "name": "vim::HelixDelete",
+    "human_name": "vim: helix delete"
+  },
+  {
+    "name": "vim::HelixDelete",
+    "human_name": "vim: helix delete"
+  },
+  {
+    "name": "vim::HelixNormalAfter",
+    "human_name": "vim: helix normal after"
+  },
+  {
+    "name": "vim::Increment",
+    "human_name": "vim: increment"
+  },
+  {
+    "name": "vim::Indent",
+    "human_name": "vim: indent"
+  },
+  {
+    "name": "vim::IndentObj",
+    "human_name": "vim: indent obj"
+  },
+  {
+    "name": "vim::InnerObject",
+    "human_name": "vim: inner object"
+  },
+  {
+    "name": "vim::InsertAfter",
+    "human_name": "vim: insert after"
+  },
+  {
+    "name": "vim::InsertAtPrevious",
+    "human_name": "vim: insert at previous"
+  },
+  {
+    "name": "vim::InsertBefore",
+    "human_name": "vim: insert before"
+  },
+  {
+    "name": "vim::InsertEmptyLineAbove",
+    "human_name": "vim: insert empty line above"
+  },
+  {
+    "name": "vim::InsertEmptyLineBelow",
+    "human_name": "vim: insert empty line below"
+  },
+  {
+    "name": "vim::InsertEndOfLine",
+    "human_name": "vim: insert end of line"
+  },
+  {
+    "name": "vim::InsertFirstNonWhitespace",
+    "human_name": "vim: insert first non whitespace"
+  },
+  {
+    "name": "vim::InsertLineAbove",
+    "human_name": "vim: insert line above"
+  },
+  {
+    "name": "vim::InsertLineBelow",
+    "human_name": "vim: insert line below"
+  },
+  {
+    "name": "vim::JoinLines",
+    "human_name": "vim: join lines"
+  },
+  {
+    "name": "vim::JoinLinesNoWhitespace",
+    "human_name": "vim: join lines no whitespace"
+  },
+  {
+    "name": "vim::Left",
+    "human_name": "vim: left"
+  },
+  {
+    "name": "vim::LineDown",
+    "human_name": "vim: line down"
+  },
+  {
+    "name": "vim::LineUp",
+    "human_name": "vim: line up"
+  },
+  {
+    "name": "vim::Literal",
+    "human_name": "vim: literal"
+  },
+  {
+    "name": "vim::Matching",
+    "human_name": "vim: matching"
+  },
+  {
+    "name": "vim::MaximizePane",
+    "human_name": "vim: maximize pane"
+  },
+  {
+    "name": "vim::Method",
+    "human_name": "vim: method"
+  },
+  {
+    "name": "vim::MiddleOfLine",
+    "human_name": "vim: middle of line"
+  },
+  {
+    "name": "vim::MiniBrackets",
+    "human_name": "vim: mini brackets"
+  },
+  {
+    "name": "vim::MiniQuotes",
+    "human_name": "vim: mini quotes"
+  },
+  {
+    "name": "vim::MoveToNext",
+    "human_name": "vim: move to next"
+  },
+  {
+    "name": "vim::MoveToNextMatch",
+    "human_name": "vim: move to next match"
+  },
+  {
+    "name": "vim::MoveToPrevious",
+    "human_name": "vim: move to previous"
+  },
+  {
+    "name": "vim::MoveToPreviousMatch",
+    "human_name": "vim: move to previous match"
+  },
+  {
+    "name": "vim::NextComment",
+    "human_name": "vim: next comment"
+  },
+  {
+    "name": "vim::NextGreaterIndent",
+    "human_name": "vim: next greater indent"
+  },
+  {
+    "name": "vim::NextLesserIndent",
+    "human_name": "vim: next lesser indent"
+  },
+  {
+    "name": "vim::NextLineStart",
+    "human_name": "vim: next line start"
+  },
+  {
+    "name": "vim::NextMethodEnd",
+    "human_name": "vim: next method end"
+  },
+  {
+    "name": "vim::NextMethodStart",
+    "human_name": "vim: next method start"
+  },
+  {
+    "name": "vim::NextSameIndent",
+    "human_name": "vim: next same indent"
+  },
+  {
+    "name": "vim::NextSectionEnd",
+    "human_name": "vim: next section end"
+  },
+  {
+    "name": "vim::NextSectionStart",
+    "human_name": "vim: next section start"
+  },
+  {
+    "name": "vim::NextSubwordEnd",
+    "human_name": "vim: next subword end"
+  },
+  {
+    "name": "vim::NextSubwordStart",
+    "human_name": "vim: next subword start"
+  },
+  {
+    "name": "vim::NextWordEnd",
+    "human_name": "vim: next word end"
+  },
+  {
+    "name": "vim::NextWordStart",
+    "human_name": "vim: next word start"
+  },
+  {
+    "name": "vim::NormalBefore",
+    "human_name": "vim: normal before"
+  },
+  {
+    "name": "vim::Number",
+    "human_name": "vim: number"
+  },
+  {
+    "name": "vim::OpenDefaultKeymap",
+    "human_name": "vim: open default keymap"
+  },
+  {
+    "name": "vim::OtherEnd",
+    "human_name": "vim: other end"
+  },
+  {
+    "name": "vim::OtherEndRowAware",
+    "human_name": "vim: other end row aware"
+  },
+  {
+    "name": "vim::Outdent",
+    "human_name": "vim: outdent"
+  },
+  {
+    "name": "vim::PageDown",
+    "human_name": "vim: page down"
+  },
+  {
+    "name": "vim::PageUp",
+    "human_name": "vim: page up"
+  },
+  {
+    "name": "vim::Paragraph",
+    "human_name": "vim: paragraph"
+  },
+  {
+    "name": "vim::Parentheses",
+    "human_name": "vim: parentheses"
+  },
+  {
+    "name": "vim::Paste",
+    "human_name": "vim: paste"
+  },
+  {
+    "name": "vim::PreviousComment",
+    "human_name": "vim: previous comment"
+  },
+  {
+    "name": "vim::PreviousGreaterIndent",
+    "human_name": "vim: previous greater indent"
+  },
+  {
+    "name": "vim::PreviousLesserIndent",
+    "human_name": "vim: previous lesser indent"
+  },
+  {
+    "name": "vim::PreviousLineStart",
+    "human_name": "vim: previous line start"
+  },
+  {
+    "name": "vim::PreviousMethodEnd",
+    "human_name": "vim: previous method end"
+  },
+  {
+    "name": "vim::PreviousMethodStart",
+    "human_name": "vim: previous method start"
+  },
+  {
+    "name": "vim::PreviousSameIndent",
+    "human_name": "vim: previous same indent"
+  },
+  {
+    "name": "vim::PreviousSectionEnd",
+    "human_name": "vim: previous section end"
+  },
+  {
+    "name": "vim::PreviousSectionStart",
+    "human_name": "vim: previous section start"
+  },
+  {
+    "name": "vim::PreviousSubwordEnd",
+    "human_name": "vim: previous subword end"
+  },
+  {
+    "name": "vim::PreviousSubwordStart",
+    "human_name": "vim: previous subword start"
+  },
+  {
+    "name": "vim::PreviousWordEnd",
+    "human_name": "vim: previous word end"
+  },
+  {
+    "name": "vim::PreviousWordStart",
+    "human_name": "vim: previous word start"
+  },
+  {
+    "name": "vim::PushAddSurrounds",
+    "human_name": "vim: push add surrounds"
+  },
+  {
+    "name": "vim::PushAutoIndent",
+    "human_name": "vim: push auto indent"
+  },
+  {
+    "name": "vim::PushChange",
+    "human_name": "vim: push change"
+  },
+  {
+    "name": "vim::PushChangeSurrounds",
+    "human_name": "vim: push change surrounds"
+  },
+  {
+    "name": "vim::PushDelete",
+    "human_name": "vim: push delete"
+  },
+  {
+    "name": "vim::PushDeleteSurrounds",
+    "human_name": "vim: push delete surrounds"
+  },
+  {
+    "name": "vim::PushDigraph",
+    "human_name": "vim: push digraph"
+  },
+  {
+    "name": "vim::PushFindBackward",
+    "human_name": "vim: push find backward"
+  },
+  {
+    "name": "vim::PushFindForward",
+    "human_name": "vim: push find forward"
+  },
+  {
+    "name": "vim::PushForcedMotion",
+    "human_name": "vim: push forced motion"
+  },
+  {
+    "name": "vim::PushIndent",
+    "human_name": "vim: push indent"
+  },
+  {
+    "name": "vim::PushJump",
+    "human_name": "vim: push jump"
+  },
+  {
+    "name": "vim::PushLiteral",
+    "human_name": "vim: push literal"
+  },
+  {
+    "name": "vim::PushLowercase",
+    "human_name": "vim: push lowercase"
+  },
+  {
+    "name": "vim::PushMark",
+    "human_name": "vim: push mark"
+  },
+  {
+    "name": "vim::PushObject",
+    "human_name": "vim: push object"
+  },
+  {
+    "name": "vim::PushOppositeCase",
+    "human_name": "vim: push opposite case"
+  },
+  {
+    "name": "vim::PushOutdent",
+    "human_name": "vim: push outdent"
+  },
+  {
+    "name": "vim::PushRecordRegister",
+    "human_name": "vim: push record register"
+  },
+  {
+    "name": "vim::PushRegister",
+    "human_name": "vim: push register"
+  },
+  {
+    "name": "vim::PushReplace",
+    "human_name": "vim: push replace"
+  },
+  {
+    "name": "vim::PushReplaceWithRegister",
+    "human_name": "vim: push replace with register"
+  },
+  {
+    "name": "vim::PushReplayRegister",
+    "human_name": "vim: push replay register"
+  },
+  {
+    "name": "vim::PushRewrap",
+    "human_name": "vim: push rewrap"
+  },
+  {
+    "name": "vim::PushRot13",
+    "human_name": "vim: push rot13"
+  },
+  {
+    "name": "vim::PushRot47",
+    "human_name": "vim: push rot47"
+  },
+  {
+    "name": "vim::PushShellCommand",
+    "human_name": "vim: push shell command"
+  },
+  {
+    "name": "vim::PushSneak",
+    "human_name": "vim: push sneak"
+  },
+  {
+    "name": "vim::PushSneakBackward",
+    "human_name": "vim: push sneak backward"
+  },
+  {
+    "name": "vim::PushToggleComments",
+    "human_name": "vim: push toggle comments"
+  },
+  {
+    "name": "vim::PushUppercase",
+    "human_name": "vim: push uppercase"
+  },
+  {
+    "name": "vim::PushYank",
+    "human_name": "vim: push yank"
+  },
+  {
+    "name": "vim::Quotes",
+    "human_name": "vim: quotes"
+  },
+  {
+    "name": "vim::Redo",
+    "human_name": "vim: redo"
+  },
+  {
+    "name": "vim::Repeat",
+    "human_name": "vim: repeat"
+  },
+  {
+    "name": "vim::RepeatFind",
+    "human_name": "vim: repeat find"
+  },
+  {
+    "name": "vim::RepeatFindReversed",
+    "human_name": "vim: repeat find reversed"
+  },
+  {
+    "name": "vim::ReplayLastRecording",
+    "human_name": "vim: replay last recording"
+  },
+  {
+    "name": "vim::ResetPaneSizes",
+    "human_name": "vim: reset pane sizes"
+  },
+  {
+    "name": "vim::ResizePaneDown",
+    "human_name": "vim: resize pane down"
+  },
+  {
+    "name": "vim::ResizePaneLeft",
+    "human_name": "vim: resize pane left"
+  },
+  {
+    "name": "vim::ResizePaneRight",
+    "human_name": "vim: resize pane right"
+  },
+  {
+    "name": "vim::ResizePaneUp",
+    "human_name": "vim: resize pane up"
+  },
+  {
+    "name": "vim::RestoreVisualSelection",
+    "human_name": "vim: restore visual selection"
+  },
+  {
+    "name": "vim::Rewrap",
+    "human_name": "vim: rewrap"
+  },
+  {
+    "name": "vim::Right",
+    "human_name": "vim: right"
+  },
+  {
+    "name": "vim::ScrollDown",
+    "human_name": "vim: scroll down"
+  },
+  {
+    "name": "vim::ScrollUp",
+    "human_name": "vim: scroll up"
+  },
+  {
+    "name": "vim::Search",
+    "human_name": "vim: search"
+  },
+  {
+    "name": "vim::SearchSubmit",
+    "human_name": "vim: search submit"
+  },
+  {
+    "name": "vim::SelectLargerSyntaxNode",
+    "human_name": "vim: select larger syntax node"
+  },
+  {
+    "name": "vim::SelectNext",
+    "human_name": "vim: select next"
+  },
+  {
+    "name": "vim::SelectNextMatch",
+    "human_name": "vim: select next match"
+  },
+  {
+    "name": "vim::SelectPrevious",
+    "human_name": "vim: select previous"
+  },
+  {
+    "name": "vim::SelectPreviousMatch",
+    "human_name": "vim: select previous match"
+  },
+  {
+    "name": "vim::SelectRegister",
+    "human_name": "vim: select register"
+  },
+  {
+    "name": "vim::SelectSmallerSyntaxNode",
+    "human_name": "vim: select smaller syntax node"
+  },
+  {
+    "name": "vim::Sentence",
+    "human_name": "vim: sentence"
+  },
+  {
+    "name": "vim::SentenceBackward",
+    "human_name": "vim: sentence backward"
+  },
+  {
+    "name": "vim::SentenceForward",
+    "human_name": "vim: sentence forward"
+  },
+  {
+    "name": "vim::ShellCommand",
+    "human_name": "vim: shell command"
+  },
+  {
+    "name": "vim::ShowLocation",
+    "human_name": "vim: show location"
+  },
+  {
+    "name": "vim::Space",
+    "human_name": "vim: space"
+  },
+  {
+    "name": "vim::SquareBrackets",
+    "human_name": "vim: square brackets"
+  },
+  {
+    "name": "vim::StartOfDocument",
+    "human_name": "vim: start of document"
+  },
+  {
+    "name": "vim::StartOfLine",
+    "human_name": "vim: start of line"
+  },
+  {
+    "name": "vim::StartOfLineDownward",
+    "human_name": "vim: start of line downward"
+  },
+  {
+    "name": "vim::StartOfParagraph",
+    "human_name": "vim: start of paragraph"
+  },
+  {
+    "name": "vim::Substitute",
+    "human_name": "vim: substitute"
+  },
+  {
+    "name": "vim::SubstituteLine",
+    "human_name": "vim: substitute line"
+  },
+  {
+    "name": "vim::Subword",
+    "human_name": "vim: subword"
+  },
+  {
+    "name": "vim::SwitchToHelixNormalMode",
+    "human_name": "vim: switch to helix normal mode"
+  },
+  {
+    "name": "vim::SwitchToInsertMode",
+    "human_name": "vim: switch to insert mode"
+  },
+  {
+    "name": "vim::SwitchToNormalMode",
+    "human_name": "vim: switch to normal mode"
+  },
+  {
+    "name": "vim::SwitchToReplaceMode",
+    "human_name": "vim: switch to replace mode"
+  },
+  {
+    "name": "vim::SwitchToVisualBlockMode",
+    "human_name": "vim: switch to visual block mode"
+  },
+  {
+    "name": "vim::SwitchToVisualLineMode",
+    "human_name": "vim: switch to visual line mode"
+  },
+  {
+    "name": "vim::SwitchToVisualMode",
+    "human_name": "vim: switch to visual mode"
+  },
+  {
+    "name": "vim::Tab",
+    "human_name": "vim: tab"
+  },
+  {
+    "name": "vim::Tag",
+    "human_name": "vim: tag"
+  },
+  {
+    "name": "vim::TemporaryNormal",
+    "human_name": "vim: temporary normal"
+  },
+  {
+    "name": "vim::ToggleComments",
+    "human_name": "vim: toggle comments"
+  },
+  {
+    "name": "vim::ToggleMarksView",
+    "human_name": "vim: toggle marks view"
+  },
+  {
+    "name": "vim::ToggleRecord",
+    "human_name": "vim: toggle record"
+  },
+  {
+    "name": "vim::ToggleRegistersView",
+    "human_name": "vim: toggle registers view"
+  },
+  {
+    "name": "vim::ToggleReplace",
+    "human_name": "vim: toggle replace"
+  },
+  {
+    "name": "vim::ToggleVisual",
+    "human_name": "vim: toggle visual"
+  },
+  {
+    "name": "vim::ToggleVisualBlock",
+    "human_name": "vim: toggle visual block"
+  },
+  {
+    "name": "vim::ToggleVisualLine",
+    "human_name": "vim: toggle visual line"
+  },
+  {
+    "name": "vim::Undo",
+    "human_name": "vim: undo"
+  },
+  {
+    "name": "vim::UndoReplace",
+    "human_name": "vim: undo replace"
+  },
+  {
+    "name": "vim::UnmatchedBackward",
+    "human_name": "vim: unmatched backward"
+  },
+  {
+    "name": "vim::UnmatchedForward",
+    "human_name": "vim: unmatched forward"
+  },
+  {
+    "name": "vim::Up",
+    "human_name": "vim: up"
+  },
+  {
+    "name": "vim::VerticalBars",
+    "human_name": "vim: vertical bars"
+  },
+  {
+    "name": "vim::VisualCommand",
+    "human_name": "vim: visual command"
+  },
+  {
+    "name": "vim::VisualDelete",
+    "human_name": "vim: visual delete"
+  },
+  {
+    "name": "vim::VisualDeleteLine",
+    "human_name": "vim: visual delete line"
+  },
+  {
+    "name": "vim::VisualInsertEndOfLine",
+    "human_name": "vim: visual insert end of line"
+  },
+  {
+    "name": "vim::VisualInsertFirstNonWhiteSpace",
+    "human_name": "vim: visual insert first non white space"
+  },
+  {
+    "name": "vim::VisualYank",
+    "human_name": "vim: visual yank"
+  },
+  {
+    "name": "vim::VisualYankLine",
+    "human_name": "vim: visual yank line"
+  },
+  {
+    "name": "vim::WindowBottom",
+    "human_name": "vim: window bottom"
+  },
+  {
+    "name": "vim::WindowMiddle",
+    "human_name": "vim: window middle"
+  },
+  {
+    "name": "vim::WindowTop",
+    "human_name": "vim: window top"
+  },
+  {
+    "name": "vim::Word",
+    "human_name": "vim: word"
+  },
+  {
+    "name": "vim::WrappingLeft",
+    "human_name": "vim: wrapping left",
+    "deprecated_aliases": [
+      "vim::Backspace"
+    ]
+  },
+  {
+    "name": "vim::WrappingRight",
+    "human_name": "vim: wrapping right",
+    "deprecated_aliases": [
+      "vim::Space"
+    ]
+  },
+  {
+    "name": "vim::Yank",
+    "human_name": "vim: yank"
+  },
+  {
+    "name": "vim::YankLine",
+    "human_name": "vim: yank line"
+  },
+  {
+    "name": "welcome::ResetHints",
+    "human_name": "welcome: reset hints"
+  },
+  {
+    "name": "welcome::ToggleBaseKeymapSelector",
+    "human_name": "welcome: toggle base keymap selector"
+  },
+  {
+    "name": "workspace::ActivateNextPane",
+    "human_name": "workspace: activate next pane"
+  },
+  {
+    "name": "workspace::ActivateNextWindow",
+    "human_name": "workspace: activate next window"
+  },
+  {
+    "name": "workspace::ActivatePane",
+    "human_name": "workspace: activate pane"
+  },
+  {
+    "name": "workspace::ActivatePaneDown",
+    "human_name": "workspace: activate pane down"
+  },
+  {
+    "name": "workspace::ActivatePaneLeft",
+    "human_name": "workspace: activate pane left"
+  },
+  {
+    "name": "workspace::ActivatePaneRight",
+    "human_name": "workspace: activate pane right"
+  },
+  {
+    "name": "workspace::ActivatePaneUp",
+    "human_name": "workspace: activate pane up"
+  },
+  {
+    "name": "workspace::ActivatePreviousPane",
+    "human_name": "workspace: activate previous pane"
+  },
+  {
+    "name": "workspace::ActivatePreviousWindow",
+    "human_name": "workspace: activate previous window"
+  },
+  {
+    "name": "workspace::AddFolderToProject",
+    "human_name": "workspace: add folder to project"
+  },
+  {
+    "name": "workspace::ClearAllNotifications",
+    "human_name": "workspace: clear all notifications"
+  },
+  {
+    "name": "workspace::CloseActiveDock",
+    "human_name": "workspace: close active dock"
+  },
+  {
+    "name": "workspace::CloseAllDocks",
+    "human_name": "workspace: close all docks"
+  },
+  {
+    "name": "workspace::CloseAllItemsAndPanes",
+    "human_name": "workspace: close all items and panes"
+  },
+  {
+    "name": "workspace::CloseInactiveTabsAndPanes",
+    "human_name": "workspace: close inactive tabs and panes"
+  },
+  {
+    "name": "workspace::CloseWindow",
+    "human_name": "workspace: close window"
+  },
+  {
+    "name": "workspace::CopyPath",
+    "human_name": "workspace: copy path",
+    "deprecated_aliases": [
+      "editor::CopyPath",
+      "outline_panel::CopyPath",
+      "project_panel::CopyPath"
+    ]
+  },
+  {
+    "name": "workspace::CopyRelativePath",
+    "human_name": "workspace: copy relative path",
+    "deprecated_aliases": [
+      "editor::CopyRelativePath",
+      "outline_panel::CopyRelativePath",
+      "project_panel::CopyRelativePath"
+    ]
+  },
+  {
+    "name": "workspace::Feedback",
+    "human_name": "workspace: feedback"
+  },
+  {
+    "name": "workspace::FollowNextCollaborator",
+    "human_name": "workspace: follow next collaborator"
+  },
+  {
+    "name": "workspace::MoveFocusedPanelToNextPosition",
+    "human_name": "workspace: move focused panel to next position"
+  },
+  {
+    "name": "workspace::MoveItemToPane",
+    "human_name": "workspace: move item to pane"
+  },
+  {
+    "name": "workspace::MoveItemToPaneInDirection",
+    "human_name": "workspace: move item to pane in direction"
+  },
+  {
+    "name": "workspace::NewCenterTerminal",
+    "human_name": "workspace: new center terminal"
+  },
+  {
+    "name": "workspace::NewFile",
+    "human_name": "workspace: new file"
+  },
+  {
+    "name": "workspace::NewFileSplitHorizontal",
+    "human_name": "workspace: new file split horizontal"
+  },
+  {
+    "name": "workspace::NewFileSplitVertical",
+    "human_name": "workspace: new file split vertical"
+  },
+  {
+    "name": "workspace::NewSearch",
+    "human_name": "workspace: new search"
+  },
+  {
+    "name": "workspace::NewTerminal",
+    "human_name": "workspace: new terminal"
+  },
+  {
+    "name": "workspace::NewWindow",
+    "human_name": "workspace: new window"
+  },
+  {
+    "name": "workspace::Open",
+    "human_name": "workspace: open"
+  },
+  {
+    "name": "workspace::OpenComponentPreview",
+    "human_name": "workspace: open component preview"
+  },
+  {
+    "name": "workspace::OpenFiles",
+    "human_name": "workspace: open files"
+  },
+  {
+    "name": "workspace::OpenInTerminal",
+    "human_name": "workspace: open in terminal"
+  },
+  {
+    "name": "workspace::OpenTerminal",
+    "human_name": "workspace: open terminal"
+  },
+  {
+    "name": "workspace::Reload",
+    "human_name": "workspace: reload"
+  },
+  {
+    "name": "workspace::ReloadActiveItem",
+    "human_name": "workspace: reload active item"
+  },
+  {
+    "name": "workspace::RestoreBanner",
+    "human_name": "workspace: restore banner"
+  },
+  {
+    "name": "workspace::Save",
+    "human_name": "workspace: save"
+  },
+  {
+    "name": "workspace::SaveAll",
+    "human_name": "workspace: save all"
+  },
+  {
+    "name": "workspace::SaveAs",
+    "human_name": "workspace: save as"
+  },
+  {
+    "name": "workspace::SaveWithoutFormat",
+    "human_name": "workspace: save without format"
+  },
+  {
+    "name": "workspace::SendKeystrokes",
+    "human_name": "workspace: send keystrokes"
+  },
+  {
+    "name": "workspace::ShutdownDebugAdapters",
+    "human_name": "workspace: shutdown debug adapters"
+  },
+  {
+    "name": "workspace::SuppressNotification",
+    "human_name": "workspace: suppress notification"
+  },
+  {
+    "name": "workspace::SwapPaneDown",
+    "human_name": "workspace: swap pane down"
+  },
+  {
+    "name": "workspace::SwapPaneLeft",
+    "human_name": "workspace: swap pane left"
+  },
+  {
+    "name": "workspace::SwapPaneRight",
+    "human_name": "workspace: swap pane right"
+  },
+  {
+    "name": "workspace::SwapPaneUp",
+    "human_name": "workspace: swap pane up"
+  },
+  {
+    "name": "workspace::ToggleBottomDock",
+    "human_name": "workspace: toggle bottom dock"
+  },
+  {
+    "name": "workspace::ToggleCenteredLayout",
+    "human_name": "workspace: toggle centered layout"
+  },
+  {
+    "name": "workspace::ToggleExpandItem",
+    "human_name": "workspace: toggle expand item"
+  },
+  {
+    "name": "workspace::ToggleLeftDock",
+    "human_name": "workspace: toggle left dock"
+  },
+  {
+    "name": "workspace::ToggleRightDock",
+    "human_name": "workspace: toggle right dock"
+  },
+  {
+    "name": "workspace::ToggleVimMode",
+    "human_name": "workspace: toggle vim mode"
+  },
+  {
+    "name": "workspace::ToggleZoom",
+    "human_name": "workspace: toggle zoom"
+  },
+  {
+    "name": "workspace::Unfollow",
+    "human_name": "workspace: unfollow"
+  },
+  {
+    "name": "workspace::Welcome",
+    "human_name": "workspace: welcome"
+  },
+  {
+    "name": "zed::About",
+    "human_name": "zed: about"
+  },
+  {
+    "name": "zed::CopySystemSpecsIntoClipboard",
+    "human_name": "zed: copy system specs into clipboard"
+  },
+  {
+    "name": "zed::DebugElements",
+    "human_name": "zed: debug elements"
+  },
+  {
+    "name": "zed::DecreaseBufferFontSize",
+    "human_name": "zed: decrease buffer font size"
+  },
+  {
+    "name": "zed::DecreaseUiFontSize",
+    "human_name": "zed: decrease ui font size"
+  },
+  {
+    "name": "zed::EmailZed",
+    "human_name": "zed: email zed"
+  },
+  {
+    "name": "zed::Extensions",
+    "human_name": "zed: extensions"
+  },
+  {
+    "name": "zed::Hide",
+    "human_name": "zed: hide"
+  },
+  {
+    "name": "zed::HideOthers",
+    "human_name": "zed: hide others"
+  },
+  {
+    "name": "zed::ImportCursorSettings",
+    "human_name": "zed: import cursor settings"
+  },
+  {
+    "name": "zed::ImportVsCodeSettings",
+    "human_name": "zed: import vs code settings"
+  },
+  {
+    "name": "zed::IncreaseBufferFontSize",
+    "human_name": "zed: increase buffer font size"
+  },
+  {
+    "name": "zed::IncreaseUiFontSize",
+    "human_name": "zed: increase ui font size"
+  },
+  {
+    "name": "zed::InstallDevExtension",
+    "human_name": "zed: install dev extension"
+  },
+  {
+    "name": "zed::Minimize",
+    "human_name": "zed: minimize"
+  },
+  {
+    "name": "zed::NoAction",
+    "human_name": "zed: no action"
+  },
+  {
+    "name": "zed::OpenAccountSettings",
+    "human_name": "zed: open account settings"
+  },
+  {
+    "name": "zed::OpenBrowser",
+    "human_name": "zed: open browser"
+  },
+  {
+    "name": "zed::OpenDebugTasks",
+    "human_name": "zed: open debug tasks"
+  },
+  {
+    "name": "zed::OpenDefaultKeymap",
+    "human_name": "zed: open default keymap"
+  },
+  {
+    "name": "zed::OpenDefaultSettings",
+    "human_name": "zed: open default settings"
+  },
+  {
+    "name": "zed::OpenDocs",
+    "human_name": "zed: open docs"
+  },
+  {
+    "name": "zed::OpenKeymap",
+    "human_name": "zed: open keymap"
+  },
+  {
+    "name": "zed::OpenLicenses",
+    "human_name": "zed: open licenses"
+  },
+  {
+    "name": "zed::OpenLog",
+    "human_name": "zed: open log"
+  },
+  {
+    "name": "zed::OpenProjectSettings",
+    "human_name": "zed: open project settings"
+  },
+  {
+    "name": "zed::OpenProjectTasks",
+    "human_name": "zed: open project tasks"
+  },
+  {
+    "name": "zed::OpenServerSettings",
+    "human_name": "zed: open server settings"
+  },
+  {
+    "name": "zed::OpenSettings",
+    "human_name": "zed: open settings"
+  },
+  {
+    "name": "zed::OpenSettingsEditor",
+    "human_name": "zed: open settings editor"
+  },
+  {
+    "name": "zed::OpenTasks",
+    "human_name": "zed: open tasks"
+  },
+  {
+    "name": "zed::OpenTelemetryLog",
+    "human_name": "zed: open telemetry log"
+  },
+  {
+    "name": "zed::OpenZedRepo",
+    "human_name": "zed: open zed repo"
+  },
+  {
+    "name": "zed::OpenZedUrl",
+    "human_name": "zed: open zed url"
+  },
+  {
+    "name": "zed::Quit",
+    "human_name": "zed: quit"
+  },
+  {
+    "name": "zed::ReloadExtensions",
+    "human_name": "zed: reload extensions"
+  },
+  {
+    "name": "zed::RequestFeature",
+    "human_name": "zed: request feature"
+  },
+  {
+    "name": "zed::ResetBufferFontSize",
+    "human_name": "zed: reset buffer font size"
+  },
+  {
+    "name": "zed::ResetDatabase",
+    "human_name": "zed: reset database"
+  },
+  {
+    "name": "zed::ResetUiFontSize",
+    "human_name": "zed: reset ui font size"
+  },
+  {
+    "name": "zed::ShowAll",
+    "human_name": "zed: show all"
+  },
+  {
+    "name": "zed::TestPanic",
+    "human_name": "zed: test panic"
+  },
+  {
+    "name": "zed::ToggleFullScreen",
+    "human_name": "zed: toggle full screen"
+  },
+  {
+    "name": "zed::Zoom",
+    "human_name": "zed: zoom"
+  },
+  {
+    "name": "zed_predict_onboarding::OpenZedPredictOnboarding",
+    "human_name": "zed predict onboarding: open zed predict onboarding"
+  },
+  {
+    "name": "zeta::FocusCompletions",
+    "human_name": "zeta: focus completions"
+  },
+  {
+    "name": "zeta::NextEdit",
+    "human_name": "zeta: next edit"
+  },
+  {
+    "name": "zeta::PreviewCompletion",
+    "human_name": "zeta: preview completion"
+  },
+  {
+    "name": "zeta::PreviousEdit",
+    "human_name": "zeta: previous edit"
+  },
+  {
+    "name": "zeta::ThumbsDownActiveCompletion",
+    "human_name": "zeta: thumbs down active completion"
+  },
+  {
+    "name": "zeta::ThumbsUpActiveCompletion",
+    "human_name": "zeta: thumbs up active completion"
+  }
+]
