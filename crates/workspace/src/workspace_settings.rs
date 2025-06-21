@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub use_system_tabs: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -202,6 +203,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+    ///
+    /// Default: false
+    pub use_system_tabs: Option<bool>,
 }
 
 #[derive(Deserialize)]
