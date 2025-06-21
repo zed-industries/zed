@@ -5561,22 +5561,21 @@ impl LspStore {
 
                 completion.new_text = parsed_edit.new_text;
                 completion.replace_range = parsed_edit.replace_range;
-
-                updated_insert_range = parsed_edit.insert_range;
+                if let CompletionSource::Lsp { insert_range, .. } = &mut completion.source {
+                    *insert_range = parsed_edit.insert_range;
+                }
             }
         }
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
-            insert_range,
             lsp_completion,
             resolved,
             server_id: completion_server_id,
             ..
         } = &mut completion.source
         {
-            *insert_range = updated_insert_range;
             if *resolved {
                 return Ok(());
             }
