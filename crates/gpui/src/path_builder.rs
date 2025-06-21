@@ -336,10 +336,7 @@ impl PathBuilder {
             let v1 = buf.vertices[i1];
             let v2 = buf.vertices[i2];
 
-            path.push_triangle(
-                (v0.into(), v1.into(), v2.into()),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
+            path.push_triangle((v0.into(), v1.into(), v2.into()));
         }
 
         path
