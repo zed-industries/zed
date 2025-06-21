@@ -4087,13 +4087,6 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                if self.settings.is_path_excluded(&relative_path) {
-                    if !is_git_related {
-                        log::debug!("ignoring FS event for excluded path {relative_path:?}");
-                    }
-                    return false;
-                }
-
                 relative_paths.push(relative_path);
                 true
             }
