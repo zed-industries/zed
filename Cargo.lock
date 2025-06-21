@@ -3345,6 +3345,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "dirs 4.0.0",
  "editor",
  "fs",
  "futures 0.3.31",
