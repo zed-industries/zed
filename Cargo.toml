@@ -213,6 +213,7 @@ edition = "2024"
 # Workspace member crates
 #
 
+actions = { path = "crates/actions" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
 agent_settings = { path = "crates/agent_settings" }

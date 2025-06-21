@@ -6,6 +6,7 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
+actions.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 mdbook = "0.4.40"
@@ -13,11 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 regex.workspace = true
+rust-embed.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-zed.workspace = true
-gpui.workspace = true
-command_palette.workspace = true
 
 [lints]
 workspace = true

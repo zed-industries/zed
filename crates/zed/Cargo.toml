@@ -158,6 +158,9 @@ windows.workspace = true
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
+[build-dependencies]
+zed_actions.workspace = true
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 

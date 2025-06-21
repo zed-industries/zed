@@ -4610,18 +4610,17 @@ dependencies = [
 name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
+ "actions",
  "anyhow",
  "clap",
- "command_palette",
- "gpui",
  "mdbook",
  "regex",
+ "rust-embed",
  "serde",
  "serde_json",
  "settings",
  "util",
  "workspace-hack",
- "zed",
 ]
 
 [[package]]

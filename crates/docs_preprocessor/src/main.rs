@@ -1,14 +1,21 @@
+use actions::ActionDef;
 use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
 use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
+use rust_embed::RustEmbed;
 use settings::KeymapFile;
 use std::collections::HashSet;
 use std::io::{self, Read};
 use std::process;
 use std::sync::LazyLock;
+
+#[derive(RustEmbed)]
+#[folder = "../../assets"]
+#[include = "actions/*"]
+struct Assets;
 
 static KEYMAP_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-macos.json").expect("Failed to load MacOS keymap")
@@ -18,7 +25,7 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
 });
 
-static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
+static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(load_all_actions);
 
 pub fn make_app() -> Command {
     Command::new("zed-docs-preprocessor")
@@ -28,19 +35,13 @@ pub fn make_app() -> Command {
                 .arg(Arg::new("renderer").required(true))
                 .about("Check whether a renderer is supported by this preprocessor"),
         )
-        .subcommand(Command::new("dump").about("Dump all actions to JSON"))
 }
 
 fn main() -> Result<()> {
     let matches = make_app().get_matches();
-    // call a zed:: function so everything in `zed` crate is linked and
-    // all actions in the actual app are registered
-    zed::stdout_is_a_pty();
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
         handle_supports(sub_args);
-    } else if matches.subcommand_matches("dump").is_some() {
-        handle_dump()?;
     } else {
         handle_preprocessing()?;
     }
@@ -57,7 +58,7 @@ enum Error {
 impl Error {
     fn new_for_not_found_action(action_name: String) -> Self {
         for action in &*ALL_ACTIONS {
-            for alias in action.deprecated_aliases {
+            for alias in &action.deprecated_aliases {
                 if alias == &action_name {
                     return Error::DeprecatedActionUsed {
                         used: action_name.clone(),
@@ -123,11 +124,6 @@ fn handle_supports(sub_args: &ArgMatches) -> ! {
     }
 }
 
-fn handle_dump() -> Result<()> {
-    serde_json::to_writer_pretty(io::stdout(), &*ALL_ACTIONS)?;
-    Ok(())
-}
-
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error>) {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
 
@@ -171,7 +167,7 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Error>) {
 
 fn find_action_by_name(name: &str) -> Option<&ActionDef> {
     ALL_ACTIONS
-        .binary_search_by(|action| action.name.cmp(name))
+        .binary_search_by(|action| action.name.as_str().cmp(name))
         .ok()
         .map(|index| &ALL_ACTIONS[index])
 }
@@ -242,25 +238,80 @@ where
     });
 }
 
-#[derive(Debug, serde::Serialize)]
-struct ActionDef {
-    name: &'static str,
-    human_name: String,
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
-    deprecated_aliases: &'static [&'static str],
+fn load_all_actions() -> Vec<ActionDef> {
+    let content = util::asset_str::<Assets>("actions/actions.json");
+    let mut actions: Vec<ActionDef> =
+        serde_json::from_str(content.as_ref()).expect("Failed to parse actions.json");
+
+    actions.sort_by(|a, b| a.name.cmp(&b.name));
+    actions
 }
 
-fn dump_all_gpui_actions() -> Vec<ActionDef> {
-    let mut actions = gpui::generate_list_of_all_registered_actions()
-        .into_iter()
-        .map(|action| ActionDef {
-            name: action.name,
-            human_name: command_palette::humanize_action_name(action.name),
-            deprecated_aliases: action.aliases,
-        })
-        .collect::<Vec<ActionDef>>();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    actions.sort_by_key(|a| a.name);
+    #[test]
+    fn test_load_actions() {
+        let actions = load_all_actions();
+        assert!(!actions.is_empty(), "Actions should not be empty");
 
-    return actions;
+        // Check that actions are sorted
+        for i in 1..actions.len() {
+            assert!(
+                actions[i - 1].name <= actions[i].name,
+                "Actions should be sorted by name"
+            );
+        }
+
+        // Check that we can find a common action
+        assert!(
+            find_action_by_name("editor::Cut").is_some(),
+            "Should be able to find editor::Cut action"
+        );
+    }
+
+    #[test]
+    fn test_find_action_by_name() {
+        // Test finding an action that exists
+        let action = find_action_by_name("editor::Cut");
+        assert!(action.is_some());
+        assert_eq!(action.unwrap().name, "editor::Cut");
+
+        // Test finding an action that doesn't exist
+        let action = find_action_by_name("nonexistent::Action");
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_name_for_action() {
+        // Test simple action name
+        assert_eq!(name_for_action("editor::Cut".to_string()), "editor::Cut");
+
+        // Test action with parameters
+        assert_eq!(
+            name_for_action(
+                "\"editor::ToggleComments\", {\"advance_downwards\":false}".to_string()
+            ),
+            "editor::ToggleComments"
+        );
+
+        // Test action with quotes
+        assert_eq!(
+            name_for_action("\"workspace::NewFile\"".to_string()),
+            "workspace::NewFile"
+        );
+    }
+
+    #[test]
+    fn test_error_creation() {
+        // Test creating error for non-existent action
+        let error = Error::new_for_not_found_action("nonexistent::Action".to_string());
+        match error {
+            Error::ActionNotFound { action_name } => {
+                assert_eq!(action_name, "nonexistent::Action");
+            }
+            _ => panic!("Expected ActionNotFound error"),
+        }
+    }
 }
