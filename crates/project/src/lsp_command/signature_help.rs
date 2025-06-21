@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use gpui::{FontStyle, FontWeight, HighlightStyle};
+use regex::Regex;
 use rpc::proto::{self, documentation};
 
 #[derive(Debug)]
@@ -19,76 +20,46 @@ impl SignatureHelp {
             .and_then(|active_signature| help.signatures.get(active_signature as usize))
             .or_else(|| help.signatures.first())?;
 
-        let str_for_join = ", ";
-        let parameter_length = signature_information
-            .parameters
-            .as_ref()
-            .map_or(0, |parameters| parameters.len());
-        let mut highlight_start = 0;
-        let (strings, mut highlights): (Vec<_>, Vec<_>) = signature_information
-            .parameters
-            .as_ref()?
-            .iter()
-            .enumerate()
-            .map(|(i, parameter_information)| {
-                let label = match parameter_information.label.clone() {
-                    lsp::ParameterLabel::Simple(string) => string,
-                    lsp::ParameterLabel::LabelOffsets(offset) => signature_information
-                        .label
-                        .chars()
-                        .skip(offset[0] as usize)
-                        .take((offset[1] - offset[0]) as usize)
-                        .collect::<String>(),
-                };
-                let label_length = label.len();
+        let mut highlights = Vec::with_capacity(2);
 
-                let highlights = help.active_parameter.and_then(|active_parameter| {
-                    if i == active_parameter as usize {
-                        Some((
-                            highlight_start..(highlight_start + label_length),
-                            HighlightStyle {
-                                font_weight: Some(FontWeight::EXTRA_BOLD),
-                                ..Default::default()
-                            },
-                        ))
-                    } else {
-                        None
-                    }
-                });
+        if let Some(active_parameter) = help.active_parameter {
+            let active_label = &signature_information
+                .parameters
+                .as_ref()?
+                .get(active_parameter as usize)?
+                .label;
 
-                if i != parameter_length {
-                    highlight_start += label_length + str_for_join.len();
+            let range = match &active_label {
+                lsp::ParameterLabel::Simple(label) => {
+                    Regex::new(&format!("(\\W|^)(?<label>{})(\\W|$)", regex::escape(label)))
+                        .ok()
+                        .and_then(|re| re.captures(&signature_information.label))
+                        .and_then(|captures| captures.get(2).map(|m| m.start()..m.end()))
+                        .unwrap_or(0..0)
                 }
-
-                (label, highlights)
-            })
-            .unzip();
-
-        if strings.is_empty() {
-            None
-        } else {
-            let mut label = strings.join(str_for_join);
-
-            if function_options_count >= 2 {
-                let suffix = format!("(+{} overload)", function_options_count - 1);
-                let highlight_start = label.len() + 1;
-                highlights.push(Some((
-                    highlight_start..(highlight_start + suffix.len()),
-                    HighlightStyle {
-                        font_style: Some(FontStyle::Italic),
-                        ..Default::default()
-                    },
-                )));
-                label.push(' ');
-                label.push_str(&suffix);
+                lsp::ParameterLabel::LabelOffsets([start, end]) => {
+                    (*start as usize)..(*end as usize)
+                }
             };
 
-            Some(Self {
-                label,
-                highlights: highlights.into_iter().flatten().collect(),
-                original_data: help,
-            })
+            highlights.push((range, FontWeight::EXTRA_BOLD.into()));
         }
+
+        let mut label = signature_information.label.clone();
+        if function_options_count >= 2 {
+            let suffix = format!("(+{} overload)", function_options_count - 1);
+            let highlight_start = label.len() + 1;
+            let highlight_range = highlight_start..(highlight_start + suffix.len());
+            highlights.push((highlight_range, FontStyle::Italic.into()));
+            label.push(' ');
+            label.push_str(&suffix);
+        };
+
+        Some(Self {
+            label,
+            highlights,
+            original_data: help,
+        })
     }
 }
 
@@ -211,17 +182,11 @@ mod tests {
     use crate::lsp_command::signature_help::SignatureHelp;
 
     fn current_parameter() -> HighlightStyle {
-        HighlightStyle {
-            font_weight: Some(FontWeight::EXTRA_BOLD),
-            ..Default::default()
-        }
+        FontWeight::EXTRA_BOLD.into()
     }
 
     fn overload() -> HighlightStyle {
-        HighlightStyle {
-            font_style: Some(FontStyle::Italic),
-            ..Default::default()
-        }
+        FontStyle::Italic.into()
     }
 
     #[test]
@@ -253,8 +218,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(0..7, current_parameter())]
+                "fn test(foo: u8, bar: &str)".to_string(),
+                vec![(8..15, current_parameter())]
             )
         );
     }
@@ -288,8 +253,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(9..18, current_parameter())]
+                "fn test(foo: u8, bar: &str)".to_string(),
+                vec![(17..26, current_parameter())]
             )
         );
     }
@@ -340,8 +305,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str (+1 overload)".to_string(),
-                vec![(0..7, current_parameter()), (19..32, overload())]
+                "fn test1(foo: u8, bar: &str) (+1 overload)".to_string(),
+                vec![(9..16, current_parameter()), (29..42, overload())]
             )
         );
     }
@@ -392,8 +357,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
-                vec![(0..12, current_parameter()), (25..38, overload())]
+                "fn test2(hoge: String, fuga: bool) (+1 overload)".to_string(),
+                vec![(9..21, current_parameter()), (35..48, overload())]
             )
         );
     }
@@ -444,8 +409,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
-                vec![(14..24, current_parameter()), (25..38, overload())]
+                "fn test2(hoge: String, fuga: bool) (+1 overload)".to_string(),
+                vec![(23..33, current_parameter()), (35..48, overload()),]
             )
         );
     }
@@ -496,8 +461,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "hoge: String, fuga: bool (+1 overload)".to_string(),
-                vec![(25..38, overload())]
+                "fn test2(hoge: String, fuga: bool) (+1 overload)".to_string(),
+                vec![(35..48, overload())]
             )
         );
     }
@@ -563,8 +528,8 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "one: usize, two: u32 (+2 overload)".to_string(),
-                vec![(12..20, current_parameter()), (21..34, overload())]
+                "fn test3(one: usize, two: u32) (+2 overload)".to_string(),
+                vec![(21..29, current_parameter()), (31..44, overload())]
             )
         );
     }
@@ -609,9 +574,67 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "foo: u8, bar: &str".to_string(),
-                vec![(0..7, current_parameter())]
+                "fn test(foo: u8, bar: &str)".to_string(),
+                vec![(8..15, current_parameter())]
             )
         );
+    }
+
+    #[test]
+    fn test_create_signature_help_markdown_string_10() {
+        let signature_help = lsp::SignatureHelp {
+            signatures: vec![lsp::SignatureInformation {
+                label: "foo: u8, bar: &str".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("bar: &str".to_string()),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(1),
+        };
+        let maybe_markdown = SignatureHelp::new(signature_help);
+        assert!(maybe_markdown.is_some());
+
+        let markdown = maybe_markdown.unwrap();
+        let (_, items) = (markdown.label, markdown.highlights);
+        assert_eq!(items, vec![(9..18, current_parameter())]);
+    }
+
+    #[test]
+    fn test_create_signature_help_markdown_string_11() {
+        let signature_help = lsp::SignatureHelp {
+            signatures: vec![lsp::SignatureInformation {
+                label: "(func $func (param $1 i32) (param $2 f32) (result i32))".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("(param $1 i32)".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("(param $2 f32)".to_string()),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(1),
+        };
+        let maybe_markdown = SignatureHelp::new(signature_help);
+        assert!(maybe_markdown.is_some());
+
+        let markdown = maybe_markdown.unwrap();
+        let (_, items) = (markdown.label, markdown.highlights);
+        assert_eq!(items, vec![(27..41, current_parameter())]);
     }
 }
