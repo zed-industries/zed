@@ -1982,25 +1982,21 @@ impl CodeLabel {
         } else {
             label.clone()
         };
+        let filter_range =
+            Self::filter_range(&text, item.filter_text.as_deref()).unwrap_or(0..label_length);
         Self {
             text,
             runs,
-            filter_range: 0..label_length,
+            filter_range,
         }
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
-        let mut result = Self {
+        Self {
             runs: Vec::new(),
-            filter_range: 0..text.len(),
+            filter_range: Self::filter_range(&text, filter_text).unwrap_or(0..text.len()),
             text,
-        };
-        if let Some(filter_text) = filter_text {
-            if let Some(ix) = result.text.find(filter_text) {
-                result.filter_range = ix..ix + filter_text.len();
-            }
         }
-        result
     }
 
     pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {
@@ -2018,6 +2014,10 @@ impl CodeLabel {
 
     pub fn filter_text(&self) -> &str {
         &self.text[self.filter_range.clone()]
+    }
+
+    pub fn filter_range(text: &str, filter_text: Option<&str>) -> Option<Range<usize>> {
+        filter_text.and_then(|filter| text.find(filter).map(|start| start..start + filter.len()))
     }
 }
 

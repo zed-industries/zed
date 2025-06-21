@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
+use language::{CodeLabel, Toolchain};
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
@@ -268,10 +268,12 @@ impl LspAdapter for PythonLspAdapter {
             lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
             _ => return None,
         };
+        let filter_range =
+            CodeLabel::filter_range(&label, item.filter_text.as_deref()).unwrap_or(0..label.len());
         Some(language::CodeLabel {
             text: label.clone(),
             runs: vec![(0..label.len(), highlight_id)],
-            filter_range: 0..label.len(),
+            filter_range,
         })
     }
 
@@ -1152,10 +1154,12 @@ impl LspAdapter for PyLspAdapter {
             lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
             _ => return None,
         };
+        let filter_range =
+            CodeLabel::filter_range(&label, item.filter_text.as_deref()).unwrap_or(0..label.len());
         Some(language::CodeLabel {
             text: label.clone(),
             runs: vec![(0..label.len(), highlight_id)],
-            filter_range: 0..label.len(),
+            filter_range,
         })
     }
 

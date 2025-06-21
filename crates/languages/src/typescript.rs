@@ -8,7 +8,8 @@ use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
-    ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    CodeLabel, ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -668,11 +669,12 @@ impl LspAdapter for TypeScriptLspAdapter {
         } else {
             item.label.clone()
         };
-
+        let filter_range =
+            CodeLabel::filter_range(&text, item.filter_text.as_deref()).unwrap_or(0..len);
         Some(language::CodeLabel {
             text,
             runs: vec![(0..len, highlight_id)],
-            filter_range: 0..len,
+            filter_range,
         })
     }
 
