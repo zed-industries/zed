@@ -34,6 +34,7 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+use zed_llm_client::CompletionIntent;
 
 pub struct BufferCodegen {
     alternatives: Vec<Entity<CodegenAlternative>>,
@@ -385,8 +386,10 @@ impl CodegenAlternative {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
                 let request = self.build_request(&model, user_prompt, cx)?;
-                cx.spawn(async move |_, cx| model.stream_completion_text(request.await, &cx).await)
-                    .boxed_local()
+                cx.spawn(async move |_, cx| {
+                    Ok(model.stream_completion_text(request.await, &cx).await?)
+                })
+                .boxed_local()
             };
         self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         Ok(())
@@ -464,6 +467,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                intent: Some(CompletionIntent::InlineAssist),
                 mode: None,
                 tools: Vec::new(),
                 tool_choice: None,

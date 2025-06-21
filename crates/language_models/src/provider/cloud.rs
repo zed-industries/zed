@@ -1,9 +1,10 @@
 use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Context as _, Result, anyhow};
-use client::{Client, UserStore, zed_urls};
+use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
+use google_ai::GoogleModelMode;
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
 };
@@ -13,7 +14,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
+    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter,
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
@@ -72,9 +73,9 @@ pub struct AvailableModel {
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,
     /// The maximum number of output tokens allowed by the model.
-    pub max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u64>,
     /// The maximum number of completion tokens allowed by the model (o1-* only)
-    pub max_completion_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u64>,
     /// Override this model with a different Anthropic model for tool calls.
     pub tool_override: Option<String>,
     /// Indicates whether this custom model supports caching.
@@ -529,7 +530,7 @@ pub struct CloudLanguageModel {
 
 struct PerformLlmCompletionResponse {
     response: Response<AsyncBody>,
-    usage: Option<RequestUsage>,
+    usage: Option<ModelRequestUsage>,
     tool_use_limit_reached: bool,
     includes_status_messages: bool,
 }
@@ -580,7 +581,7 @@ impl CloudLanguageModel {
                 let usage = if includes_status_messages {
                     None
                 } else {
-                    RequestUsage::from_headers(response.headers()).ok()
+                    ModelRequestUsage::from_headers(response.headers()).ok()
                 };
 
                 return Ok(PerformLlmCompletionResponse {
@@ -714,8 +715,8 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
-    fn max_token_count(&self) -> usize {
-        self.model.max_token_count
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count as u64
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -736,7 +737,7 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
             zed_llm_client::LanguageModelProvider::OpenAi => {
@@ -750,7 +751,8 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = self.model.id.to_string();
-                let generate_content_request = into_google(request, model_id.clone());
+                let generate_content_request =
+                    into_google(request, model_id.clone(), GoogleModelMode::Default);
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -784,7 +786,7 @@ impl LanguageModel for CloudLanguageModel {
                         let response_body: CountTokensResponse =
                             serde_json::from_str(&response_body)?;
 
-                        Ok(response_body.tokens)
+                        Ok(response_body.tokens as u64)
                     } else {
                         Err(anyhow!(ApiError {
                             status,
@@ -805,10 +807,12 @@ impl LanguageModel for CloudLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
+        let intent = request.intent;
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         match self.model.provider {
@@ -817,7 +821,7 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     self.model.id.to_string(),
                     1.0,
-                    self.model.max_output_tokens as u32,
+                    self.model.max_output_tokens as u64,
                     if self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
@@ -841,10 +845,12 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
+                            intent,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)?,
+                            provider_request: serde_json::to_value(&request)
+                                .map_err(|e| anyhow!(e))?,
                         },
                     )
                     .await
@@ -880,7 +886,7 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
-                    Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
+                    Err(err) => return async move { Err(anyhow!(err).into()) }.boxed(),
                 };
                 let request = into_open_ai(request, &model, None);
                 let llm_api_token = self.llm_api_token.clone();
@@ -897,10 +903,12 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
+                            intent,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)?,
+                            provider_request: serde_json::to_value(&request)
+                                .map_err(|e| anyhow!(e))?,
                         },
                     )
                     .await?;
@@ -919,7 +927,8 @@ impl LanguageModel for CloudLanguageModel {
             }
             zed_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
-                let request = into_google(request, self.model.id.to_string());
+                let request =
+                    into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
@@ -934,10 +943,12 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
+                            intent,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
-                            provider_request: serde_json::to_value(&request)?,
+                            provider_request: serde_json::to_value(&request)
+                                .map_err(|e| anyhow!(e))?,
                         },
                     )
                     .await?;
@@ -991,7 +1002,7 @@ where
 }
 
 fn usage_updated_event<T>(
-    usage: Option<RequestUsage>,
+    usage: Option<ModelRequestUsage>,
 ) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
     futures::stream::iter(usage.map(|usage| {
         Ok(CloudCompletionEvent::Status(

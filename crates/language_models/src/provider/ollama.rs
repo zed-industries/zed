@@ -4,25 +4,22 @@ use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, StopReason,
-};
-use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
-    OllamaToolCall, get_models, preload_model, show_model, stream_chat_completion,
+    OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
@@ -49,11 +46,15 @@ pub struct AvailableModel {
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
     pub supports_tools: Option<bool>,
+    /// Whether the model supports vision
+    pub supports_images: Option<bool>,
+    /// Whether to enable think mode
+    pub supports_thinking: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -99,6 +100,8 @@ impl State {
                             None,
                             None,
                             Some(capabilities.supports_tools()),
+                            Some(capabilities.supports_vision()),
+                            Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
                     }
@@ -198,7 +201,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
+        let mut models: HashMap<String, ollama::Model> = HashMap::new();
 
         // Add models from the Ollama API
         for model in self.state.read(cx).available_models.iter() {
@@ -219,11 +222,13 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
+                    supports_vision: model.supports_images,
+                    supports_thinking: model.supports_thinking,
                 },
             );
         }
 
-        models
+        let mut models = models
             .into_values()
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
@@ -233,16 +238,9 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
-            .collect()
-    }
-
-    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let id = model.id().0.to_string();
-        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
-            .detach_and_log_err(cx);
+            .collect::<Vec<_>>();
+        models.sort_by_key(|model| model.name());
+        models
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -273,22 +271,59 @@ pub struct OllamaLanguageModel {
 
 impl OllamaLanguageModel {
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
+        let supports_vision = self.model.supports_vision.unwrap_or(false);
+
         ChatRequest {
             model: self.model.name.clone(),
             messages: request
                 .messages
                 .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => ChatMessage::User {
-                        content: msg.string_contents(),
-                    },
-                    Role::Assistant => ChatMessage::Assistant {
-                        content: msg.string_contents(),
-                        tool_calls: None,
-                    },
-                    Role::System => ChatMessage::System {
-                        content: msg.string_contents(),
-                    },
+                .map(|msg| {
+                    let images = if supports_vision {
+                        msg.content
+                            .iter()
+                            .filter_map(|content| match content {
+                                MessageContent::Image(image) => Some(image.source.to_string()),
+                                _ => None,
+                            })
+                            .collect::<Vec<String>>()
+                    } else {
+                        vec![]
+                    };
+
+                    match msg.role {
+                        Role::User => ChatMessage::User {
+                            content: msg.string_contents(),
+                            images: if images.is_empty() {
+                                None
+                            } else {
+                                Some(images)
+                            },
+                        },
+                        Role::Assistant => {
+                            let content = msg.string_contents();
+                            let thinking =
+                                msg.content.into_iter().find_map(|content| match content {
+                                    MessageContent::Thinking { text, .. } if !text.is_empty() => {
+                                        Some(text)
+                                    }
+                                    _ => None,
+                                });
+                            ChatMessage::Assistant {
+                                content,
+                                tool_calls: None,
+                                images: if images.is_empty() {
+                                    None
+                                } else {
+                                    Some(images)
+                                },
+                                thinking,
+                            }
+                        }
+                        Role::System => ChatMessage::System {
+                            content: msg.string_contents(),
+                        },
+                    }
                 })
                 .collect(),
             keep_alive: self.model.keep_alive.clone().unwrap_or_default(),
@@ -299,6 +334,7 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
+            think: self.model.supports_thinking,
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }
@@ -326,7 +362,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_vision.unwrap_or(false)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -341,7 +377,7 @@ impl LanguageModel for OllamaLanguageModel {
         format!("ollama/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -349,7 +385,7 @@ impl LanguageModel for OllamaLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         // There is no endpoint for this _yet_ in Ollama
         // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
         let token_count = request
@@ -359,7 +395,7 @@ impl LanguageModel for OllamaLanguageModel {
             .sum::<usize>()
             / 4;
 
-        async move { Ok(token_count) }.boxed()
+        async move { Ok(token_count as u64) }.boxed()
     }
 
     fn stream_completion(
@@ -370,6 +406,7 @@ impl LanguageModel for OllamaLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_ollama_request(request);
@@ -379,7 +416,7 @@ impl LanguageModel for OllamaLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
             settings.api_url.clone()
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
@@ -424,7 +461,7 @@ fn map_to_language_model_completion_events(
             let mut events = Vec::new();
 
             match delta.message {
-                ChatMessage::User { content } => {
+                ChatMessage::User { content, images: _ } => {
                     events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                 }
                 ChatMessage::System { content } => {
@@ -433,8 +470,16 @@ fn map_to_language_model_completion_events(
                 ChatMessage::Assistant {
                     content,
                     tool_calls,
+                    images: _,
+                    thinking,
                 } => {
-                    // Check for tool calls
+                    if let Some(text) = thinking {
+                        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                            text,
+                            signature: None,
+                        }));
+                    }
+
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         match tool_call {
                             OllamaToolCall::Function(function) => {
@@ -455,13 +500,19 @@ fn map_to_language_model_completion_events(
                                 state.used_tools = true;
                             }
                         }
-                    } else {
+                    } else if !content.is_empty() {
                         events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                     }
                 }
             };
 
             if delta.done {
+                events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: delta.prompt_eval_count.unwrap_or(0),
+                    output_tokens: delta.eval_count.unwrap_or(0),
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })));
                 if state.used_tools {
                     state.used_tools = false;
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));

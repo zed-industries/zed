@@ -82,7 +82,10 @@ fn view_release_notes_locally(
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, cx)
+                                let buffer = project.create_local_buffer("", markdown, cx);
+                                project
+                                    .mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
+                                buffer
                             });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
@@ -91,7 +94,7 @@ fn view_release_notes_locally(
 
                             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-                            let tab_content = SharedString::from(body.title.to_string());
+                            let tab_content = Some(SharedString::from(body.title.to_string()));
                             let editor = cx.new(|cx| {
                                 Editor::for_multibuffer(buffer, Some(project), window, cx)
                             });

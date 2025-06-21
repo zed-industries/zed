@@ -111,7 +111,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_or_create_user_by_github_account(
+    pub async fn update_or_create_user_by_github_account(
         &self,
         github_login: &str,
         github_user_id: i32,
@@ -121,7 +121,7 @@ impl Database {
         initial_channel_id: Option<ChannelId>,
     ) -> Result<User> {
         self.transaction(|tx| async move {
-            self.get_or_create_user_by_github_account_tx(
+            self.update_or_create_user_by_github_account_tx(
                 github_login,
                 github_user_id,
                 github_email,
@@ -135,7 +135,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_or_create_user_by_github_account_tx(
+    pub async fn update_or_create_user_by_github_account_tx(
         &self,
         github_login: &str,
         github_user_id: i32,

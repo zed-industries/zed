@@ -26,8 +26,8 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::ResultExt;
 use util::command::{new_smol_command, new_std_command};
+use util::{ResultExt, paths};
 use uuid::Uuid;
 
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
@@ -199,6 +199,44 @@ pub enum ResetMode {
     Mixed,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum FetchOptions {
+    All,
+    Remote(Remote),
+}
+
+impl FetchOptions {
+    pub fn to_proto(&self) -> Option<String> {
+        match self {
+            FetchOptions::All => None,
+            FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
+        }
+    }
+
+    pub fn from_proto(remote_name: Option<String>) -> Self {
+        match remote_name {
+            Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
+            None => FetchOptions::All,
+        }
+    }
+
+    pub fn name(&self) -> SharedString {
+        match self {
+            Self::All => "Fetch all remotes".into(),
+            Self::Remote(remote) => remote.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for FetchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchOptions::All => write!(f, "--all"),
+            FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
+        }
+    }
+}
+
 /// Modifies .git/info/exclude temporarily
 pub struct GitExcludeOverride {
     git_exclude_path: PathBuf,
@@ -291,7 +329,7 @@ pub trait GitRepository: Send + Sync {
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<Result<Vec<Option<String>>>>;
 
-    fn head_sha(&self) -> BoxFuture<Option<String>> {
+    fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
             self.revparse_batch(vec!["HEAD".into()])
                 .await
@@ -387,6 +425,7 @@ pub trait GitRepository: Send + Sync {
 
     fn fetch(
         &self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
@@ -475,6 +514,50 @@ pub struct GitRepositoryCheckpoint {
     pub commit_sha: Oid,
 }
 
+#[derive(Debug)]
+pub struct GitCommitter {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
+    if cfg!(any(feature = "test-support", test)) {
+        return GitCommitter {
+            name: None,
+            email: None,
+        };
+    }
+
+    let git_binary_path =
+        if cfg!(target_os = "macos") && option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+            cx.update(|cx| {
+                cx.path_for_auxiliary_executable("git")
+                    .context("could not find git binary path")
+                    .log_err()
+            })
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+
+    let git = GitBinary::new(
+        git_binary_path.unwrap_or(PathBuf::from("git")),
+        paths::home_dir().clone(),
+        cx.background_executor().clone(),
+    );
+
+    cx.background_spawn(async move {
+        let name = git.run(["config", "--global", "user.name"]).await.log_err();
+        let email = git
+            .run(["config", "--global", "user.email"])
+            .await
+            .log_err();
+        GitCommitter { name, email }
+    })
+    .await
+}
+
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
@@ -492,7 +575,7 @@ impl GitRepository for RealGitRepository {
         repo.commondir().into()
     }
 
-    fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {
+    fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -528,7 +611,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<Result<CommitDiff>> {
+    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
         let Some(working_directory) = self.repository.lock().workdir().map(ToOwned::to_owned)
         else {
             return future::ready(Err(anyhow!("no working directory"))).boxed();
@@ -635,7 +718,7 @@ impl GitRepository for RealGitRepository {
         commit: String,
         mode: ResetMode,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         async move {
             let working_directory = self.working_directory();
 
@@ -665,7 +748,7 @@ impl GitRepository for RealGitRepository {
         commit: String,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         async move {
@@ -690,7 +773,7 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
         const GIT_MODE_SYMLINK: u32 = 0o120000;
 
@@ -723,7 +806,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         let repo = self.repository.clone();
         self.executor
             .spawn(async move {
@@ -744,7 +827,7 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Option<String>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<anyhow::Result<()>> {
+    ) -> BoxFuture<'_, anyhow::Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         self.executor
@@ -808,7 +891,7 @@ impl GitRepository for RealGitRepository {
         remote.url().map(|url| url.to_string())
     }
 
-    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<Result<Vec<Option<String>>>> {
+    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -858,14 +941,14 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn merge_message(&self) -> BoxFuture<Option<String>> {
+    fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         let path = self.path().join("MERGE_MSG");
         self.executor
             .spawn(async move { std::fs::read_to_string(&path).ok() })
             .boxed()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>> {
         let git_binary_path = self.git_binary_path.clone();
         let working_directory = self.working_directory();
         let path_prefixes = path_prefixes.to_owned();
@@ -886,7 +969,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
+    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         self.executor
@@ -953,7 +1036,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn change_branch(&self, name: String) -> BoxFuture<Result<()>> {
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
         self.executor
             .spawn(async move {
@@ -985,7 +1068,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn create_branch(&self, name: String) -> BoxFuture<Result<()>> {
+    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
         self.executor
             .spawn(async move {
@@ -997,7 +1080,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<Result<crate::blame::Blame>> {
+    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1019,7 +1102,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn diff(&self, diff: DiffType) -> BoxFuture<Result<String>> {
+    fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         self.executor
@@ -1050,7 +1133,7 @@ impl GitRepository for RealGitRepository {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         self.executor
@@ -1078,7 +1161,7 @@ impl GitRepository for RealGitRepository {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1110,7 +1193,7 @@ impl GitRepository for RealGitRepository {
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -1149,7 +1232,7 @@ impl GitRepository for RealGitRepository {
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         async move {
@@ -1181,7 +1264,7 @@ impl GitRepository for RealGitRepository {
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         async move {
@@ -1202,18 +1285,20 @@ impl GitRepository for RealGitRepository {
 
     fn fetch(
         &self,
+        fetch_options: FetchOptions,
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let remote_name = format!("{}", fetch_options);
         let executor = cx.background_executor().clone();
         async move {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
                 .current_dir(&working_directory?)
-                .args(["fetch", "--all"])
+                .args(["fetch", &remote_name])
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 
@@ -1222,7 +1307,7 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<Result<Vec<Remote>>> {
+    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         self.executor
@@ -1268,7 +1353,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn check_for_pushed_commit(&self) -> BoxFuture<Result<Vec<SharedString>>> {
+    fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         self.executor
@@ -1361,7 +1446,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
+    fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1400,7 +1485,7 @@ impl GitRepository for RealGitRepository {
         &self,
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
-    ) -> BoxFuture<Result<bool>> {
+    ) -> BoxFuture<'_, Result<bool>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1439,7 +1524,7 @@ impl GitRepository for RealGitRepository {
         &self,
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
-    ) -> BoxFuture<Result<String>> {
+    ) -> BoxFuture<'_, Result<String>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 

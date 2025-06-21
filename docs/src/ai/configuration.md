@@ -1,7 +1,7 @@
 # Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting [the Configuring Zed page](./configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring Zed page](../configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
@@ -13,18 +13,19 @@ Here's an overview of the supported providers and tool call support:
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Amazon Bedrock](#amazon-bedrock)               | Depends on the model                                                                                                                                                        |
 | [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
-| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | ✅                                                                                                                                                                          |
 | [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
 | [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
-| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | ✅                                                                                                                                                                          |
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
+| [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
 | [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
+While Zed offers hosted versions of models through [our various plans](./plans-and-usage.md), we're always happy to support users wanting to supply their own API keys.
 Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
@@ -164,7 +165,7 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 
 ### DeepSeek {#deepseek}
 
-> 🚫 Does not support tool use
+> ✅ Supports tool use
 
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
 2. Open the settings view (`agent: open configuration`) and go to the DeepSeek section
@@ -208,13 +209,20 @@ Custom models will be listed in the model dropdown in the Agent Panel. You can a
 > ✅ Supports tool use in some cases.
 > Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
 
-You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use GitHub Copilot Chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+
+1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
+2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
+
+Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
+
+> **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
 ### Google AI {#google-ai}
 
 > ✅ Supports tool use
 
-You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use Gemini models with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section
@@ -226,7 +234,9 @@ Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#google-ai-custom-models}
 
-By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models), with the Google AI provider by adding the following to your Zed `settings.json`:
+By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models). You can configure a model to use [thinking mode](https://ai.google.dev/gemini-api/docs/thinking) (if it supports it) by adding a `mode` configuration to your model. This is useful for controlling reasoning token usage and response speed. If not specified, Gemini will automatically choose the thinking budget.
+
+Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
 
 ```json
 {
@@ -234,9 +244,13 @@ By default, Zed will use `stable` versions of models, but you can use specific v
     "google": {
       "available_models": [
         {
-          "name": "gemini-1.5-flash-latest",
-          "display_name": "Gemini 1.5 Flash (Latest)",
-          "max_tokens": 1000000
+          "name": "gemini-2.5-flash-preview-05-20",
+          "display_name": "Gemini 2.5 Flash (Thinking)",
+          "max_tokens": 1000000,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 24000
+          }
         }
       ]
     }
@@ -248,7 +262,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### LM Studio {#lmstudio}
 
-> 🚫 Does not support tool use
+> ✅ Supports tool use
 
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
@@ -295,7 +309,8 @@ The Zed Assistant comes pre-configured with several Mistral models (codestral-la
           "max_tokens": 32000,
           "max_output_tokens": 4096,
           "max_completion_tokens": 1024,
-          "supports_tools": true
+          "supports_tools": true,
+          "supports_images": false
         }
       ]
     }
@@ -345,7 +360,9 @@ Depending on your hardware or use-case you may wish to limit or increase the con
           "name": "qwen2.5-coder",
           "display_name": "qwen 2.5 coder 32K",
           "max_tokens": 32768,
-          "supports_tools": true
+          "supports_tools": true,
+          "supports_thinking": true,
+          "supports_images": true
         }
       ]
     }
@@ -364,6 +381,12 @@ For example, `"keep_alive": "120s"` will allow the remote server to unload the m
 The `supports_tools` option controls whether or not the model will use additional tools.
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
 If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
+
+The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.
+If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in zed.
+
+The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.
+If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in zed.
 
 ### OpenAI {#openai}
 
@@ -414,6 +437,9 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
+You can add a custom API URL for OpenAI either via the UI or by editing the your `settings.json`.
+Here are a few model examples you can plug in by using this feature:
+
 #### X.ai Grok
 
 Example configuration for using X.ai Grok with Zed:
@@ -433,6 +459,78 @@ Example configuration for using X.ai Grok with Zed:
     },
   }
 ```
+
+#### Vercel's v0
+
+To use Vercel's v0 models with Zed, ensure you have created a [v0 API key first](https://v0.dev/chat/settings/keys).
+Once that's done, insert that into the OpenAI API key section, and add this API endpoint:
+
+```json
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.v0.dev/v1",
+      "version": "1"
+    },
+  }
+```
+
+### OpenRouter {#openrouter}
+
+> ✅ Supports tool use
+
+OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
+
+1. Visit [OpenRouter](https://openrouter.ai) and create an account
+2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys)
+3. Open the settings view (`agent: open configuration`) and go to the OpenRouter section
+4. Enter your OpenRouter API key
+
+The OpenRouter API key will be saved in your keychain.
+
+Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
+
+#### Custom Models {#openrouter-custom-models}
+
+You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+      "available_models": [
+        {
+          "name": "google/gemini-2.0-flash-thinking-exp",
+          "display_name": "Gemini 2.0 Flash (Thinking)",
+          "max_tokens": 200000,
+          "max_output_tokens": 8192,
+          "supports_tools": true,
+          "supports_images": true,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 8000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The available configuration options for each model are:
+
+- `name`: The model identifier used by OpenRouter (required)
+- `display_name`: A human-readable name shown in the UI (optional)
+- `max_tokens`: The model's context window size (required)
+- `max_output_tokens`: Maximum tokens the model can generate (optional)
+- `max_completion_tokens`: Maximum completion tokens (optional)
+- `supports_tools`: Whether the model supports tool/function calling (optional)
+- `supports_images`: Whether the model supports image inputs (optional)
+- `mode`: Special mode configuration for thinking models (optional)
+
+You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
+
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ## Advanced Configuration {#advanced-configuration}
 

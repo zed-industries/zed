@@ -37,6 +37,10 @@ impl Tool for DeletePathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
     }

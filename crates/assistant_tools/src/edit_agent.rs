@@ -8,6 +8,7 @@ use crate::{Template, Templates};
 use anyhow::Result;
 use assistant_tool::ActionLog;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
+pub use edit_parser::EditFormat;
 use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
 use futures::{
     Stream, StreamExt,
@@ -28,6 +29,7 @@ use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 use util::debug_panic;
+use zed_llm_client::CompletionIntent;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -40,19 +42,30 @@ impl Template for CreateFilePromptTemplate {
 }
 
 #[derive(Serialize)]
-struct EditFilePromptTemplate {
+struct EditFileXmlPromptTemplate {
     path: Option<PathBuf>,
     edit_description: String,
 }
 
-impl Template for EditFilePromptTemplate {
-    const TEMPLATE_NAME: &'static str = "edit_file_prompt.hbs";
+impl Template for EditFileXmlPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_xml.hbs";
+}
+
+#[derive(Serialize)]
+struct EditFileDiffFencedPromptTemplate {
+    path: Option<PathBuf>,
+    edit_description: String,
+}
+
+impl Template for EditFileDiffFencedPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_diff_fenced.hbs";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditAgentOutputEvent {
     ResolvingEditRange(Range<Anchor>),
     UnresolvedEditRange,
+    AmbiguousEditRange(Vec<Range<usize>>),
     Edited,
 }
 
@@ -68,6 +81,7 @@ pub struct EditAgent {
     action_log: Entity<ActionLog>,
     project: Entity<Project>,
     templates: Arc<Templates>,
+    edit_format: EditFormat,
 }
 
 impl EditAgent {
@@ -76,12 +90,14 @@ impl EditAgent {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
+        edit_format: EditFormat,
     ) -> Self {
         EditAgent {
             model,
             project,
             action_log,
             templates,
+            edit_format,
         }
     }
 
@@ -106,7 +122,9 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let new_chunks = this.request(conversation, prompt, cx).await?;
+            let new_chunks = this
+                .request(conversation, CompletionIntent::CreateFile, prompt, cx)
+                .await?;
 
             let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
             while let Some(event) = inner_events.next().await {
@@ -205,15 +223,26 @@ impl EditAgent {
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
         let conversation = conversation.clone();
+        let edit_format = self.edit_format;
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
-            let prompt = EditFilePromptTemplate {
-                path,
-                edit_description,
-            }
-            .render(&this.templates)?;
-            let edit_chunks = this.request(conversation, prompt, cx).await?;
+            let prompt = match edit_format {
+                EditFormat::XmlTags => EditFileXmlPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+                EditFormat::DiffFenced => EditFileDiffFencedPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+            };
+
+            let edit_chunks = this
+                .request(conversation, CompletionIntent::EditFile, prompt, cx)
+                .await?;
             this.apply_edit_chunks(buffer, edit_chunks, events_tx, cx)
                 .await
         });
@@ -230,7 +259,7 @@ impl EditAgent {
         self.action_log
             .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
 
-        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
+        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, self.edit_format, cx);
         let mut edit_events = edit_events.peekable();
         while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
             // Skip events until we're at the start of a new edit.
@@ -264,16 +293,35 @@ impl EditAgent {
                 }
             }
 
-            let (edit_events_, resolved_old_text) = resolve_old_text.await?;
+            let (edit_events_, mut resolved_old_text) = resolve_old_text.await?;
             edit_events = edit_events_;
 
             // If we can't resolve the old text, restart the loop waiting for a
             // new edit (or for the stream to end).
-            let Some(resolved_old_text) = resolved_old_text else {
-                output_events
-                    .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
-                    .ok();
-                continue;
+            let resolved_old_text = match resolved_old_text.len() {
+                1 => resolved_old_text.pop().unwrap(),
+                0 => {
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
+                        .ok();
+                    continue;
+                }
+                _ => {
+                    let ranges = resolved_old_text
+                        .into_iter()
+                        .map(|text| {
+                            let start_line =
+                                (snapshot.offset_to_point(text.range.start).row + 1) as usize;
+                            let end_line =
+                                (snapshot.offset_to_point(text.range.end).row + 1) as usize;
+                            start_line..end_line
+                        })
+                        .collect();
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::AmbiguousEditRange(ranges))
+                        .ok();
+                    continue;
+                }
             };
 
             // Compute edits in the background and apply them as they become
@@ -325,6 +373,7 @@ impl EditAgent {
 
     fn parse_edit_chunks(
         chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        edit_format: EditFormat,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -334,7 +383,7 @@ impl EditAgent {
         let output = cx.background_spawn(async move {
             pin_mut!(chunks);
 
-            let mut parser = EditParser::new();
+            let mut parser = EditParser::new(edit_format);
             let mut raw_edits = String::new();
             while let Some(chunk) = chunks.next().await {
                 match chunk {
@@ -400,41 +449,57 @@ impl EditAgent {
         mut edit_events: T,
         cx: &mut AsyncApp,
     ) -> (
-        Task<Result<(T, Option<ResolvedOldText>)>>,
-        async_watch::Receiver<Option<Range<usize>>>,
+        Task<Result<(T, Vec<ResolvedOldText>)>>,
+        watch::Receiver<Option<Range<usize>>>,
     )
     where
         T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
     {
-        let (old_range_tx, old_range_rx) = async_watch::channel(None);
+        let (mut old_range_tx, old_range_rx) = watch::channel(None);
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
-                let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
+                let EditParserEvent::OldTextChunk {
+                    chunk,
+                    done,
+                    line_hint,
+                } = edit_event?
+                else {
                     break;
                 };
 
-                old_range_tx.send(matcher.push(&chunk))?;
+                old_range_tx.send(matcher.push(&chunk, line_hint))?;
                 if done {
                     break;
                 }
             }
 
-            let old_range = matcher.finish();
-            old_range_tx.send(old_range.clone())?;
-            if let Some(old_range) = old_range {
-                let line_indent =
-                    LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
-                Ok((
-                    edit_events,
-                    Some(ResolvedOldText {
-                        range: old_range,
-                        indent: line_indent,
-                    }),
-                ))
+            let matches = matcher.finish();
+            let best_match = matcher.select_best_match();
+
+            old_range_tx.send(best_match.clone())?;
+
+            let indent = LineIndent::from_iter(
+                matcher
+                    .query_lines()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .chars(),
+            );
+
+            let resolved_old_texts = if let Some(best_match) = best_match {
+                vec![ResolvedOldText {
+                    range: best_match,
+                    indent,
+                }]
             } else {
-                Ok((edit_events, None))
-            }
+                matches
+                    .into_iter()
+                    .map(|range| ResolvedOldText { range, indent })
+                    .collect::<Vec<_>>()
+            };
+
+            Ok((edit_events, resolved_old_texts))
         });
 
         (task, old_range_rx)
@@ -589,6 +654,7 @@ impl EditAgent {
     async fn request(
         &self,
         mut conversation: LanguageModelRequest,
+        intent: CompletionIntent,
         prompt: String,
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
@@ -646,6 +712,7 @@ impl EditAgent {
         let request = LanguageModelRequest {
             thread_id: conversation.thread_id,
             prompt_id: conversation.prompt_id,
+            intent: Some(intent),
             mode: conversation.mode,
             messages: conversation.messages,
             tool_choice,
@@ -1312,7 +1379,85 @@ mod tests {
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        EditAgent::new(model, project, action_log, Templates::new())
+        EditAgent::new(
+            model,
+            project,
+            action_log,
+            Templates::new(),
+            EditFormat::XmlTags,
+        )
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_non_unique_text_error(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let original_text = indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "};
+        let buffer = cx.new(|cx| Buffer::local(original_text, cx));
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        // When <old_text> matches text in more than one place
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                    return 42;
+                }
+                </old_text>
+                <new_text>
+                    return 100;
+                }
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
+
+        // Then the text should remain unchanged
+        let result_text = buffer.read_with(cx, |buffer, _| buffer.snapshot().text());
+        assert_eq!(
+            result_text,
+            indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "},
+            "Text should remain unchanged when there are multiple matches"
+        );
+
+        // And AmbiguousEditRange even should be emitted
+        let events = drain_events(&mut events);
+        let ambiguous_ranges = vec![2..3, 6..7, 10..11];
+        assert!(
+            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
+            "Should emit AmbiguousEditRange for non-unique text"
+        );
     }
 
     fn drain_events(

@@ -8,26 +8,22 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-use http_client::http::{HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
 use std::ops::{Add, Sub};
-use std::str::FromStr as _;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::{
-    CompletionRequestStatus, MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
-};
+use zed_llm_client::CompletionRequestStatus;
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -52,7 +48,7 @@ pub fn init_settings(cx: &mut App) {
 pub struct LanguageModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub should_speculate: bool,
-    pub min_total_token: usize,
+    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
@@ -74,6 +70,8 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
+    #[error("rate limit exceeded, retry after {0:?}")]
+    RateLimit(Duration),
     #[error("received bad input JSON")]
     BadInputJson {
         id: LanguageModelToolUseId,
@@ -103,46 +101,20 @@ pub enum StopReason {
     Refusal,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct RequestUsage {
-    pub limit: UsageLimit,
-    pub amount: i32,
-}
-
-impl RequestUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let limit = headers
-            .get(MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME)
-            .with_context(|| {
-                format!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header")
-            })?;
-        let limit = UsageLimit::from_str(limit.to_str()?)?;
-
-        let amount = headers
-            .get(MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME)
-            .with_context(|| {
-                format!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header")
-            })?;
-        let amount = amount.to_str()?.parse::<i32>()?;
-
-        Ok(Self { limit, amount })
-    }
-}
-
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
-    pub input_tokens: u32,
+    pub input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub output_tokens: u32,
+    pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_creation_input_tokens: u32,
+    pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_read_input_tokens: u32,
+    pub cache_read_input_tokens: u64,
 }
 
 impl TokenUsage {
-    pub fn total_tokens(&self) -> u32 {
+    pub fn total_tokens(&self) -> u64 {
         self.input_tokens
             + self.output_tokens
             + self.cache_read_input_tokens
@@ -242,7 +214,7 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports choosing which tool to use.
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
-    /// Returns whether this model supports "max mode";
+    /// Returns whether this model supports "burn mode";
     fn supports_max_mode(&self) -> bool {
         false
     }
@@ -251,8 +223,8 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelToolSchemaFormat::JsonSchema
     }
 
-    fn max_token_count(&self) -> usize;
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_token_count(&self) -> u64;
+    fn max_output_tokens(&self) -> Option<u64> {
         None
     }
 
@@ -260,7 +232,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>>;
+    ) -> BoxFuture<'static, Result<u64>>;
 
     fn stream_completion(
         &self,
@@ -270,6 +242,7 @@ pub trait LanguageModel: Send + Sync {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     >;
 
@@ -277,7 +250,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
+    ) -> BoxFuture<'static, Result<LanguageModelTextStream, LanguageModelCompletionError>> {
         let future = self.stream_completion(request, cx);
 
         async move {
@@ -345,7 +318,7 @@ pub trait LanguageModel: Send + Sync {
 #[derive(Debug, Error)]
 pub enum LanguageModelKnownError {
     #[error("Context window limit exceeded ({tokens})")]
-    ContextWindowLimitExceeded { tokens: usize },
+    ContextWindowLimitExceeded { tokens: u64 },
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
@@ -374,7 +347,6 @@ pub trait LanguageModelProvider: 'static {
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         Vec::new()
     }
-    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;

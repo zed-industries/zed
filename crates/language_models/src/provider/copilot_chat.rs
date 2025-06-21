@@ -17,13 +17,14 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
     Transformation, percentage, svg,
 };
+use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    StopReason, TokenUsage,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -36,9 +37,6 @@ use super::open_ai::count_open_ai_tokens;
 
 const PROVIDER_ID: &str = "copilot_chat";
 const PROVIDER_NAME: &str = "GitHub Copilot Chat";
-
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct CopilotChatSettings {}
 
 pub struct CopilotChatLanguageModelProvider {
     state: Entity<State>,
@@ -65,6 +63,19 @@ impl CopilotChatLanguageModelProvider {
             State {
                 _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                    if let Some(copilot_chat) = CopilotChat::global(cx) {
+                        let language_settings = all_language_settings(None, cx);
+                        let configuration = copilot::copilot_chat::CopilotChatConfiguration {
+                            enterprise_uri: language_settings
+                                .edit_predictions
+                                .copilot
+                                .enterprise_uri
+                                .clone(),
+                        };
+                        copilot_chat.update(cx, |chat, cx| {
+                            chat.set_configuration(configuration, cx);
+                        });
+                    }
                     cx.notify();
                 }),
             }
@@ -226,7 +237,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         format!("copilot_chat/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -234,7 +245,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         match self.model.vendor() {
             ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
             ModelVendor::Google => count_google_tokens(request, cx),
@@ -253,27 +264,12 @@ impl LanguageModel for CopilotChatLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
-        if let Some(message) = request.messages.last() {
-            if message.contents_empty() {
-                const EMPTY_PROMPT_MSG: &str =
-                    "Empty prompts aren't allowed. Please provide a non-empty prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
-            }
-
-            // Copilot Chat has a restriction that the final message must be from the user.
-            // While their API does return an error message for this, we can catch it earlier
-            // and provide a more helpful error message.
-            if !matches!(message.role, Role::User) {
-                const USER_ROLE_MSG: &str = "The final message must be from the user. To provide a system prompt, you must provide the system prompt followed by a user prompt.";
-                return futures::future::ready(Err(anyhow::anyhow!(USER_ROLE_MSG))).boxed();
-            }
-        }
-
         let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
-            Err(err) => return futures::future::ready(Err(err)).boxed(),
+            Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
         let is_streaming = copilot_request.stream;
 
@@ -363,6 +359,17 @@ pub fn map_to_language_model_completion_events(
                                     entry.arguments.push_str(&arguments);
                                 }
                             }
+                        }
+
+                        if let Some(usage) = event.usage {
+                            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                                TokenUsage {
+                                    input_tokens: usage.prompt_tokens,
+                                    output_tokens: usage.completion_tokens,
+                                    cache_creation_input_tokens: 0,
+                                    cache_read_input_tokens: 0,
+                                },
+                            )));
                         }
 
                         match choice.finish_reason.as_deref() {

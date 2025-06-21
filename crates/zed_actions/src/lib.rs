@@ -53,6 +53,7 @@ pub enum ExtensionCategoryFilter {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
@@ -154,6 +155,12 @@ pub mod jj {
     actions!(jj, [BookmarkList]);
 }
 
+pub mod toast {
+    use gpui::actions;
+
+    actions!(toast, [RunAction]);
+}
+
 pub mod command_palette {
     use gpui::actions;
 
@@ -242,6 +249,12 @@ pub mod assistant {
     impl_actions!(assistant, [InlineAssist]);
 }
 
+pub mod debugger {
+    use gpui::actions;
+
+    actions!(debugger, [OpenOnboardingModal, ResetOnboarding]);
+}
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
@@ -254,6 +267,8 @@ pub struct OpenRecent {
 pub struct OpenRemote {
     #[serde(default)]
     pub from_existing_connection: bool,
+    #[serde(default)]
+    pub create_new_window: bool,
 }
 
 impl_actions!(projects, [OpenRecent, OpenRemote]);
@@ -340,4 +355,12 @@ pub mod outline {
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
 
-actions!(debugger, [ToggleEnableBreakpoint, UnsetBreakpoint]);
+actions!(debug_panel, [ToggleFocus]);
+actions!(
+    debugger,
+    [
+        ToggleEnableBreakpoint,
+        UnsetBreakpoint,
+        OpenProjectDebugTasks,
+    ]
+);

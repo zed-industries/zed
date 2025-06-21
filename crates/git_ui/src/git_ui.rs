@@ -10,7 +10,7 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{Action, App, FocusHandle, actions};
+use gpui::{Action, App, Context, FocusHandle, Window, actions};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -22,6 +22,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 mod commit_view;
 mod conflict_view;
+pub mod diff_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -59,7 +60,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.fetch(window, cx);
+                    panel.fetch(true, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::FetchFrom, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.fetch(false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Push, window, cx| {
@@ -67,7 +76,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.push(false, window, cx);
+                    panel.push(false, false, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::PushTo, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(false, true, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
@@ -75,7 +92,7 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.push(true, window, cx);
+                    panel.push(true, false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Pull, window, cx| {
@@ -126,8 +143,39 @@ pub fn init(cx: &mut App) {
                 panel.git_init(window, cx);
             });
         });
+        workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
+            open_modified_files(workspace, window, cx);
+        });
     })
     .detach();
+}
+
+fn open_modified_files(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+        return;
+    };
+    let modified_paths: Vec<_> = panel.update(cx, |panel, cx| {
+        let Some(repo) = panel.active_repository.as_ref() else {
+            return Vec::new();
+        };
+        let repo = repo.read(cx);
+        repo.cached_status()
+            .filter_map(|entry| {
+                if entry.status.is_modified() {
+                    repo.repo_path_to_project_path(&entry.repo_path, cx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+    for path in modified_paths {
+        workspace.open_path(path, None, true, window, cx).detach();
+    }
 }
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
@@ -367,9 +415,11 @@ mod remote_button {
                             el.context(keybinding_target.clone())
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
+                        .action("Fetch From", git::FetchFrom.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())
+                        .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })

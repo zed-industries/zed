@@ -20,6 +20,7 @@ test-support = ["sqlite"]
 [dependencies]
 anyhow.workspace = true
 async-stripe.workspace = true
+async-trait.workspace = true
 async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
@@ -79,7 +80,6 @@ zed_llm_client.workspace = true
 agent_settings.workspace = true
 assistant_context_editor.workspace = true
 assistant_slash_command.workspace = true
-assistant_tool.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 buffer_diff.workspace = true

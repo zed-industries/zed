@@ -1,7 +1,5 @@
-use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -14,7 +12,7 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
+use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
@@ -216,6 +214,7 @@ fn search(
                         &entry_candidates,
                         &query,
                         false,
+                        true,
                         100,
                         &Arc::new(AtomicBool::default()),
                         executor,
@@ -746,7 +745,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _trigger: CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let state = buffer.update(cx, |buffer, _cx| {
             let position = buffer_position.to_point(buffer);
             let line_start = Point::new(position.row, 0);
@@ -756,18 +755,18 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             MentionCompletion::try_parse(line, offset_to_line)
         });
         let Some(state) = state else {
-            return Task::ready(Ok(None));
+            return Task::ready(Ok(Vec::new()));
         };
 
         let Some((workspace, context_store)) =
             self.workspace.upgrade().zip(self.context_store.upgrade())
         else {
-            return Task::ready(Ok(None));
+            return Task::ready(Ok(Vec::new()));
         };
 
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
-            ..snapshot.anchor_before(state.source_range.end);
+            ..snapshot.anchor_after(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
         let text_thread_store = self.text_thread_store.clone();
@@ -815,10 +814,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
             let Some(editor) = editor.upgrade() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
 
-            Ok(Some(cx.update(|cx| {
+            let completions = cx.update(|cx| {
                 matches
                     .into_iter()
                     .filter_map(|mat| match mat {
@@ -901,26 +900,24 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         ),
                     })
                     .collect()
-            })?))
-        })
-    }
+            })?;
 
-    fn resolve_completions(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completion_indices: Vec<usize>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut Context<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
+            Ok(vec![CompletionResponse {
+                completions,
+                // Since this does its own filtering (see `filter_completions()` returns false),
+                // there is no benefit to computing whether this set of completions is incomplete.
+                is_incomplete: true,
+            }])
+        })
     }
 
     fn is_completion_trigger(
         &self,
         buffer: &Entity<language::Buffer>,
         position: language::Anchor,
-        _: &str,
-        _: bool,
+        _text: &str,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
@@ -1069,8 +1066,8 @@ mod tests {
     use project::{Project, ProjectPath};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::ops::Deref;
-    use util::{path, separator};
+    use std::{ops::Deref, rc::Rc};
+    use util::path;
     use workspace::{AppState, Item};
 
     #[test]
@@ -1221,14 +1218,14 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            separator!("a/one.txt"),
-            separator!("a/two.txt"),
-            separator!("a/three.txt"),
-            separator!("a/four.txt"),
-            separator!("b/five.txt"),
-            separator!("b/six.txt"),
-            separator!("b/seven.txt"),
-            separator!("b/eight.txt"),
+            path!("a/one.txt"),
+            path!("a/two.txt"),
+            path!("a/three.txt"),
+            path!("a/four.txt"),
+            path!("b/five.txt"),
+            path!("b/six.txt"),
+            path!("b/seven.txt"),
+            path!("b/eight.txt"),
         ];
 
         let mut opened_editors = Vec::new();

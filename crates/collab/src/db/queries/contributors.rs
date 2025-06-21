@@ -71,7 +71,7 @@ impl Database {
     ) -> Result<()> {
         self.weak_transaction(|tx| async move {
             let user = self
-                .get_or_create_user_by_github_account_tx(
+                .update_or_create_user_by_github_account_tx(
                     github_login,
                     github_user_id,
                     github_email,

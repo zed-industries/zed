@@ -1,13 +1,13 @@
-use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
+use client::{ModelRequestUsage, RequestUsage};
 use collections::HashMap;
 use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
@@ -23,8 +23,8 @@ use language_model::{
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -37,10 +37,12 @@ use settings::Settings;
 use thiserror::Error;
 use ui::Window;
 use util::{ResultExt as _, post_inc};
+
 use uuid::Uuid;
-use zed_llm_client::CompletionRequestStatus;
+use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 use crate::ThreadStore;
+use crate::agent_profile::AgentProfile;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
@@ -194,20 +196,20 @@ impl MessageSegment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
     pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorktreeSnapshot {
     pub worktree_path: String,
     pub git_state: Option<GitState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GitState {
     pub remote_url: Option<String>,
     pub head_sha: Option<String>,
@@ -246,7 +248,7 @@ impl LastRestoreCheckpoint {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum DetailedSummaryState {
     #[default]
     NotGenerated,
@@ -271,8 +273,8 @@ impl DetailedSummaryState {
 
 #[derive(Default, Debug)]
 pub struct TotalTokenUsage {
-    pub total: usize,
-    pub max: usize,
+    pub total: u64,
+    pub max: u64,
 }
 
 impl TotalTokenUsage {
@@ -298,7 +300,7 @@ impl TotalTokenUsage {
         }
     }
 
-    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+    pub fn add(&self, tokens: u64) -> TotalTokenUsage {
         TotalTokenUsage {
             total: self.total + tokens,
             max: self.max,
@@ -349,7 +351,6 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
-    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -360,6 +361,7 @@ pub struct Thread {
     >,
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
+    profile: AgentProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -389,12 +391,12 @@ impl ThreadSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
     /// Token count including last message
-    token_count: usize,
+    token_count: u64,
 }
 
 impl Thread {
@@ -407,6 +409,7 @@ impl Thread {
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
 
         Self {
             id: ThreadId::new(),
@@ -440,7 +443,6 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -449,6 +451,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
+            profile: AgentProfile::new(profile_id, tools),
         }
     }
 
@@ -495,6 +498,9 @@ impl Thread {
         let completion_mode = serialized
             .completion_mode
             .unwrap_or_else(|| AgentSettings::get_global(cx).preferred_completion_mode);
+        let profile_id = serialized
+            .profile
+            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
         Self {
             id,
@@ -554,14 +560,13 @@ impl Thread {
             pending_checkpoint: None,
             project: project.clone(),
             prompt_builder,
-            tools,
+            tools: tools.clone(),
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -570,6 +575,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
+            profile: AgentProfile::new(profile_id, tools),
         }
     }
 
@@ -583,6 +589,17 @@ impl Thread {
 
     pub fn id(&self) -> &ThreadId {
         &self.id
+    }
+
+    pub fn profile(&self) -> &AgentProfile {
+        &self.profile
+    }
+
+    pub fn set_profile(&mut self, id: AgentProfileId, cx: &mut Context<Self>) {
+        if &id != self.profile.id() {
+            self.profile = AgentProfile::new(id, self.tools.clone());
+            cx.emit(ThreadEvent::ProfileChanged);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -856,10 +873,6 @@ impl Thread {
             .unwrap_or(false)
     }
 
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
-    }
-
     pub fn tool_use_limit_reached(&self) -> bool {
         self.tool_use_limit_reached
     }
@@ -871,7 +884,16 @@ impl Thread {
         self.tool_use
             .pending_tool_uses()
             .iter()
-            .all(|tool_use| tool_use.status.is_error())
+            .all(|pending_tool_use| pending_tool_use.status.is_error())
+    }
+
+    /// Returns whether any pending tool uses may perform edits
+    pub fn has_pending_edit_tool_uses(&self) -> bool {
+        self.tool_use
+            .pending_tool_uses()
+            .iter()
+            .filter(|pending_tool_use| !pending_tool_use.status.is_error())
+            .any(|pending_tool_use| pending_tool_use.may_perform_edits)
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
@@ -910,8 +932,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            self.tools()
-                .read(cx)
+            self.profile
                 .enabled_tools(cx)
                 .into_iter()
                 .filter_map(|tool| {
@@ -1023,6 +1044,7 @@ impl Thread {
         id: MessageId,
         new_role: Role,
         new_segments: Vec<MessageSegment>,
+        creases: Vec<MessageCrease>,
         loaded_context: Option<LoadedContext>,
         checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
@@ -1032,6 +1054,7 @@ impl Thread {
         };
         message.role = new_role;
         message.segments = new_segments;
+        message.creases = creases;
         if let Some(context) = loaded_context {
             message.loaded_context = context;
         }
@@ -1169,6 +1192,7 @@ impl Thread {
                     }),
                 completion_mode: Some(this.completion_mode),
                 tool_use_limit_reached: this.tool_use_limit_reached,
+                profile: Some(this.profile.id().clone()),
             })
         })
     }
@@ -1184,6 +1208,7 @@ impl Thread {
     pub fn send_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
@@ -1193,7 +1218,7 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
-        let request = self.to_completion_request(model.clone(), cx);
+        let request = self.to_completion_request(model.clone(), intent, cx);
 
         self.stream_completion(request, model, window, cx);
     }
@@ -1213,11 +1238,13 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
+            intent: Some(intent),
             mode: None,
             messages: vec![],
             tools: Vec::new(),
@@ -1356,8 +1383,6 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attached_tracked_files_state(&mut request.messages, cx);
-
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
             Some(self.completion_mode.into())
@@ -1371,12 +1396,14 @@ impl Thread {
     fn to_summarize_request(
         &self,
         model: &Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         added_user_message: String,
         cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: Some(intent),
             mode: None,
             messages: vec![],
             tools: Vec::new(),
@@ -1416,46 +1443,6 @@ impl Thread {
         });
 
         request
-    }
-
-    fn attached_tracked_files_state(
-        &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
-    ) {
-        const STALE_FILES_HEADER: &str = "These files changed since last read:";
-
-        let mut stale_message = String::new();
-
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
-            }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
-        }
-
-        let mut content = Vec::with_capacity(2);
-
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
-        }
-
-        if !content.is_empty() {
-            let context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content,
-                cache: false,
-            };
-
-            messages.push(context_message);
-        }
     }
 
     pub fn stream_completion(
@@ -1527,6 +1514,9 @@ impl Thread {
                             }
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
+                            }
+                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                                return Err(err.into());
                             }
                         };
 
@@ -1662,12 +1652,11 @@ impl Thread {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            let usage = RequestUsage { limit, amount: amount as i32 };
-
-                                            thread.last_usage = Some(usage);
+                                            thread.update_model_request_usage(amount as u32, limit, cx);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
+                                            cx.emit(ThreadEvent::ToolUseLimitReached);
                                         }
                                     }
                                 }
@@ -1849,12 +1838,14 @@ impl Thread {
             return;
         }
 
-        let added_user_message = "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
-            Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
-            If the conversation is about a specific subject, include it in the title. \
-            Be descriptive. DO NOT speak in the first person.";
+        let added_user_message = include_str!("./prompts/summarize_thread_prompt.txt");
 
-        let request = self.to_summarize_request(&model.model, added_user_message.into(), cx);
+        let request = self.to_summarize_request(
+            &model.model,
+            CompletionIntent::ThreadSummarization,
+            added_user_message.into(),
+            cx,
+        );
 
         self.summary = ThreadSummary::Generating;
 
@@ -1872,11 +1863,8 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |thread, _cx| {
-                                thread.last_usage = Some(RequestUsage {
-                                    limit,
-                                    amount: amount as i32,
-                                });
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount as u32, limit, cx);
                             })?;
                             continue;
                         }
@@ -1948,14 +1936,14 @@ impl Thread {
             return;
         }
 
-        let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
-             1. A brief overview of what was discussed\n\
-             2. Key facts or information discovered\n\
-             3. Outcomes or conclusions reached\n\
-             4. Any action items or next steps if any\n\
-             Format it in Markdown with headings and bullet points.";
+        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
 
-        let request = self.to_summarize_request(&model, added_user_message.into(), cx);
+        let request = self.to_summarize_request(
+            &model,
+            CompletionIntent::ThreadContextSummarization,
+            added_user_message.into(),
+            cx,
+        );
 
         *self.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generating {
             message_id: last_message_id,
@@ -2047,7 +2035,8 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = Arc::new(self.to_completion_request(model.clone(), cx));
+        let request =
+            Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -2101,7 +2090,7 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let available_tools = self.tools.read(cx).enabled_tools(cx);
+        let available_tools = self.profile.enabled_tools(cx);
 
         let tool_list = available_tools
             .iter()
@@ -2193,19 +2182,15 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
-        } else {
-            tool.run(
-                input,
-                request,
-                self.project.clone(),
-                self.action_log.clone(),
-                model,
-                window,
-                cx,
-            )
-        };
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project.clone(),
+            self.action_log.clone(),
+            model,
+            window,
+            cx,
+        );
 
         // Store the card separately if it exists
         if let Some(card) = tool_result.card.clone() {
@@ -2243,7 +2228,7 @@ impl Thread {
         if self.all_tools_finished() {
             if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
                 if !canceled {
-                    self.send_to_model(model.clone(), window, cx);
+                    self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
                 }
                 self.auto_capture_telemetry(cx);
             }
@@ -2324,8 +2309,7 @@ impl Thread {
         let client = self.project.read(cx).client();
 
         let enabled_tool_names: Vec<String> = self
-            .tools()
-            .read(cx)
+            .profile
             .enabled_tools(cx)
             .iter()
             .map(|tool| tool.name())
@@ -2718,7 +2702,7 @@ impl Thread {
             .unwrap_or_default();
 
         TotalTokenUsage {
-            total: token_usage.total_tokens() as usize,
+            total: token_usage.total_tokens(),
             max,
         }
     }
@@ -2740,7 +2724,7 @@ impl Thread {
         let total = self
             .token_usage_at_last_message()
             .unwrap_or_default()
-            .total_tokens() as usize;
+            .total_tokens();
 
         Some(TotalTokenUsage { total, max })
     }
@@ -2760,6 +2744,20 @@ impl Thread {
         if let Some(last) = self.request_token_usage.last_mut() {
             *last = token_usage;
         }
+    }
+
+    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            project.user_store().update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            })
+        });
     }
 
     pub fn deny_tool_use(
@@ -2835,8 +2833,10 @@ pub enum ThreadEvent {
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
+    ToolUseLimitReached,
     CancelEditing,
     CompletionCanceled,
+    ProfileChanged,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -2851,7 +2851,7 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use agent_settings::{AgentSettings, LanguageModelParameters};
+    use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -2934,7 +2934,7 @@ fn main() {{
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -3029,7 +3029,7 @@ fn main() {{
 
         // Check entire request to make sure all contexts are properly included
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // The request should contain all 3 messages
@@ -3136,7 +3136,7 @@ fn main() {{
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -3162,7 +3162,7 @@ fn main() {{
 
         // Check that both messages appear in the request
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 3);
@@ -3177,7 +3177,7 @@ fn main() {{
     }
 
     #[gpui::test]
-    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
+    async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(
@@ -3186,81 +3186,58 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store, model) =
+        let (_workspace, thread_store, thread, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
-        // Open buffer and add it to context
-        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+        // Check that we are starting with the default profile
+        let profile = cx.read(|cx| thread.read(cx).profile.clone());
+        let tool_set = cx.read(|cx| thread_store.read(cx).tools());
+        assert_eq!(
+            profile,
+            AgentProfile::new(AgentProfileId::default(), tool_set)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_serializing_thread_profile(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, thread_store, thread, _context_store, _model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Profile gets serialized with default values
+        let serialized = thread
+            .update(cx, |thread, cx| thread.serialize(cx))
             .await
             .unwrap();
 
-        let context =
-            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
-        let loaded_context = cx
-            .update(|cx| load_context(vec![context], &project, &None, cx))
-            .await;
+        assert_eq!(serialized.profile, Some(AgentProfileId::default()));
 
-        // Insert user message with the buffer as context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
+        let deserialized = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                Thread::deserialize(
+                    thread.id.clone(),
+                    serialized,
+                    thread.project.clone(),
+                    thread.tools.clone(),
+                    thread.prompt_builder.clone(),
+                    thread.project_context.clone(),
+                    None,
+                    cx,
+                )
+            })
         });
+        let tool_set = cx.read(|cx| thread_store.read(cx).tools());
 
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
-        });
-
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
-        assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
-        );
-
-        // Modify the buffer
-        buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
-            buffer.edit(
-                [(1..1, "\n    println!(\"Added a new line\");\n")],
-                None,
-                cx,
-            );
-        });
-
-        // Insert another user message without context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What does the code do now?",
-                ContextLoadResult::default(),
-                None,
-                Vec::new(),
-                cx,
-            )
-        });
-
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
-        });
-
-        // We should have a stale file warning as the last message
-        let last_message = new_request
-            .messages
-            .last()
-            .expect("Request should have messages");
-
-        // The last message should be the stale buffer notification
-        assert_eq!(last_message.role, Role::User);
-
-        // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
         assert_eq!(
-            last_message.string_contents(),
-            expected_content,
-            "Last message should be exactly the stale buffer notification"
+            deserialized.profile,
+            AgentProfile::new(AgentProfileId::default(), tool_set)
         );
     }
 
@@ -3293,7 +3270,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -3313,7 +3290,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -3333,7 +3310,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -3353,7 +3330,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, None);
     }
@@ -3385,7 +3362,12 @@ fn main() {{
         // Send a message
         thread.update(cx, |thread, cx| {
             thread.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            thread.send_to_model(model.clone(), None, cx);
+            thread.send_to_model(
+                model.clone(),
+                CompletionIntent::ThreadSummarization,
+                None,
+                cx,
+            );
         });
 
         let fake_model = model.as_fake();
@@ -3480,7 +3462,7 @@ fn main() {{
                 vec![],
                 cx,
             );
-            thread.send_to_model(model.clone(), None, cx);
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -3518,7 +3500,12 @@ fn main() {{
     ) {
         thread.update(cx, |thread, cx| {
             thread.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            thread.send_to_model(model.clone(), None, cx);
+            thread.send_to_model(
+                model.clone(),
+                CompletionIntent::ThreadSummarization,
+                None,
+                cx,
+            );
         });
 
         let fake_model = model.as_fake();

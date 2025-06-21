@@ -27,7 +27,7 @@
 ///
 /// The keybindings themselves are managed independently by calling cx.bind_keys().
 /// (Though mostly when developing Zed itself, you just need to add a new line to
-///  assets/keymaps/default.json).
+///  assets/keymaps/default-{platform}.json).
 ///
 /// ```rust
 /// cx.bind_keys([
@@ -50,8 +50,8 @@
 ///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 ///
 use crate::{
-    Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window,
+    Action, ActionRegistry, App, BindingIndex, DispatchPhase, EntityId, FocusId, KeyBinding,
+    KeyContext, Keymap, Keystroke, ModifiersChangedEvent, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -63,6 +63,8 @@ use std::{
     rc::Rc,
 };
 
+/// ID of a node within `DispatchTree`. Note that these are **not** stable between frames, and so a
+/// `DispatchNodeId` should only be used with the `DispatchTree` that provided it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
 
@@ -392,20 +394,65 @@ impl DispatchTree {
 
     /// Returns key bindings that invoke an action on the currently focused element. Bindings are
     /// returned in the order they were added. For display, the last binding should take precedence.
+    ///
+    /// Bindings are only included if they are the highest precedence match for their keystrokes, so
+    /// shadowed bindings are not included.
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,
         context_stack: &[KeyContext],
     ) -> Vec<KeyBinding> {
+        // Ideally this would return a `DoubleEndedIterator` to avoid `highest_precedence_*`
+        // methods, but this can't be done very cleanly since keymap must be borrowed.
         let keymap = self.keymap.borrow();
         keymap
-            .bindings_for_action(action)
-            .filter(|binding| {
-                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
-                bindings.iter().any(|b| b.action.partial_eq(action))
+            .bindings_for_action_with_indices(action)
+            .filter(|(binding_index, binding)| {
+                Self::binding_matches_predicate_and_not_shadowed(
+                    &keymap,
+                    *binding_index,
+                    &binding.keystrokes,
+                    context_stack,
+                )
             })
-            .cloned()
+            .map(|(_, binding)| binding.clone())
             .collect()
+    }
+
+    /// Returns the highest precedence binding for the given action and context stack. This is the
+    /// same as the last result of `bindings_for_action`, but more efficient than getting all bindings.
+    pub fn highest_precedence_binding_for_action(
+        &self,
+        action: &dyn Action,
+        context_stack: &[KeyContext],
+    ) -> Option<KeyBinding> {
+        let keymap = self.keymap.borrow();
+        keymap
+            .bindings_for_action_with_indices(action)
+            .rev()
+            .find_map(|(binding_index, binding)| {
+                let found = Self::binding_matches_predicate_and_not_shadowed(
+                    &keymap,
+                    binding_index,
+                    &binding.keystrokes,
+                    context_stack,
+                );
+                if found { Some(binding.clone()) } else { None }
+            })
+    }
+
+    fn binding_matches_predicate_and_not_shadowed(
+        keymap: &Keymap,
+        binding_index: BindingIndex,
+        keystrokes: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> bool {
+        let (bindings, _) = keymap.bindings_for_input_with_indices(&keystrokes, context_stack);
+        if let Some((highest_precedence_index, _)) = bindings.iter().next() {
+            binding_index == *highest_precedence_index
+        } else {
+            false
+        }
     }
 
     fn bindings_for_input(

@@ -13,13 +13,13 @@ use crate::provider::{
     anthropic::AnthropicSettings,
     bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
-    copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
     mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
+    open_router::OpenRouterSettings,
 };
 
 /// Initializes the language model settings.
@@ -61,9 +61,10 @@ pub struct AllLanguageModelSettings {
     pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
+    pub open_router: OpenRouterSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
-    pub copilot_chat: CopilotChatSettings,
+
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
     pub mistral: MistralSettings,
@@ -76,11 +77,12 @@ pub struct AllLanguageModelSettingsContent {
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
+    pub open_router: Option<OpenRouterSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
-    pub copilot_chat: Option<CopilotChatSettingsContent>,
+
     pub mistral: Option<MistralSettingsContent>,
 }
 
@@ -269,7 +271,10 @@ pub struct ZedDotDevSettingsContent {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct CopilotChatSettingsContent {}
+pub struct OpenRouterSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::open_router::AvailableModel>>,
+}
 
 impl settings::Settings for AllLanguageModelSettings {
     const KEY: Option<&'static str> = Some("language_models");
@@ -408,6 +413,19 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.mistral.available_models,
                 mistral.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // OpenRouter
+            let open_router = value.open_router.clone();
+            merge(
+                &mut settings.open_router.api_url,
+                open_router.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.open_router.available_models,
+                open_router
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
             );
         }
 
