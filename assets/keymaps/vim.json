@@ -850,6 +850,18 @@
     }
   },
   {
+    "context": "(CommitEditor || GitCommit) > Editor && VimControl",
+    "bindings": {
+      // TODO: Implement search on commit editor
+      "/": null,
+      "?": null,
+      "#": null,
+      "*": null,
+      "n": null,
+      "shift-n": null
+    }
+  },
+  {
     "context": "Editor && edit_prediction",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
