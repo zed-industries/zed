@@ -11805,8 +11805,8 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_editor(|editor, _, _| {
         assert!(
-            !editor.signature_help_state.is_shown(),
-            "No signature help should be shown when completions menu is open"
+            editor.signature_help_state.is_shown(),
+            "Signature help can be shown alongside completions menu"
         );
     });
 
