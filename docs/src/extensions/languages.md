@@ -369,24 +369,9 @@ Zed uses the [Language Server Protocol](https://microsoft.github.io/language-ser
 An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language(s) it applies to:
 
 ```toml
-[language_servers.my-language]
+[language_servers.my-language-server]
 name = "My Language LSP"
 languages = ["My Language"]
-```
-
-If your language server supports multiple languages, you can use `language_ids` to map `languages` to its identifiers, [defined by the LSP](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem):
-
-```toml
-
-[language-servers.fancy-lsp]
-name = "Fancy LSP"
-languages = ["JavaScript", "JSX", "HTML", "CSS"]
-
-[language-servers.fancy-lsp.language_ids]
-"JavaScript" = "javascript"
-"JSX" = "javascriptreact"
-"HTML" = "html"
-"CSS" = "css"
 ```
 
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:
@@ -408,3 +393,21 @@ impl zed::Extension for MyExtension {
 ```
 
 You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
+
+### Multi-Language Support
+
+If your language server supports additional languages, you can use `language_ids` to map Zed `languages` to the desired [LSP-specific `languageId`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem) identifiers:
+
+```toml
+
+[language-servers.my-language-server]
+name = "Whatever LSP"
+languages = ["JavaScript", "JSX", "HTML", "CSS"]
+
+[language-servers.my-language-server.language_ids]
+"JavaScript" = "javascript"
+"JSX" = "javascriptreact"
+"TSX" = "typescriptreact"
+"HTML" = "html"
+"CSS" = "css"
+```
