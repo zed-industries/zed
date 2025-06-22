@@ -599,7 +599,6 @@ impl DirectWriteState {
                 text_system: self,
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
-                utf16_index: 0,
                 width: 0.0,
             };
             text_layout.Draw(
@@ -1005,7 +1004,6 @@ struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
-    utf16_index: usize,
     width: f32,
 }
 
@@ -1027,7 +1025,10 @@ impl<'t> ClusterAnalyzer<'t> {
         }
     }
 
-    pub fn next(&mut self) -> (usize, usize, bool) {
+    pub fn next(&mut self) -> Option<(usize, usize)> {
+        if self.utf16_idx >= self.cluster_map.len() {
+            return None; // No more clusters
+        }
         let start_utf16_idx = self.utf16_idx;
         let current_glyph = self.cluster_map[start_utf16_idx] as usize;
 
@@ -1049,13 +1050,12 @@ impl<'t> ClusterAnalyzer<'t> {
         };
 
         let glyph_count = next_glyph - current_glyph;
-        let has_more = end_utf16_idx < self.cluster_map.len();
 
         // Update state for next call
         self.utf16_idx = end_utf16_idx;
         self.glyph_idx = next_glyph;
 
-        (utf16_len, glyph_count, has_more)
+        Some((utf16_len, glyph_count))
     }
 }
 
@@ -1153,17 +1153,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             let mut utf16_idx = 0;
             let mut glyph_idx = 0;
             let mut glyphs = Vec::with_capacity(glyph_count);
-            while let (utf16_len, glyph_count, has_more) = cluster_analyzer.next() {
+            while let Some((utf16_len, glyph_count)) = cluster_analyzer.next() {
                 context
                     .index_converter
                     .advance_to_utf16_ix(index_offset + utf16_idx);
                 utf16_idx += utf16_len;
-                // if glyph_count > 1 {
-                // println!(
-                //     "Offsets: {:?}",
-                //     &glyph_offsets[glyph_idx..(glyph_idx + glyph_count)]
-                // );
-                // }
                 for (i, glyph_id) in glyph_ids[glyph_idx..(glyph_idx + glyph_count)]
                     .iter()
                     .enumerate()
@@ -1173,47 +1167,17 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                         && is_color_glyph(font_face, id, &context.text_system.components.factory);
                     glyphs.push(ShapedGlyph {
                         id,
-                        position: point(px(context.width + glyph_offsets[glyph_idx + i].advanceOffset), px(0.0)),
+                        position: point(
+                            px(context.width + glyph_offsets[glyph_idx + i].advanceOffset),
+                            px(0.0),
+                        ),
                         index: context.index_converter.utf8_ix,
                         is_emoji,
                     });
                     context.width += glyph_advances[glyph_idx + i];
                 }
                 glyph_idx += glyph_count;
-
-                if !has_more {
-                    break;
-                }
             }
-            // let mut last_glyph_index = 0;
-            // let mut glyphs = Vec::with_capacity(glyph_count);
-            // println!(
-            //     "Position: {}, string len: {}",
-            //     desc.textPosition, desc.stringLength
-            // );
-            // println!("Cluster map: {:?}", cluster_map);
-            // println!("Glyph IDs: {:?}", glyph_ids);
-            // let index_offset = desc.textPosition as usize;
-            // for index in 0..desc.stringLength as usize {
-            //     let glyph_index = cluster_map[index] as usize;
-            //     if index != 0 && last_glyph_index == glyph_index {
-            //         continue;
-            //     }
-            //     last_glyph_index = glyph_index;
-            //     context
-            //         .index_converter
-            //         .advance_to_utf16_ix(index + index_offset);
-            //     let id = GlyphId(glyph_ids[glyph_index] as u32);
-            //     let is_emoji = color_font
-            //         && is_color_glyph(font_face, id, &context.text_system.components.factory);
-            //     glyphs.push(ShapedGlyph {
-            //         id,
-            //         position: point(px(context.width), px(0.0)),
-            //         index: context.index_converter.utf8_ix,
-            //         is_emoji,
-            //     });
-            //     context.width += glyph_advances[glyph_index];
-            // }
             context.runs.push(ShapedRun { font_id, glyphs });
         }
         Ok(())
@@ -1612,32 +1576,41 @@ const BRUSH_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
 #[cfg(test)]
 mod tests {
     use crate::platform::windows::direct_write::ClusterAnalyzer;
+
     #[test]
     fn test_cluster_map() {
         let cluster_map = [0];
         let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
         let next = analyzer.next();
-        assert_eq!(next, (1, 1, false));
+        assert_eq!(next, Some((1, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
 
         let cluster_map = [0, 1, 2];
         let mut analyzer = ClusterAnalyzer::new(&cluster_map, 3);
         let next = analyzer.next();
-        assert_eq!(next, (1, 1, true));
+        assert_eq!(next, Some((1, 1)));
         let next = analyzer.next();
-        assert_eq!(next, (1, 1, true));
+        assert_eq!(next, Some((1, 1)));
         let next = analyzer.next();
-        assert_eq!(next, (1, 1, false));
+        assert_eq!(next, Some((1, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
         // 👨‍👩‍👧‍👦👩‍💻
         let cluster_map = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 4, 4, 4];
         let mut analyzer = ClusterAnalyzer::new(&cluster_map, 5);
         let next = analyzer.next();
-        assert_eq!(next, (11, 4, true));
+        assert_eq!(next, Some((11, 4)));
         let next = analyzer.next();
-        assert_eq!(next, (5, 1, false));
+        assert_eq!(next, Some((5, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
         // 👩‍💻
         let cluster_map = [0, 0, 0, 0, 0];
         let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
         let next = analyzer.next();
-        assert_eq!(next, (5, 1, false));
+        assert_eq!(next, Some((5, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
     }
 }
