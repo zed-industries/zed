@@ -2,19 +2,21 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, Result, anyhow};
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use oauth2::PkceCodeChallenge;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 use url::Url;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnthropicAuth {
     pub refresh_token: String,
     pub access_token: String,
@@ -41,8 +43,7 @@ impl AnthropicAuth {
     }
 
     pub async fn authorize() -> Result<AuthorizeResult> {
-        // TODO: remove this to use something simpler or check other implementation to find out what can be used here.
-        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+        let (pkce_challenge, pkce_verifier) = Self::generate_pkce_pair();
 
         let mut url = Url::parse("https://claude.ai/oauth/authorize")?;
         url.query_pairs_mut()
@@ -54,14 +55,28 @@ impl AnthropicAuth {
                 "https://console.anthropic.com/oauth/code/callback",
             )
             .append_pair("scope", "org:create_api_key user:profile user:inference")
-            .append_pair("code_challenge", pkce_challenge.as_str())
+            .append_pair("code_challenge", &pkce_challenge)
             .append_pair("code_challenge_method", "S256")
-            .append_pair("state", pkce_verifier.secret());
+            .append_pair("state", &pkce_verifier);
 
         Ok(AuthorizeResult {
             url: url.to_string(),
-            verifier: pkce_verifier.secret().to_string(),
+            verifier: pkce_verifier,
         })
+    }
+
+    fn generate_pkce_pair() -> (String, String) {
+        let mut rng = rand::thread_rng();
+        let mut verifier_bytes = [0u8; 32];
+        rng.fill(&mut verifier_bytes);
+        let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifier_bytes);
+
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        let challenge_bytes = hasher.finalize();
+        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge_bytes);
+
+        (challenge, verifier)
     }
 
     pub async fn exchange(

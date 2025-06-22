@@ -161,10 +161,15 @@ impl State {
             .api_url
             .clone();
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let oauth_json = format!(
-            r#"{{"refresh_token":"{}","access_token":"{}","expires":{}}}"#,
-            oauth.refresh_token, oauth.access_token, oauth.expires
-        );
+        let oauth_json = match serde_json::to_string(&oauth) {
+            Ok(json) => json,
+            Err(err) => {
+                return Task::ready(Err(anyhow::anyhow!(
+                    "Failed to serialize OAuth credentials: {}",
+                    err
+                )));
+            }
+        };
 
         cx.spawn(async move |this, cx| {
             if let Err(err) = credentials_provider
@@ -196,37 +201,34 @@ impl State {
         if self.is_authenticated() {
             if let Some(oauth) = &self.oauth {
                 if oauth.is_expired() {
-                    let oauth = oauth.clone();
+                    let oauth_auth = oauth.clone();
                     let http_client = cx.http_client().clone();
                     return cx.spawn(async move |this, cx| {
-                        let mut oauth_auth = oauth;
+                        let mut oauth_auth = oauth_auth;
                         match oauth_auth.access_token(&*http_client).await {
                             Ok(Some(_)) => {
                                 this.update(cx, |this, cx| {
-                                    let settings = AllLanguageModelSettings::get_global(cx)
-                                        .anthropic
-                                        .clone();
+                                    let settings =
+                                        AllLanguageModelSettings::get_global(cx).anthropic.clone();
                                     this.oauth = Some(oauth_auth.clone());
 
                                     let credentials_provider =
                                         <dyn CredentialsProvider>::global(cx);
-                                    let oauth_json = format!(
-                                        r#"{{"refresh_token":"{}","access_token":"{}","expires":{}}}"#,
-                                        oauth_auth.refresh_token, oauth_auth.access_token, oauth_auth.expires
-                                    );
-                                    cx.spawn(async move |_, cx| {
-                                        credentials_provider
-                                            .write_credentials(
-                                                &settings.api_url,
-                                                "OAuth",
-                                                oauth_json.as_bytes(),
-                                                &cx,
-                                            )
-                                            .await
-                                            .log_err();
-                                        Ok::<(), anyhow::Error>(())
-                                    })
-                                    .detach();
+                                    if let Ok(oauth_json) = serde_json::to_string(&oauth_auth) {
+                                        cx.spawn(async move |_, cx| {
+                                            credentials_provider
+                                                .write_credentials(
+                                                    &settings.api_url,
+                                                    "OAuth",
+                                                    oauth_json.as_bytes(),
+                                                    &cx,
+                                                )
+                                                .await
+                                                .log_err();
+                                            Ok::<(), anyhow::Error>(())
+                                        })
+                                        .detach();
+                                    }
 
                                     cx.notify();
                                 })?;
@@ -274,23 +276,10 @@ impl State {
                         let oauth_str = String::from_utf8(credential_data)
                             .context("Invalid OAuth data format")?;
 
-                        let oauth_value = serde_json::from_str::<serde_json::Value>(&oauth_str)
+                        let oauth: AnthropicAuth = serde_json::from_str(&oauth_str)
                             .context("Invalid OAuth JSON format")?;
 
-                        let (refresh_token, access_token, expires) = (
-                            oauth_value["refresh_token"]
-                                .as_str()
-                                .ok_or_else(|| anyhow::anyhow!("Missing refresh_token"))?,
-                            oauth_value["access_token"]
-                                .as_str()
-                                .ok_or_else(|| anyhow::anyhow!("Missing access_token"))?,
-                            oauth_value["expires"]
-                                .as_u64()
-                                .ok_or_else(|| anyhow::anyhow!("Missing expires"))?,
-                        );
-
-                        if !refresh_token.is_empty() && !access_token.is_empty() {
-                            let oauth = AnthropicAuth::new(refresh_token, access_token, expires);
+                        if !oauth.refresh_token.is_empty() && !oauth.access_token.is_empty() {
                             this.update(cx, |this, cx| {
                                 this.oauth = Some(oauth);
                                 this.api_key = None;
@@ -545,23 +534,41 @@ impl AnthropicModel {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
-        async move {
-            let api_key = match (api_key, oauth) {
-                (Some(key), _) => key,
-                (None, Some(mut oauth)) => {
-                    // TODO: When OAuth token is refreshed by access_token(), we should update the state
-                    // to persist the new tokens. However, this requires an entity context (Context<State>)
-                    // which isn't available in this async closure. The proper solution would be to:
-                    // 1. Move the OAuth refresh logic to a method that has access to Context<State>
-                    // 2. Use cx.spawn() to handle the async refresh with proper state updates
-                    // 3. Call set_oauth() to persist the refreshed tokens
-                    // For now, the tokens are refreshed in memory but not persisted to storage
-                    oauth
+        let refresh_task = if let (None, Some(oauth)) = (&api_key, &oauth) {
+            let state = self.state.clone();
+            let http_client = http_client.clone();
+            let oauth = oauth.clone();
+
+            Some(cx.spawn(
+                async move |cx| -> Result<String, LanguageModelCompletionError> {
+                    let mut oauth = oauth;
+                    let access_token = oauth
                         .access_token(http_client.as_ref())
-                        .await?
-                        .ok_or_else(|| anyhow!("Failed to get OAuth access token"))?
-                }
-                (None, None) => return Err(anyhow!("No authentication configured").into()),
+                        .await
+                        .map_err(LanguageModelCompletionError::Other)?
+                        .ok_or_else(|| {
+                            LanguageModelCompletionError::Other(anyhow!(
+                                "Failed to get OAuth access token"
+                            ))
+                        })?;
+
+                    let _ = state
+                        .update(cx, |state, cx| state.set_oauth(oauth, cx))
+                        .map_err(LanguageModelCompletionError::Other);
+
+                    Ok(access_token)
+                },
+            ))
+        } else {
+            None
+        };
+
+        async move {
+            let api_key = match (api_key, oauth, refresh_task) {
+                (Some(key), _, _) => key,
+                (None, Some(_), Some(task)) => task.await?,
+                (None, None, _) => return Err(anyhow!("No authentication configured").into()),
+                _ => unreachable!(),
             };
 
             let request =
