@@ -7,6 +7,7 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -31,6 +32,7 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
+    any::TypeId,
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
@@ -662,6 +664,19 @@ pub fn main() {
                     if client.status().borrow().is_connected() {
                         client.reconnect(&cx.to_async());
                     }
+                }
+
+                let use_system_tabs = WorkspaceSettings::get_global(cx).use_system_tabs;
+                if !use_system_tabs {
+                    let system_window_tab_actions = [
+                        TypeId::of::<ShowNextWindowTab>(),
+                        TypeId::of::<ShowPreviousWindowTab>(),
+                        TypeId::of::<MergeAllWindows>(),
+                        TypeId::of::<MoveWindowTabToNewWindow>(),
+                    ];
+
+                    let filter = CommandPaletteFilter::global_mut(cx);
+                    filter.hide_action_types(&system_window_tab_actions);
                 }
             }
         })

@@ -20072,6 +20072,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
+ "command_palette_hooks",
  "component",
  "copilot",
  "dap",
