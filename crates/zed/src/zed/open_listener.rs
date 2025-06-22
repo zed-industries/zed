@@ -453,8 +453,6 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let mut errored = false;
-
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
     match open_paths_with_positions(
@@ -471,77 +469,190 @@ async fn open_local_workspace(
     .await
     {
         Ok((workspace, items)) => {
-            let mut item_release_futures = Vec::new();
-
-            for item in items {
-                match item {
-                    Some(Ok(item)) => {
-                        cx.update(|cx| {
-                            let released = oneshot::channel();
-                            item.on_release(
+            return handle_opened_items(
+                workspace,
+                items,
+                &paths_with_position,
+                wait,
+                responses,
+                cx,
+            )
+            .await;
+        }
+        Err(error) => {
+            #[cfg(target_os = "macos")]
+            if paths_with_position.len() == 1 && is_macos_permission_error(&error) {
+                // Try to trigger permission prompt and retry
+                if let Ok(()) =
+                    try_prompt_for_permission_and_open(&paths_with_position[0].path, cx).await
+                {
+                    // Permission granted, retry the original operation
+                    match open_paths_with_positions(
+                        &paths_with_position,
+                        &diff_paths,
+                        app_state.clone(),
+                        workspace::OpenOptions {
+                            open_new_workspace,
+                            env: env.cloned(),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .await
+                    {
+                        Ok((workspace, items)) => {
+                            // Success after permission prompt - handle normally
+                            return handle_opened_items(
+                                workspace,
+                                items,
+                                &paths_with_position,
+                                wait,
+                                responses,
                                 cx,
-                                Box::new(move |_| {
-                                    let _ = released.0.send(());
-                                }),
                             )
-                            .detach();
-                            item_release_futures.push(released.1);
-                        })
-                        .log_err();
-                    }
-                    Some(Err(err)) => {
-                        responses
-                            .send(CliResponse::Stderr {
-                                message: err.to_string(),
-                            })
-                            .log_err();
-                        errored = true;
-                    }
-                    None => {}
-                }
-            }
-
-            if wait {
-                let background = cx.background_executor().clone();
-                let wait = async move {
-                    if paths_with_position.is_empty() && diff_paths.is_empty() {
-                        let (done_tx, done_rx) = oneshot::channel();
-                        let _subscription = workspace.update(cx, |_, _, cx| {
-                            cx.on_release(move |_, _| {
-                                let _ = done_tx.send(());
-                            })
-                        });
-                        let _ = done_rx.await;
-                    } else {
-                        let _ = futures::future::try_join_all(item_release_futures).await;
-                    };
-                }
-                .fuse();
-
-                futures::pin_mut!(wait);
-
-                loop {
-                    // Repeatedly check if CLI is still open to avoid wasting resources
-                    // waiting for files or workspaces to close.
-                    let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                    futures::select_biased! {
-                        _ = wait => break,
-                        _ = timer => {
-                            if responses.send(CliResponse::Ping).is_err() {
-                                break;
-                            }
+                            .await;
+                        }
+                        Err(_) => {
+                            // Still failed after permission prompt, fall through to error handling
                         }
                     }
                 }
             }
-        }
-        Err(error) => {
-            errored = true;
+            let error_message = if paths_with_position.len() == 1 {
+                format_error_message(&error, &paths_with_position[0].path)
+            } else {
+                format!("error opening {paths_with_position:?}: {error}")
+            };
             responses
                 .send(CliResponse::Stderr {
-                    message: format!("error opening {paths_with_position:?}: {error}"),
+                    message: error_message,
                 })
                 .log_err();
+        }
+    }
+    true
+}
+
+fn format_error_message(error: &anyhow::Error, path: &std::path::Path) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
+            if io_error.kind() == std::io::ErrorKind::PermissionDenied
+                || (io_error.raw_os_error() == Some(1)
+                    && error.to_string().contains("Operation not permitted"))
+            {
+                if let Some(path_str) = path.to_str() {
+                    return format!(
+                        "Permission denied for {path_str}. Please grant Zed access to this folder in System Settings > Privacy & Security > Files and Folders, or try opening the file through File > Open in Zed to trigger the permission prompt."
+                    );
+                }
+            }
+        }
+    }
+    format!("error opening {path:?}: {error}")
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_permission_error(error: &anyhow::Error) -> bool {
+    if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
+        io_error.kind() == std::io::ErrorKind::PermissionDenied
+            || (io_error.raw_os_error() == Some(1)
+                && error.to_string().contains("Operation not permitted"))
+    } else {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn try_prompt_for_permission_and_open(
+    _path: &std::path::Path,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    use gpui::PathPromptOptions;
+    // Try to trigger permission prompt by using the file picker
+    let prompt_result = cx.update(|cx| {
+        cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: false,
+        })
+    })?;
+    // Wait for user to select something through the picker (which triggers permission prompt)
+    if let Ok(Ok(Some(selected_paths))) = prompt_result.await {
+        if !selected_paths.is_empty() {
+            // User selected a file through the picker, which should have triggered permission prompt
+            return Ok(());
+        }
+    }
+    // If user cancelled, return error
+    Err(anyhow!("User cancelled file picker"))
+}
+
+async fn handle_opened_items(
+    workspace: WindowHandle<Workspace>,
+    items: Vec<Option<Result<Box<dyn ItemHandle>>>>,
+    paths_with_position: &[PathWithPosition],
+    wait: bool,
+    responses: &IpcSender<CliResponse>,
+    cx: &mut AsyncApp,
+) -> bool {
+    let mut errored = false;
+    let mut item_release_futures = Vec::new();
+    for (item, path) in items.into_iter().zip(paths_with_position) {
+        match item {
+            Some(Ok(item)) => {
+                cx.update(|cx| {
+                    let released = oneshot::channel();
+                    item.on_release(
+                        cx,
+                        Box::new(move |_| {
+                            let _ = released.0.send(());
+                        }),
+                    )
+                    .detach();
+                    item_release_futures.push(released.1);
+                })
+                .log_err();
+            }
+            Some(Err(err)) => {
+                let error_message = format_error_message(&err, &path.path);
+                responses
+                    .send(CliResponse::Stderr {
+                        message: error_message,
+                    })
+                    .log_err();
+                errored = true;
+            }
+            None => {}
+        }
+    }
+    if wait {
+        let background = cx.background_executor().clone();
+        let wait_future = async move {
+            if paths_with_position.is_empty() {
+                let (done_tx, done_rx) = oneshot::channel();
+                let _subscription = workspace.update(cx, |_, _, cx| {
+                    cx.on_release(move |_, _| {
+                        let _ = done_tx.send(());
+                    })
+                });
+                let _ = done_rx.await;
+            } else {
+                let _ = futures::future::try_join_all(item_release_futures).await;
+            };
+        }
+        .fuse();
+        futures::pin_mut!(wait_future);
+        loop {
+            let mut timer = background.timer(Duration::from_secs(1)).fuse();
+            futures::select_biased! {
+                _ = wait_future => break,
+                _ = timer => {
+                    if responses.send(CliResponse::Ping).is_err() {
+                        break;
+                    }
+                }
+            }
         }
     }
     errored
