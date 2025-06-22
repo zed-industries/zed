@@ -648,14 +648,22 @@ pub fn into_bedrock(
 
                             Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
-                        MessageContent::ToolUse(tool_use) => BedrockToolUseBlock::builder()
-                            .name(tool_use.name.to_string())
-                            .tool_use_id(tool_use.id.to_string())
-                            .input(value_to_aws_document(&tool_use.input))
-                            .build()
-                            .context("failed to build Bedrock tool use block")
-                            .log_err()
-                            .map(BedrockInnerContent::ToolUse),
+                        MessageContent::ToolUse(tool_use) => {
+                            let input = if tool_use.input.is_null() {
+                                // Bedrock API requires valid JsonValue, not null, for tool use input
+                                value_to_aws_document(&serde_json::json!({}))
+                            } else {
+                                value_to_aws_document(&tool_use.input)
+                            };
+                            BedrockToolUseBlock::builder()
+                                .name(tool_use.name.to_string())
+                                .tool_use_id(tool_use.id.to_string())
+                                .input(input)
+                                .build()
+                                .context("failed to build Bedrock tool use block")
+                                .log_err()
+                                .map(BedrockInnerContent::ToolUse)
+                        },
                         MessageContent::ToolResult(tool_result) => {
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
