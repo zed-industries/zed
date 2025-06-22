@@ -506,7 +506,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
-    fn set_background_color(&self, _color: Rgba) {}
+    fn set_titlebar_background_color(&self, _color: Rgba) {}
     fn set_appearance(&self, _appearance: WindowAppearance) {}
     fn has_system_tabs(&self) -> bool {
         false

@@ -4290,10 +4290,10 @@ impl Window {
         self.platform_window.set_appearance(appearance);
     }
 
-    /// Set the background color of the window.
+    /// Set the background color of the titlebar.
     /// This is macOS specific.
-    pub fn set_background_color(&self, color: Rgba) {
-        self.platform_window.set_background_color(color);
+    pub fn set_titlebar_background_color(&self, color: Rgba) {
+        self.platform_window.set_titlebar_background_color(color);
     }
 
     /// Returns the number of tabbed windows in this window.

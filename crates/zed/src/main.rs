@@ -670,7 +670,7 @@ pub fn main() {
 
                     window
                         .update(cx, |_, window, _| {
-                            window.set_background_color(title_bar_background);
+                            window.set_titlebar_background_color(title_bar_background);
                             window.set_background_appearance(background_appearance);
 
                             match appearance {
