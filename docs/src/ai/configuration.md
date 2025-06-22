@@ -267,10 +267,8 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 > ✅ Supports tool use
 
-1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
-2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
-
-   You can also get models via the LM Studio CLI:
+1. Download and install [the latest version of LM Studio](https://lmstudio.ai/download)
+2. In the app press `cmd/ctrl-shift-m` and download at least one model (e.g., qwen2.5-coder-7b). Alternatively, you can get models via the LM Studio CLI:
 
    ```sh
    lms get qwen2.5-coder-7b
@@ -449,7 +447,7 @@ Here are a few model examples you can plug in by using this feature:
 
 #### Vercel v0
 
-Vercel v0 is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+[Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
 To use it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
@@ -529,14 +527,14 @@ You can add custom models to the OpenRouter provider by adding the following to 
 
 The available configuration options for each model are:
 
-- `name`: The model identifier used by OpenRouter (required)
-- `display_name`: A human-readable name shown in the UI (optional)
-- `max_tokens`: The model's context window size (required)
-- `max_output_tokens`: Maximum tokens the model can generate (optional)
-- `max_completion_tokens`: Maximum completion tokens (optional)
-- `supports_tools`: Whether the model supports tool/function calling (optional)
-- `supports_images`: Whether the model supports image inputs (optional)
-- `mode`: Special mode configuration for thinking models (optional)
+- `name` (required): The model identifier used by OpenRouter
+- `display_name` (optional): A human-readable name shown in the UI
+- `max_tokens` (required): The model's context window size
+- `max_output_tokens` (optional): Maximum tokens the model can generate
+- `max_completion_tokens` (optional): Maximum completion tokens
+- `supports_tools` (optional): Whether the model supports tool/function calling
+- `supports_images` (optional): Whether the model supports image inputs
+- `mode` (optional): Special mode configuration for thinking models
 
 You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
 
@@ -641,7 +639,7 @@ One with Claude 3.7 Sonnet, and one with GPT-4o.
 }
 ```
 
-## Default View
+### Default View
 
 Use the `default_view` setting to set change the default view of the Agent Panel.
 You can choose between `thread` (the default) and `text_thread`:
