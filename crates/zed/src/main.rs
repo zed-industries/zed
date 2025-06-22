@@ -7,6 +7,7 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -31,6 +32,7 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{Settings, SettingsStore, watch_config_file};
 use std::{
+    any::TypeId,
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
@@ -44,7 +46,10 @@ use theme::{
 use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
-use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    AppState, MergeAllWindows, MoveWindowTabToNewWindow, SerializedWorkspaceLocation,
+    ShowNextWindowTab, ShowPreviousWindowTab, WorkspaceSettings, WorkspaceStore,
+};
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
     derive_paths_with_position, handle_cli_connection, handle_keymap_file_changes,
@@ -642,6 +647,19 @@ pub fn main() {
                     if client.status().borrow().is_connected() {
                         client.reconnect(&cx.to_async());
                     }
+                }
+
+                let use_system_tabs = WorkspaceSettings::get_global(cx).use_system_tabs;
+                if !use_system_tabs {
+                    let system_window_tab_actions = [
+                        TypeId::of::<ShowNextWindowTab>(),
+                        TypeId::of::<ShowPreviousWindowTab>(),
+                        TypeId::of::<MergeAllWindows>(),
+                        TypeId::of::<MoveWindowTabToNewWindow>(),
+                    ];
+
+                    let filter = CommandPaletteFilter::global_mut(cx);
+                    filter.hide_action_types(&system_window_tab_actions);
                 }
             }
         })
