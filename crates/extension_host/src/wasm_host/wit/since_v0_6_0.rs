@@ -949,6 +949,7 @@ impl ExtensionImports for WasmState {
 
                         match settings {
                             project::project_settings::ContextServerSettings::Custom {
+                                enabled: _,
                                 command,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: Some(settings::CommandSettings {
@@ -959,6 +960,7 @@ impl ExtensionImports for WasmState {
                                 settings: None,
                             })?),
                             project::project_settings::ContextServerSettings::Extension {
+                                enabled: _,
                                 settings,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: None,

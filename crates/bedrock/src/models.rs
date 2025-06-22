@@ -108,8 +108,12 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
-        Self::Claude3_5Haiku
+    pub fn default_fast(region: &str) -> Self {
+        if region.starts_with("us-") {
+            Self::Claude3_5Haiku
+        } else {
+            Self::Claude3Haiku
+        }
     }
 
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
@@ -483,6 +487,8 @@ impl Model {
                 Model::Claude3_5Sonnet
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
                 | Model::Claude3Haiku
                 | Model::Claude3Sonnet
                 | Model::MetaLlama321BInstructV1
@@ -535,6 +541,10 @@ mod tests {
     #[test]
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         // Test European regions
+        assert_eq!(
+            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1")?,
+            "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+        );
         assert_eq!(
             Model::Claude3Sonnet.cross_region_inference_id("eu-west-1")?,
             "eu.anthropic.claude-3-sonnet-20240229-v1:0"

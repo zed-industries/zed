@@ -528,14 +528,11 @@ impl Fs for RealFs {
     #[cfg(not(target_os = "windows"))]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                // Use the directory of the destination as temp dir to avoid
-                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-                // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else {
-                tempfile::NamedTempFile::new()
-            }?;
+            // Use the directory of the destination as temp dir to avoid
+            // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+            // See https://github.com/zed-industries/zed/pull/8437 for more details.
+            let mut tmp_file =
+                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             anyhow::Ok(())

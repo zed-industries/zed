@@ -2821,6 +2821,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -2859,6 +2860,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -8158,12 +8160,11 @@ dependencies = [
 name = "inline_completion"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "client",
  "gpui",
  "language",
  "project",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -11190,9 +11191,9 @@ dependencies = [
 
 [[package]]
 name = "pathfinder_simd"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cf07ef4804cfa9aea3b04a7bbdd5a40031dbb6b4f2cbaf2b011666c80c5b4f2"
+checksum = "bf9027960355bf3afff9841918474a81a5f972ac6d226d518060bba758b5ad57"
 dependencies = [
  "rustc_version",
 ]
