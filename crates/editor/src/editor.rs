@@ -2340,7 +2340,7 @@ impl Editor {
         }
 
         if self.signature_help_state.has_multiple_signatures() {
-            key_context.add("can_scroll_signature_help");
+            key_context.add("showing_signature_helps");
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
@@ -12258,11 +12258,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(popover) = self.signature_help_state.popover_mut() {
-            let mut current_signature = popover.current_signature.borrow_mut();
-            if *current_signature + 1 == popover.signature.len() {
-                *current_signature = 0;
+            if popover.current_signature == 0 {
+                popover.current_signature = popover.signature.len() - 1;
             } else {
-                *current_signature += 1;
+                popover.current_signature -= 1;
             }
             cx.notify();
         }
@@ -12275,11 +12274,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(popover) = self.signature_help_state.popover_mut() {
-            let mut current_signature = popover.current_signature.borrow_mut();
-            if *current_signature == 0 {
-                *current_signature = popover.signature.len() - 1;
+            if popover.current_signature + 1 == popover.signature.len() {
+                popover.current_signature = 0;
             } else {
-                *current_signature -= 1;
+                popover.current_signature += 1;
             }
             cx.notify();
         }

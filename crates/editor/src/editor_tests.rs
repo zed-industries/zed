@@ -10570,7 +10570,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
         let signature_help_state = editor.signature_help_state.popover().cloned();
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[*signature.current_signature.borrow()].label,
+            signature.signature[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
     });
@@ -10742,7 +10742,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
         assert!(signature_help_state.is_some());
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[*signature.current_signature.borrow()].label,
+            signature.signature[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
         editor.signature_help_state = SignatureHelpState::default();
@@ -10784,7 +10784,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
         assert!(signature_help_state.is_some());
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[*signature.current_signature.borrow()].label,
+            signature.signature[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
     });
@@ -10846,7 +10846,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
         assert!(signature_help_state.is_some());
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[*signature.current_signature.borrow()].label,
+            signature.signature[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
     });
@@ -11051,6 +11051,129 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     "});
     cx.condition(|editor, _| !editor.signature_help_state.is_shown()) // because hidden by escape
         .await;
+}
+
+#[gpui::test]
+async fn test_signature_help_multiple_signatures(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            overloadedˇ
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("(", window, cx);
+        editor.show_signature_help(&ShowSignatureHelp, window, cx);
+    });
+
+    // Mock response with 3 signatures
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![
+            lsp::SignatureInformation {
+                label: "fn overloaded(x: i32)".to_string(),
+                documentation: None,
+                parameters: Some(vec![lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("x: i32".to_string()),
+                    documentation: None,
+                }]),
+                active_parameter: None,
+            },
+            lsp::SignatureInformation {
+                label: "fn overloaded(x: i32, y: i32)".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("x: i32".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("y: i32".to_string()),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            },
+            lsp::SignatureInformation {
+                label: "fn overloaded(x: i32, y: i32, z: i32)".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("x: i32".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("y: i32".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("z: i32".to_string()),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            },
+        ],
+        active_signature: Some(1),
+        active_parameter: Some(0),
+    };
+    handle_signature_help_request(&mut cx, mocked_response).await;
+
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+
+    // Verify we have multiple signatures and the right one is selected
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.signature.len(), 3);
+        // active_signature was 1, so that should be the current
+        assert_eq!(popover.current_signature, 1);
+        assert_eq!(popover.signature[0].label, "fn overloaded(x: i32)");
+        assert_eq!(popover.signature[1].label, "fn overloaded(x: i32, y: i32)");
+        assert_eq!(popover.signature[2].label, "fn overloaded(x: i32, y: i32, z: i32)");
+    });
+
+    // Test navigation functionality
+    cx.update_editor(|editor, window, cx| {
+        editor.signature_help_next(&crate::SignatureHelpNext, window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.current_signature, 2);
+    });
+
+    // Test wrap around
+    cx.update_editor(|editor, window, cx| {
+        editor.signature_help_next(&crate::SignatureHelpNext, window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.current_signature, 0);
+    });
+
+    // Test previous navigation
+    cx.update_editor(|editor, window, cx| {
+        editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.current_signature, 2);
+    });
 }
 
 #[gpui::test]
