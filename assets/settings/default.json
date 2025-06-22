@@ -358,7 +358,7 @@
     "code_actions": false
   },
   // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
-  "use_system_tabs": true,
+  "use_system_window_tabs": true,
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.

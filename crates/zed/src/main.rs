@@ -695,8 +695,9 @@ pub fn main() {
                     }
                 }
 
-                let use_system_tabs = WorkspaceSettings::get_global(cx).use_system_tabs;
-                if !use_system_tabs {
+                let use_system_window_tabs =
+                    WorkspaceSettings::get_global(cx).use_system_window_tabs;
+                if !use_system_window_tabs {
                     let system_window_tab_actions = [
                         TypeId::of::<ShowNextWindowTab>(),
                         TypeId::of::<ShowPreviousWindowTab>(),

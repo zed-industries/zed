@@ -282,7 +282,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         _ => gpui::WindowDecorations::Client,
     };
 
-    let use_system_tabs = WorkspaceSettings::get_global(cx).use_system_tabs;
+    let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -303,7 +303,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             width: px(360.0),
             height: px(240.0),
         }),
-        allows_automatic_window_tabbing: Some(use_system_tabs),
+        allows_automatic_window_tabbing: Some(use_system_window_tabs),
         use_toolbar: Some(true),
     }
 }
