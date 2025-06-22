@@ -14,7 +14,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _, WindowAppearance};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -38,8 +38,8 @@ use std::{
     sync::Arc,
 };
 use theme::{
-    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
-    ThemeSettings,
+    ActiveTheme, Appearance, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError,
+    ThemeRegistry, ThemeSettings,
 };
 use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
@@ -636,10 +636,19 @@ pub fn main() {
             let client = app_state.client.clone();
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
+                    let title_bar_background = cx.theme().colors().title_bar_background.to_rgb();
                     let background_appearance = cx.theme().window_background_appearance();
+                    let appearance = cx.theme().appearance();
+
                     window
                         .update(cx, |_, window, _| {
-                            window.set_background_appearance(background_appearance)
+                            window.set_background_color(title_bar_background);
+                            window.set_background_appearance(background_appearance);
+
+                            match appearance {
+                                Appearance::Light => window.set_appearance(WindowAppearance::Light),
+                                Appearance::Dark => window.set_appearance(WindowAppearance::Dark),
+                            }
                         })
                         .ok();
                 }
