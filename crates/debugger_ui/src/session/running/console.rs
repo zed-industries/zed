@@ -9,8 +9,8 @@ use dap::OutputEvent;
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
-    Render, Subscription, Task, TextStyle, WeakEntity, actions,
+    Action as _, AppContext, Context, Corner, Entity, Flatten, FocusHandle, Focusable,
+    HighlightStyle, Hsla, Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
@@ -582,14 +582,43 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 
     fn is_completion_trigger(
         &self,
-        _buffer: &Entity<Buffer>,
-        _position: language::Anchor,
-        _text: &str,
-        _trigger_in_words: bool,
-        _menu_is_open: bool,
-        _cx: &mut Context<Editor>,
+        buffer: &Entity<Buffer>,
+        position: language::Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        menu_is_open: bool,
+        cx: &mut Context<Editor>,
     ) -> bool {
-        true
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+        if chars.next().is_some() {
+            return false;
+        }
+
+        let snapshot = buffer.read(cx).snapshot();
+        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
+            return false;
+        }
+        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        if trigger_in_words && classifier.is_word(char) {
+            return true;
+        }
+
+        self.0
+            .read_with(cx, |console, cx| {
+                console
+                    .session
+                    .read(cx)
+                    .capabilities()
+                    .completion_trigger_characters
+                    .as_ref()
+                    .is_some_and(|triggers| triggers.contains(&text.to_string()))
+            })
+            .unwrap_or(true)
     }
 }
 
