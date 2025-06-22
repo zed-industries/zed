@@ -11142,7 +11142,10 @@ async fn test_signature_help_multiple_signatures(cx: &mut TestAppContext) {
         assert_eq!(popover.current_signature, 1);
         assert_eq!(popover.signature[0].label, "fn overloaded(x: i32)");
         assert_eq!(popover.signature[1].label, "fn overloaded(x: i32, y: i32)");
-        assert_eq!(popover.signature[2].label, "fn overloaded(x: i32, y: i32, z: i32)");
+        assert_eq!(
+            popover.signature[2].label,
+            "fn overloaded(x: i32, y: i32, z: i32)"
+        );
     });
 
     // Test navigation functionality

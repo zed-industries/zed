@@ -2,8 +2,8 @@ use crate::actions::ShowSignatureHelp;
 use crate::hover_popover::open_markdown_url;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
-    App, AppContext, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size,
-    Stateful, StyledText, Task, TextStyle, Window, combine_highlights, Div,
+    App, AppContext, Context, Div, Entity, HighlightStyle, MouseButton, ScrollHandle, Size,
+    Stateful, StyledText, Task, TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
 use markdown::{Markdown, MarkdownElement};
@@ -13,9 +13,9 @@ use std::ops::Range;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder,
-    IconButton, IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, Pixels, Scrollbar, ScrollbarState, SharedString,
+    ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
+    IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
+    LabelSize, ParentElement, Pixels, Scrollbar, ScrollbarState, SharedString,
     StatefulInteractiveElement, Styled, StyledExt, div, px, relative,
 };
 
@@ -360,8 +360,12 @@ impl SignatureHelpPopover {
                     .max_w(max_size.width)
                     .max_h(max_size.height)
                     .track_scroll(&self.scroll_handle)
-                    .child(StyledText::new(signature.label.clone())
-                        .with_default_highlights(&self.style, signature.highlights.iter().cloned()))
+                    .child(
+                        StyledText::new(signature.label.clone()).with_default_highlights(
+                            &self.style,
+                            signature.highlights.iter().cloned(),
+                        ),
+                    )
                     .when_some(signature.documentation.clone(), |this, description| {
                         this.child(div().h_px().bg(cx.theme().colors().border_variant).my_1())
                             .child(
@@ -382,7 +386,12 @@ impl SignatureHelpPopover {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::XSmall)
                 .tooltip(move |window, cx| {
-                    ui::Tooltip::for_action("Previous Signature", &crate::SignatureHelpPrevious, window, cx)
+                    ui::Tooltip::for_action(
+                        "Previous Signature",
+                        &crate::SignatureHelpPrevious,
+                        window,
+                        cx,
+                    )
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
