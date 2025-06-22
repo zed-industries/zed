@@ -7,6 +7,7 @@ use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
+use client::{ModelRequestUsage, RequestUsage};
 use collections::HashMap;
 use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
@@ -22,8 +23,8 @@ use language_model::{
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -38,7 +39,7 @@ use ui::Window;
 use util::{ResultExt as _, post_inc};
 
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
+use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 use crate::ThreadStore;
 use crate::agent_profile::AgentProfile;
@@ -350,7 +351,6 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
-    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -443,7 +443,6 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -568,7 +567,6 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -873,10 +871,6 @@ impl Thread {
                     .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
             })
             .unwrap_or(false)
-    }
-
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
     }
 
     pub fn tool_use_limit_reached(&self) -> bool {
@@ -1658,9 +1652,7 @@ impl Thread {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            let usage = RequestUsage { limit, amount: amount as i32 };
-
-                                            thread.last_usage = Some(usage);
+                                            thread.update_model_request_usage(amount as u32, limit, cx);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1871,11 +1863,8 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |thread, _cx| {
-                                thread.last_usage = Some(RequestUsage {
-                                    limit,
-                                    amount: amount as i32,
-                                });
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount as u32, limit, cx);
                             })?;
                             continue;
                         }
@@ -2755,6 +2744,20 @@ impl Thread {
         if let Some(last) = self.request_token_usage.last_mut() {
             *last = token_usage;
         }
+    }
+
+    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            project.user_store().update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            })
+        });
     }
 
     pub fn deny_tool_use(

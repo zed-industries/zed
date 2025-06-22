@@ -14,7 +14,9 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason, TokenUsage,
 };
-use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
+use open_router::{
+    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -45,6 +47,39 @@ pub struct AvailableModel {
     pub max_completion_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for OpenRouterModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => OpenRouterModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => {
+                OpenRouterModelMode::Thinking { budget_tokens }
+            }
+        }
+    }
+}
+
+impl From<OpenRouterModelMode> for ModelMode {
+    fn from(value: OpenRouterModelMode) -> Self {
+        match value {
+            OpenRouterModelMode::Default => ModelMode::Default,
+            OpenRouterModelMode::Thinking { budget_tokens } => {
+                ModelMode::Thinking { budget_tokens }
+            }
+        }
+    }
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -242,6 +277,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
+                mode: model.mode.clone().unwrap_or_default().into(),
             });
         }
 
@@ -403,13 +439,12 @@ pub fn into_open_router(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    add_message_content_part(
-                        open_router::MessagePart::Text { text },
-                        message.role,
-                        &mut messages,
-                    )
-                }
+                MessageContent::Text(text) => add_message_content_part(
+                    open_router::MessagePart::Text { text },
+                    message.role,
+                    &mut messages,
+                ),
+                MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
@@ -479,6 +514,16 @@ pub fn into_open_router(
             None
         },
         usage: open_router::RequestUsage { include: true },
+        reasoning: if let OpenRouterModelMode::Thinking { budget_tokens } = model.mode {
+            Some(open_router::Reasoning {
+                effort: None,
+                max_tokens: budget_tokens,
+                exclude: Some(false),
+                enabled: Some(true),
+            })
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -569,8 +614,19 @@ impl OpenRouterEventMapper {
         };
 
         let mut events = Vec::new();
+        if let Some(reasoning) = choice.delta.reasoning.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning,
+                signature: None,
+            }));
+        }
+
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            // OpenRouter send empty content string with the reasoning content
+            // This is a workaround for the OpenRouter API bug
+            if !content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
