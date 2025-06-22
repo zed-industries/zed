@@ -188,6 +188,27 @@ impl LocalLspStore {
         }
     }
 
+    fn apply_signature_help_triggers(
+        buffer: &mut Buffer,
+        server: &Arc<LanguageServer>,
+        cx: &mut Context<Buffer>,
+    ) {
+        let capabilities = server.capabilities();
+        let signature_help_provider = capabilities.signature_help_provider.as_ref();
+
+        let triggers: BTreeSet<String> = signature_help_provider
+            .and_then(|provider| provider.trigger_characters.as_ref())
+            .map(|chars| chars.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let retrigger_characters: BTreeSet<String> = signature_help_provider
+            .and_then(|provider| provider.retrigger_characters.as_ref())
+            .map(|chars| chars.iter().cloned().collect())
+            .unwrap_or_default();
+
+        buffer.set_signature_help_triggers(server.server_id(), triggers, retrigger_characters, cx);
+    }
+
     fn start_language_server(
         &mut self,
         worktree_handle: &Entity<Worktree>,
@@ -2203,6 +2224,8 @@ impl LocalLspStore {
                                 .unwrap_or_default(),
                             cx,
                         );
+
+                        Self::apply_signature_help_triggers(buffer, &server, cx);
                     });
                 }
             }
@@ -2221,6 +2244,12 @@ impl LocalLspStore {
             for server_id in self.language_server_ids_for_project_path(path, language, cx) {
                 buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
                 buffer.set_completion_triggers(server_id, Default::default(), cx);
+                buffer.set_signature_help_triggers(
+                    server_id,
+                    Default::default(),
+                    Default::default(),
+                    cx,
+                );
             }
         });
     }
@@ -2477,6 +2506,9 @@ impl LocalLspStore {
                         .unwrap_or_default(),
                     cx,
                 );
+
+                // Set signature help triggers
+                Self::apply_signature_help_triggers(buffer, &server, cx);
             });
 
             let snapshot = LspBufferSnapshot {
@@ -9798,7 +9830,10 @@ impl LspStore {
                             })
                             .unwrap_or_default(),
                         cx,
-                    )
+                    );
+
+                    // Set signature help triggers
+                    LocalLspStore::apply_signature_help_triggers(buffer, &language_server, cx);
                 });
             }
         });

@@ -26,6 +26,36 @@ pub enum SignatureHelpHiddenBy {
 }
 
 impl Editor {
+    pub fn should_trigger_signature_help(&self, text: &str, cx: &App) -> bool {
+        let position = self.selections.newest_anchor().head();
+        let Some((buffer, _)) = self.buffer.read(cx).text_anchor_for_position(position, cx) else {
+            return false;
+        };
+
+        let buffer = buffer.read(cx);
+
+        // If signature help is already shown, check retrigger characters
+        if self.signature_help_state.is_shown() {
+            return buffer.signature_help_triggers().contains(text)
+                || buffer.signature_help_retrigger_characters().contains(text);
+        }
+
+        // Otherwise, check if auto signature help is enabled and if it's a trigger character
+        if self.auto_signature_help_enabled(cx) {
+            return buffer.signature_help_triggers().contains(text);
+        }
+
+        false
+    }
+
+    pub fn has_lsp_signature_help_triggers(&self, cx: &App) -> bool {
+        let position = self.selections.newest_anchor().head();
+        let Some((buffer, _)) = self.buffer.read(cx).text_anchor_for_position(position, cx) else {
+            return false;
+        };
+        !buffer.read(cx).signature_help_triggers().is_empty()
+    }
+
     pub fn toggle_auto_signature_help_menu(
         &mut self,
         _: &ToggleAutoSignatureHelp,

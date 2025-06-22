@@ -118,6 +118,12 @@ pub struct Buffer {
     completion_triggers: BTreeSet<String>,
     completion_triggers_per_language_server: HashMap<LanguageServerId, BTreeSet<String>>,
     completion_triggers_timestamp: clock::Lamport,
+    signature_help_triggers: BTreeSet<String>,
+    signature_help_triggers_per_language_server: HashMap<LanguageServerId, BTreeSet<String>>,
+    signature_help_triggers_timestamp: clock::Lamport,
+    signature_help_retrigger_characters: BTreeSet<String>,
+    signature_help_retrigger_characters_per_language_server:
+        HashMap<LanguageServerId, BTreeSet<String>>,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
     has_conflict: bool,
@@ -952,6 +958,11 @@ impl Buffer {
             completion_triggers: Default::default(),
             completion_triggers_per_language_server: Default::default(),
             completion_triggers_timestamp: Default::default(),
+            signature_help_triggers: Default::default(),
+            signature_help_triggers_per_language_server: Default::default(),
+            signature_help_triggers_timestamp: Default::default(),
+            signature_help_retrigger_characters: Default::default(),
+            signature_help_retrigger_characters_per_language_server: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             change_bits: Default::default(),
@@ -2750,6 +2761,57 @@ impl Buffer {
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
     pub fn completion_triggers(&self) -> &BTreeSet<String> {
         &self.completion_triggers
+    }
+
+    pub fn signature_help_triggers(&self) -> &BTreeSet<String> {
+        &self.signature_help_triggers
+    }
+
+    pub fn signature_help_retrigger_characters(&self) -> &BTreeSet<String> {
+        &self.signature_help_retrigger_characters
+    }
+
+    pub fn set_signature_help_triggers(
+        &mut self,
+        server_id: LanguageServerId,
+        triggers: BTreeSet<String>,
+        retrigger_characters: BTreeSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.signature_help_triggers_timestamp = self.text.lamport_clock.tick();
+
+        if triggers.is_empty() {
+            self.signature_help_triggers_per_language_server
+                .remove(&server_id);
+            self.signature_help_triggers = self
+                .signature_help_triggers_per_language_server
+                .values()
+                .flat_map(|triggers| triggers.into_iter().cloned())
+                .collect();
+        } else {
+            self.signature_help_triggers_per_language_server
+                .insert(server_id, triggers.clone());
+            self.signature_help_triggers
+                .extend(triggers.iter().cloned());
+        }
+
+        if retrigger_characters.is_empty() {
+            self.signature_help_retrigger_characters_per_language_server
+                .remove(&server_id);
+            self.signature_help_retrigger_characters = self
+                .signature_help_retrigger_characters_per_language_server
+                .values()
+                .flat_map(|triggers| triggers.into_iter().cloned())
+                .collect();
+        } else {
+            self.signature_help_retrigger_characters_per_language_server
+                .insert(server_id, retrigger_characters.clone());
+            self.signature_help_retrigger_characters
+                .extend(retrigger_characters.iter().cloned());
+        }
+
+        // TODO: Add operation for signature help triggers if needed for collaboration
+        cx.notify();
     }
 
     /// Call this directly after performing edits to prevent the preview tab

@@ -4156,7 +4156,14 @@ impl Editor {
             }
 
             let editor_settings = EditorSettings::get_global(cx);
-            if bracket_inserted
+
+            let should_trigger_signature_help = if this.has_lsp_signature_help_triggers(cx) {
+                this.should_trigger_signature_help(&text, cx)
+            } else {
+                bracket_inserted // check if the bracket has been inserted as a fallback
+            };
+
+            if should_trigger_signature_help
                 && (editor_settings.auto_signature_help
                     || editor_settings.show_signature_help_after_edits)
             {
