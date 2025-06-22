@@ -9,8 +9,8 @@ use dap::OutputEvent;
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, Corner, Entity, Flatten, FocusHandle, Focusable,
-    HighlightStyle, Hsla, Render, Subscription, Task, TextStyle, WeakEntity, actions,
+    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
+    Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
