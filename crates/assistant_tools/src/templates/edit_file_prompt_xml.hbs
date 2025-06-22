@@ -3,21 +3,21 @@ You MUST respond with a series of edits to a file, using the following format:
 ```
 <edits>
 
-<old_text>
+<old_text line=10>
 OLD TEXT 1 HERE
 </old_text>
 <new_text>
 NEW TEXT 1 HERE
 </new_text>
 
-<old_text>
+<old_text line=456>
 OLD TEXT 2 HERE
 </old_text>
 <new_text>
 NEW TEXT 2 HERE
 </new_text>
 
-<old_text>
+<old_text line=42>
 OLD TEXT 3 HERE
 </old_text>
 <new_text>
@@ -33,6 +33,7 @@ NEW TEXT 3 HERE
 - `<old_text>` must exactly match existing file content, including indentation
 - `<old_text>` must come from the actual file, not an outline
 - `<old_text>` cannot be empty
+- `line` should be a starting line number for the text to be replaced
 - Be minimal with replacements:
   - For unique lines, include only those lines
   - For non-unique lines, include enough context to identify them
@@ -48,7 +49,7 @@ Claude and gpt-4.1 don't really need it. --}}
 <example>
 <edits>
 
-<old_text>
+<old_text line=3>
 struct User {
     name: String,
     email: String,
@@ -62,7 +63,7 @@ struct User {
 }
 </new_text>
 
-<old_text>
+<old_text line=25>
     let user = User {
         name: String::from("John"),
         email: String::from("john@example.com"),

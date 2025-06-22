@@ -56,6 +56,7 @@ jobs:
           name: zed
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           pushFilter: "${{ inputs.cachix-filter }}"
+          cachixArgs: '-v'
 
       - run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
 

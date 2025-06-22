@@ -5,6 +5,8 @@ use ui::{Pixels, px};
 pub enum ScrollDirection {
     Upwards,
     Downwards,
+    Rightwards,
+    Leftwards,
 }
 
 impl ScrollDirection {
@@ -19,6 +21,8 @@ pub enum ScrollAmount {
     Line(f32),
     // Scroll N pages (positive is towards the end of the document)
     Page(f32),
+    // Scroll N columns (positive is towards the right of the document)
+    Column(f32),
 }
 
 impl ScrollAmount {
@@ -32,6 +36,15 @@ impl ScrollAmount {
                 }
                 (visible_line_count * count).trunc()
             }
+            Self::Column(_count) => 0.0,
+        }
+    }
+
+    pub fn columns(&self) -> f32 {
+        match self {
+            Self::Line(_count) => 0.0,
+            Self::Page(_count) => 0.0,
+            Self::Column(count) => *count,
         }
     }
 
@@ -39,6 +52,12 @@ impl ScrollAmount {
         match self {
             ScrollAmount::Line(x) => px(line_height.0 * x),
             ScrollAmount::Page(x) => px(height.0 * x),
+            // This function seems to only be leveraged by the popover that is
+            // displayed by the editor when, for example, viewing a function's
+            // documentation. Right now that only supports vertical scrolling,
+            // so I'm leaving this at 0.0 for now to try and make it clear that
+            // this should not have an impact on that?
+            ScrollAmount::Column(_) => px(0.0),
         }
     }
 
@@ -53,6 +72,8 @@ impl ScrollAmount {
         match self {
             Self::Line(amount) if amount.is_sign_positive() => ScrollDirection::Downwards,
             Self::Page(amount) if amount.is_sign_positive() => ScrollDirection::Downwards,
+            Self::Column(amount) if amount.is_sign_positive() => ScrollDirection::Rightwards,
+            Self::Column(amount) if amount.is_sign_negative() => ScrollDirection::Leftwards,
             _ => ScrollDirection::Upwards,
         }
     }

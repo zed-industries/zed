@@ -162,7 +162,7 @@ impl EditorBlock {
 
             div()
                 .id(cx.block_id)
-                .block_mouse_down()
+                .block_mouse_except_scroll()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)

@@ -282,15 +282,18 @@ pub fn unordered_thread_entries(
     text_thread_store: Entity<TextThreadStore>,
     cx: &App,
 ) -> impl Iterator<Item = (DateTime<Utc>, ThreadContextEntry)> {
-    let threads = thread_store.read(cx).unordered_threads().map(|thread| {
-        (
-            thread.updated_at,
-            ThreadContextEntry::Thread {
-                id: thread.id.clone(),
-                title: thread.summary.clone(),
-            },
-        )
-    });
+    let threads = thread_store
+        .read(cx)
+        .reverse_chronological_threads()
+        .map(|thread| {
+            (
+                thread.updated_at,
+                ThreadContextEntry::Thread {
+                    id: thread.id.clone(),
+                    title: thread.summary.clone(),
+                },
+            )
+        });
 
     let text_threads = text_thread_store
         .read(cx)
@@ -300,7 +303,7 @@ pub fn unordered_thread_entries(
                 context.mtime.to_utc(),
                 ThreadContextEntry::Context {
                     path: context.path.clone(),
-                    title: context.title.clone().into(),
+                    title: context.title.clone(),
                 },
             )
         });
@@ -339,6 +342,7 @@ pub(crate) fn search_threads(
                 &candidates,
                 &query,
                 false,
+                true,
                 100,
                 &cancellation_flag,
                 executor,

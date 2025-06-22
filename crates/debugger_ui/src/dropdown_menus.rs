@@ -1,4 +1,7 @@
-use gpui::Entity;
+use std::time::Duration;
+
+use collections::HashMap;
+use gpui::{Animation, AnimationExt as _, Entity, Transformation, percentage};
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 
@@ -23,31 +26,40 @@ impl DebugPanel {
             let sessions = self.sessions().clone();
             let weak = cx.weak_entity();
             let running_state = running_state.read(cx);
-            let label = if let Some(active_session) = active_session {
+            let label = if let Some(active_session) = active_session.clone() {
                 active_session.read(cx).session(cx).read(cx).label()
             } else {
                 SharedString::new_static("Unknown Session")
             };
 
             let is_terminated = running_state.session().read(cx).is_terminated();
-            let session_state_indicator = {
-                if is_terminated {
-                    Some(Indicator::dot().color(Color::Error))
-                } else {
-                    match running_state.thread_status(cx).unwrap_or_default() {
-                        project::debugger::session::ThreadStatus::Stopped => {
-                            Some(Indicator::dot().color(Color::Conflict))
-                        }
-                        _ => Some(Indicator::dot().color(Color::Success)),
+            let is_started = active_session
+                .is_some_and(|session| session.read(cx).session(cx).read(cx).is_started());
+
+            let session_state_indicator = if is_terminated {
+                Indicator::dot().color(Color::Error).into_any_element()
+            } else if !is_started {
+                Icon::new(IconName::ArrowCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Muted)
+                    .with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(2)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    )
+                    .into_any_element()
+            } else {
+                match running_state.thread_status(cx).unwrap_or_default() {
+                    ThreadStatus::Stopped => {
+                        Indicator::dot().color(Color::Conflict).into_any_element()
                     }
+                    _ => Indicator::dot().color(Color::Success).into_any_element(),
                 }
             };
 
             let trigger = h_flex()
                 .gap_2()
-                .when_some(session_state_indicator, |this, indicator| {
-                    this.child(indicator)
-                })
+                .child(session_state_indicator)
                 .justify_between()
                 .child(
                     DebugPanel::dropdown_label(label)
@@ -61,10 +73,21 @@ impl DebugPanel {
                     trigger,
                     ContextMenu::build(window, cx, move |mut this, _, cx| {
                         let context_menu = cx.weak_entity();
+                        let mut session_depths = HashMap::default();
                         for session in sessions.into_iter() {
                             let weak_session = session.downgrade();
                             let weak_session_id = weak_session.entity_id();
-
+                            let session_id = session.read(cx).session_id(cx);
+                            let parent_depth = session
+                                .read(cx)
+                                .session(cx)
+                                .read(cx)
+                                .parent_id(cx)
+                                .and_then(|parent_id| session_depths.get(&parent_id).cloned());
+                            let self_depth =
+                                *session_depths.entry(session_id).or_insert_with(|| {
+                                    parent_depth.map(|depth| depth + 1).unwrap_or(0usize)
+                                });
                             this = this.custom_entry(
                                 {
                                     let weak = weak.clone();
@@ -73,16 +96,16 @@ impl DebugPanel {
                                         weak_session
                                             .read_with(cx, |session, cx| {
                                                 let context_menu = context_menu.clone();
-                                                let id: SharedString = format!(
-                                                    "debug-session-{}",
-                                                    session.session_id(cx).0
-                                                )
-                                                .into();
+
+                                                let id: SharedString =
+                                                    format!("debug-session-{}", session_id.0)
+                                                        .into();
+
                                                 h_flex()
                                                     .w_full()
                                                     .group(id.clone())
                                                     .justify_between()
-                                                    .child(session.label_element(cx))
+                                                    .child(session.label_element(self_depth, cx))
                                                     .child(
                                                         IconButton::new(
                                                             "close-debug-session",

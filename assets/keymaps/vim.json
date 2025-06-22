@@ -56,6 +56,9 @@
       "[ shift-b": ["pane::ActivateItem", 0],
       "] space": "vim::InsertEmptyLineBelow",
       "[ space": "vim::InsertEmptyLineAbove",
+      "[ e": "editor::MoveLineUp",
+      "] e": "editor::MoveLineDown",
+
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -184,6 +187,8 @@
       "z f": "editor::FoldSelectedRanges",
       "z shift-m": "editor::FoldAll",
       "z shift-r": "editor::UnfoldAll",
+      "z l": "vim::ColumnRight",
+      "z h": "vim::ColumnLeft",
       "shift-z shift-q": ["pane::CloseActiveItem", { "save_intent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "save_intent": "save_all" }],
       // Count support
@@ -198,6 +203,8 @@
       "9": ["vim::Number", 9],
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w ]": "editor::GoToDefinitionSplit",
+      "ctrl-w ctrl-]": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
@@ -393,6 +400,8 @@
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePreviousItem",
       "insert": "vim::InsertBefore",
+      ".": "vim::Repeat",
+      "alt-.": "vim::RepeatFind",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
@@ -419,6 +428,7 @@
 
       "x": "editor::SelectLine",
       "shift-x": "editor::SelectLine",
+      "%": "editor::SelectAll",
       // Window mode
       "space w h": "workspace::ActivatePaneLeft",
       "space w l": "workspace::ActivatePaneRight",
@@ -448,7 +458,8 @@
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow"
+      "shift-c": "editor::AddSelectionBelow",
+      "alt-shift-c": "editor::AddSelectionAbove"
     }
   },
   {
@@ -709,7 +720,7 @@
     }
   },
   {
-    "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
+    "context": "AgentPanel || GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -836,6 +847,19 @@
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.
       "tab": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "MessageEditor > Editor && VimControl",
+    "bindings": {
+      "enter": "agent::Chat",
+      // TODO: Implement search
+      "/": null,
+      "?": null,
+      "#": null,
+      "*": null,
+      "n": null,
+      "shift-n": null
     }
   },
   {

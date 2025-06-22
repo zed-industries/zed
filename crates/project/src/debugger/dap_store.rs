@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -103,8 +103,9 @@ impl DapStore {
         ADD_LOCATORS.call_once(|| {
             let registry = DapRegistry::global(cx);
             registry.add_locator(Arc::new(locators::cargo::CargoLocator {}));
-            registry.add_locator(Arc::new(locators::python::PythonLocator));
             registry.add_locator(Arc::new(locators::go::GoLocator {}));
+            registry.add_locator(Arc::new(locators::node::NodeLocator));
+            registry.add_locator(Arc::new(locators::python::PythonLocator));
         });
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
@@ -179,15 +180,12 @@ impl DapStore {
         &mut self,
         definition: DebugTaskDefinition,
         session_id: SessionId,
+        worktree: &Entity<Worktree>,
         console: UnboundedSender<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugAdapterBinary>> {
         match &self.mode {
             DapStoreMode::Local(_) => {
-                let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next()
-                else {
-                    return Task::ready(Err(anyhow!("Failed to find a worktree")));
-                };
                 let Some(adapter) = DapRegistry::global(cx).adapter(&definition.adapter) else {
                     return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
                 };
@@ -228,6 +226,7 @@ impl DapStore {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
                     session_id: session_id.to_proto(),
                     project_id: ssh.upstream_project_id,
+                    worktree_id: worktree.read(cx).id().to_proto(),
                     definition: Some(definition.to_proto()),
                 });
                 let ssh_client = ssh.ssh_client.clone();
@@ -257,14 +256,17 @@ impl DapStore {
 
                     let (program, args) = wrap_for_ssh(
                         &ssh_command,
-                        Some((&binary.command, &binary.arguments)),
+                        binary
+                            .command
+                            .as_ref()
+                            .map(|command| (command, &binary.arguments)),
                         binary.cwd.as_deref(),
                         binary.envs,
                         None,
                     );
 
                     Ok(DebugAdapterBinary {
-                        command: program,
+                        command: Some(program),
                         arguments: args,
                         envs: HashMap::default(),
                         cwd: None,
@@ -285,11 +287,17 @@ impl DapStore {
         adapter: DebugAdapterName,
         label: SharedString,
         cx: &mut App,
-    ) -> Option<DebugScenario> {
-        DapRegistry::global(cx)
-            .locators()
-            .values()
-            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
+    ) -> Task<Option<DebugScenario>> {
+        let locators = DapRegistry::global(cx).locators();
+
+        cx.background_spawn(async move {
+            for locator in locators.values() {
+                if let Some(scenario) = locator.create_scenario(&build, &label, &adapter).await {
+                    return Some(scenario);
+                }
+            }
+            None
+        })
     }
 
     pub fn run_debug_locator(
@@ -354,6 +362,7 @@ impl DapStore {
         &mut self,
         label: SharedString,
         adapter: DebugAdapterName,
+        task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
@@ -371,6 +380,7 @@ impl DapStore {
             parent_session,
             label,
             adapter,
+            task_context,
             cx,
         );
 
@@ -397,12 +407,9 @@ impl DapStore {
         &self,
         session: Entity<Session>,
         definition: DebugTaskDefinition,
+        worktree: Entity<Worktree>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
         let dap_store = cx.weak_entity();
         let console = session.update(cx, |session, cx| session.console_output(cx));
         let session_id = session.read(cx).session_id();
@@ -412,7 +419,13 @@ impl DapStore {
             async move |this, cx| {
                 let binary = this
                     .update(cx, |this, cx| {
-                        this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
+                        this.get_debug_adapter_binary(
+                            definition.clone(),
+                            session_id,
+                            &worktree,
+                            console,
+                            cx,
+                        )
                     })?
                     .await?;
                 session
@@ -575,7 +588,12 @@ impl DapStore {
             const LIMIT: usize = 100;
 
             if value.len() > LIMIT {
-                value.truncate(LIMIT);
+                let mut index = LIMIT;
+                // If index isn't a char boundary truncate will cause a panic
+                while !value.is_char_boundary(index) {
+                    index -= 1;
+                }
+                value.truncate(index);
                 value.push_str("...");
             }
 
@@ -690,6 +708,8 @@ impl DapStore {
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
+        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+
         cx.background_spawn(async move {
             if shutdown_children.len() > 0 {
                 let _ = join_all(shutdown_children).await;
@@ -771,9 +791,22 @@ impl DapStore {
         })
         .detach();
 
+        let worktree = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .read(cx)
+                    .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
+            })?
+            .context("Failed to find worktree with a given ID")?;
         let binary = this
             .update(&mut cx, |this, cx| {
-                this.get_debug_adapter_binary(definition, SessionId::from_proto(session_id), tx, cx)
+                this.get_debug_adapter_binary(
+                    definition,
+                    SessionId::from_proto(session_id),
+                    &worktree,
+                    tx,
+                    cx,
+                )
             })?
             .await?;
         Ok(binary.to_proto())
@@ -858,7 +891,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        which::which(command).ok()
+        let worktree_abs_path = self.worktree.abs_path();
+        let shell_path = self.shell_env().await.get("PATH").cloned();
+        which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

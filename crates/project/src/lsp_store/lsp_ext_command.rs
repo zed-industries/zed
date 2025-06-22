@@ -1,8 +1,9 @@
 use crate::{
     LocationLink,
     lsp_command::{
-        LspCommand, location_link_from_lsp, location_link_from_proto, location_link_to_proto,
-        location_links_from_lsp, location_links_from_proto, location_links_to_proto,
+        LspCommand, file_path_to_lsp_url, location_link_from_lsp, location_link_from_proto,
+        location_link_to_proto, location_links_from_lsp, location_links_from_proto,
+        location_links_to_proto,
     },
     lsp_store::LspStore,
     make_lsp_text_document_position, make_text_document_identifier,
@@ -584,10 +585,7 @@ impl LspCommand for GetLspRunnables {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<RunnablesParams> {
-        let url = match lsp::Url::from_file_path(path) {
-            Ok(url) => url,
-            Err(()) => anyhow::bail!("Failed to parse path {path:?} as lsp::Url"),
-        };
+        let url = file_path_to_lsp_url(path)?;
         Ok(RunnablesParams {
             text_document: lsp::TextDocumentIdentifier::new(url),
             position: self

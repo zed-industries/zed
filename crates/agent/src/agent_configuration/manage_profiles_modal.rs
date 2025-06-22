@@ -2,25 +2,21 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{AgentProfileId, AgentSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
-use convert_case::{Case, Casing as _};
 use editor::Editor;
 use fs::Fs;
-use gpui::{
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity,
-    prelude::*,
-};
-use settings::{Settings as _, update_settings_file};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
+use settings::Settings as _;
 use ui::{
     KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
-use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::{AgentPanel, ManageProfiles, ThreadStore};
+use crate::agent_profile::AgentProfile;
+use crate::{AgentPanel, ManageProfiles};
 
 use super::tool_picker::ToolPickerMode;
 
@@ -103,7 +99,6 @@ pub struct NewProfileMode {
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
     tools: Entity<ToolWorkingSet>,
-    thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
     mode: Mode,
 }
@@ -119,9 +114,8 @@ impl ManageProfilesModal {
                 let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store();
                 let tools = thread_store.read(cx).tools();
-                let thread_store = thread_store.downgrade();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut this = Self::new(fs, tools, thread_store, window, cx);
+                    let mut this = Self::new(fs, tools, window, cx);
 
                     if let Some(profile_id) = action.customize_tools.clone() {
                         this.configure_builtin_tools(profile_id, window, cx);
@@ -136,7 +130,6 @@ impl ManageProfilesModal {
     pub fn new(
         fs: Arc<dyn Fs>,
         tools: Entity<ToolWorkingSet>,
-        thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -145,7 +138,6 @@ impl ManageProfilesModal {
         Self {
             fs,
             tools,
-            thread_store,
             focus_handle,
             mode: Mode::choose_profile(window, cx),
         }
@@ -206,7 +198,6 @@ impl ManageProfilesModal {
                 ToolPickerMode::McpTools,
                 self.fs.clone(),
                 self.tools.clone(),
-                self.thread_store.clone(),
                 profile_id.clone(),
                 profile,
                 cx,
@@ -244,7 +235,6 @@ impl ManageProfilesModal {
                 ToolPickerMode::BuiltinTools,
                 self.fs.clone(),
                 self.tools.clone(),
-                self.thread_store.clone(),
                 profile_id.clone(),
                 profile,
                 cx,
@@ -270,32 +260,10 @@ impl ManageProfilesModal {
         match &self.mode {
             Mode::ChooseProfile { .. } => {}
             Mode::NewProfile(mode) => {
-                let settings = AgentSettings::get_global(cx);
-
-                let base_profile = mode
-                    .base_profile_id
-                    .as_ref()
-                    .and_then(|profile_id| settings.profiles.get(profile_id).cloned());
-
                 let name = mode.name_editor.read(cx).text(cx);
-                let profile_id = AgentProfileId(name.to_case(Case::Kebab).into());
 
-                let profile = AgentProfile {
-                    name: name.into(),
-                    tools: base_profile
-                        .as_ref()
-                        .map(|profile| profile.tools.clone())
-                        .unwrap_or_default(),
-                    enable_all_context_servers: base_profile
-                        .as_ref()
-                        .map(|profile| profile.enable_all_context_servers)
-                        .unwrap_or_default(),
-                    context_servers: base_profile
-                        .map(|profile| profile.context_servers)
-                        .unwrap_or_default(),
-                };
-
-                self.create_profile(profile_id.clone(), profile, cx);
+                let profile_id =
+                    AgentProfile::create(name, mode.base_profile_id.clone(), self.fs.clone(), cx);
                 self.view_profile(profile_id, window, cx);
             }
             Mode::ViewProfile(_) => {}
@@ -324,19 +292,6 @@ impl ManageProfilesModal {
                 self.view_profile(profile_id.clone(), window, cx)
             }
         }
-    }
-
-    fn create_profile(
-        &self,
-        profile_id: AgentProfileId,
-        profile: AgentProfile,
-        cx: &mut Context<Self>,
-    ) {
-        update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
-            move |settings, _cx| {
-                settings.create_profile(profile_id, profile).log_err();
-            }
-        });
     }
 }
 
@@ -520,14 +475,13 @@ impl ManageProfilesModal {
     ) -> impl IntoElement {
         let settings = AgentSettings::get_global(cx);
 
-        let profile_id = &settings.default_profile;
         let profile_name = settings
             .profiles
             .get(&mode.profile_id)
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let icon = match profile_id.as_str() {
+        let icon = match mode.profile_id.as_str() {
             "write" => IconName::Pencil,
             "ask" => IconName::MessageBubbles,
             _ => IconName::UserRoundPen,

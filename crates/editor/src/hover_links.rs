@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
-    editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
+    editor_settings::GoToDefinitionFallback,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
 };
@@ -120,11 +120,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let hovered_link_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => modifiers.secondary(),
-            MultiCursorModifier::CmdOrCtrl => modifiers.alt,
-        };
+        let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
         if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;

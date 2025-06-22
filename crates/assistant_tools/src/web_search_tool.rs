@@ -36,6 +36,10 @@ impl Tool for WebSearchTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         "Search the web for information using your query. Use this when you need real-time information, facts, or data that might not be in your training. Results will include snippets and links from relevant web pages.".into()
     }
@@ -166,7 +170,7 @@ impl ToolCard for WebSearchToolCard {
                     .gap_1()
                     .children(response.results.iter().enumerate().map(|(index, result)| {
                         let title = result.title.clone();
-                        let url = result.url.clone();
+                        let url = SharedString::from(result.url.clone());
 
                         Button::new(("result", index), title)
                             .label_size(LabelSize::Small)

@@ -1010,7 +1010,6 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
             pane.close_inactive_items(&Default::default(), window, cx)
-                .unwrap()
                 .detach();
         });
     });
@@ -1610,6 +1609,8 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         .unwrap()
         .root(cx_a)
         .unwrap();
+
+    executor.run_until_parked();
 
     workspace_a_project_b.update(cx_a2, |workspace, cx| {
         assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));

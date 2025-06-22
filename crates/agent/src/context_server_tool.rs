@@ -51,6 +51,10 @@ impl Tool for ContextServerTool {
         true
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         let mut schema = self.tool.input_schema.clone();
         assistant_tool::adapt_schema_to_format(&mut schema, format)?;
@@ -100,7 +104,15 @@ impl Tool for ContextServerTool {
                     tool_name,
                     arguments
                 );
-                let response = protocol.run_tool(tool_name, arguments).await?;
+                let response = protocol
+                    .request::<context_server::types::requests::CallTool>(
+                        context_server::types::CallToolParams {
+                            name: tool_name,
+                            arguments,
+                            meta: None,
+                        },
+                    )
+                    .await?;
 
                 let mut result = String::new();
                 for content in response.content {
@@ -110,6 +122,9 @@ impl Tool for ContextServerTool {
                         }
                         types::ToolResponseContent::Image { .. } => {
                             log::warn!("Ignoring image content from tool response");
+                        }
+                        types::ToolResponseContent::Audio { .. } => {
+                            log::warn!("Ignoring audio content from tool response");
                         }
                         types::ToolResponseContent::Resource { .. } => {
                             log::warn!("Ignoring resource content from tool response");

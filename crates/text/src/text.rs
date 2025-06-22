@@ -1662,11 +1662,13 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    #[track_caller]
     pub fn edit_via_marked_text(&mut self, marked_string: &str) {
         let edits = self.edits_for_marked_text(marked_string);
         self.edit(edits);
     }
 
+    #[track_caller]
     pub fn edits_for_marked_text(&self, marked_string: &str) -> Vec<(Range<usize>, String)> {
         let old_text = self.text();
         let (new_text, mut ranges) = util::test::marked_text_ranges(marked_string, false);
@@ -2047,7 +2049,7 @@ impl BufferSnapshot {
         self.visible_text.reversed_chars_at(offset)
     }
 
-    pub fn reversed_chunks_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Chunks {
+    pub fn reversed_chunks_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Chunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.visible_text.reversed_chunks_in_range(range)
     }

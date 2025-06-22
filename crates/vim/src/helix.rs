@@ -235,6 +235,60 @@ impl Vim {
                     found
                 })
             }
+            Motion::FindForward { .. } => {
+                self.update_editor(window, cx, |_, editor, window, cx| {
+                    let text_layout_details = editor.text_layout_details(window);
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let goal = selection.goal;
+                            let cursor = if selection.is_empty() || selection.reversed {
+                                selection.head()
+                            } else {
+                                movement::left(map, selection.head())
+                            };
+
+                            let (point, goal) = motion
+                                .move_point(
+                                    map,
+                                    cursor,
+                                    selection.goal,
+                                    times,
+                                    &text_layout_details,
+                                )
+                                .unwrap_or((cursor, goal));
+                            selection.set_tail(selection.head(), goal);
+                            selection.set_head(movement::right(map, point), goal);
+                        })
+                    });
+                });
+            }
+            Motion::FindBackward { .. } => {
+                self.update_editor(window, cx, |_, editor, window, cx| {
+                    let text_layout_details = editor.text_layout_details(window);
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let goal = selection.goal;
+                            let cursor = if selection.is_empty() || selection.reversed {
+                                selection.head()
+                            } else {
+                                movement::left(map, selection.head())
+                            };
+
+                            let (point, goal) = motion
+                                .move_point(
+                                    map,
+                                    cursor,
+                                    selection.goal,
+                                    times,
+                                    &text_layout_details,
+                                )
+                                .unwrap_or((cursor, goal));
+                            selection.set_tail(selection.head(), goal);
+                            selection.set_head(point, goal);
+                        })
+                    });
+                });
+            }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
     }

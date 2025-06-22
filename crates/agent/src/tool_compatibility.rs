@@ -1,30 +1,33 @@
 use std::sync::Arc;
 
-use assistant_tool::{Tool, ToolSource, ToolWorkingSet, ToolWorkingSetEvent};
+use assistant_tool::{Tool, ToolSource};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};
 use language_model::{LanguageModel, LanguageModelToolSchemaFormat};
 use ui::prelude::*;
 
+use crate::{Thread, ThreadEvent};
+
 pub struct IncompatibleToolsState {
     cache: HashMap<LanguageModelToolSchemaFormat, Vec<Arc<dyn Tool>>>,
-    tool_working_set: Entity<ToolWorkingSet>,
-    _tool_working_set_subscription: Subscription,
+    thread: Entity<Thread>,
+    _thread_subscription: Subscription,
 }
 
 impl IncompatibleToolsState {
-    pub fn new(tool_working_set: Entity<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
+    pub fn new(thread: Entity<Thread>, cx: &mut Context<Self>) -> Self {
         let _tool_working_set_subscription =
-            cx.subscribe(&tool_working_set, |this, _, event, _| match event {
-                ToolWorkingSetEvent::EnabledToolsChanged => {
+            cx.subscribe(&thread, |this, _, event, _| match event {
+                ThreadEvent::ProfileChanged => {
                     this.cache.clear();
                 }
+                _ => {}
             });
 
         Self {
             cache: HashMap::default(),
-            tool_working_set,
-            _tool_working_set_subscription,
+            thread,
+            _thread_subscription: _tool_working_set_subscription,
         }
     }
 
@@ -36,8 +39,9 @@ impl IncompatibleToolsState {
         self.cache
             .entry(model.tool_input_format())
             .or_insert_with(|| {
-                self.tool_working_set
+                self.thread
                     .read(cx)
+                    .profile()
                     .enabled_tools(cx)
                     .iter()
                     .filter(|tool| tool.input_schema(model.tool_input_format()).is_err())

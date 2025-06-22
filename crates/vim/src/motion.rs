@@ -2279,6 +2279,17 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
+    if let Some((opening_range, closing_range)) = map
+        .buffer_snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset, None)
+    {
+        if opening_range.contains(&offset) {
+            return closing_range.start.to_display_point(map);
+        } else if closing_range.contains(&offset) {
+            return opening_range.start.to_display_point(map);
+        }
+    }
+
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
@@ -3240,6 +3251,29 @@ mod test {
                 test = "test"
             />
         </a>"#});
+    }
+
+    #[gpui::test]
+    async fn test_matching_braces_in_tag(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
+
+        // test brackets within tags
+        cx.set_shared_state(indoc! {r"function f() {
+            return (
+                <div rules={ˇ[{ a: 1 }]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"function f() {
+            return (
+                <div rules={[{ a: 1 }ˇ]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"});
     }
 
     #[gpui::test]

@@ -8,8 +8,17 @@ Check out the [Anthropic news post](https://www.anthropic.com/news/model-context
 
 ## MCP Servers as Extensions
 
-One of the ways you can use MCP servers in Zed is through exposing it as an extension.
-Check the servers that are already available in Zed's extension store via either [the Zed website](https://zed.dev/extensions?filter=context-servers) or directly through the app by running the `zed: extensions` action or by going to the Agent Panel's top-right menu and looking for "View Server Extensions".
+One of the ways you can use MCP servers in Zed is by exposing them as an extension.
+To learn how to do that, check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page for more details.
+
+### Available extensions
+
+Many MCP servers have been exposed as extensions already, thanks to Zed's awesome community.
+Check which ones are already available in Zed's extension store via any of these routes:
+
+1. [the Zed website](https://zed.dev/extensions?filter=context-servers)
+2. in the app, run the `zed: extensions` action
+3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
 
 In any case, here are some of the ones available:
 
@@ -21,26 +30,27 @@ In any case, here are some of the ones available:
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
 - [Framelink Figma](https://github.com/LoamStudios/zed-mcp-server-figma)
 - [Linear](https://github.com/LoamStudios/zed-mcp-server-linear)
+- [Resend](https://github.com/danilo-leal/zed-resend-mcp-server)
 
-If there's an existing MCP server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
+## Add your own MCP server
 
-## Bring your own MCP server
-
-Alternatively, you can connect to MCP servers in Zed via adding their commands directly to your `settings.json`, like so:
+Creating an extension is not the only way to use MCP servers in Zed.
+You can connect them by adding their commands directly to your `settings.json`, like so:
 
 ```json
 {
   "context_servers": {
     "some-context-server": {
+      "source": "custom",
       "command": {
         "path": "some-command",
         "args": ["arg-1", "arg-2"],
         "env": {}
       }
-      "settings": {}
     }
   }
 }
 ```
 
-You can also add a custom server by reaching for the Agent Panel's Settings view (also accessible via the `agent: open configuration` action) and adding the desired server through the modal that appears when clicking the "Add Custom Server" button.
+Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open configuration` action).
+From there, you can add it through the modal that appears when clicking the "Add Custom Server" button.

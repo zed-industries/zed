@@ -967,6 +967,13 @@ impl WorktreeStore {
             .context("invalid request")?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
     }
+
+    pub fn fs(&self) -> Option<Arc<dyn Fs>> {
+        match &self.state {
+            WorktreeStoreState::Local { fs } => Some(fs.clone()),
+            WorktreeStoreState::Remote { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

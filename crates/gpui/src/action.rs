@@ -288,6 +288,18 @@ impl ActionRegistry {
     }
 }
 
+/// Generate a list of all the registered actions.
+/// Useful for transforming the list of available actions into a
+/// format suited for static analysis such as in validating keymaps, or
+/// generating documentation.
+pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
+    let mut actions = Vec::new();
+    for builder in inventory::iter::<MacroActionBuilder> {
+        actions.push(builder.0());
+    }
+    actions
+}
+
 /// Defines and registers unit structs that can be used as actions.
 ///
 /// To use more complex data types as actions, use `impl_actions!`
@@ -333,7 +345,6 @@ macro_rules! action_as {
             ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
         )]
         pub struct $name;
-
         gpui::__impl_action!(
             $namespace,
             $name,

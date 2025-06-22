@@ -25,7 +25,7 @@ mod inline_values;
 #[cfg(test)]
 mod module_list;
 #[cfg(test)]
-mod new_session_modal;
+mod new_process_modal;
 #[cfg(test)]
 mod persistence;
 #[cfg(test)]

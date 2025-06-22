@@ -35,13 +35,11 @@ assets.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
 convert_case.workspace = true
 dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
 emojis.workspace = true
-feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -98,6 +96,7 @@ gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
+markdown = { workspace = true, features = ["test-support"] }
 multi_buffer = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true

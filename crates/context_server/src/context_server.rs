@@ -1,5 +1,7 @@
 pub mod client;
 pub mod protocol;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
 pub mod transport;
 pub mod types;
 
@@ -14,6 +16,7 @@ use gpui::AsyncApp;
 use parking_lot::RwLock;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::redact::should_redact;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -24,11 +27,27 @@ impl Display for ContextServerId {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {
     pub path: String,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+}
+
+impl std::fmt::Debug for ContextServerCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let filtered_env = self.env.as_ref().map(|env| {
+            env.iter()
+                .map(|(k, v)| (k, if should_redact(k) { "[REDACTED]" } else { v }))
+                .collect::<Vec<_>>()
+        });
+
+        f.debug_struct("ContextServerCommand")
+            .field("path", &self.path)
+            .field("args", &self.args)
+            .field("env", &filtered_env)
+            .finish()
+    }
 }
 
 enum ContextServerTransport {

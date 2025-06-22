@@ -46,15 +46,18 @@ actions!(
         TrashUntrackedFiles,
         Uncommit,
         Push,
+        PushTo,
         ForcePush,
         Pull,
         Fetch,
+        FetchFrom,
         Commit,
         Amend,
         Cancel,
         ExpandCommitEditor,
         GenerateCommitMessage,
         Init,
+        OpenModifiedFiles,
     ]
 );
 

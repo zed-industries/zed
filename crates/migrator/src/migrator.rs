@@ -144,6 +144,14 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_05_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_08,
         ),
+        (
+            migrations::m_2025_05_29::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_05_29,
+        ),
+        (
+            migrations::m_2025_06_16::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_16,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -237,6 +245,14 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_05_08,
     migrations::m_2025_05_08::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_05_29,
+    migrations::m_2025_05_29::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_06_16,
+    migrations::m_2025_06_16::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -784,5 +800,256 @@ mod tests {
         "#,
             ),
         );
+    }
+
+    #[test]
+    fn test_preferred_completion_mode_migration() {
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "max",
+                    "enabled": true
+                }
+            }"#,
+            Some(
+                r#"{
+                "agent": {
+                    "preferred_completion_mode": "burn",
+                    "enabled": true
+                }
+            }"#,
+            ),
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "normal",
+                    "enabled": true
+                }
+            }"#,
+            None,
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "burn",
+                    "enabled": true
+                }
+            }"#,
+            None,
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "other_section": {
+                    "preferred_completion_mode": "max"
+                },
+                "agent": {
+                    "preferred_completion_mode": "max"
+                }
+            }"#,
+            Some(
+                r#"{
+                "other_section": {
+                    "preferred_completion_mode": "max"
+                },
+                "agent": {
+                    "preferred_completion_mode": "burn"
+                }
+            }"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_mcp_settings_migration() {
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "empty_server": {},
+        "extension_server": {
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "empty_server2": {},
+        "extension_server2": {
+            "foo": "bar",
+            "settings": {
+                "foo": "bar"
+            },
+            "bar": "foo"
+        },
+        "custom_server2": {
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo"
+        },
+        "invalid_server2": {
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo",
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "empty_server": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "empty_server2": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server2": {
+            "source": "extension",
+            "foo": "bar",
+            "settings": {
+                "foo": "bar"
+            },
+            "bar": "foo"
+        },
+        "custom_server2": {
+            "source": "custom",
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo"
+        },
+        "invalid_server2": {
+            "source": "custom",
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo",
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_mcp_settings_migration_doesnt_change_valid_settings() {
+        let settings = r#"{
+    "context_servers": {
+        "empty_server": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#;
+        assert_migrate_settings(settings, None);
     }
 }

@@ -44,6 +44,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -359,8 +360,13 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity().clone();
 
+        let mut initial_mode = VimSettings::get_global(cx).default_mode;
+        if initial_mode == Mode::Normal && HelixModeSetting::get_global(cx).0 {
+            initial_mode = Mode::HelixNormal;
+        }
+
         cx.new(|cx| Vim {
-            mode: VimSettings::get_global(cx).default_mode,
+            mode: initial_mode,
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
@@ -433,13 +439,23 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
 
+        if !editor.mode().is_full() {
+            vim.update(cx, |vim, _| {
+                vim.mode = Mode::Insert;
+            });
+        }
+
         editor.register_addon(VimAddon {
             entity: vim.clone(),
         });
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                vim.switch_mode(vim.default_mode(cx), false, window, cx)
+                if HelixModeSetting::get_global(cx).0 {
+                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                } else {
+                    vim.switch_mode(Mode::Normal, false, window, cx)
+                }
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -742,10 +758,6 @@ impl Vim {
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
-    pub fn default_mode(&self, cx: &App) -> Mode {
-        VimSettings::get_global(cx).default_mode
-    }
-
     pub fn editor(&self) -> Option<Entity<Editor>> {
         self.editor.upgrade()
     }
@@ -760,7 +772,7 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0
+        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
@@ -784,8 +796,8 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
-                self.update_editor(window, cx, |_, editor, _, _| {
-                    editor.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction)
+                self.update_editor(window, cx, |_, editor, _, cx| {
+                    editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
                 });
                 return;
             }
@@ -909,6 +921,9 @@ impl Vim {
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
+            self.update_editor(window, cx, |_, editor, _, _| {
+                editor.clear_selection_drag_state();
+            });
         }
         Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {

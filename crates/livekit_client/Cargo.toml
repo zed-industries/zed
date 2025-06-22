@@ -23,7 +23,7 @@ test-support = ["collections/test-support", "gpui/test-support"]
 anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true
-cpal = "0.15"
+cpal.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["x11", "wayland"] }
 gpui_tokio.workspace = true

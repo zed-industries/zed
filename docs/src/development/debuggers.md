@@ -1,32 +1,35 @@
 # Using a debugger
 
-> **DISCLAIMER**: This is not documentation for the [planned debugger support in Zed](https://github.com/zed-industries/zed/issues/5065).
-> Rather, it is intended to provide information on how to use an external debugger while developing Zed itself to both Zed employees and external contributors.
-> Once debugger support is implemented, this section will be updated to provide information on how to use the built-in debugger as part of Zed development.
+> **DISCLAIMER**: This is not documentation for [configuring Zed's debugger](../debugger.md).
+> Rather, it is intended to provide information on how to use a debugger while developing Zed itself to both Zed employees and external contributors.
 
-## Build profile considerations
+## Using Zed's built-in debugger
 
-By default, builds using the dev and release profiles (release is the profile used for production builds, i.e. nightly, preview, and stable) include limited debug info.
+While the Zed project is open you can open the `New Process Modal` and select the `Debug` tab. There you can see to debug configurations to debug Zed with, one for GDB and one for LLDB. Select the configuration you want and Zed will build and launch the binary.
 
-This is done by setting the `profile.(release|dev).debug` field in the root `Cargo.toml` field to `"limited"`.
+Please note, GDB isn't supported on arm Macbooks
+
+## Release build profile considerations
+
+By default, builds using the release profile (release is the profile used for production builds, i.e. nightly, preview, and stable) include limited debug info.
+
+This is done by setting the `profile.(release).debug` field in the root `Cargo.toml` field to `"limited"`.
 
 The official documentation for the `debug` field can be found [here](https://doc.rust-lang.org/cargo/reference/profiles.html#debug).
 But the TLDR is that `"limited"` strips type and variable level debug info.
 
 In release builds, this is done to reduce the binary size, as type and variable level debug info is not required, and does not impact the usability of generated stack traces.
 
-In debug builds, this is done to reduce compilation (especially incremental compilation) time.
-
 However, while the type and variable level debug info is not required for good stack traces, it is very important for a good experience using debuggers,
 as without the type and variable level debug info, the debugger has no way to resolve local variables, inspect them, format them using pretty-printers, etc.
 
-Therefore, in order to use a debugger to it's fullest extent, you must compile a new Zed binary, with full debug info.
+Therefore, in order to use a debugger to it's fullest extent when debugging a release build, you must compile a new Zed binary, with full debug info.
 
 The simplest way to do this, is to use the `--config` flag to override the `debug` field in the root `Cargo.toml` file when running `cargo run` or `cargo build` like so:
 
 ```sh
-cargo run --config 'profile.dev.debug="full"'
-cargo build --config 'profile.dev.debug="full"'
+cargo run --config 'profile.release.debug="full"'
+cargo build --config 'profile.release.debug="full"'
 ```
 
 > If you wish to avoid passing the `--config` flag on every invocation of `cargo`. You may also change the section in the [root `Cargo.toml`](https://github.com/zed-industries/zed/blob/main/Cargo.toml)
@@ -34,22 +37,22 @@ cargo build --config 'profile.dev.debug="full"'
 > from
 >
 > ```toml
-> [profile.dev]
+> [profile.release]
 > debug = "limited"
 > ```
 >
 > to
 >
 > ```toml
-> [profile.dev]
+> [profile.release]
 > debug = "full"
 > ```
 >
-> This will ensure all invocations of `cargo run` or `cargo build` will compile with full debug info.
+> This will ensure all invocations of `cargo run --release` or `cargo build --release` will compile with full debug info.
 >
 > **WARNING:** Make sure to avoid committing these changes!
 
-## GDB/LLDB
+## Running Zed with a shell debugger GDB/LLDB
 
 ### Background
 
@@ -72,8 +75,6 @@ According to the [previously linked article](https://michaelwoerister.github.io/
 If you are unfamiliar with `gdb` or `lldb`, you can learn more about them [here](https://www.gnu.org/software/gdb/) and [here](https://lldb.llvm.org/) respectively.
 
 ### Usage with Zed
-
-#### Running Zed with a Debugger
 
 After following the steps above for including full debug info when compiling Zed,
 You can either run `rust-gdb` or `rust-lldb` on the compiled Zed binary after building it with `cargo build`, by running one of the following commands:
