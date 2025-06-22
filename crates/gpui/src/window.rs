@@ -11,9 +11,9 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    Rgba, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString,
+    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine,
+    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
     transparent_black,
@@ -4279,12 +4279,25 @@ impl Window {
     }
 
     /// Perform titlebar double-click action.
-    /// This is MacOS specific.
+    /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
         self.platform_window.titlebar_double_click();
     }
 
+    /// Sets the window appearance.
+    /// This is macOS specific.
+    pub fn set_appearance(&self, appearance: WindowAppearance) {
+        self.platform_window.set_appearance(appearance);
+    }
+
+    /// Set the background color of the window.
+    /// This is macOS specific.
+    pub fn set_background_color(&self, color: Rgba) {
+        self.platform_window.set_background_color(color);
+    }
+
     /// Returns the number of tabbed windows in this window.
+    /// This is macOS specific.
     pub fn has_system_tabs(&self) -> bool {
         self.platform_window.has_system_tabs()
     }

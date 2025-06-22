@@ -3,7 +3,7 @@ use crate::{
     AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Rgba,
     ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
 };
@@ -32,7 +32,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
+    runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES, class_getName},
     sel, sel_impl,
 };
 use parking_lot::Mutex;
@@ -40,7 +40,7 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    ffi::{CStr, c_void},
+    ffi::{CStr, c_char, c_void},
     mem,
     ops::Range,
     path::PathBuf,
@@ -391,7 +391,6 @@ struct MacWindowState {
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
-    transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -683,9 +682,7 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
-                transparent_titlebar: titlebar
-                    .as_ref()
-                    .map_or(true, |titlebar| titlebar.appears_transparent),
+
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -722,7 +719,7 @@ impl MacWindow {
             }
 
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
-                native_window.setTitlebarAppearsTransparent_(YES);
+                hide_titlebar_effect_view(native_window);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
             }
 
@@ -940,6 +937,29 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach();
+    }
+
+    fn set_background_color(&self, color: Rgba) {
+        unsafe {
+            let native_window = self.0.lock().native_window;
+            let color = NSColor::colorWithSRGBRed_green_blue_alpha_(
+                nil,
+                color.r as f64,
+                color.g as f64,
+                color.b as f64,
+                color.a as f64,
+            );
+            native_window.setBackgroundColor_(color);
+        }
+    }
+
+    fn set_appearance(&self, appearance: WindowAppearance) {
+        unsafe {
+            let native_window = self.0.lock().native_window;
+            let appearance: id =
+                msg_send![class!(NSAppearance), appearanceNamed: appearance.into_native()];
+            NSWindow::setAppearance(native_window, appearance);
+        }
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1768,21 +1788,28 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
     if is_macos_version_at_least(min_version) {
-        unsafe {
-            lock.native_window.setTitlebarAppearsTransparent_(NO);
-        }
+        let executor = lock.executor.clone();
+        drop(lock);
+        executor
+            .spawn(async move {
+                let mut lock = window_state.as_ref().lock();
+
+                unsafe {
+                    let color = lock.native_window.backgroundColor();
+                    set_fullscreen_titlebar_color(color);
+                }
+            })
+            .detach();
     }
 }
 
-extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
+extern "C" fn window_will_exit_fullscreen(_: &Object, _: Sel, _: id) {
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
-    if is_macos_version_at_least(min_version) && lock.transparent_titlebar {
+    if is_macos_version_at_least(min_version) {
         unsafe {
-            lock.native_window.setTitlebarAppearsTransparent_(YES);
+            let color = NSColor::clearColor(nil);
+            set_fullscreen_titlebar_color(color);
         }
     }
 }
@@ -2422,4 +2449,78 @@ unsafe fn update_tab_bar_state(lock: &mut MacWindowState) {
     if lock.has_system_tabs != should_have_tabs {
         lock.has_system_tabs = should_have_tabs;
     }
+}
+
+// By hiding the visual effect view, we allow the window's (or titlebar's in this case)
+// background color to show through. If we were to set `titlebarAppearsTransparent` to true
+// the selected tab would look fine, but the unselected ones and new tab button backgrounds
+// would be an opaque color. When the titlebar isn't transparent, however, the system applies
+// a compositing effect to the unselected tab backgrounds, which makes them blend with the
+// titlebar's/window's background.
+fn hide_titlebar_effect_view(native_window: id) {
+    unsafe {
+        let content_view: id = msg_send![native_window, contentView];
+        let frame_view: id = msg_send![content_view, superview];
+
+        if let Some(titlebar_view) = find_view_by_class_name(frame_view, "NSTitlebarView") {
+            if let Some(effect_view) = find_view_by_class_name(titlebar_view, "NSVisualEffectView")
+            {
+                let _: () = msg_send![effect_view, setHidden: YES];
+            }
+        }
+    }
+}
+
+// When the window is fullscreen, the titlebar is only shown when moving the mouse to the top of the screen.
+// The titlebar will then show as overlay on top of the window's content, so we need to make sure it's not transparent.
+fn set_fullscreen_titlebar_color(color: *mut Object) {
+    unsafe {
+        let nsapp: id = msg_send![class!(NSApplication), sharedApplication];
+        let windows: id = msg_send![nsapp, windows];
+        let count: NSUInteger = msg_send![windows, count];
+
+        for i in 0..count {
+            let window: id = msg_send![windows, objectAtIndex: i];
+            let class_name: id = msg_send![window, className];
+            let class_name_str = class_name.to_str();
+
+            if class_name_str != "NSToolbarFullScreenWindow" {
+                continue;
+            }
+
+            let content_view: id = msg_send![window, contentView];
+            if let Some(titlebar_container) =
+                find_view_by_class_name(content_view, "NSTitlebarContainerView")
+            {
+                let _: () = msg_send![titlebar_container, setWantsLayer: YES];
+                let layer: id = msg_send![titlebar_container, layer];
+                let cg_color: *mut std::ffi::c_void = msg_send![color, CGColor];
+                let _: () = msg_send![layer, setBackgroundColor: cg_color];
+            }
+        }
+    }
+}
+
+fn find_view_by_class_name(view: id, target_class: &str) -> Option<id> {
+    unsafe {
+        let view_class: *const Class = msg_send![view, class];
+        let class_name_ptr: *const c_char = class_getName(view_class);
+        let class_name = CStr::from_ptr(class_name_ptr).to_str().unwrap_or("");
+        println!("Class name: {}", class_name);
+        if class_name == target_class {
+            return Some(view);
+        }
+
+        let subviews: id = msg_send![view, subviews];
+        let count: usize = msg_send![subviews, count];
+
+        for i in 0..count {
+            let subview: id = msg_send![subviews, objectAtIndex: i];
+            if let Some(found) = find_view_by_class_name(subview, target_class) {
+                return Some(found);
+            }
+        }
+    }
+
+    None
 }
