@@ -13,7 +13,7 @@ use cocoa::{
         NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSToolbar, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
     },
     base::{id, nil},
     foundation::{
@@ -389,6 +389,7 @@ struct MacWindowState {
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -396,8 +397,8 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
-    has_system_tabs: bool,
-    titlebar_color: Option<Rgba>,
+    has_system_window_tabs: bool,
+    fullscreen_titlebar_color: Option<Rgba>,
 }
 
 impl MacWindowState {
@@ -681,15 +682,17 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
-
+                transparent_titlebar: titlebar
+                    .as_ref()
+                    .map_or(true, |titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
-                has_system_tabs: false,
-                titlebar_color: None,
+                has_system_window_tabs: false,
+                fullscreen_titlebar_color: None,
             })));
 
             (*native_window).set_ivar(
@@ -783,7 +786,10 @@ impl MacWindow {
             if use_toolbar {
                 let identifier = NSString::alloc(nil).init_str("Toolbar");
                 let toolbar = NSToolbar::alloc(nil).initWithIdentifier_(identifier);
+
                 native_window.setToolbar_(toolbar);
+                native_window
+                    .setToolbarStyle_(NSWindowToolbarStyle::NSWindowToolbarStyleUnifiedCompact);
             }
 
             let app = NSApplication::sharedApplication(nil);
@@ -940,8 +946,8 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn set_titlebar_background_color(&self, color: Rgba) {
-        self.0.lock().titlebar_color = Some(color);
+    fn set_fullscreen_titlebar_background_color(&self, color: Rgba) {
+        self.0.lock().fullscreen_titlebar_color = Some(color);
     }
 
     fn set_appearance(&self, appearance: WindowAppearance) {
@@ -1313,8 +1319,8 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn has_system_tabs(&self) -> bool {
-        self.0.lock().has_system_tabs
+    fn has_system_window_tabs(&self) -> bool {
+        self.0.lock().has_system_window_tabs
     }
 
     fn draw(&self, scene: &crate::Scene) {
@@ -1777,20 +1783,22 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
-    if is_macos_version_at_least(min_version) {
+    if is_macos_version_at_least(min_version) && lock.transparent_titlebar {
+        // Execute the fullscreen titlebar color change asynchronously,
+        // to ensure the new titlebar is active.
         let executor = lock.executor.clone();
         drop(lock);
         executor
             .spawn(async move {
                 let mut lock = window_state.as_ref().lock();
-                if let Some(titlebar_color) = lock.titlebar_color {
+                if let Some(fullscreen_titlebar_color) = lock.fullscreen_titlebar_color {
                     unsafe {
                         let mut color = NSColor::colorWithSRGBRed_green_blue_alpha_(
                             nil,
-                            titlebar_color.r as f64,
-                            titlebar_color.g as f64,
-                            titlebar_color.b as f64,
-                            titlebar_color.a as f64,
+                            fullscreen_titlebar_color.r as f64,
+                            fullscreen_titlebar_color.g as f64,
+                            fullscreen_titlebar_color.b as f64,
+                            fullscreen_titlebar_color.a as f64,
                         );
                         set_fullscreen_titlebar_color(color);
                     }
@@ -1800,10 +1808,15 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn window_will_exit_fullscreen(_: &Object, _: Sel, _: id) {
+extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
-    if is_macos_version_at_least(min_version) {
+    if is_macos_version_at_least(min_version) && lock.transparent_titlebar {
+        // Execute the fullscreen titlebar color change immediately,
+        // before the window exits fullscreen (and the titlebar is hidden).
         unsafe {
             let color = NSColor::clearColor(nil);
             set_fullscreen_titlebar_color(color);
@@ -2275,13 +2288,12 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
 }
 
 extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view_controller: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    lock.has_system_tabs = true;
-
     unsafe {
         let _: () = msg_send![super(this, class!(NSWindow)), addTitlebarAccessoryViewController: view_controller];
     }
+
+    let window_state = unsafe { get_window_state(this) };
+    window_state.lock().has_system_window_tabs = true;
 }
 
 extern "C" fn remove_titlebar_accessory_view_controller(
@@ -2289,13 +2301,12 @@ extern "C" fn remove_titlebar_accessory_view_controller(
     _: Sel,
     view_controller: id,
 ) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    lock.has_system_tabs = false;
-
     unsafe {
         let _: () = msg_send![super(this, class!(NSWindow)), removeTitlebarAccessoryViewController: view_controller];
     }
+
+    let window_state = unsafe { get_window_state(this) };
+    window_state.lock().has_system_window_tabs = false;
 }
 
 async fn synthetic_drag(
@@ -2443,8 +2454,8 @@ unsafe fn update_tab_bar_state(lock: &mut MacWindowState) {
     };
 
     let should_have_tabs = tabbed_windows_count >= 2;
-    if lock.has_system_tabs != should_have_tabs {
-        lock.has_system_tabs = should_have_tabs;
+    if lock.has_system_window_tabs != should_have_tabs {
+        lock.has_system_window_tabs = should_have_tabs;
     }
 }
 
@@ -2503,7 +2514,6 @@ fn find_view_by_class_name(view: id, target_class: &str) -> Option<id> {
         let view_class: *const Class = msg_send![view, class];
         let class_name_ptr: *const c_char = class_getName(view_class);
         let class_name = CStr::from_ptr(class_name_ptr).to_str().unwrap_or("");
-        println!("Class name: {}", class_name);
         if class_name == target_class {
             return Some(view);
         }

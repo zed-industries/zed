@@ -4292,14 +4292,15 @@ impl Window {
 
     /// Set the background color of the titlebar.
     /// This is macOS specific.
-    pub fn set_titlebar_background_color(&self, color: Rgba) {
-        self.platform_window.set_titlebar_background_color(color);
+    pub fn set_fullscreen_titlebar_background_color(&self, color: Rgba) {
+        self.platform_window
+            .set_fullscreen_titlebar_background_color(color);
     }
 
     /// Returns the number of tabbed windows in this window.
     /// This is macOS specific.
-    pub fn has_system_tabs(&self) -> bool {
-        self.platform_window.has_system_tabs()
+    pub fn has_system_window_tabs(&self) -> bool {
+        self.platform_window.has_system_window_tabs()
     }
 
     /// Selects the next tab in the tab group in the trailing direction.
