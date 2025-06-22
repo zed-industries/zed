@@ -603,10 +603,6 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
             return false;
         }
-        let classifier = snapshot.char_classifier_at(position).for_completion(true);
-        if trigger_in_words && classifier.is_word(char) {
-            return true;
-        }
 
         self.0
             .read_with(cx, |console, cx| {
@@ -616,8 +612,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
                     .capabilities()
                     .completion_trigger_characters
                     .as_ref()
-                    .is_some_and(|triggers| triggers.contains(&text.to_string()))
+                    .map(|triggers| triggers.contains(&text.to_string()))
             })
+            .flatten()
             .unwrap_or(true)
     }
 }
