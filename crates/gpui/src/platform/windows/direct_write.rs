@@ -1024,8 +1024,12 @@ impl<'t> ClusterAnalyzer<'t> {
             cluster_map,
         }
     }
+}
 
-    pub fn next(&mut self) -> Option<(usize, usize)> {
+impl Iterator for ClusterAnalyzer<'_> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<(usize, usize)> {
         if self.utf16_idx >= self.cluster_map.len() {
             return None; // No more clusters
         }
@@ -1153,7 +1157,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             let mut utf16_idx = 0;
             let mut glyph_idx = 0;
             let mut glyphs = Vec::with_capacity(glyph_count);
-            while let Some((utf16_len, glyph_count)) = cluster_analyzer.next() {
+            for (utf16_len, glyph_count) in cluster_analyzer {
                 context
                     .index_converter
                     .advance_to_utf16_ix(index_offset + utf16_idx);
