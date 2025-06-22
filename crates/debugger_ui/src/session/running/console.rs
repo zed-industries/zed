@@ -614,6 +614,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
                     .as_ref()
                     .map(|triggers| triggers.contains(&text.to_string()))
             })
+            .ok()
             .flatten()
             .unwrap_or(true)
     }
