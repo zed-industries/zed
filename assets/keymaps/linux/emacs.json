@@ -91,6 +91,13 @@
     }
   },
   {
+    "context": "Editor && (showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ContextMenuPrevious",
+      "ctrl-n": "editor::ContextMenuNext"
+    }
+  },
+  {
     "context": "Workspace",
     "bindings": {
       "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
