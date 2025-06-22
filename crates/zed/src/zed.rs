@@ -953,7 +953,7 @@ fn about(
     );
     cx.spawn(async move |_, cx| {
         if let Ok(0) = prompt.await {
-            let content = format!("{}\n{}", message, detail.as_deref().unwrap_or(""),);
+            let content = format!("{}\n{}", message, detail.as_deref().unwrap_or(""));
             cx.update(|cx| {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(content));
             })
