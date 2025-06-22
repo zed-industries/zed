@@ -647,7 +647,7 @@ You can choose between `thread` (the default) and `text_thread`:
 ```json
 {
   "agent": {
-    "default_view": "text_thread".
+    "default_view": "text_thread"
   }
 }
 ```
