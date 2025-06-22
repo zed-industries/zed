@@ -10,12 +10,10 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
-        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
-        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
-        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
-        NSWindowStyleMask, NSWindowTitleVisibility,
+        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
+        NSFilenamesPboardType, NSPasteboard, NSScreen, NSToolbar, NSView, NSViewHeightSizable,
+        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
+        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -399,6 +397,7 @@ struct MacWindowState {
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     has_system_tabs: bool,
+    titlebar_color: Option<Rgba>,
 }
 
 impl MacWindowState {
@@ -690,6 +689,7 @@ impl MacWindow {
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 has_system_tabs: false,
+                titlebar_color: None,
             })));
 
             (*native_window).set_ivar(
@@ -721,6 +721,7 @@ impl MacWindow {
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
                 hide_titlebar_effect_view(native_window);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
+                let _: () = msg_send![native_window, setTitlebarSeparatorStyle: 1]; // NSTitlebarSeparatorStyleLine
             }
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
@@ -939,18 +940,8 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn set_background_color(&self, color: Rgba) {
-        unsafe {
-            let native_window = self.0.lock().native_window;
-            let color = NSColor::colorWithSRGBRed_green_blue_alpha_(
-                nil,
-                color.r as f64,
-                color.g as f64,
-                color.b as f64,
-                color.a as f64,
-            );
-            native_window.setBackgroundColor_(color);
-        }
+    fn set_titlebar_background_color(&self, color: Rgba) {
+        self.0.lock().titlebar_color = Some(color);
     }
 
     fn set_appearance(&self, appearance: WindowAppearance) {
@@ -1166,57 +1157,28 @@ impl PlatformWindow for MacWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
+        this.renderer
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
 
-        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
-        this.renderer.update_transparency(!opaque);
+        let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
+            80
+        } else {
+            0
+        };
+        let opaque = (background_appearance == WindowBackgroundAppearance::Opaque).to_objc();
 
         unsafe {
-            this.native_window.setOpaque_(opaque as BOOL);
-            let background_color = if opaque {
+            this.native_window.setOpaque_(opaque);
+            // Shadows for transparent windows cause artifacts and performance issues
+            this.native_window.setHasShadow_(opaque);
+            let clear_color = if opaque == YES {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {
-                // Not using `+[NSColor clearColor]` to avoid broken shadow.
-                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)
+                NSColor::clearColor(nil)
             };
-            this.native_window.setBackgroundColor_(background_color);
-
-            if NSAppKitVersionNumber < NSAppKitVersionNumber12_0 {
-                // Whether `-[NSVisualEffectView respondsToSelector:@selector(_updateProxyLayer)]`.
-                // On macOS Catalina/Big Sur `NSVisualEffectView` doesn’t own concrete sublayers
-                // but uses a `CAProxyLayer`. Use the legacy WindowServer API.
-                let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
-                    80
-                } else {
-                    0
-                };
-
-                let window_number = this.native_window.windowNumber();
-                CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
-            } else {
-                // On newer macOS `NSVisualEffectView` manages the effect layer directly. Using it
-                // could have a better performance (it downsamples the backdrop) and more control
-                // over the effect layer.
-                if background_appearance != WindowBackgroundAppearance::Blurred {
-                    if let Some(blur_view) = this.blurred_view {
-                        NSView::removeFromSuperview(blur_view);
-                        this.blurred_view = None;
-                    }
-                } else if this.blurred_view == None {
-                    let content_view = this.native_window.contentView();
-                    let frame = NSView::bounds(content_view);
-                    let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
-                    blur_view = NSView::initWithFrame_(blur_view, frame);
-                    blur_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
-
-                    let _: () = msg_send![
-                        content_view,
-                        addSubview: blur_view
-                        positioned: NSWindowOrderingMode::NSWindowBelow
-                        relativeTo: nil
-                    ];
-                    this.blurred_view = Some(blur_view.autorelease());
-                }
-            }
+            this.native_window.setBackgroundColor_(clear_color);
+            let window_number = this.native_window.windowNumber();
+            CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
         }
     }
 
@@ -1793,10 +1755,17 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
         executor
             .spawn(async move {
                 let mut lock = window_state.as_ref().lock();
-
-                unsafe {
-                    let color = lock.native_window.backgroundColor();
-                    set_fullscreen_titlebar_color(color);
+                if let Some(titlebar_color) = lock.titlebar_color {
+                    unsafe {
+                        let mut color = NSColor::colorWithSRGBRed_green_blue_alpha_(
+                            nil,
+                            titlebar_color.r as f64,
+                            titlebar_color.g as f64,
+                            titlebar_color.b as f64,
+                            titlebar_color.a as f64,
+                        );
+                        set_fullscreen_titlebar_color(color);
+                    }
                 }
             })
             .detach();
