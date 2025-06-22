@@ -945,11 +945,39 @@ impl PlatformWindow for MacWindow {
     }
 
     fn set_appearance(&self, appearance: WindowAppearance) {
+        let native_window = self.0.lock().native_window;
         unsafe {
-            let native_window = self.0.lock().native_window;
             let appearance: id =
                 msg_send![class!(NSAppearance), appearanceNamed: appearance.into_native()];
             NSWindow::setAppearance(native_window, appearance);
+        }
+    }
+
+    fn show_next_window_tab(&self) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![native_window, selectNextTab:nil];
+        }
+    }
+
+    fn show_previous_window_tab(&self) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![native_window, selectPreviousTab:nil];
+        }
+    }
+
+    fn merge_all_windows(&self) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![native_window, mergeAllWindows:nil];
+        }
+    }
+
+    fn move_window_tab_to_new_window(&self) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![native_window, moveTabToNewWindow:nil];
         }
     }
 

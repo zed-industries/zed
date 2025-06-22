@@ -4302,6 +4302,30 @@ impl Window {
         self.platform_window.has_system_tabs()
     }
 
+    /// Selects the next tab in the tab group in the trailing direction.
+    /// This is macOS specific.
+    pub fn show_next_window_tab(&self) {
+        self.platform_window.show_next_window_tab()
+    }
+
+    /// Selects the previous tab in the tab group in the leading direction.
+    /// This is macOS specific.
+    pub fn show_previous_window_tab(&self) {
+        self.platform_window.show_previous_window_tab()
+    }
+
+    /// Merges all open windows into a single tabbed window.
+    /// This is macOS specific.
+    pub fn merge_all_windows(&self) {
+        self.platform_window.merge_all_windows()
+    }
+
+    /// Moves the tab to a new containing window.
+    /// This is macOS specific.
+    pub fn move_window_tab_to_new_window(&self) {
+        self.platform_window.move_window_tab_to_new_window()
+    }
+
     /// Toggles the inspector mode on this window.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn toggle_inspector(&mut self, cx: &mut App) {

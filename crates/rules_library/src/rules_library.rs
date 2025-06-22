@@ -4,7 +4,7 @@ use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
-    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
+    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, size,
     transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};

@@ -253,6 +253,10 @@ actions!(
         RestoreBanner,
         /// Toggles expansion of the selected item.
         ToggleExpandItem,
+        ShowNextWindowTab,
+        ShowPreviousWindowTab,
+        MergeAllWindows,
+        MoveWindowTabToNewWindow
     ]
 );
 
@@ -5572,6 +5576,22 @@ impl Workspace {
                     workspace.activate_previous_window(cx)
                 }),
             )
+            .on_action(cx.listener(|workspace, _: &ShowNextWindowTab, window, cx| {
+                workspace.show_next_window_tab(cx, window)
+            }))
+            .on_action(
+                cx.listener(|workspace, _: &ShowPreviousWindowTab, window, cx| {
+                    workspace.show_previous_window_tab(cx, window)
+                }),
+            )
+            .on_action(cx.listener(|workspace, _: &MergeAllWindows, window, cx| {
+                workspace.merge_all_windows(cx, window)
+            }))
+            .on_action(
+                cx.listener(|workspace, _: &MoveWindowTabToNewWindow, window, cx| {
+                    workspace.move_window_tab_to_new_window(cx, window)
+                }),
+            )
             .on_action(cx.listener(|workspace, _: &ActivatePaneLeft, window, cx| {
                 workspace.activate_pane_in_direction(SplitDirection::Left, window, cx)
             }))
@@ -5889,6 +5909,38 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
+    }
+
+    pub fn show_next_window_tab(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|window, _cx| window.show_next_window_tab())?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
+    }
+
+    pub fn show_previous_window_tab(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|window, _cx| window.show_previous_window_tab())?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
+    }
+
+    pub fn merge_all_windows(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|window, _cx| window.merge_all_windows())?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
+    }
+
+    pub fn move_window_tab_to_new_window(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|window, _cx| window.move_window_tab_to_new_window())?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {

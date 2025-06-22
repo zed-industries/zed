@@ -511,6 +511,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn has_system_tabs(&self) -> bool {
         false
     }
+    fn show_next_window_tab(&self) {}
+    fn show_previous_window_tab(&self) {}
+    fn merge_all_windows(&self) {}
+    fn move_window_tab_to_new_window(&self) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
