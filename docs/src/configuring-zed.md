@@ -1252,7 +1252,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 ## Use System Tabs
 
 - Description: Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
-- Setting: `use_system_tabs`
+- Setting: `use_system_window_tabs`
 - Default: `false`
 
 **Options**
