@@ -511,10 +511,17 @@ impl EditorMode {
         }
     }
 
+    #[inline]
     pub fn is_full(&self) -> bool {
         matches!(self, Self::Full { .. })
     }
 
+    #[inline]
+    pub fn is_single_line(&self) -> bool {
+        matches!(self, Self::SingleLine { .. })
+    }
+
+    #[inline]
     fn is_minimap(&self) -> bool {
         matches!(self, Self::Minimap { .. })
     }
@@ -9535,6 +9542,11 @@ impl Editor {
     }
 
     pub fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if self.move_to_prev_snippet_tabstop(window, cx) {
             return;
@@ -9543,6 +9555,11 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         if self.move_to_next_snippet_tabstop(window, cx) {
             self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
             return;
@@ -9663,6 +9680,11 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let mut selections = self.selections.all::<Point>(cx);
         let mut prev_edited_row = 0;
@@ -9768,6 +9790,11 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
@@ -9842,6 +9869,11 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let selections = self
             .selections
@@ -10922,6 +10954,10 @@ impl Editor {
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -11029,6 +11065,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -11179,6 +11219,11 @@ impl Editor {
 
     pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        if self.mode.is_single_line() {
+            cx.propagate();
+            return;
+        }
+
         self.rewrap_impl(RewrapOptions::default(), cx)
     }
 
@@ -11788,7 +11833,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -11831,7 +11876,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -11868,7 +11913,7 @@ impl Editor {
             return;
         }
 
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
@@ -12016,7 +12061,7 @@ impl Editor {
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         self.take_rename(true, window, cx);
 
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if self.mode.is_single_line() {
             cx.propagate();
             return;
         }

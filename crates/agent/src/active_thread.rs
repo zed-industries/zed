@@ -24,7 +24,7 @@ use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
-    ListAlignment, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
+    ListAlignment, ListOffset, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
     StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
     UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
     pulsating_between,
@@ -48,14 +48,18 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
 use zed_llm_client::CompletionIntent;
+
+const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
+const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const EDIT_PREVIOUS_MESSAGE_MAX_LINES: usize = 6;
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -333,8 +337,6 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         ..Default::default()
     }
 }
-
-const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -1327,6 +1329,8 @@ impl ActiveThread {
             self.context_store.downgrade(),
             self.thread_store.downgrade(),
             self.text_thread_store.downgrade(),
+            EDIT_PREVIOUS_MESSAGE_MIN_LINES,
+            EDIT_PREVIOUS_MESSAGE_MAX_LINES,
             window,
             cx,
         );
@@ -1618,6 +1622,14 @@ impl ActiveThread {
                     })
                     .log_err();
             }));
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.focus_handle(cx).focus(window);
+                }
+            });
+        }
     }
 
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
@@ -1861,6 +1873,14 @@ impl ActiveThread {
                 }
             });
 
+        let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUpAlt)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Scroll To Top"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_top(cx);
+            }));
+
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -1970,11 +1990,14 @@ impl ActiveThread {
                                     );
                                 })),
                         )
-                        .child(open_as_markdown),
+                        .child(open_as_markdown)
+                        .child(scroll_to_top),
                 )
                 .into_any_element(),
             None => feedback_container
-                .child(h_flex().child(open_as_markdown))
+                .child(h_flex()
+                    .child(open_as_markdown))
+                    .child(scroll_to_top)
                 .into_any_element(),
         };
 
@@ -3088,6 +3111,7 @@ impl ActiveThread {
                                 .pr_1()
                                 .gap_1()
                                 .justify_between()
+                                .flex_wrap()
                                 .bg(cx.theme().colors().editor_background)
                                 .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
@@ -3461,6 +3485,11 @@ impl ActiveThread {
             .entry((message_id, ix))
             .or_insert(true);
         *is_expanded = !*is_expanded;
+    }
+
+    pub fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset::default());
+        cx.notify();
     }
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {

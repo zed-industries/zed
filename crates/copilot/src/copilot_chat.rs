@@ -318,13 +318,7 @@ pub struct ResponseEvent {
 pub struct Usage {
     pub completion_tokens: u64,
     pub prompt_tokens: u64,
-    pub prompt_tokens_details: PromptTokensDetails,
     pub total_tokens: u64,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct PromptTokensDetails {
-    pub cached_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
