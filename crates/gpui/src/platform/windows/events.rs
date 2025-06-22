@@ -92,7 +92,7 @@ pub(crate) fn handle_msg(
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
-        WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
+        WM_SETCURSOR => handle_set_cursor(handle, lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
@@ -1108,7 +1108,11 @@ fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     Some(0)
 }
 
-fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_set_cursor(
+    handle: HWND,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     if unsafe { !IsWindowEnabled(handle).as_bool() }
         || matches!(
             lparam.loword() as u32,
