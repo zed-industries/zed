@@ -264,11 +264,7 @@ impl CompletionBuilder {
         Completion {
             replace_range: Anchor::MIN..Anchor::MAX,
             new_text: label.to_string(),
-            label: CodeLabel {
-                text: label.to_string(),
-                runs: Default::default(),
-                filter_range: 0..label.len(),
-            },
+            label: CodeLabel::plain(label.to_string(), filter_text),
             documentation: None,
             source: CompletionSource::Lsp {
                 insert_range: None,
@@ -299,7 +295,7 @@ async fn filter_and_sort_matches(
     let candidates: Arc<[StringMatchCandidate]> = completions
         .iter()
         .enumerate()
-        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.filter_text()))
+        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
         .collect();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let background_executor = cx.executor();

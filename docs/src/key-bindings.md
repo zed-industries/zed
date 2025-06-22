@@ -18,7 +18,7 @@ You can also enable `vim_mode`, which adds vim bindings too.
 
 ## User keymaps
 
-Zed reads your keymap from `~/.zed/keymap.json` on MacOS (or `~/.config/zed/keymap.json` on Linux). You can open the file within Zed with {#kb zed::OpenKeymap}, or via `zed: Open Keymap` in the command palette.
+Zed reads your keymap from `~/.config/zed/keymap.json`. You can open the file within Zed with {#kb zed::OpenKeymap}, or via `zed: Open Keymap` in the command palette.
 
 The file contains a JSON array of objects with `"bindings"`. If no `"context"` is set the bindings are always active. If it is set the binding is only active when the [context matches](#contexts).
 
