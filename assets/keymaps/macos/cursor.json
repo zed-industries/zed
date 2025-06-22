@@ -8,7 +8,6 @@
       "cmd-shift-i": "agent::ToggleFocus",
       "cmd-l": "agent::ToggleFocus",
       "cmd-shift-l": "agent::ToggleFocus",
-      "cmd-alt-b": "agent::ToggleFocus",
       "cmd-shift-j": "agent::OpenConfiguration"
     }
   },
@@ -43,7 +42,6 @@
       "cmd-shift-i": "workspace::ToggleRightDock",
       "cmd-l": "workspace::ToggleRightDock",
       "cmd-shift-l": "workspace::ToggleRightDock",
-      "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-w": "workspace::ToggleRightDock", // technically should close chat
       "cmd-.": "agent::ToggleProfileSelector",
       "cmd-/": "agent::ToggleModelSelector",

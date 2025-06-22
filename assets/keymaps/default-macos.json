@@ -283,8 +283,7 @@
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-enter": "agent::ContinueThread",
-      "alt-enter": "agent::ContinueWithBurnMode",
-      "cmd-alt-b": "agent::ToggleBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode"
     }
   },
   {
@@ -587,7 +586,6 @@
       "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
-      "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
