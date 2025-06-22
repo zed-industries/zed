@@ -108,8 +108,12 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
-        Self::Claude3_5Haiku
+    pub fn default_fast(region: &str) -> Self {
+        if region.starts_with("us-") {
+            Self::Claude3_5Haiku
+        } else {
+            Self::Claude3Haiku
+        }
     }
 
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
