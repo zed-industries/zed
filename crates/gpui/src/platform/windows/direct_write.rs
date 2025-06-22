@@ -1108,72 +1108,73 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
         _clientdrawingeffect: windows::core::Ref<windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
-        unsafe {
-            let glyphrun = &*glyphrun;
-            let glyph_count = glyphrun.glyphCount as usize;
-            if glyph_count == 0 || glyphrun.fontFace.is_none() {
-                return Ok(());
-            }
-            let desc = &*glyphrundescription;
-            let context =
-                &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext);
-            let font_face = glyphrun.fontFace.as_ref().unwrap();
-            // This `cast()` action here should never fail since we are running on Win10+, and
-            // `IDWriteFontFace3` requires Win10
-            let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-            let Some((font_identifier, font_struct, color_font)) =
-                get_font_identifier_and_font_struct(font_face, &self.locale)
-            else {
-                return Ok(());
-            };
-
-            let font_id = if let Some(id) = context
-                .text_system
-                .font_id_by_identifier
-                .get(&font_identifier)
-            {
-                *id
-            } else {
-                context.text_system.select_font(&font_struct)
-            };
-
-            let glyph_ids = std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count);
-            let glyph_advances = std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count);
-            let glyph_offsets = std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count);
-            let cluster_map =
-                std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize);
-
-            let mut cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
-            let mut utf16_idx = desc.textPosition as usize;
-            let mut glyph_idx = 0;
-            let mut glyphs = Vec::with_capacity(glyph_count);
-            for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
-                context.index_converter.advance_to_utf16_ix(utf16_idx);
-                utf16_idx += cluster_utf16_len;
-                for (cluster_glyph_idx, glyph_id) in glyph_ids
-                    [glyph_idx..(glyph_idx + cluster_glyph_count)]
-                    .iter()
-                    .enumerate()
-                {
-                    let id = GlyphId(*glyph_id as u32);
-                    let is_emoji = color_font
-                        && is_color_glyph(font_face, id, &context.text_system.components.factory);
-                    let this_glyph_idx = glyph_idx + cluster_glyph_idx;
-                    glyphs.push(ShapedGlyph {
-                        id,
-                        position: point(
-                            px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                            px(0.0),
-                        ),
-                        index: context.index_converter.utf8_ix,
-                        is_emoji,
-                    });
-                    context.width += glyph_advances[this_glyph_idx];
-                }
-                glyph_idx += cluster_glyph_count;
-            }
-            context.runs.push(ShapedRun { font_id, glyphs });
+        let glyphrun = unsafe { &*glyphrun };
+        let glyph_count = glyphrun.glyphCount as usize;
+        if glyph_count == 0 || glyphrun.fontFace.is_none() {
+            return Ok(());
         }
+        let desc = unsafe { &*glyphrundescription };
+        let context = unsafe {
+            &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext)
+        };
+        let font_face = glyphrun.fontFace.as_ref().unwrap();
+        // This `cast()` action here should never fail since we are running on Win10+, and
+        // `IDWriteFontFace3` requires Win10
+        let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
+        let Some((font_identifier, font_struct, color_font)) =
+            get_font_identifier_and_font_struct(font_face, &self.locale)
+        else {
+            return Ok(());
+        };
+
+        let font_id = if let Some(id) = context
+            .text_system
+            .font_id_by_identifier
+            .get(&font_identifier)
+        {
+            *id
+        } else {
+            context.text_system.select_font(&font_struct)
+        };
+
+        let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };
+        let glyph_advances =
+            unsafe { std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count) };
+        let glyph_offsets =
+            unsafe { std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count) };
+        let cluster_map =
+            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) };
+
+        let mut cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
+        let mut utf16_idx = desc.textPosition as usize;
+        let mut glyph_idx = 0;
+        let mut glyphs = Vec::with_capacity(glyph_count);
+        for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
+            context.index_converter.advance_to_utf16_ix(utf16_idx);
+            utf16_idx += cluster_utf16_len;
+            for (cluster_glyph_idx, glyph_id) in glyph_ids
+                [glyph_idx..(glyph_idx + cluster_glyph_count)]
+                .iter()
+                .enumerate()
+            {
+                let id = GlyphId(*glyph_id as u32);
+                let is_emoji = color_font
+                    && is_color_glyph(font_face, id, &context.text_system.components.factory);
+                let this_glyph_idx = glyph_idx + cluster_glyph_idx;
+                glyphs.push(ShapedGlyph {
+                    id,
+                    position: point(
+                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
+                        px(0.0),
+                    ),
+                    index: context.index_converter.utf8_ix,
+                    is_emoji,
+                });
+                context.width += glyph_advances[this_glyph_idx];
+            }
+            glyph_idx += cluster_glyph_count;
+        }
+        context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
 
