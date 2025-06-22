@@ -52,45 +52,43 @@ impl Vim {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
+                    let new_goal = selection.goal;
+                    let mut head = selection.head();
+                    let mut tail = selection.tail();
 
-                    if selection.head() == map.max_point() {
+                    if head == map.max_point() {
                         return;
                     }
 
                     // collapse to block cursor
-                    if selection.tail() < selection.head() {
-                        selection
-                            .set_tail(movement::left(map, selection.head()), SelectionGoal::None);
+                    if tail < head {
+                        tail = movement::left(map, head);
                     } else {
-                        selection.set_tail(selection.head(), SelectionGoal::None);
-                        selection
-                            .set_head(movement::right(map, selection.head()), SelectionGoal::None);
+                        tail = head;
+                        head = movement::right(map, head);
                     }
 
                     // create a classifier
-                    let classifier = map
-                        .buffer_snapshot
-                        .char_classifier_at(selection.head().to_point(map));
+                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
 
-                    let mut last_selection = selection.clone();
                     for _ in 0..times {
-                        let (new_tail, new_head) =
-                            movement::find_boundary_trail(map, selection.head(), |left, right| {
+                        let (maybe_next_tail, next_head) =
+                            movement::find_boundary_trail(map, head, |left, right| {
                                 is_boundary(left, right, &classifier)
                             });
 
-                        selection.set_head(new_head, SelectionGoal::None);
-                        if let Some(new_tail) = new_tail {
-                            selection.set_tail(new_tail, SelectionGoal::None);
-                        }
-
-                        if selection.head() == last_selection.head()
-                            && selection.tail() == last_selection.tail()
-                        {
+                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
                             break;
                         }
-                        last_selection = selection.clone();
+
+                        head = next_head;
+                        if let Some(next_tail) = maybe_next_tail {
+                            tail = next_tail;
+                        }
                     }
+
+                    selection.set_tail(tail, new_goal);
+                    selection.set_head(head, new_goal);
                 });
             });
         });
@@ -107,49 +105,50 @@ impl Vim {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
+                    let new_goal = SelectionGoal::None;
+                    let mut head = selection.head();
+                    let mut tail = selection.tail();
 
-                    if selection.head() == DisplayPoint::zero() {
+                    if head == DisplayPoint::zero() {
                         return;
                     }
 
                     // collapse to block cursor
-                    if selection.tail() < selection.head() {
-                        selection
-                            .set_tail(movement::left(map, selection.head()), SelectionGoal::None);
+                    if tail < head {
+                        tail = movement::left(map, head);
                     } else {
-                        selection.set_tail(selection.head(), SelectionGoal::None);
-                        selection
-                            .set_head(movement::right(map, selection.head()), SelectionGoal::None);
+                        tail = head;
+                        head = movement::right(map, head);
                     }
 
+                    selection.set_head(head, new_goal);
+                    selection.set_tail(tail, new_goal);
                     // flip the selection
                     selection.swap_head_tail();
+                    head = selection.head();
+                    tail = selection.tail();
 
                     // create a classifier
-                    let classifier = map
-                        .buffer_snapshot
-                        .char_classifier_at(selection.head().to_point(map));
+                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
 
-                    let mut last_selection = selection.clone();
                     for _ in 0..times {
-                        let (new_tail, new_head) = movement::find_preceding_boundary_trail(
-                            map,
-                            selection.head(),
-                            |left, right| is_boundary(left, right, &classifier),
-                        );
+                        let (maybe_next_tail, next_head) =
+                            movement::find_preceding_boundary_trail(map, head, |left, right| {
+                                is_boundary(left, right, &classifier)
+                            });
 
-                        selection.set_head(new_head, SelectionGoal::None);
-                        if let Some(new_tail) = new_tail {
-                            selection.set_tail(new_tail, SelectionGoal::None);
-                        }
-
-                        if selection.head() == last_selection.head()
-                            && selection.tail() == last_selection.tail()
-                        {
+                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
                             break;
                         }
-                        last_selection = selection.clone();
+
+                        head = next_head;
+                        if let Some(next_tail) = maybe_next_tail {
+                            tail = next_tail;
+                        }
                     }
+
+                    selection.set_tail(tail, new_goal);
+                    selection.set_head(head, new_goal);
                 });
             })
         });
