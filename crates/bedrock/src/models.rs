@@ -503,6 +503,8 @@ impl Model {
                 | Model::Claude3_5SonnetV2
                 | Model::Claude3Haiku
                 | Model::Claude3Sonnet
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4
                 | Model::ClaudeSonnet4Thinking,
                 "apac",
