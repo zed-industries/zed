@@ -506,7 +506,6 @@ impl DirectWriteState {
                 ..Default::default()
             });
         }
-        println!("\n\nLayout line: {}", text);
         unsafe {
             let text_renderer = self.components.text_renderer.clone();
             let text_wide = text.encode_utf16().collect_vec();
@@ -609,7 +608,6 @@ impl DirectWriteState {
             )?;
             let width = px(renderer_context.width);
 
-            println!("Runs: {runs:#?}");
             Ok(LineLayout {
                 font_size,
                 width,
