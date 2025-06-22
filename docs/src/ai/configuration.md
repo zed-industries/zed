@@ -2,6 +2,7 @@
 
 There are various aspects about the Agent Panel that you can customize.
 All of them can be seen by either visiting [the Configuring Zed page](../configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
@@ -20,8 +21,8 @@ Here's an overview of the supported providers and tool call support:
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
-| [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
 | [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
@@ -177,7 +178,8 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#deepseek-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
+If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -202,14 +204,15 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 }
 ```
 
-Custom models will be listed in the model dropdown in the Agent Panel. You can also modify the `api_url` to use a custom endpoint if needed.
+Custom models will be listed in the model dropdown in the Agent Panel.
+You can also modify the `api_url` to use a custom endpoint if needed.
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
 > ✅ Supports tool use in some cases.
 > Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
 
-You can use GitHub Copilot Chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use GitHub Copilot Chat with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
 1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
 2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
@@ -222,7 +225,7 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > ✅ Supports tool use
 
-You can use Gemini models with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use Gemini models with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section
@@ -286,7 +289,7 @@ Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#
 > ✅ Supports tool use
 
 1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
-2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
+2. Open the configuration view (`agent: open configuration`) and navigate to the Mistral section
 3. Enter your Mistral API key
 
 The Mistral API key will be saved in your keychain.
@@ -295,7 +298,9 @@ Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#mistral-custom-models}
 
-The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba).
+All the default models support tool use.
+If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -318,7 +323,7 @@ The Zed Assistant comes pre-configured with several Mistral models (codestral-la
 }
 ```
 
-Custom models will be listed in the model dropdown in the assistant panel.
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### Ollama {#ollama}
 
@@ -343,7 +348,8 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 #### Ollama Context Length {#ollama-context}
 
 Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.
-Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box.
+Zed API requests to Ollama include this as the `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of RAM are able to use most models out of the box.
+
 See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
 > **Note**: Token counts displayed in the Agent Panel are only estimates and will differ from the model's native tokenizer.
@@ -378,15 +384,15 @@ You may also optionally specify a value for `keep_alive` for each available mode
 This can be an integer (seconds) or alternatively a string duration like "5m", "10m", "1h", "1d", etc.
 For example, `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120 seconds.
 
-The `supports_tools` option controls whether or not the model will use additional tools.
-If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
-If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
+The `supports_tools` option controls whether the model will use additional tools.
+If the model is tagged with `tools` in the Ollama catalog, this option should be supplied, and the built-in profiles `Ask` and `Write` can be used.
+If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with the value `true`; however, be aware that only the `Minimal` built-in profile will work.
 
-The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.
-If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in zed.
+The `supports_thinking` option controls whether the model will perform an explicit "thinking" (reasoning) pass before producing its final answer.
+If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in Zed.
 
-The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.
-If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in zed.
+The `supports_images` option enables the model's vision capabilities, allowing it to process images included in the conversation context.
+If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in Zed.
 
 ### OpenAI {#openai}
 
@@ -403,7 +409,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
+The Zed agent comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
 To use alternate models, perhaps a preview release or a dated model release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
@@ -429,7 +435,8 @@ To use alternate models, perhaps a preview release or a dated model release, or 
 }
 ```
 
-You must provide the model's Context Window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
+You must provide the model's context window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
+
 OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
 Custom models will be listed in the model dropdown in the Agent Panel.
 
@@ -437,8 +444,25 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
-You can add a custom API URL for OpenAI either via the UI or by editing the your `settings.json`.
+You can add a custom API URL for OpenAI either via the UI or by editing your `settings.json`.
 Here are a few model examples you can plug in by using this feature:
+
+#### Vercel v0
+
+Vercel v0 is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+It supports text and image inputs and provides fast streaming responses.
+
+To use it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
+Once that's done, insert that into the OpenAI API key section, and add this endpoint URL:
+
+```json
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.v0.dev/v1",
+      "version": "1"
+    },
+  }
+```
 
 #### X.ai Grok
 
@@ -455,20 +479,6 @@ Example configuration for using X.ai Grok with Zed:
           "max_tokens": 131072
         }
       ],
-      "version": "1"
-    },
-  }
-```
-
-#### Vercel's v0
-
-To use Vercel's v0 models with Zed, ensure you have created a [v0 API key first](https://v0.dev/chat/settings/keys).
-Once that's done, insert that into the OpenAI API key section, and add this API endpoint:
-
-```json
-  "language_models": {
-    "openai": {
-      "api_url": "https://api.v0.dev/v1",
       "version": "1"
     },
   }
