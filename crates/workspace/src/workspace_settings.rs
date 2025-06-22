@@ -6,7 +6,7 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, VsCodeSettings};
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
@@ -354,6 +354,8 @@ impl Settings for WorkspaceSettings {
         {
             current.max_tabs = Some(n)
         }
+
+        vscode.bool_setting("window.nativeTabs", &mut current.use_system_window_tabs);
 
         // some combination of "window.restoreWindows" and "workbench.startupEditor" might
         // map to our "restore_on_startup"
