@@ -85,7 +85,7 @@ You can specify your preferred model to use by providing a `commit_message_model
     "commit_message_model": {
       "provider": "anthropic",
       "model": "claude-3-5-haiku"
-    },
+    }
   }
 }
 ```
