@@ -585,20 +585,10 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         text: &str,
-        trigger_in_words: bool,
+        _trigger_in_words: bool,
         menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
-        let mut chars = text.chars();
-        let char = if let Some(char) = chars.next() {
-            char
-        } else {
-            return false;
-        };
-        if chars.next().is_some() {
-            return false;
-        }
-
         let snapshot = buffer.read(cx).snapshot();
         if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
             return false;
