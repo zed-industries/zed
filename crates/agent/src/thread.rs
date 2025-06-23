@@ -384,8 +384,8 @@ pub struct Thread {
 
 #[derive(Clone, Debug)]
 struct RetryState {
-    attempt: u32,
-    max_attempts: u32,
+    attempt: u8,
+    max_attempts: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2148,7 +2148,7 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        const MAX_RETRY_ATTEMPTS: u32 = 3;
+        const MAX_RETRY_ATTEMPTS: u8 = 3;
         const BASE_RETRY_DELAY_SECS: u64 = 5;
 
         // Check if we should create or update retry state
@@ -2172,7 +2172,8 @@ impl Thread {
             let delay = if let Some(custom_delay) = custom_delay {
                 custom_delay
             } else {
-                let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow(attempt - 1);
+                let delay_secs =
+                    BASE_RETRY_DELAY_SECS * 2u64.pow((attempt.saturating_sub(1)) as u32);
                 Duration::from_secs(delay_secs)
             };
             let delay_secs = delay.as_secs();
@@ -3168,8 +3169,8 @@ pub enum ThreadEvent {
     RetryScheduled {
         message_id: MessageId,
         delay: Duration,
-        attempt: u32,
-        max_attempts: u32,
+        attempt: u8,
+        max_attempts: u8,
         provider_name: LanguageModelProviderName,
     },
 }
@@ -4329,7 +4330,7 @@ fn main() {{
 
         // Should have 3 retries scheduled immediately due to errors
         let mut total_delay = Duration::from_millis(0);
-        for i in 0..3 {
+        for i in 0..3u32 {
             total_delay += Duration::from_secs(5 * 2u64.pow(i));
             cx.executor().advance_clock(total_delay);
             cx.run_until_parked();
@@ -4395,7 +4396,7 @@ fn main() {{
         cx.run_until_parked();
 
         // Advance through all retries
-        let delays = [5, 10, 20];
+        let delays = [5u64, 10, 20];
         for delay in delays {
             cx.executor().advance_clock(Duration::from_secs(delay));
             cx.run_until_parked();
