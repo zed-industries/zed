@@ -240,6 +240,21 @@ impl MessageEditor {
         &self.context_store
     }
 
+    pub fn get_text(&self, cx: &App) -> String {
+        self.editor.read(cx).text(cx)
+    }
+
+    pub fn set_text(
+        &mut self,
+        text: impl Into<Arc<str>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_text(text, window, cx);
+        });
+    }
+
     pub fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
