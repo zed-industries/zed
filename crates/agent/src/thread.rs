@@ -1897,15 +1897,13 @@ impl Thread {
                                             provider_name.0.as_ref()
                                         );
 
-                                        if !thread.handle_rate_limit_error(
+                                        thread.handle_rate_limit_error(
                                             &error_message,
                                             *retry_after,
                                             model.clone(),
                                             window,
                                             cx,
-                                        ) {
-                                            emit_generic_error(error, cx);
-                                        }
+                                        );
                                     }
                                     LanguageModelKnownError::Overloaded => {
                                         let provider_name = model.provider_name();
@@ -2084,11 +2082,12 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let delay_secs = retry_after.as_secs();
-
-        // Add a transient message to inform the user (no attempt count for single retry)
-        let retry_message = format!("{}. Retrying in {} seconds...", error_message, delay_secs);
+    ) {
+        // For rate limit errors, we only retry once with the specified duration
+        let retry_message = format!(
+            "{error_message}. Retrying in {} seconds…",
+            retry_after.as_secs()
+        );
 
         // Add a UI-only message instead of a regular message
         let id = self.next_message_id.post_inc();
@@ -2136,8 +2135,6 @@ impl Thread {
                 .log_err();
         })
         .detach();
-
-        true
     }
 
     fn handle_retryable_error(
@@ -2182,13 +2179,12 @@ impl Thread {
             let delay = if let Some(custom_delay) = custom_delay {
                 custom_delay
             } else {
-                let delay_secs =
-                    BASE_RETRY_DELAY_SECS * 2u64.pow((attempt.saturating_sub(1)) as u32);
+                let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow((attempt - 1) as u32);
                 Duration::from_secs(delay_secs)
             };
-            let delay_secs = delay.as_secs();
 
             // Add a transient message to inform the user
+            let delay_secs = delay.as_secs();
             let retry_message = format!(
                 "{}. Retrying (attempt {} of {}) in {} seconds...",
                 error_message, attempt, max_attempts, delay_secs
@@ -2593,6 +2589,11 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> bool {
         let mut canceled = self.pending_completions.pop().is_some();
+
+        // Cancel any pending retry by clearing retry state
+        if self.retry_state.take().is_some() {
+            canceled = true;
+        }
 
         for pending_tool_use in self.tool_use.cancel_pending() {
             canceled = true;
@@ -4566,8 +4567,14 @@ fn main() {{
 
         // Stream some successful content
         let fake_model = model.as_fake();
-        fake_model.stream_completion_response(&fake_model.pending_completions()[0], "Success!");
-        fake_model.end_completion_stream(&fake_model.pending_completions()[0]);
+        // After the retry, there should be a new pending completion
+        let pending = fake_model.pending_completions();
+        assert!(
+            !pending.is_empty(),
+            "Should have a pending completion after retry"
+        );
+        fake_model.stream_completion_response(&pending[0], "Success!");
+        fake_model.end_completion_stream(&pending[0]);
         cx.run_until_parked();
 
         // Check that the retry message was deleted
@@ -4782,7 +4789,7 @@ fn main() {{
                         && msg.segments.iter().any(|seg| {
                             if let MessageSegment::Text(text) = seg {
                                 text.contains("rate limit exceeded")
-                                    && text.contains("Retrying in 30 seconds...")
+                                    && text.contains("Retrying in 30 seconds…")
                                     && !text.contains("attempt")
                             } else {
                                 false
@@ -4892,6 +4899,69 @@ fn main() {{
             2,
             "Serialized thread should only have 2 messages (no UI-only)"
         );
+    }
+
+    #[gpui::test]
+    async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track retry events
+        let retry_scheduled = Arc::new(Mutex::new(false));
+        let retry_scheduled_clone = retry_scheduled.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if matches!(event, ThreadEvent::RetryScheduled { .. }) {
+                    *retry_scheduled_clone.lock() = true;
+                }
+            })
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify retry was scheduled
+        assert!(*retry_scheduled.lock(), "Should have scheduled a retry");
+
+        // Cancel the completion before the retry happens
+        thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(None, cx);
+        });
+
+        // Advance time past the retry delay
+        cx.executor().advance_clock(Duration::from_secs(10));
+        cx.run_until_parked();
+
+        // The retry should not have happened - no pending completions
+        let fake_model = model.as_fake();
+        assert_eq!(
+            fake_model.pending_completions().len(),
+            0,
+            "Should have no pending completions after cancellation"
+        );
+
+        // Verify the retry was cancelled by checking retry state
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "retry_state should be cleared after cancellation"
+            );
+        });
     }
 
     fn test_summarize_error(
