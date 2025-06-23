@@ -1902,8 +1902,6 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        dbg!("DROPPING TERMINAL", &self.title(false));
-
         self.pty_tx.0.send(Msg::Shutdown).ok();
     }
 }

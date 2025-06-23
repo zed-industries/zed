@@ -198,7 +198,6 @@ impl DapStore {
                         .await
                         .ok();
                 } else {
-                    dbg!(">>>>>>>>>>>>>>>> disconnect");
                     client
                         .request::<dap::requests::Disconnect>(dap::DisconnectArguments {
                             restart: Some(false),
@@ -207,7 +206,6 @@ impl DapStore {
                         })
                         .await
                         .ok();
-                    dbg!("<<<<<<<<<<<<<<<< disconnect");
                 }
             }
         })
