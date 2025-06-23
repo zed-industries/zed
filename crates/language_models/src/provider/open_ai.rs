@@ -528,11 +528,20 @@ impl OpenAiEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
         let Some(choice) = event.choices.first() else {
-            return Vec::new();
+            return events;
         };
 
-        let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
@@ -555,15 +564,6 @@ impl OpenAiEventMapper {
                     }
                 }
             }
-        }
-
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
         }
 
         match choice.finish_reason.as_deref() {
