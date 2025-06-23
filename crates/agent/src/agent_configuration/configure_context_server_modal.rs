@@ -503,10 +503,7 @@ impl ConfigureContextServerModal {
             ConfigurationSource::Existing { editor } => editor,
             ConfigurationSource::Extension { editor, .. } => {
                 let Some(editor) = editor else {
-                    return Label::new(
-                        "No configuration options available for this context server. Visit the Repository for any further instructions.",
-                    )
-                    .color(Color::Muted).into_any_element();
+                    return div().into_any_element();
                 };
                 editor
             }
