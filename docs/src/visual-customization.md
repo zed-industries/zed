@@ -120,6 +120,13 @@ To disable this behavior use:
 
 ```json
 {
+  // Force usage of Zed build in path prompts (file and directory pickers)
+  // instead of OS native pickers.
+  "use_system_path_prompts": false,
+  // Force usage of Zed built in confirmation prompts ("Do you want to save?")
+  // instead of OS native prompts. On linux this is ignored (always true).
+  "use_system_prompts": false,
+
   // Whether to use the system provided dialogs for Open and Save As (true) or
   // Zed's built-in keyboard-first pickers (false)
   "use_system_path_prompts": true,
