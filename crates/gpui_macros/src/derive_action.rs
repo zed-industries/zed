@@ -8,8 +8,8 @@ use syn::{Data, DeriveInput, LitStr, Token, parse::ParseStream};
 pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
 
-    let name = &input.ident;
-    let mut action_name = None;
+    let struct_name = &input.ident;
+    let mut name_argument = None;
     let mut deprecated_aliases = Vec::new();
     let mut internal = false;
     let mut namespace = None;
@@ -27,15 +27,8 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     }
                     has_name = true;
                     meta.input.parse::<Token![=]>()?;
-                    // Handle either a string literal or concat! macro
-                    if meta.input.peek(syn::token::Paren) {
-                        // Skip concat! for now, will be handled by the macro expansion
-                        let _content;
-                        syn::parenthesized!(_content in meta.input);
-                    } else {
-                        let lit: LitStr = meta.input.parse()?;
-                        action_name = Some(lit.value());
-                    }
+                    let lit: LitStr = meta.input.parse()?;
+                    name_argument = Some(lit.value());
                 } else if meta.path.is_ident("namespace") {
                     if has_namespace {
                         return Err(meta.error("'namespace' argument specified multiple times"));
@@ -72,13 +65,34 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     }
 
-    let full_name = if let Some(name) = action_name {
-        name
-    } else if let Some(ns) = namespace {
-        format!("{}::{}", ns, name)
+    let full_name = if let Some(name) = name_argument {
+        if name.contains("::") {
+            if let Some(namespace) = namespace {
+                panic!(
+                    "Action derive macro received `name = \"{name}\"`, which contains `::` \
+                    and so `namespace = \"{namespace}\"` should not be specified."
+                )
+            }
+            name
+        } else {
+            if let Some(namespace) = namespace {
+                format!("{namespace}::{name}")
+            } else {
+                panic!(
+                    "Action derive macro received `name = \"{name}\"`, \
+                    but `namespace` was not specified."
+                );
+            }
+        }
     } else {
-        // No name or namespace provided, just use the struct name
-        name.to_string()
+        if let Some(namespace) = namespace {
+            format!("{namespace}::{struct_name}")
+        } else {
+            panic!(
+                "Action derive macro for {struct_name} \
+                must specify #[action(namespace = some_namespace)]"
+            );
+        }
     };
 
     let is_unit_struct = matches!(&input.data, Data::Struct(data) if data.fields.is_empty());
@@ -140,17 +154,17 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     };
 
-    let registration = generate_register_action(name);
+    let registration = generate_register_action(struct_name);
 
     TokenStream::from(quote! {
         #registration
 
-        impl gpui::Action for #name {
+        impl gpui::Action for #struct_name {
             fn name(&self) -> &'static str {
                 #full_name
             }
 
-            fn debug_name() -> &'static str
+            fn name_for_type() -> &'static str
             where
                 Self: Sized
             {

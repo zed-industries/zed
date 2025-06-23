@@ -100,8 +100,8 @@ pub trait Action: Any + Send {
     /// Get the name of this action, for displaying in UI
     fn name(&self) -> &str;
 
-    /// Get the name of this action for debugging
-    fn debug_name() -> &'static str
+    /// Get the name of this action type (static)
+    fn name_for_type() -> &'static str
     where
         Self: Sized;
 
@@ -245,7 +245,7 @@ impl ActionRegistry {
     #[cfg(test)]
     pub(crate) fn load_action<A: Action>(&mut self) {
         self.insert_action(MacroActionData {
-            name: A::debug_name(),
+            name: A::name_for_type(),
             aliases: A::deprecated_aliases(),
             type_id: TypeId::of::<A>(),
             build: A::build,

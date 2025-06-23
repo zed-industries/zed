@@ -36,7 +36,7 @@ fn test_action_macros() {
             unimplemented!()
         }
 
-        fn debug_name() -> &'static str
+        fn name_for_type() -> &'static str
         where
             Self: Sized,
         {
