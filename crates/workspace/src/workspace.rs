@@ -3380,7 +3380,14 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(&self.active_pane, &destination, action.focus, window, cx)
+            clone_active_item(
+                self.database_id(),
+                &self.active_pane,
+                &destination,
+                action.focus,
+                window,
+                cx,
+            )
         } else {
             move_active_item(
                 &self.active_pane,
@@ -3551,7 +3558,14 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(&self.active_pane, &destination, action.focus, window, cx)
+            clone_active_item(
+                self.database_id(),
+                &self.active_pane,
+                &destination,
+                action.focus,
+                window,
+                cx,
+            )
         } else {
             move_active_item(
                 &self.active_pane,
@@ -7644,6 +7658,7 @@ pub fn move_active_item(
 }
 
 pub fn clone_active_item(
+    workspace_id: Option<WorkspaceId>,
     source: &Entity<Pane>,
     destination: &Entity<Pane>,
     focus_destination: bool,
@@ -7657,7 +7672,7 @@ pub fn clone_active_item(
         return;
     };
     destination.update(cx, |target_pane, cx| {
-        let Some(clone) = active_item.clone_on_split(None, window, cx) else {
+        let Some(clone) = active_item.clone_on_split(workspace_id, window, cx) else {
             return;
         };
         target_pane.add_item(
