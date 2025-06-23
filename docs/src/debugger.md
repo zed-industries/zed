@@ -18,7 +18,7 @@ Zed supports a variety of debug adapters for different programming languages out
 
 - Python ([debugpy](https://github.com/microsoft/debugpy.git)): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
 
-- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for C, C++, Objective-C, and Swift, offering low-level debugging features and support for Apple platforms.
+- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for Rust, C, C++, and some other compiled languages, offering low-level debugging features and support for Apple platforms. (For Swift, [see below](#swift).)
 
 - GDB ([GDB](https://sourceware.org/gdb/)): The GNU Debugger, which supports debugging for multiple programming languages including C, C++, Go, and Rust, across various platforms.
 
@@ -375,6 +375,12 @@ You might find yourself needing to connect to an existing instance of Delve that
 ```
 
 In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that _there will be no terminal_ in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
+
+#### Swift
+
+Zed's CodeLLDB adapter can be used to debug Swift programs, but it needs some customization to be able to read debug information in Swift's format (see [the CodeLLDB wiki](https://github.com/vadimcn/codelldb/wiki/Swift)). FIXME
+
+This workaround is only needed temporarily. In the near term we will extend the Swift extension for Zed to configure a debug adapter automatically out of the box, and customizing CodeLLDB will no longer be necessary.
 
 #### Ruby
 
