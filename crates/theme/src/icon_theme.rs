@@ -280,6 +280,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("bicep", "icons/file_icons/file.svg"),
     ("bun", "icons/file_icons/bun.svg"),
     ("c", "icons/file_icons/c.svg"),
+    ("cairo", "icons/file_icons/cairo.svg"),
     ("code", "icons/file_icons/code.svg"),
     ("coffeescript", "icons/file_icons/coffeescript.svg"),
     ("cpp", "icons/file_icons/cpp.svg"),
