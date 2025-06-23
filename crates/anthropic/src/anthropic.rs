@@ -781,7 +781,6 @@ pub struct MessageDelta {
     pub stop_sequence: Option<String>,
 }
 
-/// Comprehensive error type for all Anthropic API operations
 #[derive(Debug)]
 pub enum AnthropicError {
     /// Failed to serialize the HTTP request body to JSON
