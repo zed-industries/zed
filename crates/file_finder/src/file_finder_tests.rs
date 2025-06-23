@@ -898,7 +898,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        ["/roota".as_ref(),"/rootb".as_ref()],
+        ["/roota".as_ref(), "/rootb".as_ref()],
         cx,
     )
     .await;
@@ -960,7 +960,6 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "filec");
     });
-
 }
 
 #[gpui::test]
