@@ -1248,7 +1248,7 @@ impl Thread {
         self.remaining_turns -= 1;
 
         // Store the intent for potential retries
-        self.current_completion_intent = Some(intent.clone());
+        self.current_completion_intent = Some(intent);
 
         let request = self.to_completion_request(model.clone(), intent, cx);
 
