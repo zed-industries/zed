@@ -1891,11 +1891,8 @@ impl Thread {
                                         cx.notify();
                                     }
                                     LanguageModelKnownError::RateLimitExceeded { retry_after } => {
-                                        let provider_name = model.provider_name();
-                                        let error_message = format!(
-                                            "{}'s API rate limit exceeded",
-                                            provider_name.0.as_ref()
-                                        );
+                                        let provider = model.provider_name().0.as_ref();
+                                        let error_message = format!("{provider}'s API rate limit exceeded");
 
                                         if !thread.handle_rate_limit_error(
                                             &error_message,
@@ -1908,11 +1905,8 @@ impl Thread {
                                         }
                                     }
                                     LanguageModelKnownError::Overloaded => {
-                                        let provider_name = model.provider_name();
-                                        let error_message = format!(
-                                            "{}'s API servers are overloaded right now",
-                                            provider_name.0.as_ref()
-                                        );
+                                        let provider_name = model.provider_name().0.as_ref();
+                                        let error_message = format!("{provider}'s API servers are overloaded right now");
 
                                         if !thread.handle_retryable_error(
                                             &error_message,
@@ -1924,11 +1918,8 @@ impl Thread {
                                         }
                                     }
                                     LanguageModelKnownError::ApiInternalServerError => {
-                                        let provider_name = model.provider_name();
-                                        let error_message = format!(
-                                            "{}'s API server reported an internal server error",
-                                            provider_name.0.as_ref()
-                                        );
+                                        let provider = model.provider_name().0.as_ref();
+                                        let error_message = format!("{provider}'s API server reported an internal server error");
 
                                         if !thread.handle_retryable_error(
                                             &error_message,
