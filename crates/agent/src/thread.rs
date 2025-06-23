@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
@@ -2846,14 +2846,28 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+/// Resolves tool name conflicts by ensuring all tool names are unique.
+///
+/// When multiple tools have the same name, this function applies the following rules:
+/// 1. Native tools always keep their original name
+/// 2. Context server tools get prefixed with their server ID and an underscore
+/// 3. All tool names are truncated to MAX_TOOL_NAME_LENGTH (64 characters)
+/// 4. If conflicts still exist after prefixing, the conflicting tools are filtered out
+///
+/// Note: This function assumes that built-in tools occur before MCP tools in the tools list.
 fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn Tool>)> {
+    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
+        let mut tool_name = tool.name();
+        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+        tool_name
+    }
+
     const MAX_TOOL_NAME_LENGTH: usize = 64;
 
     let mut duplicated_tool_names = HashSet::default();
     let mut seen_tool_names = HashSet::default();
     for tool in tools {
-        let mut tool_name = tool.name();
-        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+        let tool_name = resolve_tool_name(tool);
         if seen_tool_names.contains(&tool_name) {
             debug_assert!(
                 tool.source() != assistant_tool::ToolSource::Native,
@@ -2866,11 +2880,17 @@ fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn 
         }
     }
 
+    if duplicated_tool_names.is_empty() {
+        return tools
+            .into_iter()
+            .map(|tool| (resolve_tool_name(tool), tool.clone()))
+            .collect();
+    }
+
     tools
         .into_iter()
         .filter_map(|tool| {
-            let mut tool_name = tool.name();
-            tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+            let mut tool_name = resolve_tool_name(tool);
             if !duplicated_tool_names.contains(&tool_name) {
                 return Some((tool_name, tool.clone()));
             }
