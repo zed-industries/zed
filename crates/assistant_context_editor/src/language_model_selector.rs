@@ -20,8 +20,8 @@ action_with_deprecated_aliases!(
     agent,
     ToggleModelSelector,
     [
-        "assistant::ToggleModelSelector",
-        "assistant2::ToggleModelSelector"
+        assistant::ToggleModelSelector,
+        assistant2::ToggleModelSelector
     ]
 );
 

@@ -26,10 +26,10 @@ action_as!(
 );
 
 // Test action_with_deprecated_aliases! macro
-action_with_deprecated_aliases!(test, ModernAction, ["OldAction", "LegacyAction"]);
+action_with_deprecated_aliases!(test, ModernAction, [OldAction, LegacyAction]);
 action_with_deprecated_aliases!(
     /// This replaces old versions
-    test, DocumentedModernAction, ["OldV1", "OldV2"]
+    test, DocumentedModernAction, [OldV1, OldV2]
 );
 
 // Test impl_actions! macro with complex types
@@ -74,7 +74,7 @@ struct ComplexActionWithAliases {
 impl_action_with_deprecated_aliases!(
     test,
     ComplexActionWithAliases,
-    ["OldComplexAction", "LegacyComplexAction"]
+    [OldComplexAction, LegacyComplexAction]
 );
 
 #[cfg(test)]
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(action.name(), "test::ModernAction");
         assert_eq!(
             ModernAction::deprecated_aliases(),
-            &["OldAction", "LegacyAction"]
+            &["test::OldAction", "test::LegacyAction"]
         );
     }
 
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(action.name(), "test::ComplexActionWithAliases");
         assert_eq!(
             ComplexActionWithAliases::deprecated_aliases(),
-            &["OldComplexAction", "LegacyComplexAction"]
+            &["test::OldComplexAction", "test::LegacyComplexAction"]
         );
     }
 

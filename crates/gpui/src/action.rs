@@ -300,55 +300,228 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
     actions
 }
 
-/// Defines and registers unit structs that can be used as actions.
+/// Defines and registers action structs that can be used throughout the application.
 ///
-/// To use more complex data types as actions, use `impl_actions!`
+/// This macro supports several attributes to customize action behavior:
 ///
-/// This macro automatically adds default documentation for actions that don't have any.
+/// - `#[impl_only]` - The struct already exists, only generate the Action trait implementation
+/// - `#[no_json]` - The action cannot be deserialized from JSON (for internal actions)
+/// - `#[deprecated_aliases("alias1", "namespace::alias2")]` - Specify deprecated aliases
+/// - `#[name("namespace::VisualName")]` - Override the action's display name
+///
+/// # Examples
+///
+/// ```ignore
+/// // Simple actions
+/// actions!(editor, [Cut, Copy, Paste]);
+///
+/// // Actions with documentation
+/// actions!(editor, [
+///     /// Cut the selected text to clipboard
+///     Cut,
+///     /// Copy the selected text to clipboard
+///     Copy,
+/// ]);
+///
+/// // Action with custom name
+/// actions!(editor, [
+///     #[name("editor::SaveFile")]
+///     Save,
+/// ]);
+///
+/// // Action with deprecated aliases
+/// actions!(editor, [
+///     #[deprecated_aliases(editor::RevertFile, RevertBuffer)]
+///     RestoreFile,
+/// ]);
+///
+/// // Implementing action for existing struct
+/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
+/// struct FindOptions { regex: bool }
+///
+/// actions!(editor, [
+///     #[impl_only]
+///     FindOptions,
+/// ]);
+///
+/// // Internal action that can't be deserialized
+/// actions!(editor, [
+///     #[no_json]
+///     InternalAction,
+/// ]);
+/// ```
 pub use gpui_macros::actions;
 
-/// Defines and registers a unit struct that can be used as an actions, with a name that differs
-/// from it's type name.
+/// Defines and registers a unit struct that can be used as an action, with a name that differs
+/// from its type name.
 ///
-/// To use more complex data types as actions, and rename them use `impl_action_as!`
+/// This is a convenience wrapper around `actions!` with the `#[name(...)]` attribute.
 ///
-/// This macro automatically adds default documentation for actions that don't have any.
-pub use gpui_macros::action_as;
+/// # Example
+///
+/// ```ignore
+/// action_as!(editor, InternalName as VisibleName);
+/// // Equivalent to:
+/// // actions!(editor, [#[name(VisibleName)] InternalName]);
+/// ```
+#[macro_export]
+macro_rules! action_as {
+    ($(#[$attr:meta])* $namespace:path, $name:ident as $visual_name:ident) => {
+        gpui::actions!(
+            $namespace,
+            [
+                $(#[$attr])*
+                #[name($visual_name)]
+                $name
+            ]
+        );
+    };
+}
 
 /// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
 ///
-/// This macro automatically adds default documentation for actions that don't have any.
-pub use gpui_macros::action_with_deprecated_aliases;
+/// This is a convenience wrapper around `actions!` with the `#[deprecated_aliases(...)]` attribute.
+///
+/// # Example
+///
+/// ```ignore
+/// action_with_deprecated_aliases!(editor, ModernAction, [OldAction, LegacyAction]);
+/// // Equivalent to:
+/// // actions!(editor, [#[deprecated_aliases(OldAction, LegacyAction)] ModernAction]);
+/// ```
+#[macro_export]
+macro_rules! action_with_deprecated_aliases {
+    ($(#[$attr:meta])* $namespace:path, $name:ident, [$($alias:path),* $(,)?]) => {
+        gpui::actions!(
+            $namespace,
+            [
+                $(#[$attr])*
+                #[deprecated_aliases($($alias),*)]
+                $name
+            ]
+        );
+    };
+}
 
-/// Registers the action and implements the Action trait for any struct that implements Clone,
-/// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+/// Implements the Action trait for a struct with deprecated aliases.
 ///
-/// Similar to `impl_actions!`, but only handles one struct, and registers some deprecated aliases.
-pub use gpui_macros::impl_action_with_deprecated_aliases;
+/// This is a convenience wrapper around `actions!` with both `#[impl_only]` and
+/// `#[deprecated_aliases(...)]` attributes.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
+/// struct ModernAction { setting: String }
+///
+/// impl_action_with_deprecated_aliases!(editor, ModernAction, [OldAction, LegacyAction]);
+/// // Equivalent to:
+/// // actions!(editor, [#[impl_only] #[deprecated_aliases(OldAction, LegacyAction)] ModernAction]);
+/// ```
+#[macro_export]
+macro_rules! impl_action_with_deprecated_aliases {
+    ($namespace:path, $name:ident, [$($alias:path),* $(,)?]) => {
+        gpui::actions!(
+            $namespace,
+            [
+                #[impl_only]
+                #[deprecated_aliases($($alias),*)]
+                $name
+            ]
+        );
+    };
+}
 
-/// Registers the action and implements the Action trait for any struct that implements Clone,
-/// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+/// Implements the Action trait for structs that implement Clone, Default, PartialEq,
+/// serde_deserialize::Deserialize, and schemars::JsonSchema.
 ///
-/// Similar to `actions!`, but accepts structs with fields.
+/// This is a convenience wrapper around `actions!` with the `#[impl_only]` attribute.
 ///
-/// Fields and variants that don't make sense for user configuration should be annotated with
-/// #[serde(skip)].
-pub use gpui_macros::impl_actions;
+/// # Example
+///
+/// ```ignore
+/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
+/// struct FindOptions { regex: bool }
+///
+/// impl_actions!(editor, [FindOptions]);
+/// // Equivalent to:
+/// // actions!(editor, [#[impl_only] FindOptions]);
+/// ```
+#[macro_export]
+macro_rules! impl_actions {
+    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
+        gpui::actions!(
+            $namespace,
+            [
+                $(
+                    #[impl_only]
+                    $name
+                ),*
+            ]
+        );
+    };
+}
 
 /// Implements the Action trait for internal action structs that implement Clone, Default,
-/// PartialEq. The purpose of this is to conveniently define values that can be passed in `dyn
-/// Action`.
+/// PartialEq. These actions cannot be deserialized from JSON.
 ///
-/// These actions are internal and so are not registered and do not support deserialization.
-pub use gpui_macros::impl_internal_actions;
+/// This is a convenience wrapper around `actions!` with both `#[impl_only]` and `#[no_json]`
+/// attributes.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Clone, Default, PartialEq)]
+/// struct InternalAction { state: u32 }
+///
+/// impl_internal_actions!(editor, [InternalAction]);
+/// // Equivalent to:
+/// // actions!(editor, [#[impl_only] #[no_json] InternalAction]);
+/// ```
+#[macro_export]
+macro_rules! impl_internal_actions {
+    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
+        gpui::actions!(
+            $namespace,
+            [
+                $(
+                    #[impl_only]
+                    #[no_json]
+                    $name
+                ),*
+            ]
+        );
+    };
+}
 
-/// Implements the Action trait for a struct that implements Clone, Default, PartialEq, and
-/// serde_deserialize::Deserialize. Allows you to rename the action visually, without changing the
-/// struct's name.
+/// Implements the Action trait for a struct with a different visual name.
 ///
-/// Fields and variants that don't make sense for user configuration should be annotated with
-/// #[serde(skip)].
-pub use gpui_macros::impl_action_as;
+/// This is a convenience wrapper around `actions!` with both `#[impl_only]` and `#[name(...)]`
+/// attributes.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
+/// struct InternalComplexAction { data: String }
+///
+/// impl_action_as!(editor, InternalComplexAction as VisibleComplexAction);
+/// // Equivalent to:
+/// // actions!(editor, [#[impl_only] #[name(VisibleComplexAction)] InternalComplexAction]);
+/// ```
+#[macro_export]
+macro_rules! impl_action_as {
+    ($namespace:path, $name:ident as $visual_name:ident) => {
+        gpui::actions!(
+            $namespace,
+            [
+                #[impl_only]
+                #[name($visual_name)]
+                $name
+            ]
+        );
+    };
+}
 
 mod no_action {
     use crate as gpui;

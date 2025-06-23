@@ -125,9 +125,9 @@ pub mod workspace {
         workspace,
         CopyPath,
         [
-            "editor::CopyPath",
-            "outline_panel::CopyPath",
-            "project_panel::CopyPath"
+            editor::CopyPath,
+            outline_panel::CopyPath,
+            project_panel::CopyPath
         ]
     );
 
@@ -135,9 +135,9 @@ pub mod workspace {
         workspace,
         CopyRelativePath,
         [
-            "editor::CopyRelativePath",
-            "outline_panel::CopyRelativePath",
-            "project_panel::CopyRelativePath"
+            editor::CopyRelativePath,
+            outline_panel::CopyRelativePath,
+            project_panel::CopyRelativePath
         ]
     );
 }
@@ -146,7 +146,7 @@ pub mod git {
     use gpui::{action_with_deprecated_aliases, actions};
 
     actions!(git, [CheckoutBranch, Switch, SelectRepo]);
-    action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
+    action_with_deprecated_aliases!(git, Branch, [branches::OpenRecent]);
 }
 
 pub mod jj {
@@ -220,7 +220,7 @@ pub mod assistant {
     use serde::Deserialize;
     use uuid::Uuid;
 
-    action_with_deprecated_aliases!(agent, ToggleFocus, ["assistant::ToggleFocus"]);
+    action_with_deprecated_aliases!(agent, ToggleFocus, [assistant::ToggleFocus]);
 
     actions!(assistant, [ShowConfiguration]);
 
@@ -234,10 +234,7 @@ pub mod assistant {
     impl_action_with_deprecated_aliases!(
         agent,
         OpenRulesLibrary,
-        [
-            "assistant::OpenRulesLibrary",
-            "assistant::DeployPromptLibrary"
-        ]
+        [assistant::OpenRulesLibrary, assistant::DeployPromptLibrary]
     );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]

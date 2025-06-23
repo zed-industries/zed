@@ -10,15 +10,12 @@ use syn::{
 
 /// Common code generation for all action types
 fn generate_action_impl(
-    namespace: &Path,
     name: &Ident,
-    visual_name: &Ident,
+    visual_name: &str,
     build_fn: TokenStream2,
     json_schema_fn: TokenStream2,
     deprecated_aliases_fn: Option<TokenStream2>,
 ) -> TokenStream2 {
-    let debug_name = format!("{}::{}", quote!(#namespace), visual_name);
-
     let deprecated_aliases_impl = if let Some(aliases_fn) = deprecated_aliases_fn {
         aliases_fn
     } else {
@@ -32,14 +29,14 @@ fn generate_action_impl(
     quote! {
         impl gpui::Action for #name {
             fn name(&self) -> &'static str {
-                #debug_name
+                #visual_name
             }
 
             fn debug_name() -> &'static str
             where
                 Self: ::std::marker::Sized
             {
-                #debug_name
+                #visual_name
             }
 
             fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
@@ -76,6 +73,51 @@ fn generate_default_doc(name: &Ident) -> TokenStream2 {
 struct ActionDef {
     attrs: Vec<Attribute>,
     name: Ident,
+    impl_only: bool,
+    no_json: bool,
+    deprecated_aliases: Vec<Path>,
+    visual_name: Option<Path>,
+}
+
+impl ActionDef {
+    fn parse_from_attributes(attrs: Vec<Attribute>, name: Ident) -> syn::Result<Self> {
+        let mut impl_only = false;
+        let mut no_json = false;
+        let mut deprecated_aliases = Vec::new();
+        let mut visual_name = None;
+        let mut remaining_attrs = Vec::new();
+
+        for attr in attrs {
+            if attr.path().is_ident("impl_only") {
+                impl_only = true;
+            } else if attr.path().is_ident("no_json") {
+                no_json = true;
+            } else if attr.path().is_ident("deprecated_aliases") {
+                // Parse deprecated aliases as paths
+                attr.parse_nested_meta(|meta| {
+                    deprecated_aliases.push(meta.path);
+                    Ok(())
+                })?;
+            } else if attr.path().is_ident("name") {
+                // Parse visual name as a path
+                attr.parse_nested_meta(|meta| {
+                    visual_name = Some(meta.path);
+                    Ok(())
+                })?;
+            } else {
+                remaining_attrs.push(attr);
+            }
+        }
+
+        Ok(ActionDef {
+            attrs: remaining_attrs,
+            name,
+            impl_only,
+            no_json,
+            deprecated_aliases,
+            visual_name,
+        })
+    }
 }
 
 struct ActionsInput {
@@ -96,7 +138,7 @@ impl Parse for ActionsInput {
             |input| {
                 let attrs = input.call(Attribute::parse_outer)?;
                 let name = input.parse()?;
-                Ok(ActionDef { attrs, name })
+                ActionDef::parse_from_attributes(attrs, name)
             },
             Token![,],
         )?;
@@ -114,421 +156,137 @@ pub fn actions_macro(input: TokenStream) -> TokenStream {
 
     let mut output = TokenStream2::new();
 
-    for ActionDef { attrs, name } in actions {
+    for action_def in actions {
+        let ActionDef {
+            attrs,
+            name,
+            impl_only,
+            no_json,
+            deprecated_aliases,
+            visual_name,
+        } = action_def;
+
+        // Determine the visual name and full name string
+        let full_visual_name = if let Some(ref vn) = visual_name {
+            // Check if the path has multiple segments (contains namespace)
+            if vn.segments.len() > 1 {
+                // Full namespace provided
+                quote!(#vn).to_string()
+            } else {
+                // Just the name provided, add current namespace
+                format!("{}::{}", quote!(#namespace), quote!(#vn))
+            }
+        } else {
+            format!("{}::{}", quote!(#namespace), name)
+        };
+
+        // Add default doc comment if needed
         let doc_attr = if !has_doc_comment(&attrs) {
             generate_default_doc(&name)
         } else {
             quote! {}
         };
 
-        let build_fn = quote! {
-            fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                Ok(Box::new(Self))
+        // Generate build function based on attributes
+        let build_fn = if no_json {
+            let error_msg = format!(
+                "{} is an internal action, so cannot be built from JSON.",
+                full_visual_name
+            );
+            quote! {
+                fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    gpui::Result::Err(gpui::private::anyhow::anyhow!(#error_msg))
+                }
+            }
+        } else if impl_only {
+            quote! {
+                fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
+                }
+            }
+        } else {
+            quote! {
+                fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    Ok(Box::new(Self))
+                }
             }
         };
 
-        let json_schema_fn = quote! {
-            fn action_json_schema(
-                _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                None
+        // Generate JSON schema function based on attributes
+        let json_schema_fn = if no_json || !impl_only {
+            quote! {
+                fn action_json_schema(
+                    _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
+                ) -> Option<gpui::private::schemars::schema::Schema> {
+                    None
+                }
+            }
+        } else {
+            quote! {
+                fn action_json_schema(
+                    generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
+                ) -> Option<gpui::private::schemars::schema::Schema> {
+                    Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(generator))
+                }
             }
         };
 
-        let action_impl =
-            generate_action_impl(&namespace, &name, &name, build_fn, json_schema_fn, None);
+        // Handle deprecated aliases
+        let deprecated_aliases_fn = if !deprecated_aliases.is_empty() {
+            // Process aliases to add namespace if missing
+            let processed_aliases: Vec<String> = deprecated_aliases
+                .iter()
+                .map(|alias| {
+                    if alias.segments.len() > 1 {
+                        // Full namespace provided
+                        quote!(#alias).to_string()
+                    } else {
+                        // Just the name provided, add current namespace
+                        format!("{}::{}", quote!(#namespace), quote!(#alias))
+                    }
+                })
+                .collect();
 
-        let full_output = quote! {
-            #doc_attr
-            #(#attrs)*
-            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug)]
-            pub struct #name;
-
-            #action_impl
-
-            gpui::register_action!(#name);
-        };
-
-        output.extend(full_output);
-    }
-
-    TokenStream::from(output)
-}
-
-struct ActionAsInput {
-    attrs: Vec<Attribute>,
-    namespace: Path,
-    name: Ident,
-    visual_name: Ident,
-}
-
-impl Parse for ActionAsInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let attrs = input.call(Attribute::parse_outer)?;
-        let namespace = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let name = input.parse()?;
-        input.parse::<Token![as]>()?;
-        let visual_name = input.parse()?;
-
-        Ok(ActionAsInput {
-            attrs,
-            namespace,
-            name,
-            visual_name,
-        })
-    }
-}
-
-pub fn action_as_macro(input: TokenStream) -> TokenStream {
-    let ActionAsInput {
-        attrs,
-        namespace,
-        name,
-        visual_name,
-    } = parse_macro_input!(input as ActionAsInput);
-
-    let doc_attr = if !has_doc_comment(&attrs) {
-        generate_default_doc(&name)
-    } else {
-        quote! {}
-    };
-
-    let build_fn = quote! {
-        fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-            Ok(Box::new(Self))
-        }
-    };
-
-    let json_schema_fn = quote! {
-        fn action_json_schema(
-            _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-        ) -> Option<gpui::private::schemars::schema::Schema> {
+            Some(quote! {
+                fn deprecated_aliases() -> &'static [&'static str] {
+                    &[#(#processed_aliases),*]
+                }
+            })
+        } else {
             None
-        }
-    };
-
-    let action_impl = generate_action_impl(
-        &namespace,
-        &name,
-        &visual_name,
-        build_fn,
-        json_schema_fn,
-        None,
-    );
-
-    let output = quote! {
-        #doc_attr
-        #(#attrs)*
-        #[derive(
-            ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
-        )]
-        pub struct #name;
-
-        #action_impl
-
-        gpui::register_action!(#name);
-    };
-
-    TokenStream::from(output)
-}
-
-struct ActionWithAliasesInput {
-    attrs: Vec<Attribute>,
-    namespace: Path,
-    name: Ident,
-    aliases: Vec<String>,
-}
-
-impl Parse for ActionWithAliasesInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let attrs = input.call(Attribute::parse_outer)?;
-        let namespace = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let name = input.parse()?;
-        input.parse::<Token![,]>()?;
-
-        let aliases_group;
-        syn::bracketed!(aliases_group in input);
-
-        let mut aliases = Vec::new();
-        let punctuated: Punctuated<syn::LitStr, Token![,]> =
-            aliases_group.parse_terminated(|input| input.parse(), Token![,])?;
-
-        for alias in punctuated {
-            aliases.push(alias.value());
-        }
-
-        Ok(ActionWithAliasesInput {
-            attrs,
-            namespace,
-            name,
-            aliases,
-        })
-    }
-}
-
-pub fn action_with_deprecated_aliases_macro(input: TokenStream) -> TokenStream {
-    let ActionWithAliasesInput {
-        attrs,
-        namespace,
-        name,
-        aliases,
-    } = parse_macro_input!(input as ActionWithAliasesInput);
-
-    let doc_attr = if !has_doc_comment(&attrs) {
-        generate_default_doc(&name)
-    } else {
-        quote! {}
-    };
-
-    let build_fn = quote! {
-        fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-            Ok(Box::new(Self))
-        }
-    };
-
-    let json_schema_fn = quote! {
-        fn action_json_schema(
-            _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-        ) -> Option<gpui::private::schemars::schema::Schema> {
-            None
-        }
-    };
-
-    let deprecated_aliases_fn = quote! {
-        fn deprecated_aliases() -> &'static [&'static str] {
-            &[
-                #(#aliases),*
-            ]
-        }
-    };
-
-    let action_impl = generate_action_impl(
-        &namespace,
-        &name,
-        &name,
-        build_fn,
-        json_schema_fn,
-        Some(deprecated_aliases_fn),
-    );
-
-    let output = quote! {
-        #doc_attr
-        #(#attrs)*
-        #[derive(
-            ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
-        )]
-        pub struct #name;
-
-        #action_impl
-
-        gpui::register_action!(#name);
-    };
-
-    TokenStream::from(output)
-}
-
-// Additional input structs for the new macros
-
-struct ImplActionsInput {
-    namespace: Path,
-    names: Vec<Ident>,
-}
-
-impl Parse for ImplActionsInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let namespace = input.parse()?;
-        input.parse::<Token![,]>()?;
-
-        let names_group;
-        syn::bracketed!(names_group in input);
-
-        let names: Punctuated<Ident, Token![,]> =
-            names_group.parse_terminated(|input| input.parse(), Token![,])?;
-
-        Ok(ImplActionsInput {
-            namespace,
-            names: names.into_iter().collect(),
-        })
-    }
-}
-
-pub fn impl_actions_macro(input: TokenStream) -> TokenStream {
-    let ImplActionsInput { namespace, names } = parse_macro_input!(input as ImplActionsInput);
-
-    let mut output = TokenStream2::new();
-
-    for name in names {
-        let build_fn = quote! {
-            fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
-            }
         };
 
-        let json_schema_fn = quote! {
-            fn action_json_schema(
-                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(generator))
-            }
-        };
-
-        let action_impl =
-            generate_action_impl(&namespace, &name, &name, build_fn, json_schema_fn, None);
-
-        let full_output = quote! {
-            #action_impl
-
-            gpui::register_action!(#name);
-        };
-
-        output.extend(full_output);
-    }
-
-    TokenStream::from(output)
-}
-
-struct ImplActionAsInput {
-    namespace: Path,
-    name: Ident,
-    visual_name: Ident,
-}
-
-impl Parse for ImplActionAsInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let namespace = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let name = input.parse()?;
-        input.parse::<Token![as]>()?;
-        let visual_name = input.parse()?;
-
-        Ok(ImplActionAsInput {
-            namespace,
-            name,
-            visual_name,
-        })
-    }
-}
-
-pub fn impl_action_as_macro(input: TokenStream) -> TokenStream {
-    let ImplActionAsInput {
-        namespace,
-        name,
-        visual_name,
-    } = parse_macro_input!(input as ImplActionAsInput);
-
-    let build_fn = quote! {
-        fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-            Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
-        }
-    };
-
-    let json_schema_fn = quote! {
-        fn action_json_schema(
-            generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-        ) -> Option<gpui::private::schemars::schema::Schema> {
-            Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(generator))
-        }
-    };
-
-    let action_impl = generate_action_impl(
-        &namespace,
-        &name,
-        &visual_name,
-        build_fn,
-        json_schema_fn,
-        None,
-    );
-
-    let output = quote! {
-        #action_impl
-
-        gpui::register_action!(#name);
-    };
-
-    TokenStream::from(output)
-}
-
-pub fn impl_internal_actions_macro(input: TokenStream) -> TokenStream {
-    let ImplActionsInput { namespace, names } = parse_macro_input!(input as ImplActionsInput);
-
-    let mut output = TokenStream2::new();
-
-    for name in names {
-        let error_message = format!(
-            "{}::{} is an internal action, so cannot be built from JSON.",
-            quote!(#namespace),
-            name
+        // Generate action implementation
+        let action_impl = generate_action_impl(
+            &name,
+            &full_visual_name,
+            build_fn,
+            json_schema_fn,
+            deprecated_aliases_fn,
         );
 
-        let build_fn = quote! {
-            fn build(_value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                gpui::Result::Err(gpui::private::anyhow::anyhow!(#error_message))
+        // Generate the full output
+        let full_output = if impl_only {
+            // For impl_only, just generate the impl
+            quote! {
+                #action_impl
+                gpui::register_action!(#name);
+            }
+        } else {
+            // For normal actions, generate the struct too
+            quote! {
+                #doc_attr
+                #(#attrs)*
+                #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug)]
+                pub struct #name;
+
+                #action_impl
+                gpui::register_action!(#name);
             }
         };
 
-        let json_schema_fn = quote! {
-            fn action_json_schema(
-                _generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                None
-            }
-        };
-
-        let action_impl =
-            generate_action_impl(&namespace, &name, &name, build_fn, json_schema_fn, None);
-
-        output.extend(action_impl);
+        output.extend(full_output);
     }
-
-    TokenStream::from(output)
-}
-
-pub fn impl_action_with_deprecated_aliases_macro(input: TokenStream) -> TokenStream {
-    let ActionWithAliasesInput {
-        attrs: _, // We don't expect attributes on this macro
-        namespace,
-        name,
-        aliases,
-    } = parse_macro_input!(input as ActionWithAliasesInput);
-
-    let build_fn = quote! {
-        fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-            Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
-        }
-    };
-
-    let json_schema_fn = quote! {
-        fn action_json_schema(
-            generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-        ) -> Option<gpui::private::schemars::schema::Schema> {
-            Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(generator))
-        }
-    };
-
-    let deprecated_aliases_fn = quote! {
-        fn deprecated_aliases() -> &'static [&'static str] {
-            &[
-                #(#aliases),*
-            ]
-        }
-    };
-
-    let action_impl = generate_action_impl(
-        &namespace,
-        &name,
-        &name,
-        build_fn,
-        json_schema_fn,
-        Some(deprecated_aliases_fn),
-    );
-
-    let output = quote! {
-        #action_impl
-
-        gpui::register_action!(#name);
-    };
 
     TokenStream::from(output)
 }
