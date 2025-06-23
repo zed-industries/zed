@@ -1506,8 +1506,18 @@ impl Thread {
                                     LanguageModelCompletionError::ApiInternalServerError =>{
                                         anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
                                     }
-                                    LanguageModelCompletionError::PromptTooLarge => {
-                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens: 0 }); // TODO try to parse the tokens out of the message, but it's ok if we don't find it
+                                    LanguageModelCompletionError::PromptTooLarge { tokens } => {
+                                        let tokens = tokens.unwrap_or_else(|| {
+                                            // We didn't get an exact token count from the API, so fall back on our estimate.
+                                            thread.total_token_usage()
+                                                .map(|usage| usage.total)
+                                                .unwrap_or(0)
+                                                // We know the context window was exceeded in practice, so if our estimate was
+                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
+                                                .max(model.max_token_count().saturating_add(1))
+                                        });
+
+                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens })
                                     }
                                     LanguageModelCompletionError::ApiReadResponseError(io_error) => {
                                         anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));

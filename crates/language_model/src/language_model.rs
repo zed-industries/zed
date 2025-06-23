@@ -8,7 +8,7 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anthropic::AnthropicError;
+use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::Result;
 use client::Client;
 use futures::FutureExt;
@@ -98,7 +98,7 @@ pub enum LanguageModelCompletionError {
     #[error("language model provider API endpoint not found")]
     ApiEndpointNotFound,
     #[error("prompt too large for context window")]
-    PromptTooLarge,
+    PromptTooLarge { tokens: Option<u64> },
     #[error("internal server error in language model provider's API")]
     ApiInternalServerError,
     #[error("I/O error reading response from language model provider's API: {0:?}")]
@@ -145,7 +145,9 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
                 AuthenticationError => LanguageModelCompletionError::AuthenticationError,
                 PermissionError => LanguageModelCompletionError::PermissionError,
                 NotFoundError => LanguageModelCompletionError::ApiEndpointNotFound,
-                RequestTooLarge => LanguageModelCompletionError::PromptTooLarge,
+                RequestTooLarge => LanguageModelCompletionError::PromptTooLarge {
+                    tokens: parse_prompt_too_long(&error.message),
+                },
                 RateLimitError => LanguageModelCompletionError::RateLimitExceeded {
                     retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
                 },
