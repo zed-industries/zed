@@ -106,10 +106,12 @@ impl Render for StatusToast {
             .gap_2()
             .py_1p5()
             .pl_2p5()
-            .map(|this| if has_action_or_dismiss {
-                this.pr_1p5()
-            } else {
-                this.pr_2p5()
+            .map(|this| {
+                if has_action_or_dismiss {
+                    this.pr_1p5()
+                } else {
+                    this.pr_2p5()
+                }
             })
             .flex_none()
             .bg(cx.theme().colors().surface_background)
@@ -142,7 +144,7 @@ impl Render for StatusToast {
                             handle.update(cx, |_, cx| {
                                 cx.emit(DismissEvent);
                             });
-                        })
+                        }),
                 )
             })
     }
@@ -174,9 +176,8 @@ impl Component for StatusToast {
             this.action("Restart", |_, _| {})
         });
 
-        let dismiss_button_example = StatusToast::new("Dismiss Button", cx, |this, _| {
-            this.dismiss_button(true)
-        });
+        let dismiss_button_example =
+            StatusToast::new("Dismiss Button", cx, |this, _| this.dismiss_button(true));
 
         let icon_example = StatusToast::new(
             "Nathan Sobo accepted your contact request",
@@ -224,7 +225,10 @@ impl Component for StatusToast {
                                 div().child(action_example).into_any_element(),
                             ),
                             single_example("Icon", div().child(icon_example).into_any_element()),
-                            single_example("Dismiss Button", div().child(dismiss_button_example).into_any_element()),
+                            single_example(
+                                "Dismiss Button",
+                                div().child(dismiss_button_example).into_any_element(),
+                            ),
                         ],
                     ),
                     example_group_with_title(
