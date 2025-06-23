@@ -378,9 +378,18 @@ In such case Zed won't spawn a new instance of Delve, as it opts to use an exist
 
 #### Swift
 
-Zed's CodeLLDB adapter can be used to debug Swift programs, but it needs some customization to be able to read debug information in Swift's format (see [the CodeLLDB wiki](https://github.com/vadimcn/codelldb/wiki/Swift)). FIXME
+Out-of-the-box support for debugging Swift programs will be provided by the Swift extension for Zed in the near future. In the meantime, the builtin CodeLLDB adapter can be used with some customization. On macOS, you'll need to locate the `lldb-dap` binary that's part of Apple's LLVM toolchain by running `which lldb-dap`, then point Zed to it in your project's `.zed/settings.json`:
 
-This workaround is only needed temporarily. In the near term we will extend the Swift extension for Zed to configure a debug adapter automatically out of the box, and customizing CodeLLDB will no longer be necessary.
+```json
+{
+  "dap": {
+    "CodeLLDB": {
+      "binary": "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb-dap", // example value, may vary between systems
+      "args": []
+    }
+  }
+}
+```
 
 #### Ruby
 
@@ -592,7 +601,7 @@ You can pass `binary`, `args`, or both. `binary` should be a path to a _debug ad
   "dap": {
     "CodeLLDB": {
       "binary": "/Users/name/bin/lldb-dap",
-      "args": ["--settings", "{sourceLanguages:[\"rust\"]}"]
+      "args": ["--settings", "{\"sourceLanguages\":[\"rust\"]}"]
     }
   }
 }
