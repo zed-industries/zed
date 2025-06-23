@@ -1145,6 +1145,7 @@ impl ActiveThread {
                 delay,
                 attempt,
                 max_attempts,
+                provider_name,
             } => {
                 // The retry message is already added to the thread as a system message
                 // We just need to ensure the UI updates
@@ -1160,7 +1161,8 @@ impl ActiveThread {
 
                 // Show a notification to the user
                 let notification_text = format!(
-                    "API overloaded. Retrying in {}s (attempt {}/{})",
+                    "{} retry in {}s (attempt {}/{})",
+                    provider_name.0.as_ref(),
                     delay.as_secs(),
                     attempt,
                     max_attempts

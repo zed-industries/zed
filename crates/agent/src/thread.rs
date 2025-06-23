@@ -23,11 +23,11 @@ use gpui::{
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
-    TokenUsage,
+    LanguageModelId, LanguageModelKnownError, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUseId,
+    MessageContent, ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel,
+    StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -1881,90 +1881,54 @@ impl Thread {
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelKnownError::RateLimitExceeded { .. } => {
-                                        // In the future we will report the error to the user, wait retry_after, and then retry.
-                                        emit_generic_error(error, cx);
+                                    LanguageModelKnownError::RateLimitExceeded { retry_after } => {
+                                        let provider_name = model.provider_name();
+                                        let error_message = format!(
+                                            "{}'s API rate limit exceeded",
+                                            provider_name.0.as_ref()
+                                        );
+
+                                        if !thread.handle_retryable_error_with_delay(
+                                            &error_message,
+                                            Some(*retry_after),
+                                            model.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            emit_generic_error(error, cx);
+                                        }
                                     }
                                     LanguageModelKnownError::Overloaded => {
-                                        const MAX_RETRY_ATTEMPTS: u32 = 3;
-                                        const BASE_RETRY_DELAY_SECS: u64 = 5;
+                                        let provider_name = model.provider_name();
+                                        let error_message = format!(
+                                            "{}'s API servers are overloaded right now",
+                                            provider_name.0.as_ref()
+                                        );
 
-                                        // Check if we should create or update retry state
-                                        let should_retry = if let Some(retry_state) = &mut thread.retry_state {
-                                            retry_state.attempt += 1;
-                                            retry_state.attempt <= retry_state.max_attempts
-                                        } else {
-                                            thread.retry_state = Some(RetryState {
-                                                attempt: 1,
-                                                max_attempts: MAX_RETRY_ATTEMPTS,
-                                            });
-                                            true
-                                        };
-
-                                        if should_retry {
-                                            let retry_state = thread.retry_state.as_ref().unwrap();
-                                            let attempt = retry_state.attempt;
-                                            let max_attempts = retry_state.max_attempts;
-
-                                            // Calculate exponential backoff
-                                            let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow(attempt - 1);
-                                            let delay = Duration::from_secs(delay_secs);
-
-                                            // Add a transient message to inform the user
-                                            let retry_message = format!(
-                                                "The API is currently overloaded. Automatically retrying in {} seconds... (attempt {}/{})",
-                                                delay_secs,
-                                                attempt,
-                                                max_attempts
-                                            );
-
-                                            let message_id = thread.insert_message(
-                                                Role::System,
-                                                vec![MessageSegment::Text(retry_message)],
-                                                LoadedContext::default(),
-                                                Vec::new(),
-                                                true, // is_hidden - won't be persisted
-                                                cx,
-                                            );
-
-                                            cx.emit(ThreadEvent::RetryScheduled {
-                                                message_id,
-                                                delay,
-                                                attempt,
-                                                max_attempts,
-                                            });
-
-                                            // Schedule the retry
-                                            let thread_handle = cx.entity().downgrade();
-                                            let model = model.clone();
-                                            let intent = thread.current_completion_intent.clone().unwrap_or(CompletionIntent::UserPrompt);
-
-                                            cx.spawn(async move |_thread, cx| {
-                                                cx.background_executor().timer(delay).await;
-
-                                                thread_handle.update(cx, |thread, cx| {
-                                                    // Remove the retry notification message
-                                                    if let Some(index) = thread.messages.iter().position(|m| m.id == message_id) {
-                                                        thread.messages.remove(index);
-                                                        cx.emit(ThreadEvent::MessageDeleted(message_id));
-                                                    }
-
-                                                    // Retry the completion
-                                                    thread.send_to_model(model, intent, window, cx);
-                                                }).log_err();
-                                            }).detach();
-
-                                            // Don't emit a generic error or cancel the completion yet
-                                            return;
-                                        } else {
-                                            // Max retries exceeded, clear retry state and show error
-                                            thread.retry_state = None;
+                                        if !thread.handle_retryable_error(
+                                            &error_message,
+                                            model.clone(),
+                                            window,
+                                            cx,
+                                        ) {
                                             emit_generic_error(error, cx);
                                         }
                                     }
                                     LanguageModelKnownError::ApiInternalServerError => {
-                                        // In the future we will retry the request, but only once.
-                                        emit_generic_error(error, cx);
+                                        let provider_name = model.provider_name();
+                                        let error_message = format!(
+                                            "{}'s API server reported an internal server error",
+                                            provider_name.0.as_ref()
+                                        );
+
+                                        if !thread.handle_retryable_error(
+                                            &error_message,
+                                            model.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            emit_generic_error(error, cx);
+                                        }
                                     }
                                     LanguageModelKnownError::ReadResponseError(_) |
                                     LanguageModelKnownError::DeserializeResponse(_) |
@@ -2102,6 +2066,110 @@ impl Thread {
 
             Some(())
         });
+    }
+
+    fn handle_retryable_error(
+        &mut self,
+        error_message: &str,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.handle_retryable_error_with_delay(error_message, None, model, window, cx)
+    }
+
+    fn handle_retryable_error_with_delay(
+        &mut self,
+        error_message: &str,
+        custom_delay: Option<Duration>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        const MAX_RETRY_ATTEMPTS: u32 = 3;
+        const BASE_RETRY_DELAY_SECS: u64 = 5;
+
+        // Check if we should create or update retry state
+        let should_retry = if let Some(retry_state) = &mut self.retry_state {
+            retry_state.attempt += 1;
+            retry_state.attempt <= retry_state.max_attempts
+        } else {
+            self.retry_state = Some(RetryState {
+                attempt: 1,
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            });
+            true
+        };
+
+        if should_retry {
+            let retry_state = self.retry_state.as_ref().unwrap();
+            let attempt = retry_state.attempt;
+            let max_attempts = retry_state.max_attempts;
+
+            // Use custom delay if provided (e.g., from rate limit), otherwise exponential backoff
+            let delay = if let Some(custom_delay) = custom_delay {
+                custom_delay
+            } else {
+                let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow(attempt - 1);
+                Duration::from_secs(delay_secs)
+            };
+            let delay_secs = delay.as_secs();
+
+            // Add a transient message to inform the user
+            let retry_message = format!(
+                "{}. Retrying (attempt {} of {}) in {} seconds...",
+                error_message, attempt, max_attempts, delay_secs
+            );
+
+            let message_id = self.insert_message(
+                Role::System,
+                vec![MessageSegment::Text(retry_message)],
+                LoadedContext::default(),
+                Vec::new(),
+                true, // is_hidden - won't be persisted
+                cx,
+            );
+
+            cx.emit(ThreadEvent::RetryScheduled {
+                message_id,
+                delay,
+                attempt,
+                max_attempts,
+                provider_name: model.provider_name(),
+            });
+
+            // Schedule the retry
+            let thread_handle = cx.entity().downgrade();
+            let intent = self
+                .current_completion_intent
+                .clone()
+                .unwrap_or(CompletionIntent::UserPrompt);
+
+            cx.spawn(async move |_thread, cx| {
+                cx.background_executor().timer(delay).await;
+
+                thread_handle
+                    .update(cx, |thread, cx| {
+                        // Remove the retry notification message
+                        if let Some(index) = thread.messages.iter().position(|m| m.id == message_id)
+                        {
+                            thread.messages.remove(index);
+                            cx.emit(ThreadEvent::MessageDeleted(message_id));
+                        }
+
+                        // Retry the completion
+                        thread.send_to_model(model, intent, window, cx);
+                    })
+                    .log_err();
+            })
+            .detach();
+
+            true
+        } else {
+            // Max retries exceeded, clear retry state
+            self.retry_state = None;
+            false
+        }
     }
 
     pub fn start_generating_detailed_summary_if_needed(
@@ -3040,6 +3108,7 @@ pub enum ThreadEvent {
         delay: Duration,
         attempt: u32,
         max_attempts: u32,
+        provider_name: LanguageModelProviderName,
     },
 }
 
