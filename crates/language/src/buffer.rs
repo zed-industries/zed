@@ -3898,6 +3898,58 @@ impl BufferSnapshot {
         })
     }
 
+    pub fn get_fold_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        options: TreeSitterOptions,
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches =
+            self.syntax
+                .matches_with_options(range.clone(), &self.text, options, |grammar| {
+                    grammar.fold_config.as_ref().map(|c| &c.query)
+                });
+
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.fold_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            loop {
+                let mat = matches.peek()?;
+
+                let Some(config) = configs[mat.grammar_index].as_ref() else {
+                    matches.advance();
+                    continue;
+                };
+
+                let mut byte_range: Option<Range<usize>> = None;
+
+                for capture in mat.captures {
+                    if config.fold_capture_ix.contains(&capture.index) {
+                        let capture_range = capture.node.byte_range();
+                        if let Some(range) = byte_range.as_mut() {
+                            range.start = range.start.min(capture_range.start);
+                            range.end = range.end.max(capture_range.end);
+                        } else {
+                            byte_range = Some(capture_range);
+                        }
+                    }
+                }
+
+                matches.advance();
+
+                if byte_range.is_some() {
+                    return byte_range;
+                }
+            }
+        })
+    }
+
     /// Returns enclosing bracket ranges containing the given range
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
