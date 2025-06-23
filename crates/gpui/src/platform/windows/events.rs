@@ -48,7 +48,7 @@ pub(crate) fn handle_msg(
         WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
-        WM_CLOSE => handle_close_msg(state_ptr),
+        WM_CLOSE => handle_close_msg(handle, state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
         WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
@@ -248,16 +248,30 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     Some(0)
 }
 
-fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_close_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.should_close.take() {
+    let output = if let Some(mut callback) = lock.callbacks.should_close.take() {
         drop(lock);
         let should_close = callback();
         state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
         if should_close { None } else { Some(0) }
     } else {
         None
+    };
+
+    // Workaround as window close animation is not played with `WS_EX_LAYERED` enabled.
+    if output.is_none() {
+        unsafe {
+            let current_style = get_window_long(handle, GWL_EXSTYLE);
+            set_window_long(
+                handle,
+                GWL_EXSTYLE,
+                current_style & !WS_EX_LAYERED.0 as isize,
+            );
+        }
     }
+
+    output
 }
 
 fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
