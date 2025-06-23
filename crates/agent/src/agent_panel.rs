@@ -29,7 +29,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, Role,
+    ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry, Role,
     ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, ProjectPath, Worktree};

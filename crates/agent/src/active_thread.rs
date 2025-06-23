@@ -64,6 +64,15 @@ use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const ASSISTANT_EDITOR_MAX_LINES: usize = 50;
+
+static LANG_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```([a-zA-Z0-9]{1,5}) ([^\n]*[/\\][^\n]*\.([a-zA-Z0-9]+)(?:#[^\n]*)?)")
+        .expect("Failed to create LANG_PREFIX_REGEX")
+});
+static PATH_CODE_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```(\S*[/\\]\S*\.(\w+)\S*)").expect("Failed to create PATH_CODE_BLOCK_REGEX")
+});
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -343,17 +352,6 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         ..Default::default()
     }
 }
-
-const ASSISTANT_EDITOR_MAX_LINES: usize = 50;
-const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
-
-static LANG_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"```([a-zA-Z0-9]{1,5}) ([^\n]*[/\\][^\n]*\.([a-zA-Z0-9]+)(?:#[^\n]*)?)")
-        .expect("Failed to create LANG_PREFIX_REGEX")
-});
-static PATH_CODE_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"```(\S*[/\\]\S*\.(\w+)\S*)").expect("Failed to create PATH_CODE_BLOCK_REGEX")
-});
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -1498,7 +1496,8 @@ impl ActiveThread {
                 cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("", cx)), cx));
             let mut e = Editor::new(
                 editor::EditorMode::AutoHeight {
-                    max_lines: ASSISTANT_EDITOR_MAX_LINES,
+                    min_lines: 1,
+                    max_lines: Some(ASSISTANT_EDITOR_MAX_LINES),
                 },
                 buffer,
                 None,
