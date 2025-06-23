@@ -118,11 +118,21 @@ pub fn derive_action(input: TokenStream) -> TokenStream {
     let mut no_json = false;
     let mut namespace = None;
 
-    // Parse the #[action(...)] attribute
+    // Track which arguments have been specified to detect duplicates
+    let mut has_name = false;
+    let mut has_namespace = false;
+    let mut has_no_json = false;
+    let mut has_deprecated_aliases = false;
+
+    // Parse all #[action(...)] attributes
     for attr in &input.attrs {
         if attr.path().is_ident("action") {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
+                    if has_name {
+                        return Err(meta.error("'name' argument specified multiple times"));
+                    }
+                    has_name = true;
                     meta.input.parse::<Token![=]>()?;
                     // Handle either a string literal or concat! macro
                     if meta.input.peek(syn::token::Paren) {
@@ -134,12 +144,26 @@ pub fn derive_action(input: TokenStream) -> TokenStream {
                         action_name = Some(lit.value());
                     }
                 } else if meta.path.is_ident("namespace") {
+                    if has_namespace {
+                        return Err(meta.error("'namespace' argument specified multiple times"));
+                    }
+                    has_namespace = true;
                     meta.input.parse::<Token![=]>()?;
-                    let lit: LitStr = meta.input.parse()?;
-                    namespace = Some(lit.value());
+                    let ident: Ident = meta.input.parse()?;
+                    namespace = Some(ident.to_string());
                 } else if meta.path.is_ident("no_json") {
+                    if has_no_json {
+                        return Err(meta.error("'no_json' argument specified multiple times"));
+                    }
+                    has_no_json = true;
                     no_json = true;
                 } else if meta.path.is_ident("deprecated_aliases") {
+                    if has_deprecated_aliases {
+                        return Err(
+                            meta.error("'deprecated_aliases' argument specified multiple times")
+                        );
+                    }
+                    has_deprecated_aliases = true;
                     meta.input.parse::<Token![=]>()?;
                     // Parse array of string literals
                     let content;
@@ -162,8 +186,7 @@ pub fn derive_action(input: TokenStream) -> TokenStream {
     } else if let Some(ns) = namespace {
         format!("{}::{}", ns, name)
     } else {
-        // For unit structs defined by actions! macro, the full name
-        // will be provided via the name attribute
+        // No name or namespace provided, just use the struct name
         name.to_string()
     };
 

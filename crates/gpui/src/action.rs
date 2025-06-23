@@ -302,12 +302,15 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
 
 /// Derive macro for implementing the Action trait.
 ///
-/// This macro can be configured using the `#[action(...)]` attribute:
+/// This macro can be configured using the `#[action(...)]` attribute. Multiple
+/// `#[action(...)]` attributes can be specified to combine their arguments.
 ///
 /// - `name = "namespace::ActionName"` - Override the action's display name
-/// - `namespace = "namespace"` - Set just the namespace (name will be struct name)
+/// - `namespace = identifier` - Set just the namespace (name will be struct name)
 /// - `no_json` - Mark that the action cannot be deserialized from JSON
 /// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
+///
+/// It is invalid to specify the same argument multiple times across attributes.
 ///
 /// # Examples
 ///
@@ -315,6 +318,12 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
 /// // Simple action
 /// #[derive(Clone, Default, PartialEq, Action)]
 /// struct Cut;
+///
+/// // Action with multiple attributes
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(namespace = editor)]
+/// #[action(deprecated_aliases = ["OldCut", "LegacyCut"])]
+/// struct NewCut;
 ///
 /// // Action with custom name
 /// #[derive(Clone, Default, PartialEq, Action)]
@@ -347,16 +356,9 @@ macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
         $(
             $(#[$attr])*
-            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug)]
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
+            #[action(namespace = $namespace)]
             pub struct $name;
-
-            gpui::private::impl_action!(
-                $name,
-                $namespace,
-                $name,
-                true,
-                []
-            );
         )*
     };
 }

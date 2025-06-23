@@ -52,3 +52,35 @@ fn test_action_macros() {
         }
     }
 }
+
+#[test]
+fn test_multiple_action_attributes() {
+    use gpui::Action;
+
+    // Test action with multiple attributes
+    #[derive(Clone, Default, PartialEq, gpui::Action)]
+    #[action(namespace = test)]
+    #[action(deprecated_aliases = ["OldTestAction", "LegacyTestAction"])]
+    struct MultiAttributeAction;
+
+    // Verify the action name is correctly set
+    assert_eq!(
+        MultiAttributeAction::debug_name(),
+        "test::MultiAttributeAction"
+    );
+
+    // Verify deprecated aliases are correctly set
+    assert_eq!(
+        MultiAttributeAction::deprecated_aliases(),
+        &["OldTestAction", "LegacyTestAction"]
+    );
+
+    // Test with custom name and deprecated aliases
+    #[derive(Clone, Default, PartialEq, gpui::Action)]
+    #[action(name = "custom::CustomName")]
+    #[action(deprecated_aliases = ["OldName"])]
+    struct CustomNameAction;
+
+    assert_eq!(CustomNameAction::debug_name(), "custom::CustomName");
+    assert_eq!(CustomNameAction::deprecated_aliases(), &["OldName"]);
+}
