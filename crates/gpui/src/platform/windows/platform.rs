@@ -42,6 +42,7 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_thread_id_win32: u32,
 }
@@ -103,6 +104,10 @@ impl WindowsPlatform {
             DirectWriteTextSystem::new(&bitmap_factory)
                 .context("Error creating DirectWriteTextSystem")?,
         );
+        let drop_target_helper: IDropTargetHelper = unsafe {
+            CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
+                .context("Error creating drop target helper.")?
+        };
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
@@ -120,6 +125,7 @@ impl WindowsPlatform {
             text_system,
             windows_version,
             bitmap_factory,
+            drop_target_helper,
             validation_number,
             main_thread_id_win32,
         })
@@ -177,6 +183,7 @@ impl WindowsPlatform {
             executor: self.foreground_executor.clone(),
             current_cursor: self.state.borrow().current_cursor,
             windows_version: self.windows_version,
+            drop_target_helper: self.drop_target_helper.clone(),
             validation_number: self.validation_number,
             main_receiver: self.main_receiver.clone(),
             main_thread_id_win32: self.main_thread_id_win32,
@@ -728,6 +735,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) current_cursor: Option<HCURSOR>,
     pub(crate) windows_version: WindowsVersion,
+    pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) main_thread_id_win32: u32,
