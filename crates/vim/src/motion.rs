@@ -356,8 +356,8 @@ actions!(
     ]
 );
 
-action_with_deprecated_aliases!(vim, WrappingLeft, [vim::Backspace]);
-action_with_deprecated_aliases!(vim, WrappingRight, [vim::Space]);
+action_with_deprecated_aliases!(vim, WrappingLeft, ["vim::Backspace"]);
+action_with_deprecated_aliases!(vim, WrappingRight, ["vim::Space"]);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {

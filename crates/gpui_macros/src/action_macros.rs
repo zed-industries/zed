@@ -44,17 +44,17 @@ fn generate_action_impl(
     let json_schema_fn = if no_json || is_unit_struct {
         quote! {
             fn action_json_schema(
-                _: &mut schemars::r#gen::SchemaGenerator,
-            ) -> Option<schemars::schema::Schema> {
+                _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
                 None
             }
         }
     } else {
         quote! {
             fn action_json_schema(
-                generator: &mut schemars::r#gen::SchemaGenerator,
-            ) -> Option<schemars::schema::Schema> {
-                Some(<Self as schemars::JsonSchema>::json_schema(generator))
+                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(generator))
             }
         }
     };

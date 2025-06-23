@@ -341,62 +341,7 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
 /// ```
 pub use gpui_macros::Action;
 
-/// Defines and registers action structs that can be used throughout the application.
-///
-/// This macro supports several attributes to customize action behavior:
-///
-/// - `#[impl_only]` - The struct already exists, only generate the Action trait implementation
-/// - `#[no_json]` - The action cannot be deserialized from JSON (for internal actions)
-/// - `#[deprecated_aliases("alias1", "namespace::alias2")]` - Specify deprecated aliases
-/// - `#[name("namespace::VisualName")]` - Override the action's display name
-///
-/// # Examples
-///
-/// ```ignore
-/// // Simple actions
-/// actions!(editor, [Cut, Copy, Paste]);
-///
-/// // Actions with documentation
-/// actions!(editor, [
-///     /// Cut the selected text to clipboard
-///     Cut,
-///     /// Copy the selected text to clipboard
-///     Copy,
-/// ]);
-///
-/// // Action with custom name
-/// actions!(editor, [
-///     #[name("editor::SaveFile")]
-///     Save,
-/// ]);
-///
-/// // Action with deprecated aliases
-/// actions!(editor, [
-///     #[action(deprecated_aliases = ["editor::RevertFile", "RevertBuffer"])]
-///     RestoreFile,
-/// ]);
-///
-/// // Implementing action for existing struct
-/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
-/// struct FindOptions { regex: bool }
-///
-/// actions!(editor, [
-///     #[impl_only]
-///     FindOptions,
-/// ]);
-///
-/// // Internal action that can't be deserialized
-/// actions!(editor, [
-///     #[no_json]
-///     InternalAction,
-/// ]);
-/// ```
-
-/// Defines and registers unit structs that can be used as actions.
-///
-/// To use more complex data types as actions, use `impl_actions!`
-///
-/// This macro automatically adds default documentation for actions that don't have any.
+/// Defines and registers unit structs that can be used as actions. For more complex data types, derive `Action`.
 #[macro_export]
 macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
