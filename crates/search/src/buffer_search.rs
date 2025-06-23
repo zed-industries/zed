@@ -36,8 +36,9 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
+    notifications::NotificationId,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
 };
 
@@ -1243,6 +1244,8 @@ impl BufferSearchBar {
                     search
                 } else {
                     if self.search_options.contains(SearchOptions::REGEX) {
+                        struct BufferSearchRegexError;
+
                         match SearchQuery::regex(
                             query,
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -1255,8 +1258,29 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
-                            Err(_) => {
+                            Ok(query) => {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.dismiss_toast(
+                                            &NotificationId::unique::<BufferSearchRegexError>(),
+                                            cx,
+                                        );
+                                    });
+                                }
+
+                                query.with_replacement(self.replacement(cx))
+                            }
+                            Err(e) => {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    let toast = Toast::new(
+                                        NotificationId::unique::<BufferSearchRegexError>(),
+                                        format!("Invalid regex: {}", e),
+                                    );
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_toast(toast, cx);
+                                    });
+                                }
+
                                 self.query_contains_error = true;
                                 self.clear_active_searchable_item_matches(window, cx);
                                 cx.notify();
