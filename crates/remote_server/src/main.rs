@@ -46,7 +46,8 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() {
+fn main() -> anyhow::Result<()> {
+    use anyhow::Context;
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
     use remote::proxy::ProxyLaunchError;
     use remote_server::unix::{execute_proxy, execute_run};
@@ -55,15 +56,15 @@ fn main() {
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
-        return;
+        return Ok(());
     }
 
     if cli.printenv {
         util::shell_env::print_env();
-        return;
+        return Ok(());
     }
 
-    let result = match cli.command {
+    match cli.command {
         Some(Commands::Run {
             log_file,
             pid_file,
@@ -108,9 +109,6 @@ fn main() {
             eprintln!("usage: remote <run|proxy|version>");
             std::process::exit(1);
         }
-    };
-    if let Err(error) = result {
-        log::error!("exiting due to error: {}", error);
-        std::process::exit(1);
     }
+    .context("exiting remote server du to error")
 }
