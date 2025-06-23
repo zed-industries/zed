@@ -11,6 +11,8 @@ use text::*;
 
 pub use proto::{BufferState, File, Operation};
 
+use super::{point_from_lsp, point_to_lsp};
+
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
@@ -581,4 +583,34 @@ pub fn serialize_version(version: &clock::Global) -> Vec<proto::VectorClockEntry
             timestamp: entry.value,
         })
         .collect()
+}
+
+pub fn serialize_lsp_edit(edit: lsp::TextEdit) -> proto::TextEdit {
+    let start = point_from_lsp(edit.range.start).0;
+    let end = point_from_lsp(edit.range.end).0;
+    proto::TextEdit {
+        new_text: edit.new_text,
+        lsp_range_start: Some(proto::PointUtf16 {
+            row: start.row,
+            column: start.column,
+        }),
+        lsp_range_end: Some(proto::PointUtf16 {
+            row: end.row,
+            column: end.column,
+        }),
+    }
+}
+
+pub fn deserialize_lsp_edit(edit: proto::TextEdit) -> Option<lsp::TextEdit> {
+    let start = edit.lsp_range_start?;
+    let start = PointUtf16::new(start.row, start.column);
+    let end = edit.lsp_range_end?;
+    let end = PointUtf16::new(end.row, end.column);
+    Some(lsp::TextEdit {
+        range: lsp::Range {
+            start: point_to_lsp(start),
+            end: point_to_lsp(end),
+        },
+        new_text: edit.new_text,
+    })
 }

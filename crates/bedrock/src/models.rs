@@ -99,17 +99,21 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        max_tokens: usize,
+        max_tokens: u64,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        max_output_tokens: Option<u32>,
+        max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
     },
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
-        Self::Claude3_5Haiku
+    pub fn default_fast(region: &str) -> Self {
+        if region.starts_with("us-") {
+            Self::Claude3_5Haiku
+        } else {
+            Self::Claude3Haiku
+        }
     }
 
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
@@ -309,7 +313,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Claude3_5SonnetV2
             | Self::Claude3Opus
@@ -328,7 +332,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> u32 {
+    pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
             Self::Claude3_7Sonnet
@@ -452,6 +456,10 @@ impl Model {
                 | Model::Claude3_5SonnetV2
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
+                | Model::ClaudeOpus4
+                | Model::ClaudeOpus4Thinking
                 | Model::Claude3Haiku
                 | Model::Claude3Opus
                 | Model::Claude3Sonnet
@@ -479,6 +487,8 @@ impl Model {
                 Model::Claude3_5Sonnet
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
                 | Model::Claude3Haiku
                 | Model::Claude3Sonnet
                 | Model::MetaLlama321BInstructV1
@@ -492,7 +502,11 @@ impl Model {
                 Model::Claude3_5Sonnet
                 | Model::Claude3_5SonnetV2
                 | Model::Claude3Haiku
-                | Model::Claude3Sonnet,
+                | Model::Claude3Sonnet
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking,
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
@@ -527,6 +541,10 @@ mod tests {
     #[test]
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         // Test European regions
+        assert_eq!(
+            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1")?,
+            "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+        );
         assert_eq!(
             Model::Claude3Sonnet.cross_region_inference_id("eu-west-1")?,
             "eu.anthropic.claude-3-sonnet-20240229-v1:0"

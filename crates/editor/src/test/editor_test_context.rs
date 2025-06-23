@@ -1,6 +1,6 @@
 use crate::{
     AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
-    display_map::ToDisplayPoint,
+    display_map::{HighlightKey, ToDisplayPoint},
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
@@ -509,7 +509,7 @@ impl EditorTestContext {
             let snapshot = editor.snapshot(window, cx);
             editor
                 .background_highlights
-                .get(&TypeId::of::<Tag>())
+                .get(&HighlightKey::Type(TypeId::of::<Tag>()))
                 .map(|h| h.1.clone())
                 .unwrap_or_default()
                 .iter()

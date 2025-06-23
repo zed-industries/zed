@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
@@ -8,7 +7,8 @@ use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use collections::HashMap;
+use client::{ModelRequestUsage, RequestUsage};
+use collections::{HashMap, HashSet};
 use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
@@ -23,8 +23,8 @@ use language_model::{
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -37,8 +37,9 @@ use settings::Settings;
 use thiserror::Error;
 use ui::Window;
 use util::{ResultExt as _, post_inc};
+
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
+use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 use crate::ThreadStore;
 use crate::agent_profile::AgentProfile;
@@ -195,20 +196,20 @@ impl MessageSegment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
     pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorktreeSnapshot {
     pub worktree_path: String,
     pub git_state: Option<GitState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GitState {
     pub remote_url: Option<String>,
     pub head_sha: Option<String>,
@@ -247,7 +248,7 @@ impl LastRestoreCheckpoint {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum DetailedSummaryState {
     #[default]
     NotGenerated,
@@ -272,8 +273,8 @@ impl DetailedSummaryState {
 
 #[derive(Default, Debug)]
 pub struct TotalTokenUsage {
-    pub total: usize,
-    pub max: usize,
+    pub total: u64,
+    pub max: u64,
 }
 
 impl TotalTokenUsage {
@@ -299,7 +300,7 @@ impl TotalTokenUsage {
         }
     }
 
-    pub fn add(&self, tokens: usize) -> TotalTokenUsage {
+    pub fn add(&self, tokens: u64) -> TotalTokenUsage {
         TotalTokenUsage {
             total: self.total + tokens,
             max: self.max,
@@ -350,7 +351,6 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
-    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -391,12 +391,12 @@ impl ThreadSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
     model_id: LanguageModelId,
     /// Token count including last message
-    token_count: usize,
+    token_count: u64,
 }
 
 impl Thread {
@@ -443,7 +443,6 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -568,7 +567,6 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -875,10 +873,6 @@ impl Thread {
             .unwrap_or(false)
     }
 
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
-    }
-
     pub fn tool_use_limit_reached(&self) -> bool {
         self.tool_use_limit_reached
     }
@@ -938,14 +932,13 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            self.profile
-                .enabled_tools(cx)
+            resolve_tool_name_conflicts(self.profile.enabled_tools(cx).as_slice())
                 .into_iter()
-                .filter_map(|tool| {
+                .filter_map(|(name, tool)| {
                     // Skip tools that cannot be supported
                     let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
                     Some(LanguageModelRequestTool {
-                        name: tool.name(),
+                        name,
                         description: tool.description(),
                         input_schema,
                     })
@@ -1389,8 +1382,6 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attached_tracked_files_state(&mut request.messages, cx);
-
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
             Some(self.completion_mode.into())
@@ -1451,46 +1442,6 @@ impl Thread {
         });
 
         request
-    }
-
-    fn attached_tracked_files_state(
-        &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
-    ) {
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-
-        let mut stale_message = String::new();
-
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER.trim()).ok();
-            }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
-        }
-
-        let mut content = Vec::with_capacity(2);
-
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
-        }
-
-        if !content.is_empty() {
-            let context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content,
-                cache: false,
-            };
-
-            messages.push(context_message);
-        }
     }
 
     pub fn stream_completion(
@@ -1562,6 +1513,9 @@ impl Thread {
                             }
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
+                            }
+                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                                return Err(err.into());
                             }
                         };
 
@@ -1697,9 +1651,7 @@ impl Thread {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            let usage = RequestUsage { limit, amount: amount as i32 };
-
-                                            thread.last_usage = Some(usage);
+                                            thread.update_model_request_usage(amount as u32, limit, cx);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1910,11 +1862,8 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |thread, _cx| {
-                                thread.last_usage = Some(RequestUsage {
-                                    limit,
-                                    amount: amount as i32,
-                                });
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount as u32, limit, cx);
                             })?;
                             continue;
                         }
@@ -2752,7 +2701,7 @@ impl Thread {
             .unwrap_or_default();
 
         TotalTokenUsage {
-            total: token_usage.total_tokens() as usize,
+            total: token_usage.total_tokens(),
             max,
         }
     }
@@ -2774,7 +2723,7 @@ impl Thread {
         let total = self
             .token_usage_at_last_message()
             .unwrap_or_default()
-            .total_tokens() as usize;
+            .total_tokens();
 
         Some(TotalTokenUsage { total, max })
     }
@@ -2794,6 +2743,20 @@ impl Thread {
         if let Some(last) = self.request_token_usage.last_mut() {
             *last = token_usage;
         }
+    }
+
+    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            project.user_store().update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            })
+        });
     }
 
     pub fn deny_tool_use(
@@ -2883,6 +2846,85 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+/// Resolves tool name conflicts by ensuring all tool names are unique.
+///
+/// When multiple tools have the same name, this function applies the following rules:
+/// 1. Native tools always keep their original name
+/// 2. Context server tools get prefixed with their server ID and an underscore
+/// 3. All tool names are truncated to MAX_TOOL_NAME_LENGTH (64 characters)
+/// 4. If conflicts still exist after prefixing, the conflicting tools are filtered out
+///
+/// Note: This function assumes that built-in tools occur before MCP tools in the tools list.
+fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn Tool>)> {
+    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
+        let mut tool_name = tool.name();
+        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+        tool_name
+    }
+
+    const MAX_TOOL_NAME_LENGTH: usize = 64;
+
+    let mut duplicated_tool_names = HashSet::default();
+    let mut seen_tool_names = HashSet::default();
+    for tool in tools {
+        let tool_name = resolve_tool_name(tool);
+        if seen_tool_names.contains(&tool_name) {
+            debug_assert!(
+                tool.source() != assistant_tool::ToolSource::Native,
+                "There are two built-in tools with the same name: {}",
+                tool_name
+            );
+            duplicated_tool_names.insert(tool_name);
+        } else {
+            seen_tool_names.insert(tool_name);
+        }
+    }
+
+    if duplicated_tool_names.is_empty() {
+        return tools
+            .into_iter()
+            .map(|tool| (resolve_tool_name(tool), tool.clone()))
+            .collect();
+    }
+
+    tools
+        .into_iter()
+        .filter_map(|tool| {
+            let mut tool_name = resolve_tool_name(tool);
+            if !duplicated_tool_names.contains(&tool_name) {
+                return Some((tool_name, tool.clone()));
+            }
+            match tool.source() {
+                assistant_tool::ToolSource::Native => {
+                    // Built-in tools always keep their original name
+                    Some((tool_name, tool.clone()))
+                }
+                assistant_tool::ToolSource::ContextServer { id } => {
+                    // Context server tools are prefixed with the context server ID, and truncated if necessary
+                    tool_name.insert(0, '_');
+                    if tool_name.len() + id.len() > MAX_TOOL_NAME_LENGTH {
+                        let len = MAX_TOOL_NAME_LENGTH - tool_name.len();
+                        let mut id = id.to_string();
+                        id.truncate(len);
+                        tool_name.insert_str(0, &id);
+                    } else {
+                        tool_name.insert_str(0, &id);
+                    }
+
+                    tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+
+                    if seen_tool_names.contains(&tool_name) {
+                        log::error!("Cannot resolve tool name conflict for tool {}", tool.name());
+                        None
+                    } else {
+                        Some((tool_name, tool.clone()))
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2898,6 +2940,7 @@ mod tests {
     use settings::{Settings, SettingsStore};
     use std::sync::Arc;
     use theme::ThemeSettings;
+    use ui::IconName;
     use util::path;
     use workspace::Workspace;
 
@@ -3209,94 +3252,6 @@ fn main() {{
         assert_eq!(
             request.messages[2].string_contents(),
             "Are there any good books?"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        init_test_settings(cx);
-
-        let project = create_test_project(
-            cx,
-            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
-        )
-        .await;
-
-        let (_workspace, _thread_store, thread, context_store, model) =
-            setup_test_environment(cx, project.clone()).await;
-
-        // Open buffer and add it to context
-        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
-            .await
-            .unwrap();
-
-        let context =
-            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
-        let loaded_context = cx
-            .update(|cx| load_context(vec![context], &project, &None, cx))
-            .await;
-
-        // Insert user message with the buffer as context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
-        });
-
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
-        assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
-        );
-
-        // Modify the buffer
-        buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
-            buffer.edit(
-                [(1..1, "\n    println!(\"Added a new line\");\n")],
-                None,
-                cx,
-            );
-        });
-
-        // Insert another user message without context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What does the code do now?",
-                ContextLoadResult::default(),
-                None,
-                Vec::new(),
-                cx,
-            )
-        });
-
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // We should have a stale file warning as the last message
-        let last_message = new_request
-            .messages
-            .last()
-            .expect("Request should have messages");
-
-        // The last message should be the stale buffer notification
-        assert_eq!(last_message.role, Role::User);
-
-        // Check the exact content of the message
-        let expected_content = "These files changed since last read:\n- code.rs\n";
-        assert_eq!(
-            last_message.string_contents(),
-            expected_content,
-            "Last message should be exactly the stale buffer notification"
         );
     }
 
@@ -3615,6 +3570,148 @@ fn main() {{
             assert!(matches!(thread.summary(), ThreadSummary::Ready(_)));
             assert_eq!(thread.summary().or_default(), "A successful summary");
         });
+    }
+
+    #[gpui::test]
+    fn test_resolve_tool_name_conflicts() {
+        use assistant_tool::{Tool, ToolSource};
+
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+            ],
+            vec!["tool1", "tool2", "tool3"],
+        );
+
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+            ],
+            vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
+        );
+
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+            ],
+            vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
+        );
+
+        // Test that tool with very long name is always truncated
+        assert_resolve_tool_name_conflicts(
+            vec![TestTool::new(
+                "tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-blah-blah",
+                ToolSource::Native,
+            )],
+            vec!["tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-"],
+        );
+
+        // Test deduplication of tools with very long names, in this case the mcp server name should be truncated
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool-with-very-very-very-long-name", ToolSource::Native),
+                TestTool::new(
+                    "tool-with-very-very-very-long-name",
+                    ToolSource::ContextServer {
+                        id: "mcp-with-very-very-very-long-name".into(),
+                    },
+                ),
+            ],
+            vec![
+                "tool-with-very-very-very-long-name",
+                "mcp-with-very-very-very-long-_tool-with-very-very-very-long-name",
+            ],
+        );
+
+        fn assert_resolve_tool_name_conflicts(
+            tools: Vec<TestTool>,
+            expected: Vec<impl Into<String>>,
+        ) {
+            let tools: Vec<Arc<dyn Tool>> = tools
+                .into_iter()
+                .map(|t| Arc::new(t) as Arc<dyn Tool>)
+                .collect();
+            let tools = resolve_tool_name_conflicts(&tools);
+            assert_eq!(tools.len(), expected.len());
+            for (i, expected_name) in expected.into_iter().enumerate() {
+                let expected_name = expected_name.into();
+                let actual_name = &tools[i].0;
+                assert_eq!(
+                    actual_name, &expected_name,
+                    "Expected '{}' got '{}' at index {}",
+                    expected_name, actual_name, i
+                );
+            }
+        }
+
+        struct TestTool {
+            name: String,
+            source: ToolSource,
+        }
+
+        impl TestTool {
+            fn new(name: impl Into<String>, source: ToolSource) -> Self {
+                Self {
+                    name: name.into(),
+                    source,
+                }
+            }
+        }
+
+        impl Tool for TestTool {
+            fn name(&self) -> String {
+                self.name.clone()
+            }
+
+            fn icon(&self) -> IconName {
+                IconName::Ai
+            }
+
+            fn may_perform_edits(&self) -> bool {
+                false
+            }
+
+            fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+                true
+            }
+
+            fn source(&self) -> ToolSource {
+                self.source.clone()
+            }
+
+            fn description(&self) -> String {
+                "Test tool".to_string()
+            }
+
+            fn ui_text(&self, _input: &serde_json::Value) -> String {
+                "Test tool".to_string()
+            }
+
+            fn run(
+                self: Arc<Self>,
+                _input: serde_json::Value,
+                _request: Arc<LanguageModelRequest>,
+                _project: Entity<Project>,
+                _action_log: Entity<ActionLog>,
+                _model: Arc<dyn LanguageModel>,
+                _window: Option<AnyWindowHandle>,
+                _cx: &mut App,
+            ) -> assistant_tool::ToolResult {
+                assistant_tool::ToolResult {
+                    output: Task::ready(Err(anyhow::anyhow!("No content"))),
+                    card: None,
+                }
+            }
+        }
     }
 
     fn test_summarize_error(

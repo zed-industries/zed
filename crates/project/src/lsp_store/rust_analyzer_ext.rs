@@ -1,12 +1,11 @@
 use ::serde::{Deserialize, Serialize};
 use anyhow::Context as _;
-use gpui::{App, Entity, PromptLevel, Task, WeakEntity};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use language::{LanguageServerStatusUpdate, ServerHealth};
 use lsp::LanguageServer;
 use rpc::proto;
 
-use crate::{
-    LanguageServerPromptRequest, LspStore, LspStoreEvent, Project, ProjectPath, lsp_store,
-};
+use crate::{LspStore, Project, ProjectPath, lsp_store};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
@@ -17,20 +16,10 @@ pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
 #[derive(Debug)]
 enum ServerStatus {}
 
-/// Other(String) variant to handle unknown values due to this still being experimental
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-enum ServerHealthStatus {
-    Ok,
-    Warning,
-    Error,
-    Other(String),
-}
-
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ServerStatusParams {
-    pub health: ServerHealthStatus,
+    pub health: ServerHealth,
     pub message: Option<String>,
 }
 
@@ -45,40 +34,28 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
 
     language_server
         .on_notification::<ServerStatus, _>({
-            let name = name.to_string();
+            let name = name.clone();
             move |params, cx| {
-                let name = name.to_string();
-                if let Some(ref message) = params.message {
-                    let message = message.trim();
-                    if !message.is_empty() {
-                        let formatted_message = format!(
-                            "Language server {name} (id {server_id}) status update: {message}"
-                        );
-                        match params.health {
-                            ServerHealthStatus::Ok => log::info!("{formatted_message}"),
-                            ServerHealthStatus::Warning => log::warn!("{formatted_message}"),
-                            ServerHealthStatus::Error => {
-                                log::error!("{formatted_message}");
-                                let (tx, _rx) = smol::channel::bounded(1);
-                                let request = LanguageServerPromptRequest {
-                                    level: PromptLevel::Critical,
-                                    message: params.message.unwrap_or_default(),
-                                    actions: Vec::new(),
-                                    response_channel: tx,
-                                    lsp_name: name.clone(),
-                                };
-                                lsp_store
-                                    .update(cx, |_, cx| {
-                                        cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                                    })
-                                    .ok();
-                            }
-                            ServerHealthStatus::Other(status) => {
-                                log::info!("Unknown server health: {status}\n{formatted_message}")
-                            }
-                        }
-                    }
+                let status = params.message;
+                let log_message =
+                    format!("Language server {name} (id {server_id}) status update: {status:?}");
+                match &params.health {
+                    ServerHealth::Ok => log::info!("{log_message}"),
+                    ServerHealth::Warning => log::warn!("{log_message}"),
+                    ServerHealth::Error => log::error!("{log_message}"),
                 }
+
+                lsp_store
+                    .update(cx, |lsp_store, _| {
+                        lsp_store.languages.update_lsp_status(
+                            name.clone(),
+                            LanguageServerStatusUpdate::Health(
+                                params.health,
+                                status.map(SharedString::from),
+                            ),
+                        );
+                    })
+                    .ok();
             }
         })
         .detach();

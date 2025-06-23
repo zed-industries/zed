@@ -14,7 +14,7 @@ pub fn create_fake_transport(
     executor: BackgroundExecutor,
 ) -> FakeTransport {
     let name = name.into();
-    FakeTransport::new(executor).on_request::<crate::types::request::Initialize>(move |_params| {
+    FakeTransport::new(executor).on_request::<crate::types::requests::Initialize>(move |_params| {
         create_initialize_response(name.clone())
     })
 }

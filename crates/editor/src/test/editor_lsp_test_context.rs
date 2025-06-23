@@ -169,6 +169,12 @@ impl EditorLspTestContext {
                 .expect("Opened test file wasn't an editor")
         });
         editor.update_in(&mut cx, |editor, window, cx| {
+            let nav_history = workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .nav_history_for_item(&cx.entity());
+            editor.set_nav_history(Some(nav_history));
             window.focus(&editor.focus_handle(cx))
         });
 

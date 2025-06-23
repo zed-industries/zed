@@ -258,6 +258,7 @@ impl TestServer {
                             None,
                             Some(connection_id_tx),
                             Executor::Deterministic(cx.background_executor().clone()),
+                            None,
                         ))
                         .detach();
                         let connection_id = connection_id_rx.await.map_err(|e| {

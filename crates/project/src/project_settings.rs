@@ -55,7 +55,7 @@ pub struct ProjectSettings {
 
     /// Settings for context servers used for AI-related features.
     #[serde(default)]
-    pub context_servers: HashMap<Arc<str>, ContextServerConfiguration>,
+    pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
@@ -84,17 +84,44 @@ pub struct DapSettings {
     pub binary: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
-pub struct ContextServerConfiguration {
-    /// The command to run this context server.
-    ///
-    /// This will override the command set by an extension.
-    pub command: Option<ContextServerCommand>,
-    /// The settings for this context server.
-    ///
-    /// Consult the documentation for the context server to see what settings
-    /// are supported.
-    pub settings: Option<serde_json::Value>,
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ContextServerSettings {
+    Custom {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The command to run this context server.
+        ///
+        /// This will override the command set by an extension.
+        command: ContextServerCommand,
+    },
+    Extension {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The settings for this context server specified by the extension.
+        ///
+        /// Consult the documentation for the context server to see what settings
+        /// are supported.
+        settings: serde_json::Value,
+    },
+}
+
+impl ContextServerSettings {
+    pub fn enabled(&self) -> bool {
+        match self {
+            ContextServerSettings::Custom { enabled, .. } => *enabled,
+            ContextServerSettings::Extension { enabled, .. } => *enabled,
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -472,13 +499,13 @@ impl Settings for ProjectSettings {
                 .extend(mcp.iter().filter_map(|(k, v)| {
                     Some((
                         k.clone().into(),
-                        ContextServerConfiguration {
-                            command: Some(
-                                serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
-                                    .ok()?
-                                    .into(),
-                            ),
-                            settings: None,
+                        ContextServerSettings::Custom {
+                            enabled: true,
+                            command: serde_json::from_value::<VsCodeContextServerCommand>(
+                                v.clone(),
+                            )
+                            .ok()?
+                            .into(),
                         },
                     ))
                 }));

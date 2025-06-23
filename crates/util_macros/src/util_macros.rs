@@ -4,25 +4,32 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{LitStr, parse_macro_input};
 
-/// This macro replaces the path separator `/` with `\` for Windows.
-/// But if the target OS is not Windows, the path is returned as is.
+/// A macro used in tests for cross-platform path string literals in tests. On Windows it replaces
+/// `/` with `\\` and adds `C:` to the beginning of absolute paths. On other platforms, the path is
+/// returned unmodified.
 ///
 /// # Example
 /// ```rust
-/// # use util_macros::separator;
-/// let path = separator!("path/to/file");
+/// use util_macros::path;
+///
+/// let path = path!("/Users/user/file.txt");
 /// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "path\\to\\file");
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
 /// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "path/to/file");
+/// assert_eq!(path, "/Users/user/file.txt");
 /// ```
 #[proc_macro]
-pub fn separator(input: TokenStream) -> TokenStream {
+pub fn path(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as LitStr);
-    let path = path.value();
+    let mut path = path.value();
 
     #[cfg(target_os = "windows")]
-    let path = path.replace("/", "\\");
+    {
+        path = path.replace("/", "\\");
+        if path.starts_with("\\") {
+            path = format!("C:{}", path);
+        }
+    }
 
     TokenStream::from(quote! {
         #path

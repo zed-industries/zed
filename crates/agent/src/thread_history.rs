@@ -224,6 +224,7 @@ impl ThreadHistory {
                     &candidates,
                     &query,
                     false,
+                    true,
                     MAX_MATCHES,
                     &Default::default(),
                     executor,
@@ -594,10 +595,11 @@ impl Render for ThreadHistory {
                     view.pr_5()
                         .child(
                             uniform_list(
-                                cx.entity().clone(),
                                 "thread-history",
                                 self.list_item_count(),
-                                Self::list_items,
+                                cx.processor(|this, range: Range<usize>, window, cx| {
+                                    this.list_items(range, window, cx)
+                                }),
                             )
                             .p_1()
                             .track_scroll(self.scroll_handle.clone())

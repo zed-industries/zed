@@ -638,29 +638,36 @@ impl ToolCard for TerminalToolCard {
                             .bg(cx.theme().colors().editor_background)
                             .rounded_b_md()
                             .text_ui_sm(cx)
-                            .child(
-                                ToolOutputPreview::new(
-                                    terminal.clone().into_any_element(),
-                                    terminal.entity_id(),
-                                )
-                                .with_total_lines(self.content_line_count)
-                                .toggle_state(!terminal.read(cx).is_content_limited(window))
-                                .on_toggle({
-                                    let terminal = terminal.clone();
-                                    move |is_expanded, _, cx| {
-                                        terminal.update(cx, |terminal, cx| {
-                                            terminal.set_embedded_mode(
-                                                if is_expanded {
-                                                    None
-                                                } else {
-                                                    Some(COLLAPSED_LINES)
-                                                },
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                }),
-                            ),
+                            .child({
+                                let content_mode = terminal.read(cx).content_mode(window, cx);
+
+                                if content_mode.is_scrollable() {
+                                    div().h_72().child(terminal.clone()).into_any_element()
+                                } else {
+                                    ToolOutputPreview::new(
+                                        terminal.clone().into_any_element(),
+                                        terminal.entity_id(),
+                                    )
+                                    .with_total_lines(self.content_line_count)
+                                    .toggle_state(!content_mode.is_limited())
+                                    .on_toggle({
+                                        let terminal = terminal.clone();
+                                        move |is_expanded, _, cx| {
+                                            terminal.update(cx, |terminal, cx| {
+                                                terminal.set_embedded_mode(
+                                                    if is_expanded {
+                                                        None
+                                                    } else {
+                                                        Some(COLLAPSED_LINES)
+                                                    },
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                                    .into_any_element()
+                                }
+                            }),
                     )
                 },
             )

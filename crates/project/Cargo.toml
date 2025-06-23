@@ -82,7 +82,6 @@ text.workspace = true
 toml.workspace = true
 url.workspace = true
 util.workspace = true
-uuid.workspace = true
 which.workspace = true
 worktree.workspace = true
 zlog.workspace = true

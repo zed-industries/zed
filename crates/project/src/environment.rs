@@ -249,7 +249,7 @@ async fn load_shell_environment(
     use util::shell_env;
 
     let dir_ = dir.to_owned();
-    let mut envs = match smol::unblock(move || shell_env::capture(Some(dir_))).await {
+    let mut envs = match smol::unblock(move || shell_env::capture(&dir_)).await {
         Ok(envs) => envs,
         Err(err) => {
             util::log_err(&err);
@@ -274,7 +274,13 @@ async fn load_shell_environment(
         },
     };
     if let Some(direnv_environment) = direnv_environment {
-        envs.extend(direnv_environment);
+        for (key, value) in direnv_environment {
+            if let Some(value) = value {
+                envs.insert(key, value);
+            } else {
+                envs.remove(&key);
+            }
+        }
     }
 
     (Some(envs), direnv_error)

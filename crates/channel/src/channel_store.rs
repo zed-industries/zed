@@ -111,7 +111,7 @@ pub struct ChannelMembership {
     pub role: proto::ChannelRole,
 }
 impl ChannelMembership {
-    pub fn sort_key(&self) -> MembershipSortKey {
+    pub fn sort_key(&self) -> MembershipSortKey<'_> {
         MembershipSortKey {
             role_order: match self.role {
                 proto::ChannelRole::Admin => 0,

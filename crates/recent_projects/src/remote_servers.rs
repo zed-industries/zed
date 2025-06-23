@@ -281,7 +281,7 @@ impl RemoteEntry {
         matches!(self, Self::Project { .. })
     }
 
-    fn connection(&self) -> Cow<SshConnection> {
+    fn connection(&self) -> Cow<'_, SshConnection> {
         match self {
             Self::Project { connection, .. } => Cow::Borrowed(connection),
             Self::SshConfig { host, .. } => Cow::Owned(SshConnection {

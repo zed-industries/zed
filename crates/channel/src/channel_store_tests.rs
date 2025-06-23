@@ -269,7 +269,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 github_login: "nathansobo".into(),
                 avatar_url: "http://avatar.com/nathansobo".into(),
                 name: None,
-                email: None,
             }],
         },
     );
@@ -323,7 +322,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 github_login: "maxbrunsfeld".into(),
                 avatar_url: "http://avatar.com/maxbrunsfeld".into(),
                 name: None,
-                email: None,
             }],
         },
     );
@@ -368,7 +366,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 github_login: "as-cii".into(),
                 avatar_url: "http://avatar.com/as-cii".into(),
                 name: None,
-                email: None,
             }],
         },
     );

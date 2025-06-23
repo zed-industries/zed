@@ -138,18 +138,18 @@ impl Render for SingleLineInput {
             .when_some(self.label.clone(), |this, label| {
                 this.child(
                     Label::new(label)
-                        .size(LabelSize::Default)
+                        .size(LabelSize::Small)
                         .color(if self.disabled {
                             Color::Disabled
                         } else {
-                            Color::Muted
+                            Color::Default
                         }),
                 )
             })
             .child(
                 h_flex()
                     .px_2()
-                    .py_1()
+                    .py_1p5()
                     .bg(style.background_color)
                     .text_color(style.text_color)
                     .rounded_md()

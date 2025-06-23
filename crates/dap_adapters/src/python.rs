@@ -81,11 +81,12 @@ impl PythonDebugAdapter {
         }
     }
 
-    fn request_args(
+    async fn request_args(
         &self,
+        delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
     ) -> Result<StartDebuggingRequestArguments> {
-        let request = self.request_kind(&task_definition.config)?;
+        let request = self.request_kind(&task_definition.config).await?;
 
         let mut configuration = task_definition.config.clone();
         if let Ok(console) = configuration.dot_get_mut("console") {
@@ -93,6 +94,11 @@ impl PythonDebugAdapter {
             if console.is_null() {
                 *console = Value::String("integratedTerminal".into());
             }
+        }
+
+        if let Some(obj) = configuration.as_object_mut() {
+            obj.entry("cwd")
+                .or_insert(delegate.worktree_root_path().to_string_lossy().into());
         }
 
         Ok(StartDebuggingRequestArguments {
@@ -187,7 +193,7 @@ impl PythonDebugAdapter {
         );
 
         Ok(DebugAdapterBinary {
-            command: python_command,
+            command: Some(python_command),
             arguments,
             connection: Some(adapters::TcpArguments {
                 host,
@@ -196,7 +202,7 @@ impl PythonDebugAdapter {
             }),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
-            request_args: self.request_args(config)?,
+            request_args: self.request_args(delegate, config).await?,
         })
     }
 }
@@ -211,7 +217,7 @@ impl DebugAdapter for PythonDebugAdapter {
         Some(SharedString::new_static("Python").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",
@@ -251,7 +257,7 @@ impl DebugAdapter for PythonDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {

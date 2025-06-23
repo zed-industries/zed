@@ -81,9 +81,9 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new() -> Result<Self> {
         unsafe {
-            OleInitialize(None).expect("unable to initialize Windows OLE");
+            OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
@@ -97,19 +97,19 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .expect("Error creating bitmap factory.")
+                .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Error creating DirectWriteTextSystem"),
+                .context("Error creating DirectWriteTextSystem")?,
         );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
-        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
-        Self {
+        Ok(Self {
             state,
             raw_window_handles,
             gpu_context,
@@ -122,7 +122,7 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
-        }
+        })
     }
 
     fn redraw_all(&self) {
@@ -294,6 +294,18 @@ impl WindowsPlatform {
         update_jump_list(&lock.jump_list)
             .log_err()
             .unwrap_or_default()
+    }
+
+    fn find_current_active_window(&self) -> Option<HWND> {
+        let active_window_hwnd = unsafe { GetActiveWindow() };
+        if active_window_hwnd.is_invalid() {
+            return None;
+        }
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|&&hwnd| hwnd == active_window_hwnd)
+            .copied()
     }
 }
 
@@ -473,9 +485,10 @@ impl Platform for WindowsPlatform {
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
+        let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_open_dialog(options));
+                let _ = tx.send(file_open_dialog(options, window));
             })
             .detach();
 
@@ -485,9 +498,10 @@ impl Platform for WindowsPlatform {
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (tx, rx) = oneshot::channel();
+        let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory));
+                let _ = tx.send(file_save_dialog(directory, window));
             })
             .detach();
 
@@ -754,7 +768,10 @@ fn open_target_in_explorer(target: &str) {
     }
 }
 
-fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> {
+fn file_open_dialog(
+    options: PathPromptOptions,
+    window: Option<HWND>,
+) -> Result<Option<Vec<PathBuf>>> {
     let folder_dialog: IFileOpenDialog =
         unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)? };
 
@@ -768,7 +785,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
-        if folder_dialog.Show(None).is_err() {
+        if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
         }
@@ -790,7 +807,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
     Ok(Some(paths))
 }
 
-fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
+fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
@@ -806,7 +823,7 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(None).is_err() {
+        if dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
         }

@@ -64,7 +64,7 @@ pub struct AppCell {
 impl AppCell {
     #[doc(hidden)]
     #[track_caller]
-    pub fn borrow(&self) -> AppRef {
+    pub fn borrow(&self) -> AppRef<'_> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
@@ -74,7 +74,7 @@ impl AppCell {
 
     #[doc(hidden)]
     #[track_caller]
-    pub fn borrow_mut(&self) -> AppRefMut {
+    pub fn borrow_mut(&self) -> AppRefMut<'_> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
@@ -84,7 +84,7 @@ impl AppCell {
 
     #[doc(hidden)]
     #[track_caller]
-    pub fn try_borrow_mut(&self) -> Result<AppRefMut, BorrowMutError> {
+    pub fn try_borrow_mut(&self) -> Result<AppRefMut<'_>, BorrowMutError> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");

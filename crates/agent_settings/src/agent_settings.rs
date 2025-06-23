@@ -386,7 +386,9 @@ impl AgentSettingsContent {
                             _ => None,
                         };
                         settings.provider = Some(AgentProviderContentV1::LmStudio {
-                            default_model: Some(lmstudio::Model::new(&model, None, None, false)),
+                            default_model: Some(lmstudio::Model::new(
+                                &model, None, None, false, false,
+                            )),
                             api_url,
                         });
                     }

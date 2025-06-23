@@ -255,7 +255,7 @@ pub trait VisualContext: AppContext {
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Self::Result<R>;
 
-    /// Update a view with the given callback
+    /// Create a new entity, with access to `Window`.
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,

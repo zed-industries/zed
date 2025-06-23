@@ -133,46 +133,6 @@ impl Render for QuickActionBar {
             )
         });
 
-        let last_run_debug = self
-            .workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .debugger_provider()
-                    .map(|provider| provider.debug_scenario_scheduled_last(cx))
-                    .unwrap_or_default()
-            })
-            .ok()
-            .unwrap_or_default();
-
-        let run_button = if last_run_debug {
-            QuickActionBarButton::new(
-                "debug",
-                IconName::PlayBug,
-                false,
-                Box::new(debugger_ui::Start),
-                focus_handle.clone(),
-                "Debug",
-                move |_, window, cx| {
-                    window.dispatch_action(Box::new(debugger_ui::Start), cx);
-                },
-            )
-        } else {
-            let action = Box::new(tasks_ui::Spawn::ViaModal {
-                reveal_target: None,
-            });
-            QuickActionBarButton::new(
-                "run",
-                IconName::PlayAlt,
-                false,
-                action.boxed_clone(),
-                focus_handle.clone(),
-                "Spawn Task",
-                move |_, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
-                },
-            )
-        };
-
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
             IconName::ZedAssistant,
@@ -257,6 +217,12 @@ impl Render for QuickActionBar {
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
+            let has_diff_hunks = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .has_diff_hunks();
             let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
@@ -291,8 +257,18 @@ impl Render for QuickActionBar {
                             .action("Next Problem", Box::new(GoToDiagnostic))
                             .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .action("Next Hunk", Box::new(GoToHunk))
-                            .action("Previous Hunk", Box::new(GoToPreviousHunk))
+                            .map(|menu| {
+                                if has_diff_hunks {
+                                    menu.action("Next Hunk", Box::new(GoToHunk))
+                                        .action("Previous Hunk", Box::new(GoToPreviousHunk))
+                                } else {
+                                    menu.disabled_action("Next Hunk", Box::new(GoToHunk))
+                                        .disabled_action(
+                                            "Previous Hunk",
+                                            Box::new(GoToPreviousHunk),
+                                        )
+                                }
+                            })
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))
@@ -601,7 +577,6 @@ impl Render for QuickActionBar {
                 AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
-            .child(run_button)
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)

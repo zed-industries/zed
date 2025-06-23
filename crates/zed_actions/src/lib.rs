@@ -53,6 +53,7 @@ pub enum ExtensionCategoryFilter {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
@@ -248,6 +249,12 @@ pub mod assistant {
     impl_actions!(assistant, [InlineAssist]);
 }
 
+pub mod debugger {
+    use gpui::actions;
+
+    actions!(debugger, [OpenOnboardingModal, ResetOnboarding]);
+}
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
@@ -348,4 +355,12 @@ pub mod outline {
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
 
-actions!(debugger, [ToggleEnableBreakpoint, UnsetBreakpoint]);
+actions!(debug_panel, [ToggleFocus]);
+actions!(
+    debugger,
+    [
+        ToggleEnableBreakpoint,
+        UnsetBreakpoint,
+        OpenProjectDebugTasks,
+    ]
+);
