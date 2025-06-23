@@ -1225,16 +1225,17 @@ impl MessageEditor {
             })
     }
 
-    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        let is_using_zed_provider = self
-            .thread
+    fn is_using_zed_provider(&self, cx: &App) -> bool {
+        self.thread
             .read(cx)
             .configured_model()
             .map_or(false, |model| {
                 model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
-            });
+            })
+    }
 
-        if !is_using_zed_provider {
+    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.is_using_zed_provider(cx) {
             return None;
         }
 
@@ -1288,15 +1289,7 @@ impl MessageEditor {
             "Thread reaching the token limit soon"
         };
 
-        let is_using_zed_provider = self
-            .thread
-            .read(cx)
-            .configured_model()
-            .map_or(false, |model| {
-                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
-            });
-
-        let description = if is_using_zed_provider {
+        let description = if self.is_using_zed_provider(cx) {
             "To continue, start a new thread from a summary or turn burn mode on."
         } else {
             "To continue, start a new thread from a summary."
@@ -1316,7 +1309,7 @@ impl MessageEditor {
                     })),
             );
 
-        if is_using_zed_provider {
+        if self.is_using_zed_provider(cx) {
             callout = callout.secondary_action(
                 IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
                     .icon_size(IconSize::XSmall)
