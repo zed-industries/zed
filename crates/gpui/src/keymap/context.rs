@@ -425,11 +425,11 @@ mod tests {
     #[test]
     fn test_actions_definition() {
         {
-            gpui_macros::actions!(test, [A, B, C, D, E, F, G]);
+            actions!(test, [A, B, C, D, E, F, G]);
         }
 
         {
-            gpui_macros::actions!(
+            actions!(
                 test,
                 [
                     A, B, C, D, E, F, G, // Don't wrap, test the trailing comma

@@ -263,7 +263,7 @@ mod tests {
     use crate as gpui;
     use gpui::NoAction;
 
-    gpui_macros::actions!(
+    actions!(
         keymap_test,
         [ActionAlpha, ActionBeta, ActionGamma, ActionDelta,]
     );

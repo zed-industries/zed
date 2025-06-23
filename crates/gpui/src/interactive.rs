@@ -493,7 +493,7 @@ mod test {
         focus_handle: FocusHandle,
     }
 
-    gpui_macros::actions!(test, [TestAction]);
+    actions!(test, [TestAction]);
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

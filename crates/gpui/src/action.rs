@@ -300,6 +300,47 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
     actions
 }
 
+/// Derive macro for implementing the Action trait.
+///
+/// This macro can be configured using the `#[action(...)]` attribute:
+///
+/// - `name = "namespace::ActionName"` - Override the action's display name
+/// - `namespace = "namespace"` - Set just the namespace (name will be struct name)
+/// - `no_json` - Mark that the action cannot be deserialized from JSON
+/// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
+///
+/// # Examples
+///
+/// ```ignore
+/// // Simple action
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// struct Cut;
+///
+/// // Action with custom name
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(name = "editor::SaveFile")]
+/// struct Save;
+///
+/// // Action with fields that can be deserialized
+/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema, Action)]
+/// struct Find {
+///     query: String,
+/// }
+///
+/// // Internal action that can't be deserialized
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(no_json)]
+/// struct InternalAction {
+///     state: u32,
+/// }
+///
+/// // Action with deprecated aliases
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(deprecated_aliases = ["editor::RevertFile", "RevertBuffer"])]
+/// struct RestoreFile;
+/// ```
+pub use gpui_macros::Action;
+
 /// Defines and registers action structs that can be used throughout the application.
 ///
 /// This macro supports several attributes to customize action behavior:
@@ -331,7 +372,7 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
 ///
 /// // Action with deprecated aliases
 /// actions!(editor, [
-///     #[deprecated_aliases(editor::RevertFile, RevertBuffer)]
+///     #[action(deprecated_aliases = ["editor::RevertFile", "RevertBuffer"])]
 ///     RestoreFile,
 /// ]);
 ///
@@ -350,7 +391,30 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
 ///     InternalAction,
 /// ]);
 /// ```
-pub use gpui_macros::actions;
+
+/// Defines and registers unit structs that can be used as actions.
+///
+/// To use more complex data types as actions, use `impl_actions!`
+///
+/// This macro automatically adds default documentation for actions that don't have any.
+#[macro_export]
+macro_rules! actions {
+    ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
+        $(
+            $(#[$attr])*
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug)]
+            pub struct $name;
+
+            gpui::private::impl_action!(
+                $name,
+                $namespace,
+                $name,
+                true,
+                []
+            );
+        )*
+    };
+}
 
 /// Defines and registers a unit struct that can be used as an action, with a name that differs
 /// from its type name.
@@ -367,13 +431,10 @@ pub use gpui_macros::actions;
 #[macro_export]
 macro_rules! action_as {
     ($(#[$attr:meta])* $namespace:path, $name:ident as $visual_name:ident) => {
-        gpui::actions!(
-            $namespace,
-            [
-                $(#[$attr])*
-                #[name($visual_name)]
-                $name
-            ]
+        gpui::actions!($namespace,
+            $(#[$attr])*
+            #[action(name = $visual_name)]
+            $name
         );
     };
 }
@@ -385,9 +446,7 @@ macro_rules! action_as {
 /// # Example
 ///
 /// ```ignore
-/// action_with_deprecated_aliases!(editor, ModernAction, [OldAction, LegacyAction]);
-/// // Equivalent to:
-/// // actions!(editor, [#[deprecated_aliases(OldAction, LegacyAction)] ModernAction]);
+/// action_with_deprecated_aliases!(editor, ModernAction, ["OldAction", "LegacyAction"]);
 /// ```
 #[macro_export]
 macro_rules! action_with_deprecated_aliases {
@@ -396,7 +455,7 @@ macro_rules! action_with_deprecated_aliases {
             $namespace,
             [
                 $(#[$attr])*
-                #[deprecated_aliases($($alias),*)]
+                #[action(deprecated_aliases = [$($alias),*])]
                 $name
             ]
         );
@@ -405,8 +464,7 @@ macro_rules! action_with_deprecated_aliases {
 
 /// Implements the Action trait for a struct with deprecated aliases.
 ///
-/// This is a convenience wrapper around `actions!` with both `#[impl_only]` and
-/// `#[deprecated_aliases(...)]` attributes.
+/// This is a convenience wrapper that applies the Action derive with deprecated aliases.
 ///
 /// # Example
 ///
@@ -414,20 +472,17 @@ macro_rules! action_with_deprecated_aliases {
 /// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
 /// struct ModernAction { setting: String }
 ///
-/// impl_action_with_deprecated_aliases!(editor, ModernAction, [OldAction, LegacyAction]);
-/// // Equivalent to:
-/// // actions!(editor, [#[impl_only] #[deprecated_aliases(OldAction, LegacyAction)] ModernAction]);
+/// impl_action_with_deprecated_aliases!(editor, ModernAction, ["OldAction", "LegacyAction"]);
 /// ```
 #[macro_export]
 macro_rules! impl_action_with_deprecated_aliases {
-    ($namespace:path, $name:ident, [$($alias:path),* $(,)?]) => {
-        gpui::actions!(
+    ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
+        gpui::private::impl_action!(
+            $name,
             $namespace,
-            [
-                #[impl_only]
-                #[deprecated_aliases($($alias),*)]
-                $name
-            ]
+            $name,
+            true,
+            [$($alias),*]
         );
     };
 }
@@ -450,15 +505,15 @@ macro_rules! impl_action_with_deprecated_aliases {
 #[macro_export]
 macro_rules! impl_actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
-        gpui::actions!(
-            $namespace,
-            [
-                $(
-                    #[impl_only]
-                    $name
-                ),*
-            ]
-        );
+        $(
+            gpui::private::impl_action!(
+                $name,
+                $namespace,
+                $name,
+                true,
+                []
+            );
+        )*
     };
 }
 
@@ -481,16 +536,15 @@ macro_rules! impl_actions {
 #[macro_export]
 macro_rules! impl_internal_actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
-        gpui::actions!(
-            $namespace,
-            [
-                $(
-                    #[impl_only]
-                    #[no_json]
-                    $name
-                ),*
-            ]
-        );
+        $(
+            gpui::private::impl_action!(
+                $name,
+                $namespace,
+                $name,
+                false,
+                []
+            );
+        )*
     };
 }
 
@@ -512,14 +566,7 @@ macro_rules! impl_internal_actions {
 #[macro_export]
 macro_rules! impl_action_as {
     ($namespace:path, $name:ident as $visual_name:ident) => {
-        gpui::actions!(
-            $namespace,
-            [
-                #[impl_only]
-                #[name($visual_name)]
-                $name
-            ]
-        );
+        gpui::private::impl_action!($name, $namespace, $visual_name, false, []);
     };
 }
 
@@ -527,7 +574,7 @@ mod no_action {
     use crate as gpui;
     use std::any::Any as _;
 
-    gpui_macros::actions!(
+    gpui::actions!(
         zed,
         [
             /// Action with special handling which unbinds the keybinding this is associated with,

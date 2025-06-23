@@ -1,9 +1,8 @@
-mod actions;
+mod action_macros;
 mod derive_app_context;
 mod derive_into_element;
 mod derive_render;
 mod derive_visual_context;
-mod register_action;
 mod styles;
 mod test;
 
@@ -18,7 +17,7 @@ use syn::{DeriveInput, Ident};
 /// but this can be used for fine grained customization.
 #[proc_macro]
 pub fn register_action(ident: TokenStream) -> TokenStream {
-    register_action::register_action_macro(ident)
+    action_macros::register_action_macro(ident)
 }
 
 /// #[derive(IntoElement)] is used to create a Component out of anything that implements
@@ -254,9 +253,63 @@ pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> To
 ///     InternalAction,
 /// ]);
 /// ```
+/// Internal procedural macro for implementing the Action trait.
+/// This is used by the declarative macros and should not be used directly.
+///
+/// Parameters:
+/// - `action_struct` - The struct to implement Action for
+/// - `name` - Optional full action name (e.g. "editor::Save")
+/// - `namespace` - Optional namespace (used with struct name if `name` not provided)
+/// - `deprecated_aliases` - Array of deprecated action names
+/// - `no_json` - Boolean indicating if the action cannot be deserialized
 #[proc_macro]
-pub fn actions(input: TokenStream) -> TokenStream {
-    actions::actions_macro(input)
+#[doc(hidden)]
+pub fn impl_action(input: TokenStream) -> TokenStream {
+    action_macros::impl_action_macro(input)
+}
+
+/// Derive macro for implementing the Action trait.
+///
+/// This macro can be configured using the `#[action(...)]` attribute:
+///
+/// - `name = "namespace::ActionName"` - Override the action's display name
+/// - `namespace = "namespace"` - Set just the namespace (name will be struct name)
+/// - `no_json` - Mark that the action cannot be deserialized from JSON
+/// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
+///
+/// # Examples
+///
+/// ```ignore
+/// // Simple action
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// struct Cut;
+///
+/// // Action with custom name
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(name = "editor::SaveFile")]
+/// struct Save;
+///
+/// // Action with fields that can be deserialized
+/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema, Action)]
+/// struct Find {
+///     query: String,
+/// }
+///
+/// // Internal action that can't be deserialized
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(no_json)]
+/// struct InternalAction {
+///     state: u32,
+/// }
+///
+/// // Action with deprecated aliases
+/// #[derive(Clone, Default, PartialEq, Action)]
+/// #[action(deprecated_aliases = ["editor::RevertFile", "RevertBuffer"])]
+/// struct RestoreFile;
+/// ```
+#[proc_macro_derive(Action, attributes(action))]
+pub fn derive_action(input: TokenStream) -> TokenStream {
+    action_macros::derive_action(input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {
