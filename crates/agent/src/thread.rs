@@ -1327,7 +1327,7 @@ impl Thread {
 
         let mut message_ix_to_cache = None;
         for message in &self.messages {
-            // Skip UI-only messages - they're for UI only, not for the model
+            // ui_only messages are for the UI only, not for the model
             if message.ui_only {
                 continue;
             }
