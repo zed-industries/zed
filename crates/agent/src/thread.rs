@@ -1888,9 +1888,9 @@ impl Thread {
                                             provider_name.0.as_ref()
                                         );
 
-                                        if !thread.handle_retryable_error_with_delay(
+                                        if !thread.handle_rate_limit_error(
                                             &error_message,
-                                            Some(*retry_after),
+                                            *retry_after,
                                             model.clone(),
                                             window,
                                             cx,
@@ -2066,6 +2066,68 @@ impl Thread {
 
             Some(())
         });
+    }
+
+    fn handle_rate_limit_error(
+        &mut self,
+        error_message: &str,
+        retry_after: Duration,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        // For rate limit errors, we only retry once with the specified duration
+        // Clear any existing retry state since this is a special case
+        self.retry_state = None;
+
+        let delay_secs = retry_after.as_secs();
+
+        // Add a transient message to inform the user (no attempt count for single retry)
+        let retry_message = format!("{}. Retrying in {} seconds...", error_message, delay_secs);
+
+        let message_id = self.insert_message(
+            Role::System,
+            vec![MessageSegment::Text(retry_message)],
+            LoadedContext::default(),
+            Vec::new(),
+            true, // is_hidden - won't be persisted
+            cx,
+        );
+
+        cx.emit(ThreadEvent::RetryScheduled {
+            message_id,
+            delay: retry_after,
+            attempt: 1,
+            max_attempts: 1,
+            provider_name: model.provider_name(),
+        });
+
+        // Schedule the retry
+        let thread_handle = cx.entity().downgrade();
+        let intent = self
+            .current_completion_intent
+            .clone()
+            .unwrap_or(CompletionIntent::UserPrompt);
+
+        cx.spawn(async move |_thread, cx| {
+            cx.background_executor().timer(retry_after).await;
+
+            thread_handle
+                .update(cx, |thread, cx| {
+                    // Remove the retry notification message
+                    if let Some(index) = thread.messages.iter().position(|m| m.id == message_id) {
+                        thread.messages.remove(index);
+                        cx.emit(ThreadEvent::MessageDeleted(message_id));
+                    }
+
+                    // Retry the completion
+                    thread.send_to_model(model, intent, window, cx);
+                })
+                .log_err();
+        })
+        .detach();
+
+        true
     }
 
     fn handle_retryable_error(
@@ -3214,8 +3276,8 @@ mod tests {
     use icons::IconName;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
-        LanguageModelCompletionError, LanguageModelKnownError, LanguageModelName,
-        LanguageModelProviderId, LanguageModelToolChoice,
+        LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
+        LanguageModelToolChoice,
     };
     use parking_lot::Mutex;
     use project::{FakeFs, Project};
@@ -4078,13 +4140,13 @@ fn main() {{
             >,
         > {
             let error = match self.error_type {
-                TestError::Overloaded => LanguageModelKnownError::Overloaded,
-                TestError::InternalServerError => LanguageModelKnownError::ApiInternalServerError,
+                TestError::Overloaded => LanguageModelCompletionError::Overloaded,
+                TestError::InternalServerError => {
+                    LanguageModelCompletionError::ApiInternalServerError
+                }
             };
             async move {
-                let stream = futures::stream::once(async move {
-                    Err(LanguageModelCompletionError::Other(anyhow::anyhow!(error)))
-                });
+                let stream = futures::stream::once(async move { Err(error) });
                 Ok(stream.boxed())
             }
             .boxed()
@@ -4431,9 +4493,7 @@ fn main() {{
                     *self.failed_once.lock() = true;
                     // Return error on first attempt
                     let stream = futures::stream::once(async move {
-                        Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
-                            "Language model provider's API is currently overloaded"
-                        )))
+                        Err(LanguageModelCompletionError::Overloaded)
                     });
                     async move { Ok(stream.boxed()) }.boxed()
                 } else {
@@ -4555,6 +4615,165 @@ fn main() {{
             assert!(
                 thread.retry_state.is_none(),
                 "Retry state should be cleared on success"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rate_limit_retry_single_attempt(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create a model that returns rate limit error with retry_after
+        struct RateLimitModel {
+            inner: Arc<FakeLanguageModel>,
+        }
+
+        impl LanguageModel for RateLimitModel {
+            fn id(&self) -> LanguageModelId {
+                self.inner.id()
+            }
+
+            fn name(&self) -> LanguageModelName {
+                self.inner.name()
+            }
+
+            fn provider_id(&self) -> LanguageModelProviderId {
+                self.inner.provider_id()
+            }
+
+            fn provider_name(&self) -> LanguageModelProviderName {
+                self.inner.provider_name()
+            }
+
+            fn supports_tools(&self) -> bool {
+                self.inner.supports_tools()
+            }
+
+            fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+                self.inner.supports_tool_choice(choice)
+            }
+
+            fn supports_images(&self) -> bool {
+                self.inner.supports_images()
+            }
+
+            fn telemetry_id(&self) -> String {
+                self.inner.telemetry_id()
+            }
+
+            fn max_token_count(&self) -> u64 {
+                self.inner.max_token_count()
+            }
+
+            fn count_tokens(
+                &self,
+                request: LanguageModelRequest,
+                cx: &App,
+            ) -> BoxFuture<'static, Result<u64>> {
+                self.inner.count_tokens(request, cx)
+            }
+
+            fn stream_completion(
+                &self,
+                _request: LanguageModelRequest,
+                _cx: &AsyncApp,
+            ) -> BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                    >,
+                    LanguageModelCompletionError,
+                >,
+            > {
+                async move {
+                    let stream = futures::stream::once(async move {
+                        Err(LanguageModelCompletionError::RateLimitExceeded {
+                            retry_after: Duration::from_secs(30),
+                        })
+                    });
+                    Ok(stream.boxed())
+                }
+                .boxed()
+            }
+
+            fn as_fake(&self) -> &FakeLanguageModel {
+                &self.inner
+            }
+        }
+
+        let model = Arc::new(RateLimitModel {
+            inner: Arc::new(FakeLanguageModel::default()),
+        });
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track retry events
+        let retry_events = Arc::new(Mutex::new(Vec::new()));
+        let retry_events_clone = retry_events.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::RetryScheduled {
+                    attempt,
+                    delay,
+                    max_attempts,
+                    ..
+                } = event
+                {
+                    retry_events_clone
+                        .lock()
+                        .push((*attempt, *delay, *max_attempts));
+                }
+            })
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check that a retry was scheduled with the specified delay
+        let events = retry_events.lock();
+        assert_eq!(events.len(), 1, "Should have scheduled exactly one retry");
+        assert_eq!(events[0].0, 1, "Should be first attempt");
+        assert_eq!(
+            events[0].1,
+            Duration::from_secs(30),
+            "Should use the retry_after duration"
+        );
+        assert_eq!(
+            events[0].2, 1,
+            "Should only have max 1 attempt for rate limit"
+        );
+
+        // Check that retry message doesn't include attempt count
+        thread.read_with(cx, |thread, _| {
+            let mut messages = thread.messages();
+            assert!(
+                messages.any(|msg| {
+                    msg.role == Role::System
+                        && msg.is_hidden
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("rate limit exceeded")
+                                    && text.contains("Retrying in 30 seconds...")
+                                    && !text.contains("attempt")
+                            } else {
+                                false
+                            }
+                        })
+                }),
+                "Should have added a system retry message without attempt count"
             );
         });
     }
