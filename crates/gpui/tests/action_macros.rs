@@ -8,8 +8,9 @@ fn test_action_macros() {
     actions!(
         test,
         [
-            /// This is a test
-            TestAction
+            TestAction,
+            /// Documented action
+            TestActionWithDocs,
         ]
     );
 

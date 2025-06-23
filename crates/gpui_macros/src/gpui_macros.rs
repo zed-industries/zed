@@ -1,3 +1,4 @@
+mod actions;
 mod derive_app_context;
 mod derive_into_element;
 mod derive_render;
@@ -201,6 +202,55 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
     derive_inspector_reflection::derive_inspector_reflection(_args, input)
+}
+
+/// Procedural macro version of the `actions!` macro that generates action structs
+/// with automatic default documentation if none is provided.
+#[proc_macro]
+pub fn actions(input: TokenStream) -> TokenStream {
+    actions::actions_macro(input)
+}
+
+/// Procedural macro version of the `action_as!` macro that generates an action struct
+/// with a different visual name and automatic default documentation if none is provided.
+#[proc_macro]
+pub fn action_as(input: TokenStream) -> TokenStream {
+    actions::action_as_macro(input)
+}
+
+/// Procedural macro version of the `action_with_deprecated_aliases!` macro that generates
+/// an action struct with deprecated aliases and automatic default documentation if none is provided.
+#[proc_macro]
+pub fn action_with_deprecated_aliases(input: TokenStream) -> TokenStream {
+    actions::action_with_deprecated_aliases_macro(input)
+}
+
+/// Procedural macro version of the `impl_actions!` macro that implements the Action trait
+/// for structs that have fields and implement Clone, Default, PartialEq, Deserialize, and JsonSchema.
+#[proc_macro]
+pub fn impl_actions(input: TokenStream) -> TokenStream {
+    actions::impl_actions_macro(input)
+}
+
+/// Procedural macro version of the `impl_action_as!` macro that implements the Action trait
+/// for a struct with a different visual name.
+#[proc_macro]
+pub fn impl_action_as(input: TokenStream) -> TokenStream {
+    actions::impl_action_as_macro(input)
+}
+
+/// Procedural macro version of the `impl_internal_actions!` macro that implements the Action trait
+/// for internal actions that cannot be deserialized from JSON.
+#[proc_macro]
+pub fn impl_internal_actions(input: TokenStream) -> TokenStream {
+    actions::impl_internal_actions_macro(input)
+}
+
+/// Procedural macro version of the `impl_action_with_deprecated_aliases!` macro that implements
+/// the Action trait for a struct with deprecated aliases.
+#[proc_macro]
+pub fn impl_action_with_deprecated_aliases(input: TokenStream) -> TokenStream {
+    actions::impl_action_with_deprecated_aliases_macro(input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {

@@ -41,7 +41,5 @@ pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
                 }
             }
         }
-
-
     }
 }

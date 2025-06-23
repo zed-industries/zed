@@ -303,134 +303,28 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
 /// Defines and registers unit structs that can be used as actions.
 ///
 /// To use more complex data types as actions, use `impl_actions!`
-#[macro_export]
-macro_rules! actions {
-    ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
-        $(
-            $(#[$attr])*
-            #[derive(::std::clone::Clone,::std::cmp::PartialEq, ::std::default::Default)]
-            pub struct $name;
-
-            gpui::__impl_action!($namespace, $name, $name,
-                fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                    Ok(Box::new(Self))
-                },
-                fn action_json_schema(
-                    _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-                ) -> Option<gpui::private::schemars::schema::Schema> {
-                    None
-                }
-            );
-
-            gpui::register_action!($name);
-        )*
-    };
-}
+///
+/// This macro automatically adds default documentation for actions that don't have any.
+pub use gpui_macros::actions;
 
 /// Defines and registers a unit struct that can be used as an actions, with a name that differs
 /// from it's type name.
 ///
 /// To use more complex data types as actions, and rename them use `impl_action_as!`
-#[macro_export]
-macro_rules! action_as {
-    ($(#[$attr:meta])* $namespace:path, $name:ident as $visual_name:ident) => {
-        $(#[$attr])*
-        #[derive(
-            ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
-        )]
-        pub struct $name;
-        gpui::__impl_action!(
-            $namespace,
-            $name,
-            $visual_name,
-            fn build(
-                _: gpui::private::serde_json::Value,
-            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                Ok(Box::new(Self))
-            },
-            fn action_json_schema(
-                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                None
-            }
-        );
-
-        gpui::register_action!($name);
-    };
-}
+///
+/// This macro automatically adds default documentation for actions that don't have any.
+pub use gpui_macros::action_as;
 
 /// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
-#[macro_export]
-macro_rules! action_with_deprecated_aliases {
-    ($(#[$attr:meta])* $namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
-        $(#[$attr])*
-        #[derive(
-            ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
-        )]
-        pub struct $name;
-
-        gpui::__impl_action!(
-            $namespace,
-            $name,
-            $name,
-            fn build(
-                value: gpui::private::serde_json::Value,
-            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                Ok(Box::new(Self))
-            },
-
-            fn action_json_schema(
-                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                None
-            },
-
-            fn deprecated_aliases() -> &'static [&'static str] {
-                &[
-                    $($alias),*
-                ]
-            }
-        );
-
-        gpui::register_action!($name);
-    };
-}
+///
+/// This macro automatically adds default documentation for actions that don't have any.
+pub use gpui_macros::action_with_deprecated_aliases;
 
 /// Registers the action and implements the Action trait for any struct that implements Clone,
 /// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
 ///
 /// Similar to `impl_actions!`, but only handles one struct, and registers some deprecated aliases.
-#[macro_export]
-macro_rules! impl_action_with_deprecated_aliases {
-    ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
-        gpui::__impl_action!(
-            $namespace,
-            $name,
-            $name,
-            fn build(
-                value: gpui::private::serde_json::Value,
-            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
-            },
-
-            fn action_json_schema(
-                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
-                    generator,
-                ))
-            },
-
-            fn deprecated_aliases() -> &'static [&'static str] {
-                &[
-                    $($alias),*
-                ]
-            }
-        );
-
-        gpui::register_action!($name);
-    };
-}
+pub use gpui_macros::impl_action_with_deprecated_aliases;
 
 /// Registers the action and implements the Action trait for any struct that implements Clone,
 /// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
@@ -439,56 +333,14 @@ macro_rules! impl_action_with_deprecated_aliases {
 ///
 /// Fields and variants that don't make sense for user configuration should be annotated with
 /// #[serde(skip)].
-#[macro_export]
-macro_rules! impl_actions {
-    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
-        $(
-            gpui::__impl_action!($namespace, $name, $name,
-                fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                    Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
-                },
-                fn action_json_schema(
-                    generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-                ) -> Option<gpui::private::schemars::schema::Schema> {
-                    Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
-                        generator,
-                    ))
-                }
-            );
-
-            gpui::register_action!($name);
-        )*
-    };
-}
+pub use gpui_macros::impl_actions;
 
 /// Implements the Action trait for internal action structs that implement Clone, Default,
 /// PartialEq. The purpose of this is to conveniently define values that can be passed in `dyn
 /// Action`.
 ///
 /// These actions are internal and so are not registered and do not support deserialization.
-#[macro_export]
-macro_rules! impl_internal_actions {
-    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
-        $(
-            gpui::__impl_action!($namespace, $name, $name,
-                fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                    gpui::Result::Err(gpui::private::anyhow::anyhow!(
-                        concat!(
-                            stringify!($namespace),
-                            "::",
-                            stringify!($visual_name),
-                            " is an internal action, so cannot be built from JSON."
-                        )))
-                },
-                fn action_json_schema(
-                    generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-                ) -> Option<gpui::private::schemars::schema::Schema> {
-                    None
-                }
-            );
-        )*
-    };
-}
+pub use gpui_macros::impl_internal_actions;
 
 /// Implements the Action trait for a struct that implements Clone, Default, PartialEq, and
 /// serde_deserialize::Deserialize. Allows you to rename the action visually, without changing the
@@ -496,80 +348,13 @@ macro_rules! impl_internal_actions {
 ///
 /// Fields and variants that don't make sense for user configuration should be annotated with
 /// #[serde(skip)].
-#[macro_export]
-macro_rules! impl_action_as {
-    ($namespace:path, $name:ident as $visual_name:tt ) => {
-        gpui::__impl_action!(
-            $namespace,
-            $name,
-            $visual_name,
-            fn build(
-                value: gpui::private::serde_json::Value,
-            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
-                Ok(std::boxed::Box::new(
-                    gpui::private::serde_json::from_value::<Self>(value)?,
-                ))
-            },
-            fn action_json_schema(
-                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
-                    generator,
-                ))
-            }
-        );
-
-        gpui::register_action!($name);
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __impl_action {
-    ($namespace:path, $name:ident, $visual_name:tt, $($items:item),*) => {
-        impl gpui::Action for $name {
-            fn name(&self) -> &'static str
-            {
-                concat!(
-                    stringify!($namespace),
-                    "::",
-                    stringify!($visual_name),
-                )
-            }
-
-            fn debug_name() -> &'static str
-            where
-                Self: ::std::marker::Sized
-            {
-                concat!(
-                    stringify!($namespace),
-                    "::",
-                    stringify!($visual_name),
-                )
-            }
-
-            fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
-                action
-                    .as_any()
-                    .downcast_ref::<Self>()
-                    .map_or(false, |a| self == a)
-            }
-
-            fn boxed_clone(&self) ->  std::boxed::Box<dyn gpui::Action> {
-                ::std::boxed::Box::new(self.clone())
-            }
-
-
-            $($items)*
-        }
-    };
-}
+pub use gpui_macros::impl_action_as;
 
 mod no_action {
     use crate as gpui;
     use std::any::Any as _;
 
-    actions!(
+    gpui_macros::actions!(
         zed,
         [
             /// Action with special handling which unbinds the keybinding this is associated with,
