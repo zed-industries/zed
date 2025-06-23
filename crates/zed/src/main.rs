@@ -697,16 +697,21 @@ pub fn main() {
 
                 let use_system_window_tabs =
                     WorkspaceSettings::get_global(cx).use_system_window_tabs;
-                if !use_system_window_tabs {
-                    let system_window_tab_actions = [
-                        TypeId::of::<ShowNextWindowTab>(),
-                        TypeId::of::<ShowPreviousWindowTab>(),
-                        TypeId::of::<MergeAllWindows>(),
-                        TypeId::of::<MoveWindowTabToNewWindow>(),
-                    ];
+                let system_window_tab_actions = [
+                    TypeId::of::<ShowNextWindowTab>(),
+                    TypeId::of::<ShowPreviousWindowTab>(),
+                    TypeId::of::<MergeAllWindows>(),
+                    TypeId::of::<MoveWindowTabToNewWindow>(),
+                ];
 
-                    let filter = CommandPaletteFilter::global_mut(cx);
-                    filter.hide_action_types(&system_window_tab_actions);
+                if use_system_window_tabs {
+                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                        filter.show_action_types(system_window_tab_actions.iter());
+                    });
+                } else {
+                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                        filter.hide_action_types(&system_window_tab_actions);
+                    });
                 }
             }
         })
