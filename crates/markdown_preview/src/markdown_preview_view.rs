@@ -107,9 +107,10 @@ impl MarkdownPreviewView {
     ) -> Option<usize> {
         pane.items_of_type::<MarkdownPreviewView>()
             .find(|view| {
-                view.read(cx).active_editor.as_ref().is_some_and(|active_editor| {
-                    active_editor.editor == *editor
-                })
+                view.read(cx)
+                    .active_editor
+                    .as_ref()
+                    .is_some_and(|active_editor| active_editor.editor == *editor)
             })
             .and_then(|view| pane.index_for_item(&view))
     }
@@ -359,7 +360,7 @@ impl MarkdownPreviewView {
         if self.tab_content_text.is_none() {
             self.tab_content_text = Some(format!("Preview {}", tab_content).into());
         }
-        
+
         self.active_editor = Some(EditorState {
             editor,
             _subscription: subscription,
