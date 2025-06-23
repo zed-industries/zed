@@ -1161,10 +1161,8 @@ impl ActiveThread {
 
                 // Show a notification to the user
                 let notification_text = if *max_attempts == 1 {
-                    // For single retry (e.g., rate limit with retry_after)
                     format!("{} retry in {}s", provider_name.0.as_ref(), delay.as_secs())
                 } else {
-                    // For multiple retry attempts
                     format!(
                         "{} retry in {}s (attempt {attempt}/{max_attempts})",
                         provider_name.0.as_ref(),
