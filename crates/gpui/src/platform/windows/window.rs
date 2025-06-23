@@ -63,6 +63,7 @@ pub struct WindowsWindowState {
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
     this: Weak<Self>,
+    drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -210,6 +211,7 @@ impl WindowsWindowStatePtr {
         Ok(Rc::new_cyclic(|this| Self {
             hwnd,
             this: this.clone(),
+            drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
@@ -331,6 +333,7 @@ struct WindowCreateContext<'a> {
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
+    drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
     gpu_context: &'a BladeContext,
@@ -349,6 +352,7 @@ impl WindowsWindow {
             executor,
             current_cursor,
             windows_version,
+            drop_target_helper,
             validation_number,
             main_receiver,
             main_thread_id_win32,
@@ -394,6 +398,7 @@ impl WindowsWindow {
             executor,
             current_cursor,
             windows_version,
+            drop_target_helper,
             validation_number,
             main_receiver,
             gpu_context,
@@ -831,8 +836,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 lindex: -1,
                 tymed: TYMED_HGLOBAL.0 as _,
             };
+            let cursor_position = POINT { x: pt.x, y: pt.y };
             if idata_obj.QueryGetData(&config as _) == S_OK {
-                *pdweffect = DROPEFFECT_LINK;
+                *pdweffect = DROPEFFECT_COPY;
                 let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
                     return Ok(());
                 };
@@ -847,7 +853,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                     }
                 });
                 ReleaseStgMedium(&mut idata);
-                let mut cursor_position = POINT { x: pt.x, y: pt.y };
+                let mut cursor_position = cursor_position;
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
                     .ok()
                     .log_err();
@@ -864,6 +870,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
             } else {
                 *pdweffect = DROPEFFECT_NONE;
             }
+            self.0
+                .drop_target_helper
+                .DragEnter(self.0.hwnd, idata_obj, &cursor_position, *pdweffect)
+                .log_err();
         }
         Ok(())
     }
@@ -872,10 +882,15 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         &self,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        _pdweffect: *mut DROPEFFECT,
+        pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
+            *pdweffect = DROPEFFECT_COPY;
+            self.0
+                .drop_target_helper
+                .DragOver(&cursor_position, *pdweffect)
+                .log_err();
             ScreenToClient(self.0.hwnd, &mut cursor_position)
                 .ok()
                 .log_err();
@@ -894,6 +909,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
+        unsafe {
+            self.0.drop_target_helper.DragLeave().log_err();
+        }
         let input = PlatformInput::FileDrop(FileDropEvent::Exited);
         self.handle_drag_drop(input);
 
@@ -902,13 +920,19 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
     fn Drop(
         &self,
-        _pdataobj: windows::core::Ref<IDataObject>,
+        pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        _pdweffect: *mut DROPEFFECT,
+        pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        let idata_obj = pdataobj.ok()?;
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
+            *pdweffect = DROPEFFECT_COPY;
+            self.0
+                .drop_target_helper
+                .Drop(idata_obj, &cursor_position, *pdweffect)
+                .log_err();
             ScreenToClient(self.0.hwnd, &mut cursor_position)
                 .ok()
                 .log_err();

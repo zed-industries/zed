@@ -59,7 +59,6 @@ use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
-const EDIT_PREVIOUS_MESSAGE_MAX_LINES: usize = 6;
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -304,7 +303,7 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
         base_text_style: text_style,
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().players().local().selection,
-        code_block_overflow_x_scroll: true,
+        code_block_overflow_x_scroll: false,
         code_block: StyleRefinement {
             margin: EdgesRefinement::default(),
             padding: EdgesRefinement::default(),
@@ -1330,7 +1329,7 @@ impl ActiveThread {
             self.thread_store.downgrade(),
             self.text_thread_store.downgrade(),
             EDIT_PREVIOUS_MESSAGE_MIN_LINES,
-            EDIT_PREVIOUS_MESSAGE_MAX_LINES,
+            None,
             window,
             cx,
         );
@@ -1695,7 +1694,7 @@ impl ActiveThread {
             let mut editor = Editor::new(
                 editor::EditorMode::AutoHeight {
                     min_lines: 1,
-                    max_lines: 4,
+                    max_lines: Some(4),
                 },
                 buffer,
                 None,

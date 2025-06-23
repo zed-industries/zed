@@ -89,7 +89,7 @@ pub(crate) fn create_editor(
     thread_store: WeakEntity<ThreadStore>,
     text_thread_store: WeakEntity<TextThreadStore>,
     min_lines: usize,
-    max_lines: usize,
+    max_lines: Option<usize>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
@@ -107,7 +107,7 @@ pub(crate) fn create_editor(
         let mut editor = Editor::new(
             editor::EditorMode::AutoHeight {
                 min_lines,
-                max_lines,
+                max_lines: max_lines,
             },
             buffer,
             None,
@@ -163,7 +163,7 @@ impl MessageEditor {
             thread_store.clone(),
             text_thread_store.clone(),
             MIN_EDITOR_LINES,
-            MAX_EDITOR_LINES,
+            Some(MAX_EDITOR_LINES),
             window,
             cx,
         );
@@ -240,6 +240,21 @@ impl MessageEditor {
         &self.context_store
     }
 
+    pub fn get_text(&self, cx: &App) -> String {
+        self.editor.read(cx).text(cx)
+    }
+
+    pub fn set_text(
+        &mut self,
+        text: impl Into<Arc<str>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_text(text, window, cx);
+        });
+    }
+
     pub fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
@@ -261,7 +276,7 @@ impl MessageEditor {
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
-                    max_lines: MAX_EDITOR_LINES,
+                    max_lines: Some(MAX_EDITOR_LINES),
                 })
             }
         });
@@ -1225,16 +1240,17 @@ impl MessageEditor {
             })
     }
 
-    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        let is_using_zed_provider = self
-            .thread
+    fn is_using_zed_provider(&self, cx: &App) -> bool {
+        self.thread
             .read(cx)
             .configured_model()
             .map_or(false, |model| {
                 model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
-            });
+            })
+    }
 
-        if !is_using_zed_provider {
+    fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.is_using_zed_provider(cx) {
             return None;
         }
 
@@ -1288,37 +1304,41 @@ impl MessageEditor {
             "Thread reaching the token limit soon"
         };
 
+        let description = if self.is_using_zed_provider(cx) {
+            "To continue, start a new thread from a summary or turn burn mode on."
+        } else {
+            "To continue, start a new thread from a summary."
+        };
+
+        let mut callout = Callout::new()
+            .line_height(line_height)
+            .icon(icon)
+            .title(title)
+            .description(description)
+            .primary_action(
+                Button::new("start-new-thread", "Start New Thread")
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let from_thread_id = Some(this.thread.read(cx).id().clone());
+                        window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
+                    })),
+            );
+
+        if self.is_using_zed_provider(cx) {
+            callout = callout.secondary_action(
+                IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
+                    .icon_size(IconSize::XSmall)
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.toggle_burn_mode(&ToggleBurnMode, window, cx);
+                    })),
+            );
+        }
+
         Some(
             div()
                 .border_t_1()
                 .border_color(cx.theme().colors().border)
-                .child(
-                    Callout::new()
-                        .line_height(line_height)
-                        .icon(icon)
-                        .title(title)
-                        .description(
-                            "To continue, start a new thread from a summary or turn burn mode on.",
-                        )
-                        .primary_action(
-                            Button::new("start-new-thread", "Start New Thread")
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let from_thread_id = Some(this.thread.read(cx).id().clone());
-                                    window.dispatch_action(
-                                        Box::new(NewThread { from_thread_id }),
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .secondary_action(
-                            IconButton::new("burn-mode-callout", IconName::ZedBurnMode)
-                                .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(|this, _event, window, cx| {
-                                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
-                                })),
-                        ),
-                ),
+                .child(callout),
         )
     }
 
