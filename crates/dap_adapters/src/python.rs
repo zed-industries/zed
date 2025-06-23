@@ -717,6 +717,33 @@ mod tests {
         assert_eq!(venv_args[2], "--host=127.0.0.1");
         assert_eq!(venv_args[3], "--port=5678");
 
+        // The same cases, with arguments overridden by the user
+        let user_args = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            Some(&user_path),
+            Some(vec!["foo".into()]),
+            false,
+        )
+        .await
+        .unwrap();
+        let venv_args = PythonDebugAdapter::generate_debugpy_arguments(
+            &host,
+            port,
+            None,
+            Some(vec!["foo".into()]),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert!(user_args[0].ends_with("src/debugpy/adapter"));
+        assert_eq!(user_args[1], "foo");
+
+        assert_eq!(venv_args[0], "-m");
+        assert_eq!(venv_args[1], "debugpy.adapter");
+        assert_eq!(venv_args[2], "foo");
+
         // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
     }
 }
