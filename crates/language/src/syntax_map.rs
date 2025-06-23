@@ -32,6 +32,7 @@ pub struct SyntaxSnapshot {
     parsed_version: clock::Global,
     interpolated_version: clock::Global,
     language_registry_version: usize,
+    update_count: usize,
 }
 
 #[derive(Default)]
@@ -257,7 +258,9 @@ impl SyntaxMap {
     }
 
     pub fn clear(&mut self, text: &BufferSnapshot) {
+        let update_count = self.snapshot.update_count + 1;
         self.snapshot = SyntaxSnapshot::new(text);
+        self.snapshot.update_count = update_count;
     }
 }
 
@@ -268,11 +271,16 @@ impl SyntaxSnapshot {
             parsed_version: clock::Global::default(),
             interpolated_version: clock::Global::default(),
             language_registry_version: 0,
+            update_count: 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
+    }
+
+    pub fn update_count(&self) -> usize {
+        self.update_count
     }
 
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
@@ -443,6 +451,8 @@ impl SyntaxSnapshot {
                 self.language_registry_version = registry.version();
             }
         }
+
+        self.update_count += 1;
     }
 
     fn reparse_with_ranges(

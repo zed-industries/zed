@@ -379,7 +379,7 @@ pub(crate) fn commit_message_editor(
     let mut commit_editor = Editor::new(
         EditorMode::AutoHeight {
             min_lines: 1,
-            max_lines,
+            max_lines: Some(max_lines),
         },
         buffer,
         None,
@@ -475,7 +475,7 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::Updated { full_scan },
+                        RepositoryEvent::Updated { full_scan, .. },
                         true,
                     ) => {
                         this.schedule_update(*full_scan, window, cx);

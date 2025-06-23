@@ -217,8 +217,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if let Some(highlights) = editor.clear_background_highlights::<VimExchange>(cx) {
-            let previous_range = highlights[0].range.clone();
+        if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
+            let previous_range = ranges[0].clone();
 
             let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot);
             let new_range_end = new_range.end.to_offset(&snapshot.buffer_snapshot);

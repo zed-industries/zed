@@ -56,6 +56,9 @@
       "[ shift-b": ["pane::ActivateItem", 0],
       "] space": "vim::InsertEmptyLineBelow",
       "[ space": "vim::InsertEmptyLineAbove",
+      "[ e": "editor::MoveLineUp",
+      "] e": "editor::MoveLineDown",
+
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",

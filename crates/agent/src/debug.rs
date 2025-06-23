@@ -1,7 +1,7 @@
 #![allow(unused, dead_code)]
 
+use client::{ModelRequestUsage, RequestUsage};
 use gpui::Global;
-use language_model::RequestUsage;
 use std::ops::{Deref, DerefMut};
 use ui::prelude::*;
 use zed_llm_client::{Plan, UsageLimit};
@@ -17,7 +17,7 @@ pub struct DebugAccountState {
     pub enabled: bool,
     pub trial_expired: bool,
     pub plan: Plan,
-    pub custom_prompt_usage: RequestUsage,
+    pub custom_prompt_usage: ModelRequestUsage,
     pub usage_based_billing_enabled: bool,
     pub monthly_spending_cap: i32,
     pub custom_edit_prediction_usage: UsageLimit,
@@ -43,7 +43,7 @@ impl DebugAccountState {
         self
     }
 
-    pub fn set_custom_prompt_usage(&mut self, custom_prompt_usage: RequestUsage) -> &mut Self {
+    pub fn set_custom_prompt_usage(&mut self, custom_prompt_usage: ModelRequestUsage) -> &mut Self {
         self.custom_prompt_usage = custom_prompt_usage;
         self
     }
@@ -76,10 +76,10 @@ impl Default for DebugAccountState {
             enabled: false,
             trial_expired: false,
             plan: Plan::ZedFree,
-            custom_prompt_usage: RequestUsage {
+            custom_prompt_usage: ModelRequestUsage(RequestUsage {
                 limit: UsageLimit::Unlimited,
                 amount: 0,
-            },
+            }),
             usage_based_billing_enabled: false,
             // $50.00
             monthly_spending_cap: 5000,

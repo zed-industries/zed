@@ -73,7 +73,7 @@ use super::{
 
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
-    AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
@@ -217,6 +217,7 @@ pub(crate) struct WaylandClientState {
     click: ClickState,
     repeat: KeyRepeat,
     pub modifiers: Modifiers,
+    pub capslock: Capslock,
     axis_source: AxisSource,
     pub mouse_location: Option<Point<Pixels>>,
     continuous_scroll_delta: Option<Point<Pixels>>,
@@ -595,6 +596,7 @@ impl WaylandClient {
                 function: false,
                 platform: false,
             },
+            capslock: Capslock { on: false },
             scroll_event_received: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
@@ -1251,9 +1253,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+                let keymap_state = state.keymap_state.as_mut().unwrap();
+                state.capslock = Capslock::from_xkb(keymap_state);
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
+                    capslock: state.capslock,
                 });
                 drop(state);
 

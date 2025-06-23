@@ -122,7 +122,6 @@ impl LspColorData {
 impl Editor {
     pub(super) fn refresh_colors(
         &mut self,
-        update_on_edit: bool,
         for_server_id: Option<LanguageServerId>,
         buffer_id: Option<BufferId>,
         _: &Window,
@@ -158,8 +157,7 @@ impl Editor {
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
-                    let colors_task =
-                        lsp_store.document_colors(update_on_edit, for_server_id, buffer, cx)?;
+                    let colors_task = lsp_store.document_colors(for_server_id, buffer, cx)?;
                     Some(async move { (buffer_id, colors_task.await) })
                 })
                 .collect::<Vec<_>>()

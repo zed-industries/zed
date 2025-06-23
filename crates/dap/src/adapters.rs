@@ -1,10 +1,10 @@
-use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
+use fs::Fs;
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};

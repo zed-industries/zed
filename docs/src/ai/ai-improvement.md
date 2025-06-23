@@ -13,6 +13,8 @@ When using upstream services through Zed AI, we require assurances from our serv
 
 > "Anthropic may not train models on Customer Content from paid Services."
 
+We also have a [zero-data retention agreement](https://privacy.anthropic.com/en/articles/8956058-i-have-a-zero-data-retention-agreement-with-anthropic-what-products-does-it-apply-to) with Anthropic.
+
 When you directly connect Zed with a non Zed AI service (e.g., via API key) Zed does not have control over how your data is used by that service provider.
 You should reference your agreement with each service provider to understand what terms and conditions apply.
 

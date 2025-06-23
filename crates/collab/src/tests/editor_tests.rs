@@ -7,7 +7,7 @@ use editor::{
     DocumentColorsRenderMode, Editor, EditorSettings, RowInfo,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
-        ExpandMacroRecursively, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
+        ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
     },
     test::{
         editor_test_context::{AssertionContextManager, EditorTestContext},
@@ -15,7 +15,7 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::StreamExt;
+use futures::{StreamExt, lock::Mutex};
 use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
@@ -35,7 +35,8 @@ use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
-    ops::Range,
+    collections::BTreeSet,
+    ops::{Deref as _, Range},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -2028,7 +2029,6 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    executor.start_waiting();
 
     // The host opens a rust file.
     let _buffer_a = project_a
@@ -2225,6 +2225,600 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
             extract_color_inlays(editor, cx),
             "Client should be unaffected by the host's settings changes"
         );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-pulls".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: lsp::WorkDoneProgressOptions {
+                            work_done_progress: None,
+                        },
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    // Client A opens a project.
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { a }",
+                "lib.rs": "fn other() {}",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client B joins the project
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    executor.start_waiting();
+
+    // The host opens a rust file.
+    let _buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let editor_a_main = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    let expected_push_diagnostic_main_message = "pushed main diagnostic";
+    let expected_push_diagnostic_lib_message = "pushed lib diagnostic";
+    let expected_pull_diagnostic_main_message = "pulled main diagnostic";
+    let expected_pull_diagnostic_lib_message = "pulled lib diagnostic";
+    let expected_workspace_pull_diagnostics_main_message = "pulled workspace main diagnostic";
+    let expected_workspace_pull_diagnostics_lib_message = "pulled workspace lib diagnostic";
+
+    let diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<Option<String>>::new()));
+    let workspace_diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<String>::new()));
+    let diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
+    let closure_diagnostics_pulls_made = diagnostics_pulls_made.clone();
+    let closure_diagnostics_pulls_result_ids = diagnostics_pulls_result_ids.clone();
+    let mut pull_diagnostics_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
+            let requests_made = closure_diagnostics_pulls_made.clone();
+            let diagnostics_pulls_result_ids = closure_diagnostics_pulls_result_ids.clone();
+            async move {
+                let message = if lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                    == params.text_document.uri
+                {
+                    expected_pull_diagnostic_main_message.to_string()
+                } else if lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap()
+                    == params.text_document.uri
+                {
+                    expected_pull_diagnostic_lib_message.to_string()
+                } else {
+                    panic!("Unexpected document: {}", params.text_document.uri)
+                };
+                {
+                    diagnostics_pulls_result_ids
+                        .lock()
+                        .await
+                        .insert(params.previous_result_id);
+                }
+                let new_requests_count = requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
+                Ok(lsp::DocumentDiagnosticReportResult::Report(
+                    lsp::DocumentDiagnosticReport::Full(lsp::RelatedFullDocumentDiagnosticReport {
+                        related_documents: None,
+                        full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
+                            result_id: Some(format!("pull-{new_requests_count}")),
+                            items: vec![lsp::Diagnostic {
+                                range: lsp::Range {
+                                    start: lsp::Position {
+                                        line: 0,
+                                        character: 0,
+                                    },
+                                    end: lsp::Position {
+                                        line: 0,
+                                        character: 2,
+                                    },
+                                },
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message,
+                                ..lsp::Diagnostic::default()
+                            }],
+                        },
+                    }),
+                ))
+            }
+        });
+
+    let workspace_diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
+    let closure_workspace_diagnostics_pulls_made = workspace_diagnostics_pulls_made.clone();
+    let closure_workspace_diagnostics_pulls_result_ids =
+        workspace_diagnostics_pulls_result_ids.clone();
+    let mut workspace_diagnostics_pulls_handle = fake_language_server
+        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+        move |params, _| {
+            let workspace_requests_made = closure_workspace_diagnostics_pulls_made.clone();
+            let workspace_diagnostics_pulls_result_ids =
+                closure_workspace_diagnostics_pulls_result_ids.clone();
+            async move {
+                let workspace_request_count =
+                    workspace_requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
+                {
+                    workspace_diagnostics_pulls_result_ids
+                        .lock()
+                        .await
+                        .extend(params.previous_result_ids.into_iter().map(|id| id.value));
+                }
+                Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                    lsp::WorkspaceDiagnosticReport {
+                        items: vec![
+                            lsp::WorkspaceDocumentDiagnosticReport::Full(
+                                lsp::WorkspaceFullDocumentDiagnosticReport {
+                                    uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    version: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: Some(format!(
+                                                "workspace_{workspace_request_count}"
+                                            )),
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range {
+                                                    start: lsp::Position {
+                                                        line: 0,
+                                                        character: 1,
+                                                    },
+                                                    end: lsp::Position {
+                                                        line: 0,
+                                                        character: 3,
+                                                    },
+                                                },
+                                                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                                message:
+                                                    expected_workspace_pull_diagnostics_main_message
+                                                        .to_string(),
+                                                ..lsp::Diagnostic::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                            lsp::WorkspaceDocumentDiagnosticReport::Full(
+                                lsp::WorkspaceFullDocumentDiagnosticReport {
+                                    uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                    version: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: Some(format!(
+                                                "workspace_{workspace_request_count}"
+                                            )),
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range {
+                                                    start: lsp::Position {
+                                                        line: 0,
+                                                        character: 1,
+                                                    },
+                                                    end: lsp::Position {
+                                                        line: 0,
+                                                        character: 3,
+                                                    },
+                                                },
+                                                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                                message:
+                                                    expected_workspace_pull_diagnostics_lib_message
+                                                        .to_string(),
+                                                ..lsp::Diagnostic::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ],
+                    },
+                ))
+            }
+        },
+    );
+
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        1,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Workspace diagnostics should be pulled initially on a server startup"
+    );
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        1,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Host should query pull diagnostics when the editor is opened"
+    );
+    executor.run_until_parked();
+    editor_a_main.update(cx_a, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_diagnostics.len(),
+            1,
+            "Expected single diagnostic, but got: {all_diagnostics:?}"
+        );
+        let diagnostic = &all_diagnostics[0];
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+        ];
+        assert!(
+            expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+            "Expected {expected_messages:?} on the host, but got: {}",
+            diagnostic.diagnostic.message
+        );
+    });
+
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        &lsp::PublishDiagnosticsParams {
+            uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            diagnostics: vec![lsp::Diagnostic {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 3,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 4,
+                    },
+                },
+                severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                message: expected_push_diagnostic_main_message.to_string(),
+                ..lsp::Diagnostic::default()
+            }],
+            version: None,
+        },
+    );
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        &lsp::PublishDiagnosticsParams {
+            uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+            diagnostics: vec![lsp::Diagnostic {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 3,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 4,
+                    },
+                },
+                severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                message: expected_push_diagnostic_lib_message.to_string(),
+                ..lsp::Diagnostic::default()
+            }],
+            version: None,
+        },
+    );
+    executor.run_until_parked();
+    editor_a_main.update(cx_a, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_diagnostics.len(),
+            2,
+            "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
+        );
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Expected push and pull messages on the host: {expected_messages:?}, but got: {}",
+                diagnostic.diagnostic.message
+            );
+        }
+    });
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b_main = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        2,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client should query pull diagnostics when its editor is opened"
+    );
+    executor.run_until_parked();
+    assert_eq!(
+        1,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Workspace diagnostics should not be changed as the remote client does not initialize the workspace diagnostics pull"
+    );
+    editor_b_main.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_diagnostics.len(),
+            2,
+            "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
+        );
+
+        // Despite the workspace diagnostics not re-initialized for the remote client, we can still expect its message synced from the host.
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
+                diagnostic.diagnostic.message
+            );
+        }
+    });
+
+    let editor_b_lib = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "lib.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        3,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client should query pull diagnostics when its another editor is opened"
+    );
+    executor.run_until_parked();
+    assert_eq!(
+        1,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "The remote client still did not anything to trigger the workspace diagnostics pull"
+    );
+    editor_b_lib.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        let expected_messages = [
+            expected_pull_diagnostic_lib_message,
+            // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
+            // expected_push_diagnostic_lib_message,
+        ];
+        assert_eq!(
+            all_diagnostics.len(),
+            1,
+            "Expected pull diagnostics, but got: {all_diagnostics:?}"
+        );
+        for diagnostic in all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
+                diagnostic.diagnostic.message
+            );
+        }
+    });
+    {
+        assert!(
+            diagnostics_pulls_result_ids.lock().await.len() > 0,
+            "Initial diagnostics pulls should report None at least"
+        );
+        assert_eq!(
+            0,
+            workspace_diagnostics_pulls_result_ids
+                .lock()
+                .await
+                .deref()
+                .len(),
+            "After the initial workspace request, opening files should not reuse any result ids"
+        );
+    }
+
+    editor_b_lib.update_in(cx_b, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(":", window, cx);
+    });
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        4,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client lib.rs edits should trigger another diagnostics pull for a buffer"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        2,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "After client lib.rs edits, the workspace diagnostics request should follow"
+    );
+    executor.run_until_parked();
+
+    editor_b_main.update_in(cx_b, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(":", window, cx);
+    });
+    pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        6,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client main.rs edits should trigger another diagnostics pull by both client and host as they share the buffer"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        3,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "After client main.rs edits, the workspace diagnostics pull should follow"
+    );
+    executor.run_until_parked();
+
+    editor_a_main.update_in(cx_a, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(":", window, cx);
+    });
+    pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        8,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Host main.rs edits should trigger another diagnostics pull by both client and host as they share the buffer"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        4,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "After host main.rs edits, the workspace diagnostics pull should follow"
+    );
+    executor.run_until_parked();
+    let diagnostic_pulls_result_ids = diagnostics_pulls_result_ids.lock().await.len();
+    let workspace_pulls_result_ids = workspace_diagnostics_pulls_result_ids.lock().await.len();
+    {
+        assert!(
+            diagnostic_pulls_result_ids > 1,
+            "Should have sent result ids when pulling diagnostics"
+        );
+        assert!(
+            workspace_pulls_result_ids > 1,
+            "Should have sent result ids when pulling workspace diagnostics"
+        );
+    }
+
+    fake_language_server
+        .request::<lsp::request::WorkspaceDiagnosticRefresh>(())
+        .await
+        .into_response()
+        .expect("workspace diagnostics refresh request failed");
+    assert_eq!(
+        8,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "No single file pulls should happen after the diagnostics refresh server request"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        5,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Another workspace diagnostics pull should happen after the diagnostics refresh server request"
+    );
+    {
+        assert!(
+            diagnostics_pulls_result_ids.lock().await.len() == diagnostic_pulls_result_ids,
+            "Pulls should not happen hence no extra ids should appear"
+        );
+        assert!(
+            workspace_diagnostics_pulls_result_ids.lock().await.len() > workspace_pulls_result_ids,
+            "More workspace diagnostics should be pulled"
+        );
+    }
+    editor_b_lib.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_lib_message,
+            expected_pull_diagnostic_lib_message,
+            expected_push_diagnostic_lib_message,
+        ];
+        assert_eq!(all_diagnostics.len(), 1);
+        for diagnostic in &all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Unexpected diagnostics: {all_diagnostics:?}"
+            );
+        }
+    });
+    editor_b_main.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(all_diagnostics.len(), 2);
+
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in &all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Unexpected diagnostics: {all_diagnostics:?}"
+            );
+        }
+    });
+    editor_a_main.update(cx_a, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(all_diagnostics.len(), 2);
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in &all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Unexpected diagnostics: {all_diagnostics:?}"
+            );
+        }
     });
 }
 

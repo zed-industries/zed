@@ -19,6 +19,7 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
+- [Visual Customization](./visual-customization.md)
 - [Vim Mode](./vim.md)
 
 <!-- - [Globs](./globs.md) -->
@@ -32,7 +33,7 @@
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)
-- [Debugging (Beta)](./debugger.md)
+- [Debugger](./debugger.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)

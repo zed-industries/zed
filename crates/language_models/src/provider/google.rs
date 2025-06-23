@@ -342,11 +342,11 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.supports_tools()
     }
 
     fn supports_images(&self) -> bool {
-        true
+        self.model.supports_images()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -367,6 +367,10 @@ impl LanguageModel for GoogleLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        self.model.max_output_tokens()
     }
 
     fn count_tokens(

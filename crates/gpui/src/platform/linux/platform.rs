@@ -491,6 +491,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .context("Cannot find username in stored credentials")?;
+                    item.unlock().await?;
                     let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
@@ -870,6 +871,14 @@ impl crate::Modifiers {
             platform,
             function: false,
         }
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl crate::Capslock {
+    pub(super) fn from_xkb(keymap_state: &State) -> Self {
+        let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+        Self { on }
     }
 }
 

@@ -217,6 +217,12 @@ impl Render for QuickActionBar {
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
+            let has_diff_hunks = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .has_diff_hunks();
             let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
@@ -251,8 +257,18 @@ impl Render for QuickActionBar {
                             .action("Next Problem", Box::new(GoToDiagnostic))
                             .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .action("Next Hunk", Box::new(GoToHunk))
-                            .action("Previous Hunk", Box::new(GoToPreviousHunk))
+                            .map(|menu| {
+                                if has_diff_hunks {
+                                    menu.action("Next Hunk", Box::new(GoToHunk))
+                                        .action("Previous Hunk", Box::new(GoToPreviousHunk))
+                                } else {
+                                    menu.disabled_action("Next Hunk", Box::new(GoToHunk))
+                                        .disabled_action(
+                                            "Previous Hunk",
+                                            Box::new(GoToPreviousHunk),
+                                        )
+                                }
+                            })
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))

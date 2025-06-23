@@ -1115,14 +1115,14 @@ mod tests {
     use super::*;
     use crate::{
         InlayId, MultiBuffer,
-        display_map::{InlayHighlights, TextHighlights},
+        display_map::{HighlightKey, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
     };
     use gpui::{App, HighlightStyle};
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{any::TypeId, cmp::Reverse, env};
+    use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::Patch;
     use util::post_inc;
@@ -1629,17 +1629,17 @@ mod tests {
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
-                TypeId::of::<()>(),
-                text_highlight_ranges
-                    .into_iter()
-                    .map(|range| {
-                        (
+                HighlightKey::Type(TypeId::of::<()>()),
+                Arc::new((
+                    HighlightStyle::default(),
+                    text_highlight_ranges
+                        .into_iter()
+                        .map(|range| {
                             buffer_snapshot.anchor_before(range.start)
-                                ..buffer_snapshot.anchor_after(range.end),
-                            HighlightStyle::default(),
-                        )
-                    })
-                    .collect(),
+                                ..buffer_snapshot.anchor_after(range.end)
+                        })
+                        .collect(),
+                )),
             );
 
             let mut inlay_highlights = InlayHighlights::default();

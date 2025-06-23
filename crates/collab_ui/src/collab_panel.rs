@@ -499,6 +499,7 @@ impl CollabPanel {
                         &self.match_candidates,
                         &query,
                         true,
+                        true,
                         usize::MAX,
                         &Default::default(),
                         executor.clone(),
@@ -541,6 +542,7 @@ impl CollabPanel {
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
+                    true,
                     true,
                     usize::MAX,
                     &Default::default(),
@@ -593,6 +595,7 @@ impl CollabPanel {
                     &self.match_candidates,
                     &query,
                     true,
+                    true,
                     usize::MAX,
                     &Default::default(),
                     executor.clone(),
@@ -622,6 +625,7 @@ impl CollabPanel {
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &Default::default(),
@@ -699,6 +703,7 @@ impl CollabPanel {
                 &self.match_candidates,
                 &query,
                 true,
+                true,
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
@@ -734,6 +739,7 @@ impl CollabPanel {
                 &self.match_candidates,
                 &query,
                 true,
+                true,
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
@@ -757,6 +763,7 @@ impl CollabPanel {
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &Default::default(),
@@ -790,6 +797,7 @@ impl CollabPanel {
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &Default::default(),
