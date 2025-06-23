@@ -123,6 +123,7 @@ pub struct Message {
     pub loaded_context: LoadedContext,
     pub creases: Vec<MessageCrease>,
     pub is_hidden: bool,
+    pub ui_only: bool,
 }
 
 impl Message {
@@ -574,6 +575,7 @@ impl Thread {
                         })
                         .collect(),
                     is_hidden: message.is_hidden,
+                    ui_only: false, // UI-only messages are not persisted
                 })
                 .collect(),
             next_message_id,
@@ -1058,6 +1060,7 @@ impl Thread {
             loaded_context,
             creases,
             is_hidden,
+            ui_only: false,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -1147,6 +1150,7 @@ impl Thread {
                 updated_at: this.updated_at(),
                 messages: this
                     .messages()
+                    .filter(|message| !message.ui_only)
                     .map(|message| SerializedMessage {
                         id: message.id,
                         role: message.role,
@@ -1323,6 +1327,11 @@ impl Thread {
 
         let mut message_ix_to_cache = None;
         for message in &self.messages {
+            // Skip UI-only messages - they're for UI only, not for the model
+            if message.ui_only {
+                continue;
+            }
+
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -2085,14 +2094,19 @@ impl Thread {
         // Add a transient message to inform the user (no attempt count for single retry)
         let retry_message = format!("{}. Retrying in {} seconds...", error_message, delay_secs);
 
-        let message_id = self.insert_message(
-            Role::System,
-            vec![MessageSegment::Text(retry_message)],
-            LoadedContext::default(),
-            Vec::new(),
-            true, // is_hidden - won't be persisted
-            cx,
-        );
+        // Add a UI-only message instead of a regular message
+        let id = self.next_message_id.post_inc();
+        self.messages.push(Message {
+            id,
+            role: Role::System,
+            segments: vec![MessageSegment::Text(retry_message)],
+            loaded_context: LoadedContext::default(),
+            creases: Vec::new(),
+            is_hidden: true,
+            ui_only: true,
+        });
+        cx.emit(ThreadEvent::MessageAdded(id));
+        let message_id = id;
 
         cx.emit(ThreadEvent::RetryScheduled {
             message_id,
@@ -2184,14 +2198,19 @@ impl Thread {
                 error_message, attempt, max_attempts, delay_secs
             );
 
-            let message_id = self.insert_message(
-                Role::System,
-                vec![MessageSegment::Text(retry_message)],
-                LoadedContext::default(),
-                Vec::new(),
-                true, // is_hidden - won't be persisted
-                cx,
-            );
+            // Add a UI-only message instead of a regular message
+            let id = self.next_message_id.post_inc();
+            self.messages.push(Message {
+                id,
+                role: Role::System,
+                segments: vec![MessageSegment::Text(retry_message)],
+                loaded_context: LoadedContext::default(),
+                creases: Vec::new(),
+                is_hidden: true,
+                ui_only: true,
+            });
+            cx.emit(ThreadEvent::MessageAdded(id));
+            let message_id = id;
 
             cx.emit(ThreadEvent::RetryScheduled {
                 message_id,
@@ -4777,6 +4796,106 @@ fn main() {{
                 "Should have added a system retry message without attempt count"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_ui_only_messages_not_sent_to_model(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, model) = setup_test_environment(cx, project.clone()).await;
+
+        // Insert a regular user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Insert a UI-only message (like our retry notifications)
+        thread.update(cx, |thread, cx| {
+            let id = thread.next_message_id.post_inc();
+            thread.messages.push(Message {
+                id,
+                role: Role::System,
+                segments: vec![MessageSegment::Text(
+                    "This is a UI-only message that should not be sent to the model".to_string(),
+                )],
+                loaded_context: LoadedContext::default(),
+                creases: Vec::new(),
+                is_hidden: true,
+                ui_only: true,
+            });
+            cx.emit(ThreadEvent::MessageAdded(id));
+        });
+
+        // Insert another regular message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "How are you?",
+                ContextLoadResult::default(),
+                None,
+                vec![],
+                cx,
+            );
+        });
+
+        // Generate the completion request
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // Verify that the request only contains non-UI-only messages
+        // Should have system prompt + 2 user messages, but not the UI-only message
+        let user_messages: Vec<_> = request
+            .messages
+            .iter()
+            .filter(|msg| msg.role == Role::User)
+            .collect();
+        assert_eq!(
+            user_messages.len(),
+            2,
+            "Should have exactly 2 user messages"
+        );
+
+        // Verify the UI-only content is not present anywhere in the request
+        let request_text = request
+            .messages
+            .iter()
+            .flat_map(|msg| &msg.content)
+            .filter_map(|content| match content {
+                MessageContent::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert!(
+            !request_text.contains("UI-only message"),
+            "UI-only message content should not be in the request"
+        );
+
+        // Verify the thread still has all 3 messages (including UI-only)
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.messages().count(),
+                3,
+                "Thread should have 3 messages"
+            );
+            assert_eq!(
+                thread.messages().filter(|m| m.ui_only).count(),
+                1,
+                "Thread should have 1 UI-only message"
+            );
+        });
+
+        // Verify that UI-only messages are not serialized
+        let serialized = thread
+            .update(cx, |thread, cx| thread.serialize(cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            serialized.messages.len(),
+            2,
+            "Serialized thread should only have 2 messages (no UI-only)"
+        );
     }
 
     fn test_summarize_error(
