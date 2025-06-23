@@ -803,11 +803,12 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
         }
     }
     unsafe {
+        let current_window = GetActiveWindow();
         dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(None).is_err() {
+        if dialog.Show(Some(current_window)).is_err() {
             // User cancelled
             return Ok(None);
         }
