@@ -593,7 +593,7 @@ impl AgentConfiguration {
                             }
                         })
                         .separator()
-                        .entry("Delete", None, {
+                        .entry("Uninstall", None, {
                             let fs = fs.clone();
                             let context_server_id = context_server_id.clone();
                             let context_server_store = context_server_store.clone();
