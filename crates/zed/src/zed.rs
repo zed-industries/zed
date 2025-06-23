@@ -1762,6 +1762,7 @@ mod tests {
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
     };
     use language::{LanguageMatcher, LanguageRegistry};
+    use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath, WorktreeSettings, project_settings::ProjectSettings};
     use serde_json::json;
     use settings::{SettingsStore, watch_config_file};
@@ -3926,6 +3927,8 @@ mod tests {
         })
     }
 
+    actions!(test_only, [ActionA, ActionB]);
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();
@@ -3934,7 +3937,6 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        actions!(test1, [A, B]);
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
@@ -3954,7 +3956,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test1::A"}}]"#.into(),
+                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3981,8 +3983,8 @@ mod tests {
         });
         workspace
             .update(cx, |workspace, _, cx| {
-                workspace.register_action(|_, _: &A, _window, _cx| {});
-                workspace.register_action(|_, _: &B, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionA, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionB, _window, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _window, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousItem, _window, _cx| {});
                 cx.notify();
@@ -3993,7 +3995,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            vec![("backspace", &ActionA), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
@@ -4002,7 +4004,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test1::B"}}]"#.into(),
+                &r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4013,7 +4015,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+            vec![("backspace", &ActionB), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
@@ -4033,7 +4035,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("{", &ActivatePreviousItem)],
+            vec![("backspace", &ActionB), ("{", &ActivatePreviousItem)],
             line!(),
         );
     }
@@ -4046,7 +4048,6 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        actions!(test2, [A, B]);
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
@@ -4054,8 +4055,8 @@ mod tests {
 
         workspace
             .update(cx, |workspace, _, _| {
-                workspace.register_action(|_, _: &A, _window, _cx| {});
-                workspace.register_action(|_, _: &B, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionA, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionB, _window, _cx| {});
                 workspace.register_action(|_, _: &Deploy, _window, _cx| {});
             })
             .unwrap();
@@ -4072,7 +4073,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test2::A"}}]"#.into(),
+                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4106,7 +4107,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            vec![("backspace", &ActionA), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
@@ -4216,6 +4217,121 @@ mod tests {
                     errors.join("\n")
                 );
             }
+        });
+    }
+
+    /// Checks that action namespaces are the expected set and that action names are unique.
+    ///
+    /// The purpose of checking action namespaces is to prevent typos and let you know when
+    /// introducing a new namespace.
+    #[gpui::test]
+    async fn test_action_names(cx: &mut gpui::TestAppContext) {
+        use itertools::Itertools;
+
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+
+            let all_namespaces = all_actions
+                .iter()
+                .map(|action_name| {
+                    action_name
+                        .split("::")
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .skip(1)
+                        .rev()
+                        .join("::")
+                })
+                .sorted()
+                .dedup()
+                .collect::<Vec<_>>();
+            let expected_namespaces = vec![
+                "activity_indicator",
+                "agent",
+                "app_menu",
+                "assistant",
+                "assistant2",
+                "auto_update",
+                "branches",
+                "buffer_search",
+                "channel_modal",
+                "chat_panel",
+                "cli",
+                "client",
+                "collab",
+                "collab_panel",
+                "command_palette",
+                "console",
+                "context_server",
+                "copilot",
+                "debug_panel",
+                "debugger",
+                "dev",
+                "diagnostics",
+                "edit_prediction",
+                "editor",
+                "feedback",
+                "file_finder",
+                "git",
+                "git_onboarding",
+                "git_panel",
+                "go_to_line",
+                "icon_theme_selector",
+                "jj",
+                "journal",
+                "language_selector",
+                "markdown",
+                "menu",
+                "notebook",
+                "notification_panel",
+                "outline",
+                "outline_panel",
+                "pane",
+                "panel",
+                "picker",
+                "project_panel",
+                "project_search",
+                "project_symbols",
+                "projects",
+                "repl",
+                "rules_library",
+                "search",
+                "snippets",
+                "supermaven",
+                "tab_switcher",
+                "task",
+                "terminal",
+                "terminal_panel",
+                "test_only",
+                "theme_selector",
+                "toast",
+                "toolchain",
+                "variable_list",
+                "vim",
+                "welcome",
+                "workspace",
+                "zed",
+                "zed_predict_onboarding",
+                "zeta",
+            ];
+            assert_eq!(
+                all_namespaces,
+                expected_namespaces
+                    .into_iter()
+                    .map(|namespace| namespace.to_string())
+                    .sorted()
+                    .collect::<Vec<_>>()
+            );
+
+            let duplicate_names = all_actions
+                .iter()
+                .counts()
+                .into_iter()
+                .filter(|entry| entry.1 > 1)
+                .collect::<Vec<_>>();
+            assert_eq!(duplicate_names, Vec::new());
         });
     }
 

@@ -264,7 +264,7 @@ mod tests {
     use gpui::NoAction;
 
     actions!(
-        keymap_test,
+        test_only,
         [ActionAlpha, ActionBeta, ActionGamma, ActionDelta,]
     );
 

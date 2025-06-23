@@ -6,17 +6,17 @@ use serde_derive::Deserialize;
 #[test]
 fn test_action_macros() {
     actions!(
-        test,
+        test_only,
         [
-            TestAction,
+            SomeAction,
             /// Documented action
-            TestActionWithDocs,
+            SomeActionWithDocs,
         ]
     );
 
     #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
-    #[action(namespace = test)]
-    struct AnotherTestAction;
+    #[action(namespace = test_only)]
+    struct AnotherSomeAction;
 
     #[derive(PartialEq, Clone, gpui::private::serde_derive::Deserialize)]
     struct RegisterableAction {}
