@@ -601,7 +601,7 @@ You can pass `binary`, `args`, or both. `binary` should be a path to a _debug ad
   "dap": {
     "CodeLLDB": {
       "binary": "/Users/name/bin/lldb-dap",
-      "args": ["--settings", "{\"sourceLanguages\":[\"rust\"]}"]
+      "args": ["--wait-for-debugger"]
     }
   }
 }
