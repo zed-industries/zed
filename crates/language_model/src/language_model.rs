@@ -406,7 +406,7 @@ pub enum LanguageModelKnownError {
     #[error("Language model provider's API returned a response in an unknown format")]
     UnknownResponseFormat(String),
     #[error("Rate limit exceeded for language model provider's API; retry in {retry_after:?}")]
-    RateLimiteExceeded { retry_after: Duration },
+    RateLimitExceeded { retry_after: Duration },
 }
 
 impl LanguageModelKnownError {
@@ -414,7 +414,7 @@ impl LanguageModelKnownError {
     /// Returns None if the status code doesn't map to a specific known error.
     pub fn from_http_response(status: u16, _body: &str) -> Option<Self> {
         match status {
-            429 => Some(Self::RateLimiteExceeded {
+            429 => Some(Self::RateLimitExceeded {
                 retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
             }),
             503 => Some(Self::Overloaded),

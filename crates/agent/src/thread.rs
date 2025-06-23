@@ -1498,7 +1498,7 @@ impl Thread {
                             Err(error) => {
                                 match error {
                                     LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
-                                        anyhow::bail!(LanguageModelKnownError::RateLimiteExceeded { retry_after });
+                                        anyhow::bail!(LanguageModelKnownError::RateLimitExceeded { retry_after });
                                     }
                                     LanguageModelCompletionError::Overloaded => {
                                         anyhow::bail!(LanguageModelKnownError::Overloaded);
@@ -1831,7 +1831,7 @@ impl Thread {
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelKnownError::RateLimiteExceeded { .. } => {
+                                    LanguageModelKnownError::RateLimitExceeded { .. } => {
                                         // In the future we will report the error to the user, wait retry_after, and then retry.
                                         emit_generic_error(error, cx);
                                     }
