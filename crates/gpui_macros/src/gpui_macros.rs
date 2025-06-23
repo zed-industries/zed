@@ -268,54 +268,7 @@ pub fn impl_action(input: TokenStream) -> TokenStream {
     action_macros::impl_action_macro(input)
 }
 
-/// Derive macro for implementing the Action trait.
-///
-/// This macro can be configured using the `#[action(...)]` attribute. Multiple
-/// `#[action(...)]` attributes can be specified to combine their arguments.
-///
-/// - `name = "namespace::ActionName"` - Override the action's display name
-/// - `namespace = identifier` - Set just the namespace (name will be struct name)
-/// - `no_json` - Mark that the action cannot be deserialized from JSON
-/// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
-///
-/// It is invalid to specify the same argument multiple times across attributes.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Simple action
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// struct Cut;
-///
-/// // Action with multiple attributes
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(namespace = editor)]
-/// #[action(deprecated_aliases = ["OldCut", "LegacyCut"])]
-/// struct NewCut;
-///
-/// // Action with custom name
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(name = "editor::SaveFile")]
-/// struct Save;
-///
-/// // Action with fields that can be deserialized
-/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema, Action)]
-/// struct Find {
-///     query: String,
-/// }
-///
-/// // Internal action that can't be deserialized
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(no_json)]
-/// struct InternalAction {
-///     state: u32,
-/// }
-///
-/// // Action with deprecated aliases
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(deprecated_aliases = ["editor::RevertFile", "RevertBuffer"])]
-/// struct RestoreFile;
-/// ```
+/// `Action` derive macro - see the trait documentation for details.
 #[proc_macro_derive(Action, attributes(action))]
 pub fn derive_action(input: TokenStream) -> TokenStream {
     action_macros::derive_action(input)
