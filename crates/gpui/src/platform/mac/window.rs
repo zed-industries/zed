@@ -948,6 +948,19 @@ impl PlatformWindow for MacWindow {
 
     fn set_fullscreen_titlebar_background_color(&self, color: Rgba) {
         self.0.lock().fullscreen_titlebar_color = Some(color);
+
+        if self.is_fullscreen() {
+            unsafe {
+                let mut color = NSColor::colorWithSRGBRed_green_blue_alpha_(
+                    nil,
+                    color.r as f64,
+                    color.g as f64,
+                    color.b as f64,
+                    color.a as f64,
+                );
+                set_fullscreen_titlebar_color(color);
+            }
+        }
     }
 
     fn set_appearance(&self, appearance: WindowAppearance) {
