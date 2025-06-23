@@ -96,7 +96,7 @@ use gpui::{
     MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, ScrollHandle,
     SharedString, Size, Stateful, Styled, Subscription, Task, TextStyle, TextStyleRefinement,
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
+    div, point, prelude::*, pulsating_between, px, relative, size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};

@@ -355,9 +355,9 @@ pub use gpui_macros::Action;
 macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
         $(
-            $(#[$attr])*
             #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
             #[action(namespace = $namespace)]
+            $(#[$attr])*
             pub struct $name;
         )*
     };

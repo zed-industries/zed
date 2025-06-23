@@ -107,7 +107,6 @@ mod window;
 #[doc(hidden)]
 pub mod private {
     pub use anyhow;
-    pub use gpui_macros::impl_action;
     pub use inventory;
     pub use schemars;
     pub use serde;

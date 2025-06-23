@@ -12,9 +12,9 @@ mod derive_inspector_reflection;
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Ident};
 
-/// register_action! can be used to register an action with the GPUI runtime.
-/// You should typically use `gpui::actions!` or `gpui::impl_actions!` instead,
-/// but this can be used for fine grained customization.
+/// This can be used to register an action with the GPUI runtime when you want to manually implement
+/// the `Action` trait. Typically you should use the `Action` derive macro or `actions!` macro
+/// instead.
 #[proc_macro]
 pub fn register_action(ident: TokenStream) -> TokenStream {
     action_macros::register_action_macro(ident)
