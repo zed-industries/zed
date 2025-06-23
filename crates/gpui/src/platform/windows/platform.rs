@@ -767,8 +767,9 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
     }
 
     unsafe {
+        let current_window = GetActiveWindow();
         folder_dialog.SetOptions(dialog_options)?;
-        if folder_dialog.Show(None).is_err() {
+        if folder_dialog.Show(Some(current_window)).is_err() {
             // User cancelled
             return Ok(None);
         }
