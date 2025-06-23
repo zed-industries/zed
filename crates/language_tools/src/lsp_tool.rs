@@ -457,16 +457,17 @@ fn fill_servers(
         let can_stop = binary_status.is_none_or(|status| {
             matches!(status.status, BinaryStatus::None | BinaryStatus::Starting)
         });
-        let can_start = binary_status.is_some_and(|status| {
-            matches!(
-                status.status,
-                BinaryStatus::Stopped | BinaryStatus::Failed { .. }
-            )
-        });
-        let has_logs = lsp_logs
-            .update(cx, |lsp_logs, _| lsp_logs.has_server_logs(&server_selector))
-            .ok()
-            .unwrap_or(false);
+        // TODO currently, Zed remote does not work well with the LSP logs
+        // https://github.com/zed-industries/zed/issues/28557
+        let Ok(is_local) = lsp_store.update(cx, |lsp_store, _| lsp_store.as_local().is_some())
+        else {
+            return menu;
+        };
+        let has_logs = is_local
+            && lsp_logs
+                .update(cx, |lsp_logs, _| lsp_logs.has_server_logs(&server_selector))
+                .ok()
+                .unwrap_or(false);
 
         menu = menu.custom_entry(
             {
@@ -493,37 +494,16 @@ fn fill_servers(
                                 }),
                         )
                         .child(
-                            h_flex().gap_1()
+                            h_flex()
+                                .gap_1()
                                 .when(has_logs, |div| {
                                     div.child(
-                                        IconButton::new("open-logs", IconName::FileText)
-                                            .icon_size(IconSize::XSmall)
-                                            .tooltip(|_, cx| Tooltip::simple("Open logs", cx))
-                                            .on_click({
-                                                let workspace = workspace.clone();
-                                                let lsp_logs = lsp_logs.clone();
-                                                let server_selector = server_selector.clone();
-                                                move |_, window, cx| {
-                                                    lsp_logs
-                                                        .update(cx, |lsp_logs, cx| {
-                                                            lsp_logs.open_server_log(
-                                                                workspace.clone(),
-                                                                server_selector.clone(),
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        })
-                                                        .ok();
-                                                }
-                                            }),
-                                    )
-                                    .child(
                                         IconButton::new(
-                                            "open-lsp-messages-current",
+                                            "debug-language-server",
                                             IconName::MessageBubbles,
                                         )
                                         .icon_size(IconSize::XSmall)
-                                        .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
+                                        .tooltip(|_, cx| Tooltip::simple("Debug Language Server", cx))
                                         .on_click({
                                             let workspace = workspace.clone();
                                             let lsp_logs = lsp_logs.clone();
@@ -543,37 +523,7 @@ fn fill_servers(
                                         }),
                                     )
                                 })
-                                .when(can_start && !can_stop, |div| {
-                                    div.child(
-                                        IconButton::new("start-server", IconName::TriangleRight)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(|_, cx| Tooltip::simple("Start server", cx))
-                                            .on_click({
-                                                let lsp_store = lsp_store.clone();
-                                                let workspace = workspace.clone();
-                                                let editor_buffers = editor_buffers.clone();
-                                                let server_selector = server_selector.clone();
-                                                move |_, _, cx| {
-                                                    if let Some(workspace) = workspace.upgrade() {
-                                                        let buffer_store = workspace.read(cx).project().read(cx).buffer_store().clone();
-                                                        let buffers = editor_buffers
-                                                            .iter()
-                                                            .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
-                                                            .collect::<Vec<_>>();
-                                                        if !buffers.is_empty() {
-                                                            lsp_store.update(cx, |lsp_store, cx| {
-                                                                lsp_store.restart_language_servers_for_buffers(
-                                                                    buffers,
-                                                                    HashSet::from_iter([server_selector.clone()]),
-                                                                    cx,
-                                                                );
-                                                            }).ok();
-                                                        }
-                                                    }
-                                                }
-                                            })
-                                    )
-                                }).when(can_stop && !can_start, |div| {
+                                .when(can_stop, |div| {
                                     div.child(
                                         IconButton::new("stop-server", IconName::Stop)
                                             .icon_size(IconSize::Small)
@@ -582,17 +532,50 @@ fn fill_servers(
                                                 let lsp_store = lsp_store.clone();
                                                 let server_selector = server_selector.clone();
                                                 move |_, _, cx| {
-                                                    lsp_store.update(cx, |lsp_store, cx| {
-                                                        lsp_store.stop_language_servers_for_buffers(
-                                                            Vec::new(),
-                                                            HashSet::from_iter([server_selector.clone()]),
-                                                            cx,
-                                                        );
-                                                    }).ok();
+                                                    lsp_store
+                                                        .update(cx, |lsp_store, cx| {
+                                                            lsp_store
+                                                                .stop_language_servers_for_buffers(
+                                                                    Vec::new(),
+                                                                    HashSet::from_iter([
+                                                                        server_selector.clone(),
+                                                                    ]),
+                                                                    cx,
+                                                                );
+                                                        })
+                                                        .ok();
                                                 }
-                                            })
+                                            }),
                                     )
-                                })
+                                }).child(
+                                    IconButton::new("restart-server", IconName::Rerun)
+                                        .icon_size(IconSize::XSmall)
+                                        .tooltip(|_, cx| Tooltip::simple("Restart server", cx))
+                                        .on_click({
+                                            let lsp_store = lsp_store.clone();
+                                            let workspace = workspace.clone();
+                                            let editor_buffers = editor_buffers.clone();
+                                            let server_selector = server_selector.clone();
+                                            move |_, _, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    let buffer_store = workspace.read(cx).project().read(cx).buffer_store().clone();
+                                                    let buffers = editor_buffers
+                                                        .iter()
+                                                        .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
+                                                        .collect::<Vec<_>>();
+                                                    if !buffers.is_empty() {
+                                                        lsp_store.update(cx, |lsp_store, cx| {
+                                                            lsp_store.restart_language_servers_for_buffers(
+                                                                buffers,
+                                                                HashSet::from_iter([server_selector.clone()]),
+                                                                cx,
+                                                            );
+                                                        }).ok();
+                                                    }
+                                                }
+                                            }
+                                        })
+                                ),
                         )
                         .cursor_default()
                         .into_any_element()

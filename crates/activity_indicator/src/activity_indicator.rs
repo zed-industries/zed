@@ -80,10 +80,13 @@ impl ActivityIndicator {
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
-                while let Some((name, status)) = status_events.next().await {
+                while let Some((name, binary_status)) = status_events.next().await {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
                         this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus { name, status });
+                        this.statuses.push(ServerStatus {
+                            name,
+                            status: LanguageServerStatusUpdate::Binary(binary_status),
+                        });
                         cx.notify();
                     })?;
                 }
@@ -413,6 +416,12 @@ impl ActivityIndicator {
         let mut servers_to_clear_statuses = HashSet::<LanguageServerName>::default();
         for status in &self.statuses {
             match &status.status {
+                LanguageServerStatusUpdate::Binary(
+                    BinaryStatus::Starting | BinaryStatus::Stopping,
+                ) => {}
+                LanguageServerStatusUpdate::Binary(BinaryStatus::Stopped) => {
+                    servers_to_clear_statuses.insert(status.name.clone());
+                }
                 LanguageServerStatusUpdate::Binary(BinaryStatus::CheckingForUpdate) => {
                     checking_for_update.push(status.name.clone());
                 }
