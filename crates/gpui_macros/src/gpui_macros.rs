@@ -1,8 +1,9 @@
-mod action_macros;
+mod derive_action;
 mod derive_app_context;
 mod derive_into_element;
 mod derive_render;
 mod derive_visual_context;
+mod register_action;
 mod styles;
 mod test;
 
@@ -12,12 +13,18 @@ mod derive_inspector_reflection;
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Ident};
 
+/// `Action` derive macro - see the trait documentation for details.
+#[proc_macro_derive(Action, attributes(action))]
+pub fn derive_action(input: TokenStream) -> TokenStream {
+    derive_action::derive_action(input)
+}
+
 /// This can be used to register an action with the GPUI runtime when you want to manually implement
 /// the `Action` trait. Typically you should use the `Action` derive macro or `actions!` macro
 /// instead.
 #[proc_macro]
 pub fn register_action(ident: TokenStream) -> TokenStream {
-    action_macros::register_action_macro(ident)
+    register_action::register_action(ident)
 }
 
 /// #[derive(IntoElement)] is used to create a Component out of anything that implements
@@ -201,77 +208,6 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
     derive_inspector_reflection::derive_inspector_reflection(_args, input)
-}
-
-/// Defines and registers action structs that can be used throughout the application.
-///
-/// This macro supports several attributes to customize action behavior:
-///
-/// - `#[impl_only]` - The struct already exists, only generate the Action trait implementation
-/// - `#[no_json]` - The action cannot be deserialized from JSON (for internal actions)
-/// - `#[deprecated_aliases("alias1", "namespace::alias2")]` - Specify deprecated aliases
-/// - `#[name("namespace::VisualName")]` - Override the action's display name
-///
-/// # Examples
-///
-/// ```ignore
-/// // Simple actions
-/// actions!(editor, [Cut, Copy, Paste]);
-///
-/// // Actions with documentation
-/// actions!(editor, [
-///     /// Cut the selected text to clipboard
-///     Cut,
-///     /// Copy the selected text to clipboard
-///     Copy,
-/// ]);
-///
-/// // Action with custom name
-/// actions!(editor, [
-///     #[name(SaveFile)]
-///     Save,
-/// ]);
-///
-/// // Action with deprecated aliases
-/// actions!(editor, [
-///     #[deprecated_aliases(editor::RevertFile, RevertBuffer)]
-///     RestoreFile,
-/// ]);
-///
-/// // Implementing action for existing struct
-/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema)]
-/// struct FindOptions { regex: bool }
-///
-/// actions!(editor, [
-///     #[impl_only]
-///     FindOptions,
-/// ]);
-///
-/// // Internal action that can't be deserialized
-/// actions!(editor, [
-///     #[no_json]
-///     InternalAction,
-/// ]);
-/// ```
-/// Internal procedural macro for implementing the Action trait.
-/// This is used by the declarative macros and should not be used directly.
-///
-/// Parameters:
-/// - `action_struct` - The struct to implement Action for
-/// - `name` - Optional full action name (e.g. "editor::Save")
-/// - `namespace` - Optional namespace (used with struct name if `name` not provided)
-/// - `deprecated_aliases` - Array of deprecated action names
-/// - `no_json` - Boolean indicating if the action cannot be deserialized
-#[proc_macro]
-#[doc(hidden)]
-pub fn impl_action(input: TokenStream) -> TokenStream {
-    action_macros::impl_action_macro(input)
-}
-
-/// `Action` derive macro - see the trait documentation for details.
-#[proc_macro_derive(Action, attributes(action))]
-pub fn derive_action(input: TokenStream) -> TokenStream {
-    action_macros::derive_action(input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {
