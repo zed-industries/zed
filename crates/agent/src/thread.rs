@@ -1495,27 +1495,76 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         let event = match event {
                             Ok(event) => event,
-                            Err(LanguageModelCompletionError::BadInputJson {
-                                id,
-                                tool_name,
-                                raw_input: invalid_input_json,
-                                json_parse_error,
-                            }) => {
-                                thread.receive_invalid_tool_json(
-                                    id,
-                                    tool_name,
-                                    invalid_input_json,
-                                    json_parse_error,
-                                    window,
-                                    cx,
-                                );
-                                return Ok(());
-                            }
-                            Err(LanguageModelCompletionError::Other(error)) => {
-                                return Err(error);
-                            }
-                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
-                                return Err(err.into());
+                            Err(error) => {
+                                match error {
+                                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
+                                        anyhow::bail!(LanguageModelKnownError::RateLimitExceeded { retry_after });
+                                    }
+                                    LanguageModelCompletionError::Overloaded => {
+                                        anyhow::bail!(LanguageModelKnownError::Overloaded);
+                                    }
+                                    LanguageModelCompletionError::ApiInternalServerError =>{
+                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
+                                    }
+                                    LanguageModelCompletionError::PromptTooLarge { tokens } => {
+                                        let tokens = tokens.unwrap_or_else(|| {
+                                            // We didn't get an exact token count from the API, so fall back on our estimate.
+                                            thread.total_token_usage()
+                                                .map(|usage| usage.total)
+                                                .unwrap_or(0)
+                                                // We know the context window was exceeded in practice, so if our estimate was
+                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
+                                                .max(model.max_token_count().saturating_add(1))
+                                        });
+
+                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens })
+                                    }
+                                    LanguageModelCompletionError::ApiReadResponseError(io_error) => {
+                                        anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
+                                    }
+                                    LanguageModelCompletionError::UnknownResponseFormat(error) => {
+                                        anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
+                                    }
+                                    LanguageModelCompletionError::HttpResponseError { status, ref body } => {
+                                        if let Some(known_error) = LanguageModelKnownError::from_http_response(status, body) {
+                                            anyhow::bail!(known_error);
+                                        } else {
+                                            return Err(error.into());
+                                        }
+                                    }
+                                    LanguageModelCompletionError::DeserializeResponse(error) => {
+                                        anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
+                                    }
+                                    LanguageModelCompletionError::BadInputJson {
+                                        id,
+                                        tool_name,
+                                        raw_input: invalid_input_json,
+                                        json_parse_error,
+                                    } => {
+                                        thread.receive_invalid_tool_json(
+                                            id,
+                                            tool_name,
+                                            invalid_input_json,
+                                            json_parse_error,
+                                            window,
+                                            cx,
+                                        );
+                                        return Ok(());
+                                    }
+                                    // These are all errors we can't automatically attempt to recover from (e.g. by retrying)
+                                    err @ LanguageModelCompletionError::BadRequestFormat |
+                                    err @ LanguageModelCompletionError::AuthenticationError |
+                                    err @ LanguageModelCompletionError::PermissionError |
+                                    err @ LanguageModelCompletionError::ApiEndpointNotFound |
+                                    err @ LanguageModelCompletionError::SerializeRequest(_) |
+                                    err @ LanguageModelCompletionError::BuildRequestBody(_) |
+                                    err @ LanguageModelCompletionError::HttpSend(_) => {
+                                        anyhow::bail!(err);
+                                    }
+                                    LanguageModelCompletionError::Other(error) => {
+                                        return Err(error);
+                                    }
+                                }
                             }
                         };
 
@@ -1751,6 +1800,18 @@ impl Thread {
                                 project.set_agent_location(None, cx);
                             });
 
+                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<Thread>) {
+                                let error_message = error
+                                    .chain()
+                                    .map(|err| err.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                    header: "Error interacting with language model".into(),
+                                    message: SharedString::from(error_message.clone()),
+                                }));
+                            }
+
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
                             } else if let Some(error) =
@@ -1763,26 +1824,34 @@ impl Thread {
                                 error.downcast_ref::<LanguageModelKnownError>()
                             {
                                 match known_error {
-                                    LanguageModelKnownError::ContextWindowLimitExceeded {
-                                        tokens,
-                                    } => {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
                                             token_count: *tokens,
                                         });
                                         cx.notify();
                                     }
+                                    LanguageModelKnownError::RateLimitExceeded { .. } => {
+                                        // In the future we will report the error to the user, wait retry_after, and then retry.
+                                        emit_generic_error(error, cx);
+                                    }
+                                    LanguageModelKnownError::Overloaded => {
+                                        // In the future we will wait and then retry, up to N times.
+                                        emit_generic_error(error, cx);
+                                    }
+                                    LanguageModelKnownError::ApiInternalServerError => {
+                                        // In the future we will retry the request, but only once.
+                                        emit_generic_error(error, cx);
+                                    }
+                                    LanguageModelKnownError::ReadResponseError(_) |
+                                    LanguageModelKnownError::DeserializeResponse(_) |
+                                    LanguageModelKnownError::UnknownResponseFormat(_) => {
+                                        // In the future we will attempt to re-roll response, but only once
+                                        emit_generic_error(error, cx);
+                                    }
                                 }
                             } else {
-                                let error_message = error
-                                    .chain()
-                                    .map(|err| err.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Error interacting with language model".into(),
-                                    message: SharedString::from(error_message.clone()),
-                                }));
+                                emit_generic_error(error, cx);
                             }
 
                             thread.cancel_last_completion(window, cx);
