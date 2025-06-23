@@ -911,7 +911,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 
     let b_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new("the-parent-dira/filea")),
+        path: Arc::from(Path::new(path!("the-parent-dira/filea"))),
     };
     workspace
         .update_in(cx, |workspace, window, cx| {
