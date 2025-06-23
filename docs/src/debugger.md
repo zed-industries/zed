@@ -573,9 +573,37 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 }
 ```
 
+### Customizing Debug Adapters
+
+- Description: Custom program path and arguments to override how Zed launches a specific debug adapter.
+- Default: Adapter-specific
+- Setting: `dap.$ADAPTER.binary` and `dap.$ADAPTER.args`
+
+You can pass `binary`, `args`, or both. `binary` should be a path to a _debug adapter_ (like `lldb-dap`) not a _debugger_ (like `lldb` itself). The `args` setting overrides any arguments that Zed would otherwise pass to the adapter.
+
+```json
+{
+  "dap": {
+    "CodeLLDB": {
+      "binary": "/Users/name/bin/lldb-dap",
+      "args": ["--settings", "{sourceLanguages:[\"rust\"]}"]
+    }
+  }
+}
+```
+
 ## Theme
 
 The Debugger supports the following theme options:
 
 - `debugger.accent`: Color used to accent breakpoint & breakpoint-related symbols
 - `editor.debugger_active_line.background`: Background color of active debug line
+
+## Troubleshooting
+
+If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/zed/issues/new?template=04_bug_debugger.yml) or [schedule an onboarding call](https://cal.com/team/zed-research/debugger) with us so we can help understand and fix your issue.
+
+There are also some features you can use to gather more information about the problem:
+
+- When you have a session running in the debug panel, you can run the `dev: copy debug adapter arguments` action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
+- You can also use the `dev: open debug adapter logs` action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
