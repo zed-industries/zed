@@ -2089,6 +2089,9 @@ impl SshRemoteConnection {
         if self.ssh_platform.os == "linux" {
             rust_flags.push_str(" -C target-feature=+crt-static");
         }
+        if build_remote_server.contains("mold") {
+            rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
+        }
 
         let bin_path = if self.ssh_platform.arch == std::env::consts::ARCH
             && self.ssh_platform.os == std::env::consts::OS
