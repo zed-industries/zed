@@ -5545,7 +5545,6 @@ impl LspStore {
             .into_response()
             .context("resolve completion")?;
 
-        let mut updated_insert_range = None;
         if let Some(text_edit) = resolved_completion.text_edit.as_ref() {
             // Technically we don't have to parse the whole `text_edit`, since the only
             // language server we currently use that does update `text_edit` in `completionItem/resolve`
@@ -5561,22 +5560,21 @@ impl LspStore {
 
                 completion.new_text = parsed_edit.new_text;
                 completion.replace_range = parsed_edit.replace_range;
-
-                updated_insert_range = parsed_edit.insert_range;
+                if let CompletionSource::Lsp { insert_range, .. } = &mut completion.source {
+                    *insert_range = parsed_edit.insert_range;
+                }
             }
         }
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
-            insert_range,
             lsp_completion,
             resolved,
             server_id: completion_server_id,
             ..
         } = &mut completion.source
         {
-            *insert_range = updated_insert_range;
             if *resolved {
                 return Ok(());
             }
