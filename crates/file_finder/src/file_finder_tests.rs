@@ -904,13 +904,16 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     .await;
 
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-    let worktree_id = cx.read(|cx| {
+    let (worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        (
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
+        )
     });
 
     let b_path = ProjectPath {
-        worktree_id,
+        worktree_id: worktree_id1,
         path: Arc::from(Path::new(path!("the-parent-dira/filea"))),
     };
     workspace
@@ -954,7 +957,14 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        assert_eq!(active_editor.read(cx).title(cx), "filec");
+        let project_path = active_editor.read(cx).project_path(cx);
+        assert_eq!(
+            project_path,
+            Some(ProjectPath {
+                worktree_id: worktree_id2,
+                path: Arc::from(Path::new("filec"))
+            })
+        );
     });
 }
 
