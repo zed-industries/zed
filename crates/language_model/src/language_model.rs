@@ -409,6 +409,21 @@ pub enum LanguageModelKnownError {
     RateLimiteExceeded { retry_after: Duration },
 }
 
+impl LanguageModelKnownError {
+    /// Attempts to map an HTTP response status code to a known error type.
+    /// Returns None if the status code doesn't map to a specific known error.
+    pub fn from_http_response(status: u16, _body: &str) -> Option<Self> {
+        match status {
+            429 => Some(Self::RateLimiteExceeded {
+                retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
+            }),
+            503 => Some(Self::Overloaded),
+            500..=599 => Some(Self::ApiInternalServerError),
+            _ => None,
+        }
+    }
+}
+
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn name() -> String;
     fn description() -> String;

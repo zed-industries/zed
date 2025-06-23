@@ -1525,9 +1525,12 @@ impl Thread {
                                     LanguageModelCompletionError::UnknownResponseFormat(error) => {
                                         anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
                                     }
-                                    LanguageModelCompletionError::HttpResponseError { .. } => {
-                                        // TODO: In the future, generate different LanguageModelKnownError based on status code
-                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
+                                    LanguageModelCompletionError::HttpResponseError { status, ref body } => {
+                                        if let Some(known_error) = LanguageModelKnownError::from_http_response(status, body) {
+                                            anyhow::bail!(known_error);
+                                        } else {
+                                            return Err(error.into());
+                                        }
                                     }
                                     LanguageModelCompletionError::DeserializeResponse(error) => {
                                         anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
