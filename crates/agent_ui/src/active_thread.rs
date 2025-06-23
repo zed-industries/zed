@@ -1166,11 +1166,9 @@ impl ActiveThread {
                 } else {
                     // For multiple retry attempts
                     format!(
-                        "{} retry in {}s (attempt {}/{})",
+                        "{} retry in {}s (attempt {attempt}/{max_attempts})",
                         provider_name.0.as_ref(),
                         delay.as_secs(),
-                        attempt,
-                        max_attempts
                     )
                 };
                 self.show_notification(&notification_text, IconName::ArrowCircle, window, cx);
