@@ -922,8 +922,6 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 
     let finder = open_file_picker(&workspace, cx);
 
-    cx.run_until_parked();
-
     finder
         .update_in(cx, |f, window, cx| {
             f.delegate
@@ -949,10 +947,8 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
         .await;
     cx.run_until_parked();
     finder.update_in(cx, |picker, window, cx| {
-        picker.delegate.confirm(false, window, cx)
-    });
-    finder.update(cx, |picker, _| {
         assert_eq!(picker.delegate.matches.len(), 1);
+        picker.delegate.confirm(false, window, cx)
     });
     cx.run_until_parked();
 
