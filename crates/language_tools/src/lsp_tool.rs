@@ -555,6 +555,14 @@ impl PickerDelegate for LspPickerDelegate {
             )
         }
     }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        if self.items.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.items.len() - 1]
+        }
+    }
 }
 
 // TODO kb keyboard story
@@ -781,22 +789,26 @@ impl StatusItemView for LspTool {
                     let lsp_picker = Self::new_lsp_picker(self.state.clone(), window, cx);
                     self.lsp_picker = Some(lsp_picker.clone());
                     lsp_picker.update(cx, |lsp_picker, cx| lsp_picker.refresh(window, cx));
-
-                    cx.notify();
                 }
             } else if self.state.read(cx).active_editor.is_some() {
                 self.state.update(cx, |state, _| {
                     state.active_editor = None;
                 });
-                self.lsp_picker = None;
-                cx.notify();
+                if let Some(lsp_picker) = self.lsp_picker.as_ref() {
+                    lsp_picker.update(cx, |lsp_picker, cx| {
+                        lsp_picker.refresh(window, cx);
+                    });
+                };
             }
         } else if self.state.read(cx).active_editor.is_some() {
             self.state.update(cx, |state, _| {
                 state.active_editor = None;
             });
-            self.lsp_picker = None;
-            cx.notify();
+            if let Some(lsp_picker) = self.lsp_picker.as_ref() {
+                lsp_picker.update(cx, |lsp_picker, cx| {
+                    lsp_picker.refresh(window, cx);
+                });
+            }
         }
     }
 }
