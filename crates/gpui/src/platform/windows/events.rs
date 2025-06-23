@@ -92,7 +92,7 @@ pub(crate) fn handle_msg(
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
-        WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
+        WM_SETCURSOR => handle_set_cursor(handle, lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
@@ -148,22 +148,18 @@ fn handle_get_min_max_info_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let lock = state_ptr.state.borrow();
-    if let Some(min_size) = lock.min_size {
-        let scale_factor = lock.scale_factor;
-        let boarder_offset = lock.border_offset;
-        drop(lock);
-
-        unsafe {
-            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x =
-                min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
-            minmax_info.ptMinTrackSize.y =
-                min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
-        }
-        Some(0)
-    } else {
-        None
+    let min_size = lock.min_size?;
+    let scale_factor = lock.scale_factor;
+    let boarder_offset = lock.border_offset;
+    drop(lock);
+    unsafe {
+        let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+        minmax_info.ptMinTrackSize.x =
+            min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+        minmax_info.ptMinTrackSize.y =
+            min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
     }
+    Some(0)
 }
 
 fn handle_size_msg(
@@ -1112,11 +1108,24 @@ fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     Some(0)
 }
 
-fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    if matches!(
-        lparam.loword() as u32,
-        HTLEFT | HTRIGHT | HTTOP | HTTOPLEFT | HTTOPRIGHT | HTBOTTOM | HTBOTTOMLEFT | HTBOTTOMRIGHT
-    ) {
+fn handle_set_cursor(
+    handle: HWND,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    if unsafe { !IsWindowEnabled(handle).as_bool() }
+        || matches!(
+            lparam.loword() as u32,
+            HTLEFT
+                | HTRIGHT
+                | HTTOP
+                | HTTOPLEFT
+                | HTTOPRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+                | HTBOTTOMRIGHT
+        )
+    {
         return None;
     }
     unsafe {

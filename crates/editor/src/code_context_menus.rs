@@ -260,7 +260,7 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
             .collect();
 
         let completions_menu = Self {
@@ -1115,7 +1115,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Inline => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
-                let sort_exact = Reverse(if Some(completion.filter_text()) == query {
+                let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
                     1
                 } else {
                     0

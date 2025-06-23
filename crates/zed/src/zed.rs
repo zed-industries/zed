@@ -944,12 +944,23 @@ fn about(
     let message = format!("{release_channel} {version} {debug}");
     let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
 
-    let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
-    cx.foreground_executor()
-        .spawn(async {
-            prompt.await.ok();
-        })
-        .detach();
+    let prompt = window.prompt(
+        PromptLevel::Info,
+        &message,
+        detail.as_deref(),
+        &["Copy", "OK"],
+        cx,
+    );
+    cx.spawn(async move |_, cx| {
+        if let Ok(0) = prompt.await {
+            let content = format!("{}\n{}", message, detail.as_deref().unwrap_or(""));
+            cx.update(|cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(content));
+            })
+            .ok();
+        }
+    })
+    .detach();
 }
 
 fn test_panic(_: &TestPanic, _: &mut App) {

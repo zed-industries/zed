@@ -9,8 +9,8 @@ use dap::OutputEvent;
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render, Subscription, Task,
-    TextStyle, WeakEntity,
+    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
+    Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
@@ -21,7 +21,9 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
-use ui::{Divider, prelude::*};
+use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
+
+actions!(console, [WatchExpression]);
 
 pub struct Console {
     console: Entity<Editor>,
@@ -329,6 +331,40 @@ impl Console {
         });
     }
 
+    pub fn watch_expression(
+        &mut self,
+        _: &WatchExpression,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let expression = self.query_bar.update(cx, |editor, cx| {
+            let expression = editor.text(cx);
+            cx.defer_in(window, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
+
+            expression
+        });
+
+        self.session.update(cx, |session, cx| {
+            session
+                .evaluate(
+                    expression.clone(),
+                    Some(dap::EvaluateArgumentsContext::Repl),
+                    self.stack_frame_list.read(cx).opened_stack_frame_id(),
+                    None,
+                    cx,
+                )
+                .detach();
+
+            if let Some(stack_frame_id) = self.stack_frame_list.read(cx).opened_stack_frame_id() {
+                session
+                    .add_watcher(expression.into(), stack_frame_id, cx)
+                    .detach();
+            }
+        });
+    }
+
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
@@ -350,6 +386,43 @@ impl Console {
                 )
                 .detach();
         });
+    }
+
+    fn render_submit_menu(
+        &self,
+        id: impl Into<ElementId>,
+        keybinding_target: Option<FocusHandle>,
+        cx: &App,
+    ) -> impl IntoElement {
+        PopoverMenu::new(id.into())
+            .trigger(
+                ui::ButtonLike::new_rounded_right("console-confirm-split-button-right")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ui::ButtonSize::None)
+                    .child(
+                        div()
+                            .px_1()
+                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                    ),
+            )
+            .when(
+                self.stack_frame_list
+                    .read(cx)
+                    .opened_stack_frame_id()
+                    .is_some(),
+                |this| {
+                    this.menu(move |window, cx| {
+                        Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                            context_menu
+                                .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                                    el.context(keybinding_target.clone())
+                                })
+                                .action("Watch expression", WatchExpression.boxed_clone())
+                        }))
+                    })
+                },
+            )
+            .anchor(Corner::TopRight)
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -408,15 +481,52 @@ impl Console {
 
 impl Render for Console {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let query_focus_handle = self.query_bar.focus_handle(cx);
+
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
+            .on_action(cx.listener(Self::watch_expression))
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_running(cx), |this| {
-                this.child(Divider::horizontal())
-                    .child(self.render_query_bar(cx))
+                this.child(Divider::horizontal()).child(
+                    h_flex()
+                        .gap_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(self.render_query_bar(cx))
+                        .child(SplitButton::new(
+                            ui::ButtonLike::new_rounded_all(ElementId::Name(
+                                "split-button-left-confirm-button".into(),
+                            ))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(Confirm), cx)
+                            })
+                            .tooltip({
+                                let query_focus_handle = query_focus_handle.clone();
+
+                                move |window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Evaluate",
+                                        &Confirm,
+                                        &query_focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .layer(ui::ElevationIndex::ModalSurface)
+                            .size(ui::ButtonSize::Compact)
+                            .child(Label::new("Evaluate")),
+                            self.render_submit_menu(
+                                ElementId::Name("split-button-right-confirm-button".into()),
+                                Some(query_focus_handle.clone()),
+                                cx,
+                            )
+                            .into_any_element(),
+                        )),
+                )
             })
             .border_2()
     }

@@ -24,6 +24,7 @@ chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
+derive_more.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -57,6 +58,7 @@ worktree.workspace = true
 telemetry.workspace = true
 tokio.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

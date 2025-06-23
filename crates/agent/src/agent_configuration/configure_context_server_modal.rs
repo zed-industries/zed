@@ -140,8 +140,15 @@ impl ConfigurationSource {
     fn output(&self, cx: &mut App) -> Result<(ContextServerId, ContextServerSettings)> {
         match self {
             ConfigurationSource::New { editor } | ConfigurationSource::Existing { editor } => {
-                parse_input(&editor.read(cx).text(cx))
-                    .map(|(id, command)| (id, ContextServerSettings::Custom { command }))
+                parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
+                    (
+                        id,
+                        ContextServerSettings::Custom {
+                            enabled: true,
+                            command,
+                        },
+                    )
+                })
             }
             ConfigurationSource::Extension {
                 id,
@@ -160,7 +167,13 @@ impl ConfigurationSource {
                         return Err(anyhow::anyhow!(error.to_string()));
                     }
                 }
-                Ok((id.clone(), ContextServerSettings::Extension { settings }))
+                Ok((
+                    id.clone(),
+                    ContextServerSettings::Extension {
+                        enabled: true,
+                        settings,
+                    },
+                ))
             }
         }
     }
@@ -283,6 +296,7 @@ impl ConfigureContextServerModal {
                     .read(cx)
                     .context_server_descriptor(&server_id.0)
                     .map(|_| ContextServerSettings::Extension {
+                        enabled: true,
                         settings: serde_json::json!({}),
                     })
             })
@@ -292,7 +306,10 @@ impl ConfigureContextServerModal {
 
         window.spawn(cx, async move |cx| {
             let target = match settings {
-                ContextServerSettings::Custom { command } => Some(ConfigurationTarget::Existing {
+                ContextServerSettings::Custom {
+                    enabled: _,
+                    command,
+                } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
                 }),

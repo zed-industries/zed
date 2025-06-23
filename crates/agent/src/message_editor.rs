@@ -29,8 +29,7 @@ use gpui::{
 };
 use language::{Buffer, Language, Point};
 use language_model::{
-    ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    ConfiguredModel, LanguageModelRequestMessage, MessageContent, ZED_CLOUD_PROVIDER_ID,
 };
 use multi_buffer;
 use project::Project;
@@ -42,7 +41,7 @@ use theme::ThemeSettings;
 use ui::{
     Callout, Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use util::{ResultExt as _, maybe};
+use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionIntent;
 
@@ -1257,24 +1256,8 @@ impl MessageEditor {
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
             .unwrap_or(zed_llm_client::Plan::ZedFree);
-        let usage = self.thread.read(cx).last_usage().or_else(|| {
-            maybe!({
-                let amount = user_store.model_request_usage_amount()?;
-                let limit = user_store.model_request_usage_limit()?.variant?;
 
-                Some(RequestUsage {
-                    amount: amount as i32,
-                    limit: match limit {
-                        proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
-                        }
-                        proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
-                        }
-                    },
-                })
-            })
-        })?;
+        let usage = user_store.model_request_usage()?;
 
         Some(
             div()
