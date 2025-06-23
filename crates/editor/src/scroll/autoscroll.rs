@@ -274,7 +274,7 @@ impl Editor {
         start_row: DisplayRow,
         viewport_width: Pixels,
         scroll_width: Pixels,
-        max_glyph_width: Pixels,
+        em_advance: Pixels,
         layouts: &[LineWithInvisibles],
         cx: &mut Context<Self>,
     ) -> bool {
@@ -304,7 +304,7 @@ impl Editor {
                     target_right = target_right.max(
                         layouts[head.row().minus(start_row) as usize]
                             .x_for_index(end_column as usize)
-                            + max_glyph_width,
+                            + em_advance,
                     );
                 }
             }
@@ -319,14 +319,14 @@ impl Editor {
             return false;
         }
 
-        let scroll_left = self.scroll_manager.anchor.offset.x * max_glyph_width;
+        let scroll_left = self.scroll_manager.anchor.offset.x * em_advance;
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
+            self.scroll_manager.anchor.offset.x = target_left / em_advance;
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
+            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / em_advance;
             true
         } else {
             false

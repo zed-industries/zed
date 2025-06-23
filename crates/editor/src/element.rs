@@ -8592,7 +8592,7 @@ impl Element for EditorElement {
                                 start_row,
                                 editor_content_width,
                                 scroll_width,
-                                em_width,
+                                em_advance,
                                 &line_layouts,
                                 cx,
                             )
