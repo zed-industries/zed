@@ -4500,10 +4500,11 @@ mod tests {
 
         // Edit the message while the completion is still running
         active_thread.update_in(cx, |active_thread, window, cx| {
-            active_thread.start_editing_message(
+            active_thread.start_editing_user_message(
                 message.id,
                 message.segments.as_slice(),
                 message.creases.as_slice(),
+                None,
                 window,
                 cx,
             );
