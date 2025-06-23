@@ -39,9 +39,10 @@ use ui::{
 };
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
-    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemNavHistory, NewSearch, Toast, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions},
+    notifications::NotificationId,
     searchable::{Direction, SearchableItem, SearchableItemHandle},
 };
 
@@ -1191,6 +1192,8 @@ impl ProjectSearchView {
             .count()
             > 1;
 
+        struct ParseRegexError;
+
         let query = if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
@@ -1210,12 +1213,30 @@ impl ProjectSearchView {
                         cx.notify();
                     }
 
+                    if let Some(workspace) = self.workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace
+                                .dismiss_toast(&NotificationId::unique::<ParseRegexError>(), cx);
+                        });
+                    }
+
                     Some(query)
                 }
-                Err(_e) => {
+                Err(e) => {
                     let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
                     if should_mark_error {
                         cx.notify();
+                    }
+
+                    if let Some(workspace) = self.workspace.upgrade() {
+                        let toast = Toast::new(
+                            NotificationId::unique::<ParseRegexError>(),
+                            format!("Invalid regex: {}", e),
+                        );
+
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.show_toast(toast, cx);
+                        });
                     }
 
                     None

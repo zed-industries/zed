@@ -14202,6 +14202,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "notifications",
  "project",
  "schemars",
  "serde",
