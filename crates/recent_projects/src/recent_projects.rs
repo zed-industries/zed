@@ -27,15 +27,15 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_con
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
-    Workspace, WorkspaceId, with_active_or_new_workspace,
+    Workspace, WorkspaceId, with_window_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
-    cx.on_action(|open_recent: &OpenRecent, cx| {
+    cx.on_action(|open_recent: &OpenRecent, window, cx| {
         let create_new_window = open_recent.create_new_window;
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+        with_window_or_new_workspace(window, cx, move |workspace, window, cx| {
             let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
                 RecentProjects::open(workspace, create_new_window, window, cx);
                 return;
@@ -48,10 +48,10 @@ pub fn init(cx: &mut App) {
             });
         });
     });
-    cx.on_action(|open_remote: &OpenRemote, cx| {
+    cx.on_action(|open_remote: &OpenRemote, window, cx| {
         let from_existing_connection = open_remote.from_existing_connection;
         let create_new_window = open_remote.create_new_window;
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+        with_window_or_new_workspace(window, cx, move |workspace, window, cx| {
             if from_existing_connection {
                 cx.propagate();
                 return;

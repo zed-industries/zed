@@ -360,7 +360,7 @@ pub fn init(cx: &mut App) {
     )
     .detach();
 
-    cx.on_action(move |_: &workspace::NewFile, cx| {
+    cx.on_action(move |_: &workspace::NewFile, _window, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(
@@ -374,7 +374,7 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
-    cx.on_action(move |_: &workspace::NewWindow, cx| {
+    cx.on_action(move |_: &workspace::NewWindow, _window, cx| {
         let app_state = workspace::AppState::global(cx);
         if let Some(app_state) = app_state.upgrade() {
             workspace::open_new(

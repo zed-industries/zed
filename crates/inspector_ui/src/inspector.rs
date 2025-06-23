@@ -2,26 +2,16 @@ use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
-use util::{ResultExt as _, command::new_smol_command};
+use util::command::new_smol_command;
 use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
-        let Some(active_window) = cx
-            .active_window()
-            .context("no active window to toggle inspector")
-            .log_err()
-        else {
-            return;
-        };
-        // This is deferred to avoid double lease due to window already being updated.
-        cx.defer(move |cx| {
-            active_window
-                .update(cx, |_, window, cx| window.toggle_inspector(cx))
-                .log_err();
-        });
+    cx.on_action(|_: &zed_actions::dev::ToggleInspector, window, cx| {
+        if let Some(window) = window {
+            window.toggle_inspector(cx);
+        }
     });
 
     // Project used for editor buffers with LSP support

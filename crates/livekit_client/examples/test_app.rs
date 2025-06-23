@@ -70,7 +70,7 @@ fn main() {
     });
 }
 
-fn quit(_: &Quit, cx: &mut gpui::App) {
+fn quit(_: &Quit, _window: Option<&mut Window>, cx: &mut gpui::App) {
     cx.quit();
 }
 

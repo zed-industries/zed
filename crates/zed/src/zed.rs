@@ -69,7 +69,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
+use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_window_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -97,26 +97,26 @@ actions!(
 
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
-    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &Hide, _window, cx| cx.hide());
     #[cfg(target_os = "macos")]
-    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &HideOthers, _window, cx| cx.hide_other_apps());
     #[cfg(target_os = "macos")]
-    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &ShowAll, _window, cx| cx.unhide_other_apps());
     cx.on_action(quit);
 
-    cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
+    cx.on_action(|_: &RestoreBanner, _window, cx| title_bar::restore_banner(cx));
 
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
 
-    cx.on_action(|_: &OpenLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
+    cx.on_action(|_: &OpenLog, window, cx| {
+        with_window_or_new_workspace(window, cx, |workspace, window, cx| {
             open_log_file(workspace, window, cx);
         });
     });
-    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
+    cx.on_action(|_: &zed_actions::OpenLicenses, window, cx| {
+        with_window_or_new_workspace(window, cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
                 asset_str::<Assets>("licenses.md"),
@@ -127,13 +127,13 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
+    cx.on_action(|_: &zed_actions::OpenTelemetryLog, window, cx| {
+        with_window_or_new_workspace(window, cx, |workspace, window, cx| {
             open_telemetry_log_file(workspace, window, cx);
         });
     });
-    cx.on_action(|&zed_actions::OpenKeymap, cx| {
-        with_active_or_new_workspace(cx, |_, window, cx| {
+    cx.on_action(|&zed_actions::OpenKeymap, window, cx| {
+        with_window_or_new_workspace(window, cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
                 || settings::initial_keymap_content().as_ref().into(),
@@ -142,8 +142,8 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &OpenSettings, cx| {
-        with_active_or_new_workspace(cx, |_, window, cx| {
+    cx.on_action(|_: &OpenSettings, window, cx| {
+        with_window_or_new_workspace(window, cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
                 || settings::initial_user_settings_content().as_ref().into(),
@@ -152,13 +152,13 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &OpenAccountSettings, cx| {
-        with_active_or_new_workspace(cx, |_, _, cx| {
+    cx.on_action(|_: &OpenAccountSettings, window, cx| {
+        with_window_or_new_workspace(window, cx, |_, _, cx| {
             cx.open_url(&zed_urls::account_url(cx));
         });
     });
-    cx.on_action(|_: &OpenTasks, cx| {
-        with_active_or_new_workspace(cx, |_, window, cx| {
+    cx.on_action(|_: &OpenTasks, window, cx| {
+        with_window_or_new_workspace(window, cx, |_, window, cx| {
             open_settings_file(
                 paths::tasks_file(),
                 || settings::initial_tasks_content().as_ref().into(),
@@ -167,8 +167,8 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &OpenDebugTasks, cx| {
-        with_active_or_new_workspace(cx, |_, window, cx| {
+    cx.on_action(|_: &OpenDebugTasks, window, cx| {
+        with_window_or_new_workspace(window, cx, |_, window, cx| {
             open_settings_file(
                 paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
@@ -177,8 +177,8 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &OpenDefaultSettings, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
+    cx.on_action(|_: &OpenDefaultSettings, window, cx| {
+        with_window_or_new_workspace(window, cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
                 settings::default_settings(),
@@ -189,8 +189,8 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
+    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, window, cx| {
+        with_window_or_new_workspace(window, cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
                 settings::default_keymap(),
@@ -963,7 +963,7 @@ fn about(
     .detach();
 }
 
-fn test_panic(_: &TestPanic, _: &mut App) {
+fn test_panic(_: &TestPanic, _: Option<&mut Window>, _: &mut App) {
     panic!("Ran the TestPanic action")
 }
 
@@ -977,49 +977,36 @@ fn install_cli(
 }
 
 static WAITING_QUIT_CONFIRMATION: AtomicBool = AtomicBool::new(false);
-fn quit(_: &Quit, cx: &mut App) {
+fn quit(_: &Quit, window: Option<&mut Window>, cx: &mut App) {
     if WAITING_QUIT_CONFIRMATION.load(atomic::Ordering::Acquire) {
         return;
     }
 
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
+    let workspace_windows = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Workspace>())
+        .collect::<Vec<_>>();
+
+    let mut prompt = None;
+    if let (true, Some(window)) = (should_confirm, window) {
+        prompt = Some(window.prompt(
+            PromptLevel::Info,
+            "Are you sure you want to quit?",
+            None,
+            &["Quit", "Cancel"],
+            cx,
+        ));
+    }
+
     cx.spawn(async move |cx| {
-        let mut workspace_windows = cx.update(|cx| {
-            cx.windows()
-                .into_iter()
-                .filter_map(|window| window.downcast::<Workspace>())
-                .collect::<Vec<_>>()
-        })?;
-
-        // If multiple windows have unsaved changes, and need a save prompt,
-        // prompt in the active window before switching to a different window.
-        cx.update(|cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
-        })
-        .log_err();
-
-        if should_confirm {
-            if let Some(workspace) = workspace_windows.first() {
-                let answer = workspace
-                    .update(cx, |_, window, cx| {
-                        window.prompt(
-                            PromptLevel::Info,
-                            "Are you sure you want to quit?",
-                            None,
-                            &["Quit", "Cancel"],
-                            cx,
-                        )
-                    })
-                    .log_err();
-
-                if let Some(answer) = answer {
-                    WAITING_QUIT_CONFIRMATION.store(true, atomic::Ordering::Release);
-                    let answer = answer.await.ok();
-                    WAITING_QUIT_CONFIRMATION.store(false, atomic::Ordering::Release);
-                    if answer != Some(0) {
-                        return Ok(());
-                    }
-                }
+        if let Some(prompt) = prompt {
+            WAITING_QUIT_CONFIRMATION.store(true, atomic::Ordering::Release);
+            let answer = prompt.await.ok();
+            WAITING_QUIT_CONFIRMATION.store(false, atomic::Ordering::Release);
+            if answer != Some(0) {
+                return Ok(());
             }
         }
 

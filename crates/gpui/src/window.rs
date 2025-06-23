@@ -3735,7 +3735,7 @@ impl Window {
             .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, cx);
+                listener(action.as_any(), DispatchPhase::Capture, Some(self), cx);
                 if !cx.propagate_event {
                     break;
                 }
@@ -3802,7 +3802,7 @@ impl Window {
             for listener in global_listeners.iter().rev() {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
-                listener(action.as_any(), DispatchPhase::Bubble, cx);
+                listener(action.as_any(), DispatchPhase::Bubble, Some(self), cx);
                 if !cx.propagate_event {
                     break;
                 }

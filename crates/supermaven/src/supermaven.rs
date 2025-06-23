@@ -49,7 +49,7 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     })
     .detach();
 
-    cx.on_action(|_: &SignOut, cx| {
+    cx.on_action(|_: &SignOut, _window, cx| {
         if let Some(supermaven) = Supermaven::global(cx) {
             supermaven.update(cx, |supermaven, _cx| supermaven.sign_out());
         }

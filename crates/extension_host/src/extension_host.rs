@@ -203,7 +203,7 @@ pub fn init(
         )
     });
 
-    cx.on_action(|_: &ReloadExtensions, cx| {
+    cx.on_action(|_: &ReloadExtensions, _window, cx| {
         let store = cx.global::<GlobalExtensionStore>().0.clone();
         store.update(cx, |store, cx| drop(store.reload(None, cx)));
     });

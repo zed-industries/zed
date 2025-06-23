@@ -38,7 +38,7 @@ fn main() {
 actions!(set_menus, [Quit]);
 
 // Define the quit function that is registered with the App
-fn quit(_: &Quit, cx: &mut App) {
+fn quit(_: &Quit, _window: Option<&mut Window>, cx: &mut App) {
     println!("Gracefully quitting the application . . .");
     cx.quit();
 }
