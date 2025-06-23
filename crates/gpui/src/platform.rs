@@ -511,6 +511,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn has_system_window_tabs(&self) -> bool {
         false
     }
+    fn refresh_has_system_window_tabs(&self) {}
     fn show_next_window_tab(&self) {}
     fn show_previous_window_tab(&self) {}
     fn merge_all_windows(&self) {}

@@ -6,7 +6,7 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, VsCodeSettings};
+use settings::{Settings, SettingsSources};
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {

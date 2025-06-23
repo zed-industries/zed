@@ -995,9 +995,19 @@ impl Window {
         }
 
         platform_window.on_close(Box::new({
+            let windows = cx.windows();
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
+
+                windows
+                    .into_iter()
+                    .filter(|w| w.window_id() != handle.window_id())
+                    .for_each(|window| {
+                        let _ = window.update(&mut cx, |_, window, _| {
+                            window.refresh_has_system_window_tabs();
+                        });
+                    });
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -4297,10 +4307,16 @@ impl Window {
             .set_fullscreen_titlebar_background_color(color);
     }
 
-    /// Returns the number of tabbed windows in this window.
+    /// Returns whether the window has more then 1 tab (therefore showing the tab bar).
     /// This is macOS specific.
     pub fn has_system_window_tabs(&self) -> bool {
         self.platform_window.has_system_window_tabs()
+    }
+
+    /// Syncs the window's tab state.
+    /// This is macOS specific.
+    pub fn refresh_has_system_window_tabs(&self) {
+        self.platform_window.refresh_has_system_window_tabs();
     }
 
     /// Selects the next tab in the tab group in the trailing direction.

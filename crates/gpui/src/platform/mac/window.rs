@@ -1323,6 +1323,30 @@ impl PlatformWindow for MacWindow {
         self.0.lock().has_system_window_tabs
     }
 
+    fn refresh_has_system_window_tabs(&self) {
+        let mut this = self.0.lock();
+        let executor = this.executor.clone();
+        let native_window = this.native_window;
+        let has_system_window_tabs = &mut this.has_system_window_tabs as *mut bool;
+        executor
+            .spawn(async move {
+                unsafe {
+                    let tabbed_windows: id = msg_send![native_window, tabbedWindows];
+                    let tabbed_windows_count: NSUInteger = if !tabbed_windows.is_null() {
+                        msg_send![tabbed_windows, count]
+                    } else {
+                        0
+                    };
+
+                    let should_have_tabs = tabbed_windows_count >= 2;
+                    if *has_system_window_tabs != should_have_tabs {
+                        *has_system_window_tabs = should_have_tabs;
+                    }
+                }
+            })
+            .detach();
+    }
+
     fn draw(&self, scene: &crate::Scene) {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
@@ -1880,12 +1904,6 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
-
-            // This is required because the removeTitlebarAccessoryViewController hook does not catch all events.
-            // We execute this async, because otherwise the window might still report the wrong state.
-            unsafe {
-                update_tab_bar_state(&mut lock);
-            }
 
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
