@@ -650,7 +650,6 @@ impl ProjectDiagnosticsEditor {
                                     block.render_block(editor.clone(), bcx)
                                 }),
                                 priority: 1,
-                                render_in_minimap: false,
                             }
                         });
                 let block_ids = this.editor.update(cx, |editor, cx| {

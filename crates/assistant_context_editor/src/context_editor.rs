@@ -1240,7 +1240,6 @@ impl ContextEditor {
                 ),
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
-                render_in_minimap: false,
             };
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
@@ -1842,7 +1841,6 @@ impl ContextEditor {
                                 .into_any_element()
                         }),
                         priority: 0,
-                        render_in_minimap: false,
                     })
                 })
                 .collect::<Vec<_>>();
