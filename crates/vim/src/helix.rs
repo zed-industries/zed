@@ -52,7 +52,7 @@ impl Vim {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
-                    let new_goal = selection.goal;
+                    let new_goal = SelectionGoal::None;
                     let mut head = selection.head();
                     let mut tail = selection.tail();
 
