@@ -618,12 +618,12 @@ impl LspTool {
                 language_server_id,
                 name,
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
-            } => match (&status_update).status {
+            } => match &status_update.status {
                 Some(proto::status_update::Status::Binary(binary_status)) => {
                     let Some(name) = name.as_ref() else {
                         return;
                     };
-                    if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(binary_status)
+                    if let Some(binary_status) = proto::ServerBinaryStatus::from_i32(*binary_status)
                     {
                         let binary_status = match binary_status {
                             proto::ServerBinaryStatus::None => BinaryStatus::None,
@@ -652,7 +652,7 @@ impl LspTool {
                     };
                 }
                 Some(proto::status_update::Status::Health(health_status)) => {
-                    if let Some(health) = proto::ServerHealth::from_i32(health_status) {
+                    if let Some(health) = proto::ServerHealth::from_i32(*health_status) {
                         let health = match health {
                             proto::ServerHealth::Ok => ServerHealth::Ok,
                             proto::ServerHealth::Warning => ServerHealth::Warning,
