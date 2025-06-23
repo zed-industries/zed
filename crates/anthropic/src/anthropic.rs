@@ -8,6 +8,7 @@ use http_client::http::{self, HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
+use thiserror::Error;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
@@ -811,24 +812,13 @@ pub enum AnthropicError {
     UnexpectedResponseFormat(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Error)]
+#[error("Anthropic API Error: {error_type}: {message}")]
 pub struct ApiError {
     #[serde(rename = "type")]
     pub error_type: String,
     pub message: String,
 }
-
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Anthropic API Error: {}: {}",
-            self.error_type, self.message
-        )
-    }
-}
-
-impl std::error::Error for ApiError {}
 
 /// An Anthropic API error code.
 /// <https://docs.anthropic.com/en/api/errors#http-errors>
