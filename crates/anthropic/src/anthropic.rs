@@ -2,6 +2,7 @@ use std::io;
 use std::str::FromStr;
 use std::time::Duration;
 
+use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
@@ -89,52 +90,52 @@ impl Model {
         Self::Claude3_5Haiku
     }
 
-    pub fn from_id(id: &str) -> Option<Self> {
+    pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-opus-4-thinking") {
-            return Some(Self::ClaudeOpus4Thinking);
+            return Ok(Self::ClaudeOpus4Thinking);
         }
 
         if id.starts_with("claude-opus-4") {
-            return Some(Self::ClaudeOpus4);
+            return Ok(Self::ClaudeOpus4);
         }
 
         if id.starts_with("claude-sonnet-4-thinking") {
-            return Some(Self::ClaudeSonnet4Thinking);
+            return Ok(Self::ClaudeSonnet4Thinking);
         }
 
         if id.starts_with("claude-sonnet-4") {
-            return Some(Self::ClaudeSonnet4);
+            return Ok(Self::ClaudeSonnet4);
         }
 
         if id.starts_with("claude-3-7-sonnet-thinking") {
-            return Some(Self::Claude3_7SonnetThinking);
+            return Ok(Self::Claude3_7SonnetThinking);
         }
 
         if id.starts_with("claude-3-7-sonnet") {
-            return Some(Self::Claude3_7Sonnet);
+            return Ok(Self::Claude3_7Sonnet);
         }
 
         if id.starts_with("claude-3-5-sonnet") {
-            return Some(Self::Claude3_5Sonnet);
+            return Ok(Self::Claude3_5Sonnet);
         }
 
         if id.starts_with("claude-3-5-haiku") {
-            return Some(Self::Claude3_5Haiku);
+            return Ok(Self::Claude3_5Haiku);
         }
 
         if id.starts_with("claude-3-opus") {
-            return Some(Self::Claude3Opus);
+            return Ok(Self::Claude3Opus);
         }
 
         if id.starts_with("claude-3-sonnet") {
-            return Some(Self::Claude3Sonnet);
+            return Ok(Self::Claude3Sonnet);
         }
 
         if id.starts_with("claude-3-haiku") {
-            return Some(Self::Claude3Haiku);
+            return Ok(Self::Claude3Haiku);
         }
 
-        None
+        Err(anyhow!("invalid model ID: {id}"))
     }
 
     pub fn id(&self) -> &str {
@@ -336,7 +337,7 @@ pub async fn complete(
     let uri = format!("{api_url}/v1/messages");
     let beta_headers = Model::from_id(&request.model)
         .map(|model| model.beta_headers())
-        .unwrap_or_else(|| Model::DEFAULT_BETA_HEADERS.join(","));
+        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -393,24 +394,21 @@ pub struct RateLimit {
 }
 
 impl RateLimit {
-    fn from_headers(resource: &str, headers: &HeaderMap<HeaderValue>) -> Option<Self> {
-        let limit = get_header(&format!("anthropic-ratelimit-{resource}-limit"), headers)?
-            .parse()
-            .ok()?;
+    fn from_headers(resource: &str, headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        let limit =
+            get_header(&format!("anthropic-ratelimit-{resource}-limit"), headers)?.parse()?;
         let remaining = get_header(
             &format!("anthropic-ratelimit-{resource}-remaining"),
             headers,
         )?
-        .parse()
-        .ok()?;
+        .parse()?;
         let reset = DateTime::parse_from_rfc3339(get_header(
             &format!("anthropic-ratelimit-{resource}-reset"),
             headers,
-        )?)
-        .ok()?
+        )?)?
         .to_utc();
 
-        Some(Self {
+        Ok(Self {
             limit,
             remaining,
             reset,
@@ -451,16 +449,19 @@ impl RateLimitInfo {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
                 .map(Duration::from_secs),
-            requests: RateLimit::from_headers("requests", headers),
-            tokens: RateLimit::from_headers("tokens", headers),
-            input_tokens: RateLimit::from_headers("input-tokens", headers),
-            output_tokens: RateLimit::from_headers("output-tokens", headers),
+            requests: RateLimit::from_headers("requests", headers).ok(),
+            tokens: RateLimit::from_headers("tokens", headers).ok(),
+            input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
+            output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
         }
     }
 }
 
-fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Option<&'a str> {
-    headers.get(key)?.to_str().ok()
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
+    Ok(headers
+        .get(key)
+        .with_context(|| format!("missing header `{key}`"))?
+        .to_str()?)
 }
 
 pub async fn stream_completion_with_rate_limit_info(
@@ -482,7 +483,7 @@ pub async fn stream_completion_with_rate_limit_info(
     let uri = format!("{api_url}/v1/messages");
     let beta_headers = Model::from_id(&request.base.model)
         .map(|model| model.beta_headers())
-        .unwrap_or_else(|| Model::DEFAULT_BETA_HEADERS.join(","));
+        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
