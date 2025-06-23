@@ -16,7 +16,6 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
 
     let mut has_name = false;
     let mut has_namespace = false;
-    let mut has_internal = false;
     let mut has_deprecated_aliases = false;
 
     for attr in &input.attrs {
@@ -46,10 +45,9 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     let ident: Ident = meta.input.parse()?;
                     namespace = Some(ident.to_string());
                 } else if meta.path.is_ident("internal") {
-                    if has_internal {
+                    if internal {
                         return Err(meta.error("'internal' argument specified multiple times"));
                     }
-                    has_internal = true;
                     internal = true;
                 } else if meta.path.is_ident("deprecated_aliases") {
                     if has_deprecated_aliases {
@@ -74,7 +72,6 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     }
 
-    // Determine the full action name
     let full_name = if let Some(name) = action_name {
         name
     } else if let Some(ns) = namespace {
@@ -84,10 +81,8 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         name.to_string()
     };
 
-    // Check if this is a unit struct
     let is_unit_struct = matches!(&input.data, Data::Struct(data) if data.fields.is_empty());
 
-    // Generate the build function
     let build_fn = if internal {
         let error_msg = format!(
             "{} is an internal action, so cannot be built from JSON.",
@@ -112,7 +107,6 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate the JSON schema function
     let json_schema_fn = if internal || is_unit_struct {
         quote! {
             fn action_json_schema(
@@ -131,7 +125,6 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate deprecated aliases function
     let deprecated_aliases_fn = if deprecated_aliases.is_empty() {
         quote! {
             fn deprecated_aliases() -> &'static [&'static str] {
