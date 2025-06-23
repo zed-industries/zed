@@ -6466,6 +6466,11 @@ pub fn last_session_workspace_locations(
 actions!(
     collab,
     [
+        /// Opens the channel notes for the current call.
+        ///
+        /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
+        /// can be copied via "Copy link to section" in the context menu of the channel notes
+        /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
         Mute,
         Deafen,

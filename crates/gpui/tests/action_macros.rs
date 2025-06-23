@@ -5,7 +5,13 @@ use serde_derive::Deserialize;
 
 #[test]
 fn test_action_macros() {
-    actions!(test, [TestAction]);
+    actions!(
+        test,
+        [
+            /// This is a test
+            TestAction
+        ]
+    );
 
     #[derive(PartialEq, Clone, Deserialize, JsonSchema)]
     struct AnotherTestAction;
