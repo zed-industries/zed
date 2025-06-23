@@ -295,6 +295,8 @@ actions!(
         DuplicateSelection,
         EditLogBreakpoint,
         EnableBreakpoint,
+        #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
+        ExpandAllDiffHunks,
         ExpandMacroRecursively,
         FindAllReferences,
         FindNextMatch,
@@ -363,6 +365,8 @@ actions!(
         OpenGitBlameCommit,
         OpenPermalinkToLine,
         OpenProposedChangesEditor,
+        #[action(deprecated_aliases = ["editor::OpenFile"])]
+        OpenSelectedFilename,
         OpenSelectionsInMultibuffer,
         OpenUrl,
         OrganizeImports,
@@ -437,6 +441,8 @@ actions!(
         ToggleLineNumbers,
         ToggleMinimap,
         ToggleRelativeLineNumbers,
+        #[action(deprecated_aliases = ["editor::ToggleHunkDiff"])]
+        ToggleSelectedDiffHunks,
         ToggleSelectionMenu,
         ToggleSoftWrap,
         ToggleTabBar,
@@ -456,17 +462,5 @@ actions!(
     [
         #[action(name = "Toggle")]
         ToggleGoToLine
-    ]
-);
-
-actions!(
-    editor,
-    [
-        #[action(deprecated_aliases = ["editor::OpenFile"])]
-        OpenSelectedFilename,
-        #[action(deprecated_aliases = ["editor::ToggleHunkDiff"])]
-        ToggleSelectedDiffHunks,
-        #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
-        ExpandAllDiffHunks,
     ]
 );

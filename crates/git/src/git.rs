@@ -34,7 +34,11 @@ actions!(
         ToggleStaged,
         StageAndNext,
         UnstageAndNext,
+        #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
+        Restore,
         // per-file
+        #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
+        Blame,
         StageFile,
         UnstageFile,
         // repo-wide
@@ -65,16 +69,6 @@ pub struct RestoreFile {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-actions!(
-    git,
-    [
-        #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
-        Restore,
-        #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
-        Blame
-    ]
-);
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
