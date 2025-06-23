@@ -836,6 +836,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 lindex: -1,
                 tymed: TYMED_HGLOBAL.0 as _,
             };
+            let cursor_position = POINT { x: pt.x, y: pt.y };
             if idata_obj.QueryGetData(&config as _) == S_OK {
                 *pdweffect = DROPEFFECT_COPY;
                 let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
@@ -852,7 +853,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                     }
                 });
                 ReleaseStgMedium(&mut idata);
-                let mut cursor_position = POINT { x: pt.x, y: pt.y };
+                let mut cursor_position = cursor_position;
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
                     .ok()
                     .log_err();
