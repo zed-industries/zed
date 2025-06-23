@@ -81,6 +81,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("bicep", &["bicep"]),
     ("bun", &["lockb"]),
     ("c", &["c", "h"]),
+    ("cairo", &["cairo"]),
     ("code", &["handlebars", "metadata", "rkt", "scm"]),
     ("coffeescript", &["coffee"]),
     (
