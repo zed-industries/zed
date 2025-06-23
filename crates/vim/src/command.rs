@@ -46,19 +46,19 @@ use crate::{
 };
 
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub struct GoToLine {
     range: CommandRange,
 }
 
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub struct YankCommand {
     range: CommandRange,
 }
 
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub struct WithRange {
     restore_selection: bool,
     range: CommandRange,
@@ -66,7 +66,7 @@ pub struct WithRange {
 }
 
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub struct WithCount {
     count: u32,
     action: WrappedAction,
@@ -157,20 +157,20 @@ impl VimOption {
 }
 
 #[derive(Clone, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub struct VimSet {
     options: Vec<VimOption>,
 }
 
 #[derive(Clone, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 struct VimSave {
     pub save_intent: Option<SaveIntent>,
     pub filename: String,
 }
 
 #[derive(Clone, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 enum DeleteMarks {
     Marks(String),
     AllLocal,
@@ -181,7 +181,7 @@ actions!(
     [VisualCommand, CountCommand, ShellCommand, ArgumentRequired]
 );
 #[derive(Clone, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 struct VimEdit {
     pub filename: String,
 }
@@ -1282,7 +1282,7 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
 }
 
 #[derive(Debug, PartialEq, Clone, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub(crate) struct OnMatchingLines {
     range: CommandRange,
     search: String,
@@ -1475,7 +1475,7 @@ impl OnMatchingLines {
 }
 
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, internal)]
 pub struct ShellExec {
     command: String,
     range: Option<CommandRange>,

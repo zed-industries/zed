@@ -11,12 +11,12 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let name = &input.ident;
     let mut action_name = None;
     let mut deprecated_aliases = Vec::new();
-    let mut no_json = false;
+    let mut internal = false;
     let mut namespace = None;
 
     let mut has_name = false;
     let mut has_namespace = false;
-    let mut has_no_json = false;
+    let mut has_internal = false;
     let mut has_deprecated_aliases = false;
 
     for attr in &input.attrs {
@@ -45,12 +45,12 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     meta.input.parse::<Token![=]>()?;
                     let ident: Ident = meta.input.parse()?;
                     namespace = Some(ident.to_string());
-                } else if meta.path.is_ident("no_json") {
-                    if has_no_json {
-                        return Err(meta.error("'no_json' argument specified multiple times"));
+                } else if meta.path.is_ident("internal") {
+                    if has_internal {
+                        return Err(meta.error("'internal' argument specified multiple times"));
                     }
-                    has_no_json = true;
-                    no_json = true;
+                    has_internal = true;
+                    internal = true;
                 } else if meta.path.is_ident("deprecated_aliases") {
                     if has_deprecated_aliases {
                         return Err(
@@ -88,7 +88,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let is_unit_struct = matches!(&input.data, Data::Struct(data) if data.fields.is_empty());
 
     // Generate the build function
-    let build_fn = if no_json {
+    let build_fn = if internal {
         let error_msg = format!(
             "{} is an internal action, so cannot be built from JSON.",
             full_name
@@ -113,7 +113,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     };
 
     // Generate the JSON schema function
-    let json_schema_fn = if no_json || is_unit_struct {
+    let json_schema_fn = if internal || is_unit_struct {
         quote! {
             fn action_json_schema(
                 _: &mut gpui::private::schemars::r#gen::SchemaGenerator,

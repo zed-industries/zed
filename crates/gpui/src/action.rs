@@ -57,7 +57,7 @@ use std::{
 ///
 /// - `name = "namespace::ActionName"` - Override the action's display name
 /// - `namespace = identifier` - Set just the namespace (name will be struct name)
-/// - `no_json` - Mark that the action cannot be deserialized from JSON
+/// - `internal` - Mark the action as internal-only and so does not support json deserialization
 /// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
 ///
 /// ## Examples
@@ -80,7 +80,7 @@ use std::{
 ///
 /// // Internal action that can't be deserialized
 /// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(no_json)]
+/// #[action(internal)]
 /// struct InternalAction {
 ///     state: u32,
 /// }
