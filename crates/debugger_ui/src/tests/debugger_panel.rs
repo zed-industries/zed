@@ -1754,6 +1754,8 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
             "There shouldn't be any active debug lines after session shutdown"
         );
     });
+
+    dbg!("We're at the end of the function");
 }
 
 #[gpui::test]

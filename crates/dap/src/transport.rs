@@ -63,7 +63,7 @@ pub trait Transport: Send + Sync {
             Box<dyn AsyncRead + Unpin + Send + 'static>,
         )>,
     >;
-    fn kill(&self);
+    fn kill(&mut self);
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
         unreachable!()
@@ -536,7 +536,7 @@ impl Transport for TcpTransport {
         true
     }
 
-    fn kill(&self) {
+    fn kill(&mut self) {
         if let Some(process) = &mut *self.process.lock() {
             process.kill();
         }
@@ -664,7 +664,7 @@ impl Transport for StdioTransport {
         false
     }
 
-    fn kill(&self) {
+    fn kill(&mut self) {
         if let Some(process) = &mut *self.process.lock() {
             process.kill();
         }
@@ -718,6 +718,7 @@ pub struct FakeTransport {
 
     stdin_writer: Option<PipeWriter>,
     stdout_reader: Option<PipeReader>,
+    message_handler: Option<Task<Result<()>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -769,18 +770,19 @@ impl FakeTransport {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
-        let this = Self {
+        let mut this = Self {
             request_handlers: Arc::new(Mutex::new(HashMap::default())),
             response_handlers: Arc::new(Mutex::new(HashMap::default())),
             stdin_writer: Some(stdin_writer),
             stdout_reader: Some(stdout_reader),
+            message_handler: None,
         };
 
         let request_handlers = this.request_handlers.clone();
         let response_handlers = this.response_handlers.clone();
         let stdout_writer = Arc::new(smol::lock::Mutex::new(stdout_writer));
 
-        cx.background_spawn(async move {
+        this.message_handler = Some(cx.background_spawn(async move {
             let mut reader = BufReader::new(stdin_reader);
             let mut buffer = String::new();
 
@@ -828,7 +830,6 @@ impl FakeTransport {
                                             .unwrap();
 
                                     let mut writer = stdout_writer.lock().await;
-
                                     writer
                                         .write_all(
                                             TransportDelegate::build_rpc_message(message)
@@ -865,8 +866,7 @@ impl FakeTransport {
                     }
                 }
             }
-        })
-        .detach();
+        }));
 
         Ok(this)
     }
@@ -899,7 +899,9 @@ impl Transport for FakeTransport {
         false
     }
 
-    fn kill(&self) {}
+    fn kill(&mut self) {
+        self.message_handler.take();
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &FakeTransport {
