@@ -887,18 +887,24 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     app_state
         .fs
         .as_fake()
-        .insert_tree("/roota", json!({ "the-parent-dira": { "filea": "" } }))
+        .insert_tree(
+            path!("/roota"),
+            json!({ "the-parent-dira": { "filea": "" } }),
+        )
         .await;
 
     app_state
         .fs
         .as_fake()
-        .insert_tree("/rootb", json!({ "the-parent-dirb": { "fileb": "" } }))
+        .insert_tree(
+            path!("/rootb"),
+            json!({ "the-parent-dirb": { "fileb": "" } }),
+        )
         .await;
 
     let project = Project::test(
         app_state.fs.clone(),
-        ["/roota".as_ref(), "/rootb".as_ref()],
+        [path!("/roota").as_ref(), path!("/rootb").as_ref()],
         cx,
     )
     .await;
