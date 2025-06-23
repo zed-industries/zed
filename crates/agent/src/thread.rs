@@ -3595,6 +3595,17 @@ fn main() {{
             vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
         );
 
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+            ],
+            vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
+        );
+
         // Test that tool with very long name is always truncated
         assert_resolve_tool_name_conflicts(
             vec![TestTool::new(
