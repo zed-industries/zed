@@ -2697,6 +2697,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "postage",
  "rand 0.8.5",
  "release_channel",
  "rpc",
