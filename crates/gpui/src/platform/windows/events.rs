@@ -1363,6 +1363,7 @@ fn parse_normal_key(
         modifiers,
         key,
         key_char,
+        ..Default::default()
     })
 }
 

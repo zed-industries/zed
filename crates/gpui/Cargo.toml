@@ -79,6 +79,7 @@ doctest = false
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
+better-refcell = "0.1.0"
 blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
