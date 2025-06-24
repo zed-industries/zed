@@ -2142,7 +2142,12 @@ impl Session {
             .unwrap_or_default()
     }
 
-    pub fn variables_by_stack_frame_id(&self, stack_frame_id: StackFrameId) -> Vec<dap::Variable> {
+    pub fn variables_by_stack_frame_id(
+        &self,
+        stack_frame_id: StackFrameId,
+        globals: bool,
+        locals: bool,
+    ) -> Vec<dap::Variable> {
         let Some(stack_frame) = self.stack_frames.get(&stack_frame_id) else {
             return Vec::new();
         };
@@ -2150,6 +2155,10 @@ impl Session {
         stack_frame
             .scopes
             .iter()
+            .filter(|scope| {
+                (scope.name.to_lowercase().contains("local") && locals)
+                    || (scope.name.to_lowercase().contains("global") && globals)
+            })
             .filter_map(|scope| self.variables.get(&scope.variables_reference))
             .flatten()
             .cloned()

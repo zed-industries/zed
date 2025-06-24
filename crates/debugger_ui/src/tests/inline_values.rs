@@ -246,10 +246,10 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
-        let x = 10;
+        let x: 10 = 10;
         let value = 42;
         let y = 4;
         let tester = {
@@ -303,11 +303,11 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
-        let value = 42;
+        let value: 42 = 42;
         let y = 4;
         let tester = {
             let y = 10;
@@ -360,12 +360,12 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
-        let y = 4;
+        let y: 4 = 4;
         let tester = {
             let y = 10;
             let y = 5;
@@ -417,7 +417,7 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
@@ -474,14 +474,14 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
         let y: 4 = 4;
         let tester = {
-            let y = 10;
+            let y: 4 = 10;
             let y = 5;
             let b = 3;
             vec![y, 20, 30]
@@ -581,15 +581,15 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
-        let y = 4;
+        let y: 10 = 4;
         let tester = {
             let y: 10 = 10;
-            let y = 5;
+            let y: 10 = 5;
             let b = 3;
             vec![y, 20, 30]
         };
@@ -688,14 +688,14 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
-        let y = 4;
+        let y: 5 = 4;
         let tester = {
-            let y = 10;
+            let y: 5 = 10;
             let y: 5 = 5;
             let b = 3;
             vec![y, 20, 30]
@@ -807,17 +807,17 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
-        let y = 4;
+        let y: 5 = 4;
         let tester = {
-            let y = 10;
+            let y: 5 = 10;
             let y: 5 = 5;
             let b: 3 = 3;
-            vec![y, 20, 30]
+            vec![y: 5, 20, 30]
         };
 
         let caller = || {
@@ -926,7 +926,7 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
@@ -1058,7 +1058,7 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
@@ -1115,21 +1115,21 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
-        let x = 10;
-        let value = 42;
-        let y = 4;
-        let tester = {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y: 4 = 4;
+        let tester: size=3 = {
             let y = 10;
             let y = 5;
             let b = 3;
             vec![y, 20, 30]
         };
 
-        let caller = || {
-            let x = 3;
+        let caller: <not available> = || {
+            let x: 10 = 3;
             println!("x={}", x);
         };
 
@@ -1193,10 +1193,10 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 1: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
-        let x = 10;
+        let x: 3 = 10;
         let value = 42;
         let y = 4;
         let tester = {
@@ -1208,7 +1208,7 @@ fn main() {
 
         let caller = || {
             let x: 3 = 3;
-            println!("x={}", x);
+            println!("x={}", x: 3);
         };
 
         caller();
@@ -1338,7 +1338,7 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 2: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
@@ -1362,7 +1362,7 @@ fn main() {
             GLOBAL = 2;
         }
 
-        let result = value * 2 * x;
+        let result = value: 42 * 2 * x: 10;
         println!("Simple test executed: value={}, result={}", value, result);
         assert!(true);
     }
@@ -1483,7 +1483,7 @@ fn main() {
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-    static mut GLOBAL: 2: usize = 1;
+    static mut GLOBAL: usize = 1;
 
     fn main() {
         let x: 10 = 10;
@@ -1507,8 +1507,8 @@ fn main() {
             GLOBAL = 2;
         }
 
-        let result: 840 = value * 2 * x;
-        println!("Simple test executed: value={}, result={}", value, result);
+        let result: 840 = value: 42 * 2 * x: 10;
+        println!("Simple test executed: value={}, result={}", value: 42, result: 840);
         assert!(true);
     }
     "#
@@ -1821,8 +1821,8 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
         def process_data(untyped_param: test_value, typed_param: 42: int, another_typed: world: str):
             # Local variables
             x: 10 = 10
-            result: 84 = typed_param * 2
-            text: Hello, world = "Hello, " + another_typed
+            result: 84 = typed_param: 42 * 2
+            text: Hello, world = "Hello, " + another_typed: world
 
             # For loop with range
             sum_value: 10 = 0
@@ -1840,6 +1840,7 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
 }
 
 fn python_lang() -> Language {
+    let debug_variables_query = include_str!("../../../languages/src/python/debugger.scm");
     Language::new(
         LanguageConfig {
             name: "Python".into(),
@@ -1851,6 +1852,8 @@ fn python_lang() -> Language {
         },
         Some(tree_sitter_python::LANGUAGE.into()),
     )
+    .with_debug_variables_query(debug_variables_query)
+    .unwrap()
 }
 
 /// Test utility function for inline values testing
@@ -2108,8 +2111,8 @@ fn main() {
 fn main() {
     let x: 10 = 10;
     let y: 20 = 20;
-    let result: 30 = x: 10 + y: 30;
-    println!("Result: {}", result);
+    let result: 30 = x: 10 + y: 20;
+    println!("Result: {}", result: 30);
 }
 "#
     .unindent();

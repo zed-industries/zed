@@ -113,7 +113,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, Point};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
@@ -3678,7 +3678,6 @@ impl Project {
             .row as usize;
 
         let inline_value_locations = provide_inline_values(captures, &snapshot, row);
-        // dbg!(&inline_value_locations); todo! remove this
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
@@ -5378,9 +5377,10 @@ fn provide_inline_values(
 ) -> Vec<InlineValueLocation> {
     let mut variables = Vec::new();
     let mut variable_position = HashSet::default();
-    let current_scope: VariableScope = VariableScope::Local;
+    let mut scopes = Vec::new();
 
-    // todo! We should be skipping scopes we don't care about
+    let active_debug_line_offset = snapshot.point_to_offset(Point::new(max_row as u32, 0));
+
     for (capture_range, capture_kind) in captures {
         match capture_kind {
             language::DebuggerTextObject::Variable => {
@@ -5389,21 +5389,47 @@ fn provide_inline_values(
                     .collect::<String>();
                 let point = snapshot.offset_to_point(capture_range.end);
 
+                while scopes.last().map_or(false, |scope: &Range<_>| {
+                    !scope.contains(&capture_range.start)
+                }) {
+                    scopes.pop();
+                }
+
                 if point.row as usize > max_row {
                     break;
                 }
 
+                let scope = if scopes
+                    .last()
+                    .map_or(true, |scope| !scope.contains(&active_debug_line_offset))
+                {
+                    VariableScope::Global
+                } else {
+                    VariableScope::Local
+                };
+
                 if variable_position.insert(capture_range.end) {
                     variables.push(InlineValueLocation {
                         variable_name,
-                        scope: current_scope.clone(),
+                        scope,
                         lookup: VariableLookupKind::Variable,
                         row: point.row as usize,
                         column: point.column as usize,
                     });
                 }
             }
-            language::DebuggerTextObject::Scope => {}
+            language::DebuggerTextObject::Scope => {
+                while scopes.last().map_or_else(
+                    || false,
+                    |scope: &Range<usize>| {
+                        !(scope.contains(&capture_range.start)
+                            && scope.contains(&capture_range.end))
+                    },
+                ) {
+                    scopes.pop();
+                }
+                scopes.push(capture_range);
+            }
         }
     }
 
