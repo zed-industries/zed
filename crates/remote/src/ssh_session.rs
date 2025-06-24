@@ -2108,145 +2108,147 @@ impl SshRemoteConnection {
             .await?;
 
             let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok(path);
-        }
-        let Some(triple) = self.ssh_platform.triple() else {
-            anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform);
-        };
-
-        if build_remote_server.contains("cross") {
-            #[cfg(target_os = "windows")]
-            use util::paths::SanitizedPath;
-
-            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-            log::info!("installing cross");
-            run_cmd(Command::new("cargo").args([
-                "install",
-                "cross",
-                "--git",
-                "https://github.com/cross-rs/cross",
-            ]))
-            .await?;
-
-            delegate.set_status(
-                Some(&format!(
-                    "Building remote server binary from source for {} with Docker",
-                    &triple
-                )),
-                cx,
-            );
-            log::info!("building remote server binary from source for {}", &triple);
-
-            // On Windows, the binding needs to be set to the canonical path
-            #[cfg(target_os = "windows")]
-            let src =
-                SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
-            #[cfg(not(target_os = "windows"))]
-            let src = "./target";
-            run_cmd(
-                Command::new("cross")
-                    .args([
-                        "build",
-                        "--package",
-                        "remote_server",
-                        "--features",
-                        "debug-embed",
-                        "--target-dir",
-                        "target/remote_server",
-                        "--target",
-                        &triple,
-                    ])
-                    .env(
-                        "CROSS_CONTAINER_OPTS",
-                        format!("--mount type=bind,src={src},dst=/app/target"),
-                    ),
-            )
-            .await?;
+            Ok(path)
         } else {
-            let which = cx
-                .background_spawn(async move { which::which("zig") })
-                .await;
+            let Some(triple) = self.ssh_platform.triple() else {
+                anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform);
+            };
 
-            if which.is_err() {
+            if build_remote_server.contains("cross") {
+                #[cfg(target_os = "windows")]
+                use util::paths::SanitizedPath;
+
+                delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+                log::info!("installing cross");
+                run_cmd(Command::new("cargo").args([
+                    "install",
+                    "cross",
+                    "--git",
+                    "https://github.com/cross-rs/cross",
+                ]))
+                .await?;
+
+                delegate.set_status(
+                    Some(&format!(
+                        "Building remote server binary from source for {} with Docker",
+                        &triple
+                    )),
+                    cx,
+                );
+                log::info!("building remote server binary from source for {}", &triple);
+
+                // On Windows, the binding needs to be set to the canonical path
+                #[cfg(target_os = "windows")]
+                let src =
+                    SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
+                #[cfg(not(target_os = "windows"))]
+                let src = "./target";
+                run_cmd(
+                    Command::new("cross")
+                        .args([
+                            "build",
+                            "--package",
+                            "remote_server",
+                            "--features",
+                            "debug-embed",
+                            "--target-dir",
+                            "target/remote_server",
+                            "--target",
+                            &triple,
+                        ])
+                        .env(
+                            "CROSS_CONTAINER_OPTS",
+                            format!("--mount type=bind,src={src},dst=/app/target"),
+                        ),
+                )
+                .await?;
+            } else {
+                let which = cx
+                    .background_spawn(async move { which::which("zig") })
+                    .await;
+
+                if which.is_err() {
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        anyhow::bail!(
+                            "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                        )
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        anyhow::bail!(
+                            "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                        )
+                    }
+                }
+
+                delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+                log::info!("adding rustup target");
+                run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+
+                delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+                log::info!("installing cargo-zigbuild");
+                run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"]))
+                    .await?;
+
+                delegate.set_status(
+                    Some(&format!(
+                        "Building remote binary from source for {triple} with Zig"
+                    )),
+                    cx,
+                );
+                log::info!("building remote binary from source for {triple} with Zig");
+                run_cmd(Command::new("cargo").args([
+                    "zigbuild",
+                    "--package",
+                    "remote_server",
+                    "--features",
+                    "debug-embed",
+                    "--target-dir",
+                    "target/remote_server",
+                    "--target",
+                    &triple,
+                ]))
+                .await?;
+            };
+
+            let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
+            if !build_remote_server.contains("nocompress") {
+                delegate.set_status(Some("Compressing binary"), cx);
+
                 #[cfg(not(target_os = "windows"))]
                 {
-                    anyhow::bail!(
-                        "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
-                    )
+                    run_cmd(Command::new("gzip").args([
+                        "-9",
+                        "-f",
+                        &format!("target/remote_server/{}/debug/remote_server", triple),
+                    ]))
+                    .await?;
                 }
                 #[cfg(target_os = "windows")]
                 {
-                    anyhow::bail!(
-                        "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
-                    )
+                    // On Windows, we use 7z to compress the binary
+                    let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
+                    let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
+                    if smol::fs::metadata(&gz_path).await.is_ok() {
+                        smol::fs::remove_file(&gz_path).await?;
+                    }
+                    run_cmd(Command::new(seven_zip).args([
+                        "a",
+                        "-tgzip",
+                        &gz_path,
+                        &format!("target/remote_server/{}/debug/remote_server", triple),
+                    ]))
+                    .await?;
                 }
+
+                path = std::env::current_dir()?.join(format!(
+                    "target/remote_server/{triple}/debug/remote_server.gz"
+                ));
             }
 
-            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
-            log::info!("adding rustup target");
-            run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
-
-            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-            log::info!("installing cargo-zigbuild");
-            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
-
-            delegate.set_status(
-                Some(&format!(
-                    "Building remote binary from source for {triple} with Zig"
-                )),
-                cx,
-            );
-            log::info!("building remote binary from source for {triple} with Zig");
-            run_cmd(Command::new("cargo").args([
-                "zigbuild",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-                "--target",
-                &triple,
-            ]))
-            .await?;
-        };
-
-        let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
-        if !build_remote_server.contains("nocompress") {
-            delegate.set_status(Some("Compressing binary"), cx);
-
-            #[cfg(not(target_os = "windows"))]
-            {
-                run_cmd(Command::new("gzip").args([
-                    "-9",
-                    "-f",
-                    &format!("target/remote_server/{}/debug/remote_server", triple),
-                ]))
-                .await?;
-            }
-            #[cfg(target_os = "windows")]
-            {
-                // On Windows, we use 7z to compress the binary
-                let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
-                let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
-                if smol::fs::metadata(&gz_path).await.is_ok() {
-                    smol::fs::remove_file(&gz_path).await?;
-                }
-                run_cmd(Command::new(seven_zip).args([
-                    "a",
-                    "-tgzip",
-                    &gz_path,
-                    &format!("target/remote_server/{}/debug/remote_server", triple),
-                ]))
-                .await?;
-            }
-
-            path = std::env::current_dir()?.join(format!(
-                "target/remote_server/{triple}/debug/remote_server.gz"
-            ));
+            Ok(path)
         }
-
-        return Ok(path);
     }
 }
 
