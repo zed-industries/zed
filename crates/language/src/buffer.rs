@@ -3875,7 +3875,6 @@ impl BufferSnapshot {
                     else {
                         continue;
                     };
-                    // todo! come up with a better name
                     let text_object = config.objects_by_capture_ix[ix].1;
                     let byte_range = capture.node.byte_range();
 
