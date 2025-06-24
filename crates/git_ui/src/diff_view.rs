@@ -804,7 +804,7 @@ mod tests {
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
-                DiffView::open(
+                DiffView::open_file_diff(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
                     workspace,

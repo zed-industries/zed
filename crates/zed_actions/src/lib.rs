@@ -28,7 +28,7 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
-#[derive(Clone, PartialEq, Default, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Default, Deserialize, JsonSchema, Action)]
 pub struct DiffText {
     #[serde(skip)]
     pub old_text_data: TextData,
