@@ -2784,7 +2784,23 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
-        let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
+        // A panic has been occurring at this location and we haven't been able
+        // to track it down. A non-crashing bug is better than a crash, so we
+        // clamp the value and log. Hopefully, we can get proper reproduction
+        // steps in the future for this case.
+        let safe_pinned_count = if self.pinned_tab_count > tab_count {
+            log::warn!(
+                "BUG: Pinned tab count ({}) exceeds actual tab count ({}). \
+                This should not happen. Please file a bug report with reproduction steps, \
+                if possible, at https://github.com/zed-industries/zed/issues/new",
+                self.pinned_tab_count,
+                tab_count
+            );
+            tab_count
+        } else {
+            self.pinned_tab_count
+        };
+        let unpinned_tabs = tab_items.split_off(safe_pinned_count);
         let pinned_tabs = tab_items;
         TabBar::new("tab_bar")
             .when(
