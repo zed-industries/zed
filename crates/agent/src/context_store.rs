@@ -8,7 +8,7 @@ use crate::{
     thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_context_editor::AssistantContext;
+use assistant_context::AssistantContext;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};

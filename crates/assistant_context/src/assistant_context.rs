@@ -1,5 +1,6 @@
 #[cfg(test)]
-mod context_tests;
+mod assistant_context_tests;
+mod context_store;
 
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
@@ -8,7 +9,7 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, proto, telemetry::Telemetry};
+use client::{self, Client, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
@@ -46,6 +47,12 @@ use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 use zed_llm_client::CompletionIntent;
+
+pub use crate::context_store::*;
+
+pub fn init(client: Arc<Client>, _: &mut App) {
+    context_store::init(&client.into());
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);

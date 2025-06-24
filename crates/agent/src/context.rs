@@ -1,5 +1,5 @@
 use crate::thread::Thread;
-use assistant_context_editor::AssistantContext;
+use assistant_context::AssistantContext;
 use assistant_tool::outline;
 use collections::HashSet;
 use futures::future;

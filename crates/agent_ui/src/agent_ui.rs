@@ -10,11 +10,16 @@ mod context_strip;
 mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
+mod language_model_selector;
+mod max_mode_tooltip;
 mod message_editor;
 mod profile_selector;
+mod slash_command;
+mod slash_command_picker;
 mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
+mod text_thread_editor;
 mod thread_history;
 mod tool_compatibility;
 mod ui;
@@ -43,6 +48,7 @@ pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
+pub use text_thread_editor::AgentPanelDelegate;
 pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
@@ -140,7 +146,7 @@ pub fn init(
     AgentSettings::register(cx);
     SlashCommandSettings::register(cx);
 
-    assistant_context_editor::init(client.clone(), cx);
+    assistant_context::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when

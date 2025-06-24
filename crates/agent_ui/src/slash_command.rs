@@ -1,4 +1,4 @@
-use crate::context_editor::ContextEditor;
+use crate::text_thread_editor::TextThreadEditor;
 use anyhow::Result;
 pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
@@ -21,14 +21,14 @@ use workspace::Workspace;
 pub struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    editor: Option<WeakEntity<ContextEditor>>,
+    editor: Option<WeakEntity<TextThreadEditor>>,
     workspace: Option<WeakEntity<Workspace>>,
 }
 
 impl SlashCommandCompletionProvider {
     pub fn new(
         slash_commands: Arc<SlashCommandWorkingSet>,
-        editor: Option<WeakEntity<ContextEditor>>,
+        editor: Option<WeakEntity<TextThreadEditor>>,
         workspace: Option<WeakEntity<Workspace>>,
     ) -> Self {
         Self {

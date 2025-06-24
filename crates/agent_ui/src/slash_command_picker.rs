@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
+use crate::text_thread_editor::TextThreadEditor;
 use assistant_slash_command::SlashCommandWorkingSet;
 use gpui::{AnyElement, AnyView, DismissEvent, SharedString, Task, WeakEntity};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip, prelude::*};
-
-use crate::context_editor::ContextEditor;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T, TT>
@@ -14,7 +12,7 @@ where
     TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
     working_set: Arc<SlashCommandWorkingSet>,
-    active_context_editor: WeakEntity<ContextEditor>,
+    active_context_editor: WeakEntity<TextThreadEditor>,
     trigger: T,
     tooltip: TT,
 }
@@ -49,7 +47,7 @@ impl AsRef<str> for SlashCommandEntry {
 pub(crate) struct SlashCommandDelegate {
     all_commands: Vec<SlashCommandEntry>,
     filtered_commands: Vec<SlashCommandEntry>,
-    active_context_editor: WeakEntity<ContextEditor>,
+    active_context_editor: WeakEntity<TextThreadEditor>,
     selected_index: usize,
 }
 
@@ -60,7 +58,7 @@ where
 {
     pub(crate) fn new(
         working_set: Arc<SlashCommandWorkingSet>,
-        active_context_editor: WeakEntity<ContextEditor>,
+        active_context_editor: WeakEntity<TextThreadEditor>,
         trigger: T,
         tooltip: TT,
     ) -> Self {

@@ -73,7 +73,7 @@ fn search(
     recent_entries: Vec<RecentEntry>,
     prompt_store: Option<Entity<PromptStore>>,
     thread_store: Option<WeakEntity<ThreadStore>>,
-    text_thread_context_store: Option<WeakEntity<assistant_context_editor::ContextStore>>,
+    text_thread_context_store: Option<WeakEntity<assistant_context::ContextStore>>,
     workspace: Entity<Workspace>,
     cx: &mut App,
 ) -> Task<Vec<Match>> {

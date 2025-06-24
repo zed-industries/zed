@@ -3,7 +3,7 @@ use crate::{
     thread_store::{SerializedThreadMetadata, ThreadStore},
 };
 use anyhow::{Context as _, Result};
-use assistant_context_editor::SavedContextMetadata;
+use assistant_context::SavedContextMetadata;
 use chrono::{DateTime, Utc};
 use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
 use itertools::Itertools;
@@ -62,7 +62,7 @@ enum SerializedRecentOpen {
 
 pub struct HistoryStore {
     thread_store: Entity<ThreadStore>,
-    context_store: Entity<assistant_context_editor::ContextStore>,
+    context_store: Entity<assistant_context::ContextStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
     _save_recently_opened_entries_task: Task<()>,
@@ -71,7 +71,7 @@ pub struct HistoryStore {
 impl HistoryStore {
     pub fn new(
         thread_store: Entity<ThreadStore>,
-        context_store: Entity<assistant_context_editor::ContextStore>,
+        context_store: Entity<assistant_context::ContextStore>,
         initial_recent_entries: impl IntoIterator<Item = HistoryEntryId>,
         cx: &mut Context<Self>,
     ) -> Self {
