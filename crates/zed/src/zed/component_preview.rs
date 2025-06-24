@@ -5,20 +5,14 @@
 mod persistence;
 mod preview_support;
 
-use std::ops::Range;
-use std::sync::Arc;
-
-use std::iter::Iterator;
-
-use agent::{ActiveThread, TextThreadStore, ThreadStore};
+use agent::ActiveThread;
+use agent_core::{TextThreadStore, ThreadStore};
 use client::UserStore;
+use collections::HashMap;
 use component::{ComponentId, ComponentMetadata, ComponentStatus, components};
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
 };
-
-use collections::HashMap;
-
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -27,11 +21,14 @@ use preview_support::active_thread::{
     load_preview_text_thread_store, load_preview_thread_store, static_active_thread,
 };
 use project::Project;
+use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt as _;
-use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
-use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
+use workspace::{
+    AppState, Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
+    item::ItemEvent,
+};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);

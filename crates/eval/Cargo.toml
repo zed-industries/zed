@@ -18,6 +18,7 @@ name = "explorer"
 path = "src/explorer.rs"
 
 [dependencies]
+agent_core.workspace = true
 agent.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true

@@ -1,4 +1,5 @@
-use agent::{ActiveThread, ContextStore, MessageSegment, TextThreadStore, ThreadStore};
+use agent::ActiveThread;
+use agent_core::{ContextStore, MessageSegment, TextThreadStore, ThreadStore};
 use anyhow::{Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};

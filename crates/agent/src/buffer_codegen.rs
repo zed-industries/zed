@@ -1,6 +1,8 @@
-use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
-use crate::{context::load_context, context_store::ContextStore};
+use agent_core::{
+    context::{ContextLoadResult, load_context},
+    context_store::ContextStore,
+};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;

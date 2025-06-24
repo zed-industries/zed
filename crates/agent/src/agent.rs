@@ -3,16 +3,11 @@ mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
-mod agent_profile;
 mod buffer_codegen;
-mod context;
 mod context_picker;
 mod context_server_configuration;
-mod context_server_tool;
-mod context_store;
 mod context_strip;
 mod debug;
-mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
@@ -20,15 +15,13 @@ mod profile_selector;
 mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
-mod thread;
 mod thread_history;
-mod thread_store;
 mod tool_compatibility;
-mod tool_use;
 mod ui;
 
 use std::sync::Arc;
 
+use agent_core::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -43,18 +36,13 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings as _, SettingsStore};
-use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
-pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
-pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
-pub use crate::thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub use context_store::ContextStore;
 pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
@@ -160,7 +148,7 @@ pub fn init(
         init_language_model_settings(cx);
     }
     assistant_slash_command::init(cx);
-    thread_store::init(cx);
+    agent_core::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
 

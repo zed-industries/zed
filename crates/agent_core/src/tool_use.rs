@@ -7,13 +7,13 @@ use assistant_tool::{
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, Window};
+use icons::IconName;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRequest, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, Role,
 };
 use project::Project;
-use ui::{IconName, Window};
 use util::truncate_lines_to_byte_limit;
 
 use crate::thread::{MessageId, PromptId, ThreadId};
@@ -26,7 +26,7 @@ pub struct ToolUse {
     pub ui_text: SharedString,
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
-    pub icon: ui::IconName,
+    pub icon: icons::IconName,
     pub needs_confirmation: bool,
 }
 
