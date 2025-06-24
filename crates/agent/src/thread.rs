@@ -1806,53 +1806,58 @@ impl Thread {
                 .update(cx, |thread, cx| {
                     thread.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
-                        Ok(stop_reason) => match stop_reason {
-                            StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(window, cx, model.clone());
-                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
-                            }
-                            StopReason::EndTurn | StopReason::MaxTokens  => {
-                                thread.project.update(cx, |project, cx| {
-                                    project.set_agent_location(None, cx);
-                                });
-                            }
-                            StopReason::Refusal => {
-                                thread.project.update(cx, |project, cx| {
-                                    project.set_agent_location(None, cx);
-                                });
+                        Ok(stop_reason) => {
+                            match stop_reason {
+                                StopReason::ToolUse => {
+                                    let tool_uses = thread.use_pending_tools(window, cx, model.clone());
+                                    cx.emit(ThreadEvent::UsePendingTools { tool_uses });
+                                }
+                                StopReason::EndTurn | StopReason::MaxTokens  => {
+                                    thread.project.update(cx, |project, cx| {
+                                        project.set_agent_location(None, cx);
+                                    });
+                                }
+                                StopReason::Refusal => {
+                                    thread.project.update(cx, |project, cx| {
+                                        project.set_agent_location(None, cx);
+                                    });
 
-                                // Remove the turn that was refused.
-                                //
-                                // https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals#reset-context-after-refusal
-                                {
-                                    let mut messages_to_remove = Vec::new();
+                                    // Remove the turn that was refused.
+                                    //
+                                    // https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals#reset-context-after-refusal
+                                    {
+                                        let mut messages_to_remove = Vec::new();
 
-                                    for (ix, message) in thread.messages.iter().enumerate().rev() {
-                                        messages_to_remove.push(message.id);
+                                        for (ix, message) in thread.messages.iter().enumerate().rev() {
+                                            messages_to_remove.push(message.id);
 
-                                        if message.role == Role::User {
-                                            if ix == 0 {
-                                                break;
-                                            }
-
-                                            if let Some(prev_message) = thread.messages.get(ix - 1) {
-                                                if prev_message.role == Role::Assistant {
+                                            if message.role == Role::User {
+                                                if ix == 0 {
                                                     break;
+                                                }
+
+                                                if let Some(prev_message) = thread.messages.get(ix - 1) {
+                                                    if prev_message.role == Role::Assistant {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
+
+                                        for message_id in messages_to_remove {
+                                            thread.delete_message(message_id, cx);
+                                        }
                                     }
 
-                                    for message_id in messages_to_remove {
-                                        thread.delete_message(message_id, cx);
-                                    }
+                                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                        header: "Language model refusal".into(),
+                                        message: "Model refused to generate content for safety reasons.".into(),
+                                    }));
                                 }
-
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Language model refusal".into(),
-                                    message: "Model refused to generate content for safety reasons.".into(),
-                                }));
                             }
+
+                            // We successfully completed, so cancel any remaining retries.
+                            thread.retry_state = None;
                         },
                         Err(error) => {
                             thread.project.update(cx, |project, cx| {
@@ -1948,15 +1953,8 @@ impl Thread {
                                 emit_generic_error(error, cx);
                             }
 
-                            // Clear retry state on any other error
-                            thread.retry_state = None;
                             thread.cancel_last_completion(window, cx);
                         }
-                    }
-
-                    // Clear retry state on successful completion
-                    if result.is_ok() && thread.retry_state.is_some() {
-                        thread.retry_state = None;
                     }
 
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
@@ -2588,12 +2586,9 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let mut canceled = self.pending_completions.pop().is_some();
+        let mut canceled = self.pending_completions.pop().is_some() || self.retry_state.is_some();
 
-        // Cancel any pending retry by clearing retry state
-        if self.retry_state.take().is_some() {
-            canceled = true;
-        }
+        self.retry_state = None;
 
         for pending_tool_use in self.tool_use.cancel_pending() {
             canceled = true;
