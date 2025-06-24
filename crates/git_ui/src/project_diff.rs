@@ -141,7 +141,7 @@ impl ProjectDiff {
         let editor = cx.new(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
-            diff_display_editor.disable_inline_diagnostics();
+            diff_display_editor.disable_diagnostics(cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 workspace: workspace.downgrade(),
