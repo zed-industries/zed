@@ -94,78 +94,32 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
 
     let is_unit_struct = matches!(&input.data, Data::Struct(data) if data.fields.is_empty());
 
-    let build_fn = if no_json {
+    let build_fn_body = if no_json {
         let error_msg = format!("{} cannot be built from JSON", full_name);
-        quote! {
-            fn build(_: gpui::private::serde_json::Value) -> gpui::Result<Box<dyn gpui::Action>> {
-                Err(gpui::private::anyhow::anyhow!(#error_msg))
-            }
-        }
+        quote! { Err(gpui::private::anyhow::anyhow!(#error_msg)) }
     } else if is_unit_struct {
-        quote! {
-            fn build(_: gpui::private::serde_json::Value) -> gpui::Result<Box<dyn gpui::Action>> {
-                Ok(Box::new(Self))
-            }
-        }
+        quote! { Ok(Box::new(Self)) }
     } else {
-        quote! {
-            fn build(value: gpui::private::serde_json::Value) -> gpui::Result<Box<dyn gpui::Action>> {
-                Ok(Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
-            }
-        }
+        quote! { Ok(Box::new(gpui::private::serde_json::from_value::<Self>(_value)?)) }
     };
 
-    let json_schema_fn = if no_json || is_unit_struct {
-        quote! {
-            fn action_json_schema(
-                _: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                None
-            }
-        }
+    let json_schema_fn_body = if no_json || is_unit_struct {
+        quote! { None }
     } else {
-        quote! {
-            fn action_json_schema(
-                generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
-                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(generator))
-            }
-        }
+        quote! { Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(_generator)) }
     };
 
-    let deprecated_aliases_fn = if deprecated_aliases.is_empty() {
-        quote! {
-            fn deprecated_aliases() -> &'static [&'static str] {
-                &[]
-            }
-        }
+    let deprecated_aliases_fn_body = if deprecated_aliases.is_empty() {
+        quote! { &[] }
     } else {
         let aliases = deprecated_aliases.iter();
-        quote! {
-            fn deprecated_aliases() -> &'static [&'static str] {
-                &[#(#aliases),*]
-            }
-        }
+        quote! { &[#(#aliases),*] }
     };
 
-    let deprecation_fn = if let Some(message) = deprecated {
-        quote! {
-            fn deprecation_message() -> Option<&'static str>
-            where
-                Self: Sized
-            {
-                Some(#message)
-            }
-        }
+    let deprecation_fn_body = if let Some(message) = deprecated {
+        quote! { Some(#message) }
     } else {
-        quote! {
-            fn deprecation_message() -> Option<&'static str>
-            where
-                Self: Sized
-            {
-                None
-            }
-        }
+        quote! { None }
     };
 
     let registration = if no_register {
@@ -200,13 +154,23 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                 Box::new(self.clone())
             }
 
-            #build_fn
+            fn build(_value: gpui::private::serde_json::Value) -> gpui::Result<Box<dyn gpui::Action>> {
+                #build_fn_body
+            }
 
-            #json_schema_fn
+            fn action_json_schema(
+                _generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                #json_schema_fn_body
+            }
 
-            #deprecated_aliases_fn
+            fn deprecated_aliases() -> &'static [&'static str] {
+                #deprecated_aliases_fn_body
+            }
 
-            #deprecation_fn
+            fn deprecation_message() -> Option<&'static str> {
+                #deprecation_fn_body
+            }
         }
     })
 }
