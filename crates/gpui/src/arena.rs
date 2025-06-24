@@ -24,20 +24,30 @@ struct Chunk {
     start: *mut u8,
     end: *mut u8,
     offset: *mut u8,
-    size_in_bytes: usize,
+}
+
+impl Drop for Chunk {
+    fn drop(&mut self) {
+        unsafe {
+            let chunk_size = self.end.offset_from_unsigned(self.start);
+            // this never fails as it succeeded during allocation
+            let layout = alloc::Layout::from_size_align(chunk_size, 1).unwrap();
+            alloc::dealloc(self.start, layout);
+        }
+    }
 }
 
 impl Chunk {
-    fn new(size_in_bytes: usize) -> Self {
+    fn new(chunk_size: usize) -> Self {
         unsafe {
-            let layout = alloc::Layout::from_size_align(size_in_bytes, 1).unwrap();
+            // this only fails if chunk_size is unreasonably huge
+            let layout = alloc::Layout::from_size_align(chunk_size, 1).unwrap();
             let start = alloc::alloc(layout);
-            let end = start.add(size_in_bytes);
+            let end = start.add(chunk_size);
             Self {
                 start,
                 end,
                 offset: start,
-                size_in_bytes,
             }
         }
     }
@@ -69,6 +79,12 @@ pub struct Arena {
     chunk_size: usize,
 }
 
+impl Drop for Arena {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 impl Arena {
     pub fn new(chunk_size: usize) -> Self {
         Self {
@@ -80,15 +96,8 @@ impl Arena {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.chunks
-            .iter()
-            .map(|c| unsafe { c.offset.offset_from(c.start) as usize })
-            .sum()
-    }
-
     pub fn capacity(&self) -> usize {
-        self.chunks.iter().map(|c| c.size_in_bytes).sum()
+        self.chunks.len() * self.chunk_size
     }
 
     pub fn clear(&mut self) {
@@ -125,11 +134,10 @@ impl Arena {
             let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
                 ptr
             } else {
-                if self.current_chunk_index + 1 >= self.chunks.len() {
+                self.current_chunk_index += 1;
+                if self.current_chunk_index >= self.chunks.len() {
                     self.chunks.push(Chunk::new(self.chunk_size));
-                    self.current_chunk_index = self.chunks.len() - 1;
-                } else {
-                    self.current_chunk_index += 1;
+                    assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
                 }
                 current_chunk = &mut self.chunks[self.current_chunk_index];
                 if let Some(ptr) = current_chunk.allocate(layout) {
@@ -152,20 +160,6 @@ impl Arena {
             ArenaBox {
                 ptr: ptr.cast(),
                 valid: self.valid.clone(),
-            }
-        }
-    }
-}
-
-impl Drop for Arena {
-    fn drop(&mut self) {
-        self.clear();
-        for chunk in &mut self.chunks {
-            unsafe {
-                alloc::dealloc(
-                    chunk.start,
-                    alloc::Layout::from_size_align(chunk.size_in_bytes, 1).unwrap(),
-                );
             }
         }
     }
