@@ -1,6 +1,6 @@
-use std::{ops::Range, sync::LazyLock};
+use std::{fmt::Display, ops::Range, sync::LazyLock};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use schemars::schema::{
     ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
 };
@@ -143,6 +143,67 @@ pub fn update_value_in_json_text<'a>(
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
+}
+
+pub fn replace_top_level_array_value_in_json_text(
+    text: &str,
+    key_path: &[&str],
+    tab_size: usize,
+    new_value: Option<&Value>,
+    array_index: usize,
+) -> Result<(Range<usize>, String)> {
+    const DOCUMENT_KIND: &'static str = "document";
+    const ARRAY_KIND: &'static str = "array";
+    const COMMENT_KIND: &'static str = "comment";
+
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
+    let syntax_tree = parser.parse(text, None).unwrap();
+
+    let mut cursor = syntax_tree.walk();
+
+    anyhow::ensure!(
+        cursor.node().kind() == DOCUMENT_KIND,
+        "Updating top level array requires top level value to be array"
+    );
+
+    anyhow::ensure!(cursor.goto_first_child(), "Document empty");
+
+    while cursor.node().kind() != ARRAY_KIND {
+        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+    }
+
+    // false if no children
+    if !cursor.goto_first_child() {
+        todo!("appends (if index is 0)")
+    }
+
+    let mut index = 0;
+
+    while index <= array_index {
+        dbg!(cursor.node().kind());
+        if !matches!(cursor.node().kind(), "[" | "]" | COMMENT_KIND | ",") {
+            if index == array_index {
+                break;
+            }
+            index += 1;
+        }
+        if !cursor.goto_next_sibling() {
+            todo!("appends (if index is out of bounds)")
+        }
+    }
+
+    let range = cursor.node().byte_range();
+    let offset = range.start;
+    let value_str = std::str::from_utf8(&text.as_bytes()[range])?;
+
+    let (replace_range, value) =
+        replace_value_in_json_text(value_str, key_path, tab_size, new_value);
+
+    let range = replace_range.start + offset..replace_range.end + offset;
+    return Ok((range, value));
 }
 
 pub fn replace_value_in_json_text(
@@ -352,4 +413,21 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    // todo! tests for update and replace in obj
+    fn check_update_array(input: &str, index: usize, value: Value, expected: &str) {
+        let result = replace_top_level_array_value_in_json_text(input, &[], 4, Some(&value), index)
+            .expect("replace succeeded");
+        let mut result_str = input.to_string();
+        result_str.replace_range(result.0, &result.1);
+        assert_eq!(expected, result_str);
+    }
+
+    #[test]
+    fn test_update_array() {
+        check_update_array(r#"[1, 3, 3]"#, 1, json!(2), r#"[1, 2, 3]"#);
+    }
+}
