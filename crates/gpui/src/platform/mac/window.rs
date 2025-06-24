@@ -1918,6 +1918,20 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
 
+            unsafe {
+                let tabbed_windows: id = msg_send![lock.native_window, tabbedWindows];
+                let tabbed_windows_count: NSUInteger = if !tabbed_windows.is_null() {
+                    msg_send![tabbed_windows, count]
+                } else {
+                    0
+                };
+
+                let should_have_tabs = tabbed_windows_count >= 2;
+                if lock.has_system_window_tabs != should_have_tabs {
+                    lock.has_system_window_tabs = should_have_tabs;
+                }
+            }
+
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
                 callback(is_active);
