@@ -2082,7 +2082,7 @@ impl SshRemoteConnection {
             Ok(())
         }
 
-        if self.ssh_platform.arch == std::env::consts::ARCH
+        let bin_path = if self.ssh_platform.arch == std::env::consts::ARCH
             && self.ssh_platform.os == std::env::consts::OS
         {
             delegate.set_status(Some("Building remote server binary from source"), cx);
@@ -2098,17 +2098,7 @@ impl SshRemoteConnection {
             ]))
             .await?;
 
-            delegate.set_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            Ok(path)
+            "target/remote_server/debug/remote_server".into()
         } else {
             let Some(triple) = self.ssh_platform.triple() else {
                 anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform);
@@ -2210,45 +2200,35 @@ impl SshRemoteConnection {
                     &triple,
                 ]))
                 .await?;
-            };
-
-            let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
-            if !build_remote_server.contains("nocompress") {
-                delegate.set_status(Some("Compressing binary"), cx);
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    run_cmd(Command::new("gzip").args([
-                        "-9",
-                        "-f",
-                        &format!("target/remote_server/{}/debug/remote_server", triple),
-                    ]))
-                    .await?;
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    // On Windows, we use 7z to compress the binary
-                    let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
-                    let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
-                    if smol::fs::metadata(&gz_path).await.is_ok() {
-                        smol::fs::remove_file(&gz_path).await?;
-                    }
-                    run_cmd(Command::new(seven_zip).args([
-                        "a",
-                        "-tgzip",
-                        &gz_path,
-                        &format!("target/remote_server/{}/debug/remote_server", triple),
-                    ]))
-                    .await?;
-                }
-
-                path = std::env::current_dir()?.join(format!(
-                    "target/remote_server/{triple}/debug/remote_server.gz"
-                ));
             }
 
-            Ok(path)
-        }
+            format!("target/remote_server/{triple}/debug/remote_server")
+        };
+
+        let path = if !build_remote_server.contains("nocompress") {
+            delegate.set_status(Some("Compressing binary"), cx);
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path])).await?;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                // On Windows, we use 7z to compress the binary
+                let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
+                let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
+                if smol::fs::metadata(&gz_path).await.is_ok() {
+                    smol::fs::remove_file(&gz_path).await?;
+                }
+                run_cmd(Command::new(seven_zip).args(["a", "-tgzip", &gz_path, &bin_path])).await?;
+            }
+
+            std::env::current_dir()?.join(format!("{bin_path}.gz"))
+        } else {
+            bin_path.into()
+        };
+
+        Ok(path)
     }
 }
 
