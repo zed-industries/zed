@@ -945,7 +945,7 @@
     }
   },
   {
-    "context": "FileFinder",
+    "context": "FileFinder || (FileFinder > Picker > Editor)",
     "bindings": {
       "ctrl-shift-a": "file_finder::ToggleSplitMenu",
       "ctrl-shift-i": "file_finder::ToggleFilterMenu"

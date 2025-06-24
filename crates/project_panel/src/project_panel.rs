@@ -23,7 +23,7 @@ use gpui::{
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
     Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, impl_actions, point, px, size, transparent_white, uniform_list,
+    div, point, px, size, transparent_white, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -181,21 +181,21 @@ struct EntryDetails {
     canonical_path: Option<Arc<Path>>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
