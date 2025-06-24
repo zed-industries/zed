@@ -790,7 +790,7 @@ impl Session {
                 BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             })
             .detach();
-            cx.on_app_quit(Self::on_app_quit).detach();
+            // cx.on_app_quit(Self::on_app_quit).detach();
 
             let this = Self {
                 mode: Mode::Building,
@@ -943,6 +943,37 @@ impl Session {
 
     pub fn parent_session(&self) -> Option<&Entity<Self>> {
         self.parent_session.as_ref()
+    }
+
+    pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let Some(client) = self.adapter_client() else {
+            return Task::ready(());
+        };
+
+        let supports_terminate = self
+            .capabilities
+            .support_terminate_debuggee
+            .unwrap_or(false);
+
+        cx.background_spawn(async move {
+            if supports_terminate {
+                client
+                    .request::<dap::requests::Terminate>(dap::TerminateArguments {
+                        restart: Some(false),
+                    })
+                    .await
+                    .ok();
+            } else {
+                client
+                    .request::<dap::requests::Disconnect>(dap::DisconnectArguments {
+                        restart: Some(false),
+                        terminate_debuggee: Some(true),
+                        suspend_debuggee: Some(false),
+                    })
+                    .await
+                    .ok();
+            }
+        })
     }
 
     pub fn capabilities(&self) -> &Capabilities {
@@ -1818,17 +1849,11 @@ impl Session {
         }
     }
 
-    fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let debug_adapter = self.adapter_client();
-
-        cx.background_spawn(async move {
-            if let Some(client) = debug_adapter {
-                client.shutdown().await.log_err();
-            }
-        })
-    }
-
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        if self.is_session_terminated {
+            return Task::ready(());
+        }
+
         self.is_session_terminated = true;
         self.thread_states.exit_all_threads();
         cx.notify();
@@ -1859,14 +1884,8 @@ impl Session {
 
         cx.emit(SessionStateEvent::Shutdown);
 
-        let debug_client = self.adapter_client();
-
-        cx.background_spawn(async move {
-            let _ = task.await;
-
-            if let Some(client) = debug_client {
-                client.shutdown().await.log_err();
-            }
+        cx.spawn(async move |_, _| {
+            task.await;
         })
     }
 

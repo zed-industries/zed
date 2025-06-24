@@ -5,9 +5,8 @@ use assistant_tool::{Tool, ToolSource, ToolWorkingSet};
 use collections::IndexMap;
 use convert_case::{Case, Casing};
 use fs::Fs;
-use gpui::{App, Entity};
+use gpui::{App, Entity, SharedString};
 use settings::{Settings, update_settings_file};
-use ui::SharedString;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,11 +107,11 @@ mod tests {
     use agent_settings::ContextServerPreset;
     use assistant_tool::ToolRegistry;
     use collections::IndexMap;
+    use gpui::SharedString;
     use gpui::{AppContext, TestAppContext};
     use http_client::FakeHttpClient;
     use project::Project;
     use settings::{Settings, SettingsStore};
-    use ui::SharedString;
 
     use super::*;
 
@@ -302,7 +301,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn icon(&self) -> ui::IconName {
+        fn icon(&self) -> icons::IconName {
             unimplemented!()
         }
 

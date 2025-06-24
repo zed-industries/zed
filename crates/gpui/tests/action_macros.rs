@@ -1,16 +1,22 @@
-use gpui::{actions, impl_actions};
+use gpui::{Action, actions};
 use gpui_macros::register_action;
 use schemars::JsonSchema;
 use serde_derive::Deserialize;
 
 #[test]
 fn test_action_macros() {
-    actions!(test, [TestAction]);
+    actions!(
+        test_only,
+        [
+            SomeAction,
+            /// Documented action
+            SomeActionWithDocs,
+        ]
+    );
 
-    #[derive(PartialEq, Clone, Deserialize, JsonSchema)]
-    struct AnotherTestAction;
-
-    impl_actions!(test, [AnotherTestAction]);
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+    #[action(namespace = test_only)]
+    struct AnotherSomeAction;
 
     #[derive(PartialEq, Clone, gpui::private::serde_derive::Deserialize)]
     struct RegisterableAction {}
@@ -26,11 +32,11 @@ fn test_action_macros() {
             unimplemented!()
         }
 
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             unimplemented!()
         }
 
-        fn debug_name() -> &'static str
+        fn name_for_type() -> &'static str
         where
             Self: Sized,
         {

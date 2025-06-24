@@ -171,7 +171,7 @@ fn find_action_by_name(name: &str) -> Option<&ActionDef> {
 fn find_binding(os: &str, action: &str) -> Option<String> {
     let keymap = match os {
         "macos" => &KEYMAP_MACOS,
-        "linux" => &KEYMAP_LINUX,
+        "linux" | "freebsd" => &KEYMAP_LINUX,
         _ => unreachable!("Not a valid OS: {}", os),
     };
 
@@ -247,7 +247,7 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            deprecated_aliases: action.aliases,
+            deprecated_aliases: action.deprecated_aliases,
         })
         .collect::<Vec<ActionDef>>();
 

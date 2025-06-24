@@ -163,8 +163,9 @@ impl DebugAdapterClient {
         self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub async fn shutdown(&self) -> Result<()> {
-        self.transport_delegate.shutdown().await
+    pub fn kill(&self) {
+        log::debug!("Killing DAP process");
+        self.transport_delegate.transport.lock().kill();
     }
 
     pub fn has_adapter_logs(&self) -> bool {
@@ -315,8 +316,6 @@ mod tests {
             },
             response
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -368,8 +367,6 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -433,7 +430,5 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 }

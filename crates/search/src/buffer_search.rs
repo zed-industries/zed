@@ -16,7 +16,7 @@ use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, TextStyle, Window, actions, div, impl_actions,
+    Styled, Subscription, Task, TextStyle, Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -46,7 +46,8 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-#[derive(PartialEq, Clone, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = buffer_search)]
 #[serde(deny_unknown_fields)]
 pub struct Deploy {
     #[serde(default = "util::serde::default_true")]
@@ -56,8 +57,6 @@ pub struct Deploy {
     #[serde(default)]
     pub selection_search_enabled: bool,
 }
-
-impl_actions!(buffer_search, [Deploy]);
 
 actions!(buffer_search, [DeployReplace, Dismiss, FocusEditor]);
 
