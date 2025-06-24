@@ -9,6 +9,16 @@ use std::{
 };
 
 /// Defines and registers unit structs that can be used as actions. For more complex data types, derive `Action`.
+///
+/// For example:
+///
+/// ```
+/// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
+/// ```
+///
+/// This will create actions with names like `editor::MoveUp`, `editor::MoveDown`, etc.
+///
+/// The namespace argument `editor` can also be omitted, though it is required for Zed actions.
 #[macro_export]
 macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
@@ -34,23 +44,49 @@ macro_rules! actions {
 /// To declare a list of simple actions, you can use the actions! macro, which defines a simple unit
 /// struct action for each listed action name in the given namespace.
 ///
-/// ```rust
+/// ```
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
 ///
-/// More complex data types can also be actions, providing they implement Clone, PartialEq,
-/// and serde_derive::Deserialize.
-/// Use `impl_actions!` to automatically implement the action in the given namespace.
+/// # Derive Macro
+///
+/// More complex data types can also be actions, by using the derive macro for `Action`:
+///
 /// ```
-/// #[derive(Clone, PartialEq, serde_derive::Deserialize)]
+/// #[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, Action)]
+/// #[action(namespace = editor)]
 /// pub struct SelectNext {
 ///     pub replace_newest: bool,
 /// }
-/// impl_actions!(editor, [SelectNext]);
 /// ```
 ///
-/// If you want to control the behavior of the action trait manually, you can use the lower-level `#[register_action]`
-/// macro, which only generates the code needed to register your action before `main`.
+/// The derive macro for `Action` requires that the type implement `Clone` and `PartialEq`. It also
+/// requires `serde::Deserialize` and `schemars::JsonSchema` unless `#[action(no_json)]` is
+/// specified. In Zed these trait impls are used to load keymaps from JSON.
+///
+/// Multiple arguments separated by commas may be specified in `#[action(...)]`:
+///
+/// - `namespace = some_namespace` sets the namespace. In Zed this is required.
+///
+/// - `name = "ActionName"` overrides the action's name. If this contains `::` then `namespace` must
+/// not be specified.
+///
+/// - `no_json` is used in Zed for internal actions that cannot be used in the keymap. It causes the
+/// `build` method to always error and `action_json_schema` to return None.
+///
+/// - `deprecated_aliases = ["editor::SomeAction"]` specifies deprecated old names for the action.
+/// These action names should *not* correspond to any actions that are registered. These old names
+/// can then still be used to refer to invoke this action. In Zed, the keymap JSON schema will
+/// accept these old names and provide warnings.
+///
+/// - `deprecated = "Message about why this action is deprecation"` specifies a deprecation message.
+/// In Zed, the keymap JSON schema will cause this to be displayed as a warning.
+///
+/// # Manual Implementation
+///
+/// If you want to control the behavior of the action trait manually, you can use the lower-level
+/// `#[register_action]` macro, which only generates the code needed to register your action before
+/// `main`.
 ///
 /// ```
 /// #[derive(gpui::private::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone)]
@@ -58,64 +94,10 @@ macro_rules! actions {
 ///     pub content: SharedString,
 /// }
 ///
-/// ```ignore
 /// impl gpui::Action for Paste {
 ///      ///...
 /// }
 /// register_action!(Paste);
-/// ```
-///
-/// # Derive Macro
-///
-/// The `Action` trait can be automatically implemented using the derive macro:
-///
-/// ```ignore
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// struct Cut;
-/// ```
-///
-/// The derive macro can be configured using the `#[action(...)]` attribute:
-///
-/// - `name = "namespace::ActionName"` - Override the action's display name
-///
-/// - `namespace = identifier` - Set just the namespace (name will be struct name)
-///
-/// - `no_json` - In Zed this is used for internal actions that cannot be used in the keymap. It
-/// causes the `build` method to always error and `action_json_schema` to return None.
-///
-/// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
-///
-/// - `deprecated = "Message about why this action is deprecation"`
-///
-/// ## Examples
-///
-/// ```ignore
-/// // Simple action
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// struct Cut;
-///
-/// // Action with custom name
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(name = "editor::SaveFile")]
-/// struct Save;
-///
-/// // Action with fields that can be deserialized
-/// #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema, Action)]
-/// struct Find {
-///     query: String,
-/// }
-///
-/// // Internal action that can't be deserialized
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(internal)]
-/// struct InternalAction {
-///     state: u32,
-/// }
-///
-/// // Action with deprecated aliases
-/// #[derive(Clone, Default, PartialEq, Action)]
-/// #[action(deprecated_aliases = ["editor::RevertFile", "RevertBuffer"])]
-/// struct RestoreFile;
 /// ```
 pub trait Action: Any + Send {
     /// Clone the action into a new box
@@ -148,8 +130,9 @@ pub trait Action: Any + Send {
         None
     }
 
-    /// A list of alternate, deprecated names for this action. In Zed these names will still be
-    /// accepted in keymap JSON.
+    /// A list of alternate, deprecated names for this action. These names can still be used to
+    /// invoke the action. In Zed, the keymap JSON schema will accept these old names and provide
+    /// warnings.
     fn deprecated_aliases() -> &'static [&'static str]
     where
         Self: Sized,
@@ -157,7 +140,8 @@ pub trait Action: Any + Send {
         &[]
     }
 
-    /// Returns the deprecation message for this action, if any.
+    /// Returns the deprecation message for this action, if any. In Zed, the keymap JSON schema will
+    /// cause this to be displayed as a warning.
     fn deprecation_message() -> Option<&'static str>
     where
         Self: Sized,
