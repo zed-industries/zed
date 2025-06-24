@@ -3207,14 +3207,23 @@ mod tests {
     };
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
+    use futures::StreamExt;
+    use futures::future::BoxFuture;
+    use futures::stream::BoxStream;
     use gpui::TestAppContext;
     use icons::IconName;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::{
+        LanguageModelCompletionError, LanguageModelKnownError, LanguageModelName,
+        LanguageModelProviderId, LanguageModelToolChoice,
+    };
+    use parking_lot::Mutex;
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::sync::Arc;
+    use std::time::Duration;
     use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
@@ -3987,6 +3996,567 @@ fn main() {{
                 }
             }
         }
+    }
+
+    // Helper to create a model that returns errors
+    enum TestError {
+        Overloaded,
+        InternalServerError,
+    }
+
+    struct ErrorInjector {
+        inner: Arc<FakeLanguageModel>,
+        error_type: TestError,
+    }
+
+    impl ErrorInjector {
+        fn new(error_type: TestError) -> Self {
+            Self {
+                inner: Arc::new(FakeLanguageModel::default()),
+                error_type,
+            }
+        }
+    }
+
+    impl LanguageModel for ErrorInjector {
+        fn id(&self) -> LanguageModelId {
+            self.inner.id()
+        }
+
+        fn name(&self) -> LanguageModelName {
+            self.inner.name()
+        }
+
+        fn provider_id(&self) -> LanguageModelProviderId {
+            self.inner.provider_id()
+        }
+
+        fn provider_name(&self) -> LanguageModelProviderName {
+            self.inner.provider_name()
+        }
+
+        fn supports_tools(&self) -> bool {
+            self.inner.supports_tools()
+        }
+
+        fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+            self.inner.supports_tool_choice(choice)
+        }
+
+        fn supports_images(&self) -> bool {
+            self.inner.supports_images()
+        }
+
+        fn telemetry_id(&self) -> String {
+            self.inner.telemetry_id()
+        }
+
+        fn max_token_count(&self) -> u64 {
+            self.inner.max_token_count()
+        }
+
+        fn count_tokens(
+            &self,
+            request: LanguageModelRequest,
+            cx: &App,
+        ) -> BoxFuture<'static, Result<u64>> {
+            self.inner.count_tokens(request, cx)
+        }
+
+        fn stream_completion(
+            &self,
+            _request: LanguageModelRequest,
+            _cx: &AsyncApp,
+        ) -> BoxFuture<
+            'static,
+            Result<
+                BoxStream<
+                    'static,
+                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                >,
+                LanguageModelCompletionError,
+            >,
+        > {
+            let error = match self.error_type {
+                TestError::Overloaded => LanguageModelKnownError::Overloaded,
+                TestError::InternalServerError => LanguageModelKnownError::ApiInternalServerError,
+            };
+            async move {
+                let stream = futures::stream::once(async move {
+                    Err(LanguageModelCompletionError::Other(anyhow::anyhow!(error)))
+                });
+                Ok(stream.boxed())
+            }
+            .boxed()
+        }
+
+        fn as_fake(&self) -> &FakeLanguageModel {
+            &self.inner
+        }
+    }
+
+    #[gpui::test]
+    async fn test_retry_on_overloaded_error(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track retry events
+        let retry_events = Arc::new(Mutex::new(Vec::new()));
+        let retry_events_clone = retry_events.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::RetryScheduled { attempt, delay, .. } = event {
+                    retry_events_clone.lock().push((*attempt, *delay));
+                }
+            })
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check that a retry was scheduled
+        let events = retry_events.lock();
+        assert_eq!(events.len(), 1, "Should have scheduled one retry");
+        assert_eq!(events[0].0, 1, "Should be first retry attempt");
+        assert_eq!(
+            events[0].1,
+            Duration::from_secs(5),
+            "Should have 5 second delay for first retry"
+        );
+
+        // Check that a retry message was added
+        thread.read_with(cx, |thread, _| {
+            let mut messages = thread.messages();
+            assert!(
+                messages.any(|msg| {
+                    msg.role == Role::System
+                        && msg.is_hidden
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("overloaded")
+                                    && text.contains("Retrying (attempt 1 of 3)")
+                            } else {
+                                false
+                            }
+                        })
+                }),
+                "Should have added a system retry message"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_retry_on_internal_server_error(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns internal server error
+        let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track retry events
+        let retry_events = Arc::new(Mutex::new(Vec::new()));
+        let retry_events_clone = retry_events.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::RetryScheduled { attempt, delay, .. } = event {
+                    retry_events_clone.lock().push((*attempt, *delay));
+                }
+            })
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check that a retry was scheduled
+        let events = retry_events.lock();
+        assert_eq!(events.len(), 1, "Should have scheduled one retry");
+        assert_eq!(events[0].0, 1, "Should be first retry attempt");
+        assert_eq!(
+            events[0].1,
+            Duration::from_secs(5),
+            "Should have 5 second delay for first retry"
+        );
+
+        // Check that a retry message was added with provider name
+        thread.read_with(cx, |thread, _| {
+            let mut messages = thread.messages();
+            assert!(
+                messages.any(|msg| {
+                    msg.role == Role::System
+                        && msg.is_hidden
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("internal server error") &&
+                            text.contains("Fake") && // Provider name from fake_provider.rs
+                            text.contains("Retrying (attempt 1 of 3)")
+                            } else {
+                                false
+                            }
+                        })
+                }),
+                "Should have added a system retry message with provider name"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_exponential_backoff_on_retries(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track retry events and completion count
+        let retry_events = Arc::new(Mutex::new(Vec::new()));
+        let retry_events_clone = retry_events.clone();
+        let completion_count = Arc::new(Mutex::new(0));
+        let completion_count_clone = completion_count.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| match event {
+                ThreadEvent::RetryScheduled { attempt, delay, .. } => {
+                    retry_events_clone.lock().push((*attempt, *delay));
+                }
+                ThreadEvent::NewRequest => {
+                    *completion_count_clone.lock() += 1;
+                }
+                _ => {}
+            })
+        });
+
+        // First attempt
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Should have 3 retries scheduled immediately due to errors
+        let mut total_delay = Duration::from_millis(0);
+        for i in 0..3 {
+            total_delay += Duration::from_secs(5 * 2u64.pow(i));
+            cx.executor().advance_clock(total_delay);
+            cx.run_until_parked();
+        }
+
+        // Check exponential backoff
+        let events = retry_events.lock();
+        assert_eq!(events.len(), 3, "Should have scheduled three retries");
+        assert_eq!(
+            events[0],
+            (1, Duration::from_secs(5)),
+            "First retry: 5 seconds"
+        );
+        assert_eq!(
+            events[1],
+            (2, Duration::from_secs(10)),
+            "Second retry: 10 seconds"
+        );
+        assert_eq!(
+            events[2],
+            (3, Duration::from_secs(20)),
+            "Third retry: 20 seconds"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_max_retries_exceeded(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track events
+        let error_shown = Arc::new(Mutex::new(false));
+        let error_shown_clone = error_shown.clone();
+        let retry_count = Arc::new(Mutex::new(0));
+        let retry_count_clone = retry_count.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| match event {
+                ThreadEvent::ShowError(_) => {
+                    *error_shown_clone.lock() = true;
+                }
+                ThreadEvent::RetryScheduled { .. } => {
+                    *retry_count_clone.lock() += 1;
+                }
+                _ => {}
+            })
+        });
+
+        // Start initial completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Advance through all retries
+        let delays = [5, 10, 20];
+        for delay in delays {
+            cx.executor().advance_clock(Duration::from_secs(delay));
+            cx.run_until_parked();
+        }
+
+        // After max retries (3), should show error
+        assert_eq!(*retry_count.lock(), 3, "Should have attempted 3 retries");
+        assert!(
+            *error_shown.lock(),
+            "Should show error after max retries exceeded"
+        );
+
+        // Retry state should be cleared
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Retry state should be cleared after max retries"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_retry_message_removed_on_retry(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // We'll use a wrapper to switch behavior after first failure
+        struct RetryTestModel {
+            inner: Arc<FakeLanguageModel>,
+            failed_once: Arc<Mutex<bool>>,
+        }
+
+        impl LanguageModel for RetryTestModel {
+            fn id(&self) -> LanguageModelId {
+                self.inner.id()
+            }
+
+            fn name(&self) -> LanguageModelName {
+                self.inner.name()
+            }
+
+            fn provider_id(&self) -> LanguageModelProviderId {
+                self.inner.provider_id()
+            }
+
+            fn provider_name(&self) -> LanguageModelProviderName {
+                self.inner.provider_name()
+            }
+
+            fn supports_tools(&self) -> bool {
+                self.inner.supports_tools()
+            }
+
+            fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+                self.inner.supports_tool_choice(choice)
+            }
+
+            fn supports_images(&self) -> bool {
+                self.inner.supports_images()
+            }
+
+            fn telemetry_id(&self) -> String {
+                self.inner.telemetry_id()
+            }
+
+            fn max_token_count(&self) -> u64 {
+                self.inner.max_token_count()
+            }
+
+            fn count_tokens(
+                &self,
+                request: LanguageModelRequest,
+                cx: &App,
+            ) -> BoxFuture<'static, Result<u64>> {
+                self.inner.count_tokens(request, cx)
+            }
+
+            fn stream_completion(
+                &self,
+                request: LanguageModelRequest,
+                cx: &AsyncApp,
+            ) -> BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                    >,
+                    LanguageModelCompletionError,
+                >,
+            > {
+                if !*self.failed_once.lock() {
+                    *self.failed_once.lock() = true;
+                    // Return error on first attempt
+                    let stream = futures::stream::once(async move {
+                        Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                            "Language model provider's API is currently overloaded"
+                        )))
+                    });
+                    async move { Ok(stream.boxed()) }.boxed()
+                } else {
+                    // Succeed on retry
+                    self.inner.stream_completion(request, cx)
+                }
+            }
+
+            fn as_fake(&self) -> &FakeLanguageModel {
+                &self.inner
+            }
+        }
+
+        let model = Arc::new(RetryTestModel {
+            inner: Arc::new(FakeLanguageModel::default()),
+            failed_once: Arc::new(Mutex::new(false)),
+        });
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track message deletions
+        let deleted_messages = Arc::new(Mutex::new(Vec::new()));
+        let deleted_messages_clone = deleted_messages.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::MessageDeleted(id) = event {
+                    deleted_messages_clone.lock().push(*id);
+                }
+            })
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Get the retry message ID
+        let retry_message_id = thread.read_with(cx, |thread, _| {
+            thread
+                .messages()
+                .find(|msg| msg.role == Role::System && msg.is_hidden)
+                .map(|msg| msg.id)
+                .expect("Should have a retry message")
+        });
+
+        // Wait for retry
+        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.run_until_parked();
+
+        // Stream some successful content
+        let fake_model = model.as_fake();
+        fake_model.stream_completion_response(&fake_model.pending_completions()[0], "Success!");
+        fake_model.end_completion_stream(&fake_model.pending_completions()[0]);
+        cx.run_until_parked();
+
+        // Check that the retry message was deleted
+        assert!(
+            deleted_messages.lock().contains(&retry_message_id),
+            "Retry message should be deleted when retry starts"
+        );
+
+        // Message should no longer exist
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.message(retry_message_id).is_none(),
+                "Retry message should be removed from thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_successful_completion_clears_retry_state(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, model) = setup_test_environment(cx, project.clone()).await;
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Fail first attempt
+        let fake_model = model.as_fake();
+        fake_model.end_completion_stream(&fake_model.pending_completions()[0]);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        // Verify retry state exists
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_some(),
+                "Should have retry state after failure"
+            );
+        });
+
+        // Wait for retry
+        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.run_until_parked();
+
+        // Succeed on retry
+        fake_model.stream_completion_response(&fake_model.pending_completions()[0], "Hello there!");
+        fake_model.end_completion_stream(&fake_model.pending_completions()[0]);
+        cx.run_until_parked();
+
+        // Retry state should be cleared on success
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Retry state should be cleared on success"
+            );
+        });
     }
 
     fn test_summarize_error(
