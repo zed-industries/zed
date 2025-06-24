@@ -4250,7 +4250,7 @@ mod tests {
                 .sorted()
                 .dedup()
                 .collect::<Vec<_>>();
-            assert_eq!(actions_without_namespace, Vec::new());
+            assert_eq!(actions_without_namespace, Vec::new::<String>());
 
             let expected_namespaces = vec![
                 "activity_indicator",

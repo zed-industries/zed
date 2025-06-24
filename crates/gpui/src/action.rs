@@ -297,8 +297,6 @@ impl ActionRegistry {
         }
         self.names_by_type_id.insert(action.type_id, action.name);
         self.all_names.push(action.name);
-
-        // Check if the action itself has a deprecation message
         if let Some(deprecation_msg) = action.deprecation_message {
             self.deprecation_messages
                 .insert(action.name, deprecation_msg);
@@ -382,7 +380,7 @@ mod no_action {
     use crate as gpui;
     use std::any::Any as _;
 
-    gpui::actions!(
+    actions!(
         zed,
         [
             /// Action with special handling which unbinds the keybinding this is associated with,

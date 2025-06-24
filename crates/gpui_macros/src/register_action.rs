@@ -3,8 +3,6 @@ use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
-/// Implementatuion of the `register_action!` macro - see docs on `gpui_macros::register_action` for
-/// details.
 pub(crate) fn register_action(ident: TokenStream) -> TokenStream {
     let name = parse_macro_input!(ident as Ident);
     let registration = generate_register_action(&name);

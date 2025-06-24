@@ -4,7 +4,6 @@ use proc_macro2::Ident;
 use quote::quote;
 use syn::{Data, DeriveInput, LitStr, Token, parse::ParseStream};
 
-/// Implementation of the `Action` derive macro - see docs on the `Action` trait for details.
 pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
 
