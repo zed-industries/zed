@@ -145,6 +145,10 @@ impl Message {
         }
     }
 
+    pub fn push_redacted_thinking(&mut self, data: String) {
+        self.segments.push(MessageSegment::RedactedThinking(data));
+    }
+
     pub fn push_text(&mut self, text: &str) {
         if let Some(MessageSegment::Text(segment)) = self.segments.last_mut() {
             segment.push_str(text);
@@ -183,7 +187,7 @@ pub enum MessageSegment {
         text: String,
         signature: Option<String>,
     },
-    RedactedThinking(Vec<u8>),
+    RedactedThinking(String),
 }
 
 impl MessageSegment {
@@ -1638,6 +1642,25 @@ impl Thread {
                                                     text: chunk.to_string(),
                                                     signature,
                                                 }],
+                                                cx,
+                                            ));
+                                    };
+                                }
+                            }
+                            LanguageModelCompletionEvent::RedactedThinking {
+                                data
+                            } => {
+                                thread.received_chunk();
+
+                                if let Some(last_message) = thread.messages.last_mut() {
+                                    if last_message.role == Role::Assistant
+                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                    {
+                                        last_message.push_redacted_thinking(data);
+                                    } else {
+                                        request_assistant_message_id =
+                                            Some(thread.insert_assistant_message(
+                                                vec![MessageSegment::RedactedThinking(data)],
                                                 cx,
                                             ));
                                     };

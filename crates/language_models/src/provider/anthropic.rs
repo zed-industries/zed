@@ -407,7 +407,13 @@ impl AnthropicModel {
             let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.map_err(Into::into)
+            match request.await {
+                Ok(data) => Ok(data),
+                Err(err) => {
+                    dbg!(&err);
+                    Err(err.into())
+                }
+            }
         }
         .boxed()
     }
@@ -554,9 +560,7 @@ pub fn into_anthropic(
                         }
                         MessageContent::RedactedThinking(data) => {
                             if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking {
-                                    data: String::from_utf8(data).ok()?,
-                                })
+                                Some(anthropic::RequestContent::RedactedThinking { data })
                             } else {
                                 None
                             }
@@ -730,10 +734,8 @@ impl AnthropicEventMapper {
                         signature: None,
                     })]
                 }
-                ResponseContent::RedactedThinking { .. } => {
-                    // Redacted thinking is encrypted and not accessible to the user, see:
-                    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
-                    Vec::new()
+                ResponseContent::RedactedThinking { data } => {
+                    vec![Ok(LanguageModelCompletionEvent::RedactedThinking { data })]
                 }
                 ResponseContent::ToolUse { id, name, .. } => {
                     self.tool_uses_by_index.insert(
