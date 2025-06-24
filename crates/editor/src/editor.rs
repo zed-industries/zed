@@ -10363,10 +10363,10 @@ impl Editor {
         cx: &mut Context<Self>,
         mut callback: Fn,
     ) where
-        Fn: FnMut(&mut Vec<String>),
+        Fn: FnMut(&mut Vec<Cow<'_, str>>),
     {
         self.manipulate_lines(window, cx, |text| {
-            let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
+            let mut lines: Vec<Cow<str>> = text.split('\n').map(Cow::from).collect();
             let line_count_before = lines.len();
 
             callback(&mut lines);
@@ -10389,7 +10389,7 @@ impl Editor {
         let tab_size = settings.tab_size.get() as usize;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
-            // Allocates a reasonably sized buffer once for the whole loop
+            // Allocates a reasonably sized scratch buffer once for the whole loop
             let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
             // Avoids recomputing spaces that could be inserted many times
             let space_cache: Vec<Vec<char>> = (1..=tab_size)
@@ -10397,8 +10397,9 @@ impl Editor {
                 .collect();
 
             for line in lines.iter_mut().filter(|line| !line.is_empty()) {
-                let mut chars = line.chars();
+                let mut chars = line.as_ref().chars();
                 let mut col = 0;
+                let mut changed = false;
 
                 while let Some(ch) = chars.next() {
                     match ch {
@@ -10411,6 +10412,7 @@ impl Editor {
                             let spaces_len = tab_size - (col % tab_size);
                             reindented_line.extend(&space_cache[spaces_len - 1]);
                             col += spaces_len;
+                            changed = true;
                         }
                         _ => {
                             // If we dont append before break, the character is consumed
@@ -10419,11 +10421,14 @@ impl Editor {
                         }
                     }
                 }
-                // Append the rest of the line
-                reindented_line.extend(chars);
 
-                line.clear();
-                line.push_str(&reindented_line);
+                if !changed {
+                    reindented_line.clear();
+                    continue;
+                }
+                // Append the rest of the line and replace old reference with new one
+                reindented_line.extend(chars);
+                *line = Cow::Owned(reindented_line.clone());
                 reindented_line.clear();
             }
         });
@@ -10450,12 +10455,14 @@ impl Editor {
                 let mut chars = line.chars();
                 let mut spaces_count = 0;
                 let mut first_non_indent_char = None;
+                let mut changed = false;
 
                 while let Some(ch) = chars.next() {
                     match ch {
                         ' ' => {
                             // Keep track of spaces. Append \t when we reach tab_size
                             spaces_count += 1;
+                            changed = true;
                             if spaces_count == tab_size {
                                 reindented_line.push('\t');
                                 spaces_count = 0;
@@ -10472,6 +10479,11 @@ impl Editor {
                         }
                     }
                 }
+
+                if !changed {
+                    reindented_line.clear();
+                    continue;
+                }
                 // Remaining spaces that didn't make a full tab stop
                 if spaces_count > 0 {
                     reindented_line.extend(&space_cache[spaces_count - 1]);
@@ -10480,11 +10492,9 @@ impl Editor {
                 if let Some(extra_char) = first_non_indent_char {
                     reindented_line.push(extra_char);
                 }
-                // Append the rest of the line
+                // Append the rest of the line and replace old reference with new one
                 reindented_line.extend(chars);
-
-                line.clear();
-                line.push_str(&reindented_line);
+                *line = Cow::Owned(reindented_line.clone());
                 reindented_line.clear();
             }
         });
