@@ -231,7 +231,7 @@ impl Markdown {
         &self.parsed_markdown
     }
 
-    pub fn escape(s: &str) -> Cow<str> {
+    pub fn escape(s: &str) -> Cow<'_, str> {
         // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
         let count = s
             .bytes()
@@ -576,9 +576,9 @@ impl MarkdownElement {
                 .is_some();
 
         if is_hovering_link {
-            window.set_cursor_style(CursorStyle::PointingHand, Some(hitbox));
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         } else {
-            window.set_cursor_style(CursorStyle::IBeam, Some(hitbox));
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
         let on_open_url = self.on_url_click.take();

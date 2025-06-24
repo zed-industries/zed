@@ -306,17 +306,19 @@ impl ExampleInstance {
 
             let thread_store = thread_store.await?;
 
-            let profile_id = meta.profile_id.clone();
-            thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
 
             let thread =
                 thread_store.update(cx, |thread_store, cx| {
-                    if let Some(json) = &meta.existing_thread_json {
+                    let thread = if let Some(json) = &meta.existing_thread_json {
                         let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
                         thread_store.create_thread_from_serialized(serialized, cx)
                     } else {
                         thread_store.create_thread(cx)
-                    }
+                    };
+                    thread.update(cx, |thread, cx| {
+                        thread.set_profile(meta.profile_id.clone(), cx);
+                    });
+                    thread
                 })?;
 
 
@@ -365,7 +367,13 @@ impl ExampleInstance {
                 });
             })?;
 
-            let mut example_cx = ExampleContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
+            let mut example_cx = ExampleContext::new(
+                meta.clone(),
+                this.log_prefix.clone(),
+                thread.clone(),
+                model.clone(),
+                cx.clone(),
+            );
             let result = this.thread.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
@@ -1022,6 +1030,7 @@ pub fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
+            Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => {}
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Stop**: {:?}\n\n", reason));
@@ -1118,6 +1127,7 @@ impl ThreadDialog {
 
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
                 | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}

@@ -385,7 +385,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     extension::init(cx);
 
-    let (tx, rx) = async_watch::channel(None);
+    let (mut tx, rx) = watch::channel(None);
     cx.observe_global::<SettingsStore>(move |cx| {
         let settings = &ProjectSettings::get_global(cx).node;
         let options = NodeBinaryOptions {
@@ -423,7 +423,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     terminal_view::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
-    agent::init(
+    agent_ui::init(
         fs.clone(),
         client.clone(),
         prompt_builder.clone(),

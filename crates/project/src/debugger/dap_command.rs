@@ -1547,7 +1547,7 @@ fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
         supports_memory_event: Some(false),
         supports_args_can_be_interpreted_by_shell: Some(false),
         supports_start_debugging_request: Some(true),
-        supports_ansistyling: Some(false),
+        supports_ansistyling: Some(true),
     }
 }
 

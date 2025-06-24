@@ -15,7 +15,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
+pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
 use call::{ActiveCall, call_settings::CallSettings};
@@ -39,8 +39,8 @@ use gpui::{
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions,
-    canvas, impl_action_as, impl_actions, point, relative, size, transparent_black,
+    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
+    point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -213,83 +213,85 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
+    #[serde(default)]
+    pub clone: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
+    #[serde(default)]
+    pub clone: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
 
-#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
-action_as!(project_symbols, ToggleProjectSymbols as Toggle);
+actions!(
+    project_symbols,
+    [
+        #[action(name = "Toggle")]
+        ToggleProjectSymbols
+    ]
+);
 
-#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = file_finder, name = "Toggle")]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
 }
-
-impl_action_as!(file_finder, ToggleFileFinder as Toggle);
-
-impl_actions!(
-    workspace,
-    [
-        ActivatePane,
-        CloseAllItemsAndPanes,
-        CloseInactiveTabsAndPanes,
-        MoveItemToPane,
-        MoveItemToPaneInDirection,
-        OpenTerminal,
-        Reload,
-        Save,
-        SaveAll,
-        SendKeystrokes,
-    ]
-);
 
 actions!(
     workspace,
@@ -356,7 +358,8 @@ impl PartialEq for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
@@ -899,9 +902,10 @@ pub enum OpenVisible {
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
+        DirectoryLister,
         &mut Window,
         &mut Context<Workspace>,
-    ) -> oneshot::Receiver<Option<ProjectPath>>,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
 type PromptForOpenPath = Box<
@@ -921,7 +925,7 @@ type PromptForOpenPath = Box<
 /// that can be used to register a global action to be triggered from any place in the window.
 pub struct Workspace {
     weak_self: WeakEntity<Self>,
-    workspace_actions: Vec<Box<dyn Fn(Div, &mut Window, &mut Context<Self>) -> Div>>,
+    workspace_actions: Vec<Box<dyn Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div>>,
     zoomed: Option<AnyWeakView>,
     previous_dock_drag_coordinates: Option<Point<Pixels>>,
     zoomed_position: Option<DockPosition>,
@@ -1398,15 +1402,23 @@ impl Workspace {
                     .await;
             }
             let window = if let Some(window) = requesting_window {
+                let centered_layout = serialized_workspace
+                    .as_ref()
+                    .map(|w| w.centered_layout)
+                    .unwrap_or(false);
+
                 cx.update_window(window.into(), |_, window, cx| {
                     window.replace_root(cx, |window, cx| {
-                        Workspace::new(
+                        let mut workspace = Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
                             app_state.clone(),
                             window,
                             cx,
-                        )
+                        );
+
+                        workspace.centered_layout = centered_layout;
+                        workspace
                     });
                 })?;
                 window
@@ -1874,25 +1886,25 @@ impl Workspace {
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn_in(window, async move |workspace, cx| {
                 let Ok(result) = abs_path.await else {
                     return Ok(());
                 };
 
                 match result {
                     Ok(result) => {
-                        tx.send(result).log_err();
+                        tx.send(result).ok();
                     }
                     Err(err) => {
-                        let rx = this.update_in(cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), cx);
-                            let prompt = this.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(this, lister, window, cx);
-                            this.on_prompt_for_open_path = Some(prompt);
+                        let rx = workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.show_portal_error(err.to_string(), cx);
+                            let prompt = workspace.on_prompt_for_open_path.take().unwrap();
+                            let rx = prompt(workspace, lister, window, cx);
+                            workspace.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
                         if let Ok(path) = rx.await {
-                            tx.send(path).log_err();
+                            tx.send(path).ok();
                         }
                     }
                 };
@@ -1906,77 +1918,58 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
+        lister: DirectoryLister,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if (self.project.read(cx).is_via_collab() || self.project.read(cx).is_via_ssh())
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        if self.project.read(cx).is_via_collab()
+            || self.project.read(cx).is_via_ssh()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, window, cx);
+            let rx = prompt(self, lister, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
 
         let (tx, rx) = oneshot::channel();
-        cx.spawn_in(window, async move |this, cx| {
-            let abs_path = this.update(cx, |this, cx| {
-                let mut relative_to = this
+        cx.spawn_in(window, async move |workspace, cx| {
+            let abs_path = workspace.update(cx, |workspace, cx| {
+                let relative_to = workspace
                     .most_recent_active_path(cx)
-                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-                if relative_to.is_none() {
-                    let project = this.project.read(cx);
-                    relative_to = project
-                        .visible_worktrees(cx)
-                        .filter_map(|worktree| {
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                    .or_else(|| {
+                        let project = workspace.project.read(cx);
+                        project.visible_worktrees(cx).find_map(|worktree| {
                             Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
                         })
-                        .next()
-                };
-
-                cx.prompt_for_new_path(&relative_to.unwrap_or_else(|| PathBuf::from("")))
+                    })
+                    .or_else(std::env::home_dir)
+                    .unwrap_or_else(|| PathBuf::from(""));
+                cx.prompt_for_new_path(&relative_to)
             })?;
             let abs_path = match abs_path.await? {
                 Ok(path) => path,
                 Err(err) => {
-                    let rx = this.update_in(cx, |this, window, cx| {
-                        this.show_portal_error(err.to_string(), cx);
+                    let rx = workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.show_portal_error(err.to_string(), cx);
 
-                        let prompt = this.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(this, window, cx);
-                        this.on_prompt_for_new_path = Some(prompt);
+                        let prompt = workspace.on_prompt_for_new_path.take().unwrap();
+                        let rx = prompt(workspace, lister, window, cx);
+                        workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
                     if let Ok(path) = rx.await {
-                        tx.send(path).log_err();
+                        tx.send(path).ok();
                     }
                     return anyhow::Ok(());
                 }
             };
 
-            let project_path = abs_path.and_then(|abs_path| {
-                this.update(cx, |this, cx| {
-                    this.project.update(cx, |project, cx| {
-                        project.find_or_create_worktree(abs_path, true, cx)
-                    })
-                })
-                .ok()
-            });
-
-            if let Some(project_path) = project_path {
-                let (worktree, path) = project_path.await?;
-                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                tx.send(Some(ProjectPath {
-                    worktree_id,
-                    path: path.into(),
-                }))
-                .ok();
-            } else {
-                tx.send(None).ok();
-            }
+            tx.send(abs_path.map(|path| vec![path])).ok();
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         rx
     }
@@ -2206,7 +2199,7 @@ impl Workspace {
                             // (Note that the tests always do this implicitly, so you must manually test with something like:
                             //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                             // )
-                            window.draw(cx);
+                            window.draw(cx).clear();
                         }
                     })?;
                 }
@@ -2419,7 +2412,7 @@ impl Workspace {
                                 })
                             }
                         })
-                        .log_err()?;
+                        .ok()?;
                         None
                     } else {
                         Some(
@@ -2432,7 +2425,7 @@ impl Workspace {
                                     cx,
                                 )
                             })
-                            .log_err()?
+                            .ok()?
                             .await,
                         )
                     }
@@ -3129,7 +3122,7 @@ impl Workspace {
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
-                let result = pane.open_item(
+                pane.open_item(
                     project_entry_id,
                     project_path,
                     focus_item,
@@ -3139,9 +3132,7 @@ impl Workspace {
                     window,
                     cx,
                     build_item,
-                );
-
-                result
+                )
             });
             result
         })
@@ -3367,7 +3358,7 @@ impl Workspace {
         let destination = match panes.get(action.destination) {
             Some(&destination) => destination.clone(),
             None => {
-                if self.active_pane.read(cx).items_len() < 2 {
+                if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
                 let direction = SplitDirection::Right;
@@ -3387,14 +3378,25 @@ impl Workspace {
             }
         };
 
-        move_active_item(
-            &self.active_pane,
-            &destination,
-            action.focus,
-            true,
-            window,
-            cx,
-        )
+        if action.clone {
+            clone_active_item(
+                self.database_id(),
+                &self.active_pane,
+                &destination,
+                action.focus,
+                window,
+                cx,
+            )
+        } else {
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            )
+        }
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3538,7 +3540,7 @@ impl Workspace {
         let destination = match self.find_pane_in_direction(action.direction, cx) {
             Some(destination) => destination,
             None => {
-                if self.active_pane.read(cx).items_len() < 2 {
+                if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
                 let new_pane = self.add_pane(window, cx);
@@ -3554,14 +3556,25 @@ impl Workspace {
             }
         };
 
-        move_active_item(
-            &self.active_pane,
-            &destination,
-            action.focus,
-            true,
-            window,
-            cx,
-        );
+        if action.clone {
+            clone_active_item(
+                self.database_id(),
+                &self.active_pane,
+                &destination,
+                action.focus,
+                window,
+                cx,
+            )
+        } else {
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -3838,7 +3851,7 @@ impl Workspace {
         };
 
         let new_pane = self.add_pane(window, cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, window, cx);
+        move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -5456,12 +5469,19 @@ impl Workspace {
     ) -> &mut Self {
         let callback = Arc::new(callback);
 
-        self.workspace_actions.push(Box::new(move |div, _, cx| {
+        self.workspace_actions.push(Box::new(move |div, _, _, cx| {
             let callback = callback.clone();
             div.on_action(cx.listener(move |workspace, event, window, cx| {
                 (callback)(workspace, event, window, cx)
             }))
         }));
+        self
+    }
+    pub fn register_action_renderer(
+        &mut self,
+        callback: impl Fn(Div, &Workspace, &mut Window, &mut Context<Self>) -> Div + 'static,
+    ) -> &mut Self {
+        self.workspace_actions.push(Box::new(callback));
         self
     }
 
@@ -5472,7 +5492,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         for action in self.workspace_actions.iter() {
-            div = (action)(div, window, cx)
+            div = (action)(div, self, window, cx)
         }
         div
     }
@@ -6258,7 +6278,14 @@ fn resize_bottom_dock(
     let size =
         new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        bottom_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Bottom)
+        {
+            bottom_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            bottom_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6268,9 +6295,24 @@ fn resize_right_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    workspace.left_dock.read_with(cx, |left_dock, cx| {
+        let left_dock_size = left_dock
+            .active_panel_size(window, cx)
+            .unwrap_or(Pixels(0.0));
+        if left_dock_size + size > workspace.bounds.right() {
+            size = workspace.bounds.right() - left_dock_size
+        }
+    });
     workspace.right_dock.update(cx, |right_dock, cx| {
-        right_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Right)
+        {
+            right_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            right_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6283,7 +6325,14 @@ fn resize_left_dock(
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
 
     workspace.left_dock.update(cx, |left_dock, cx| {
-        left_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Left)
+        {
+            left_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            left_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6442,6 +6491,11 @@ pub fn last_session_workspace_locations(
 actions!(
     collab,
     [
+        /// Opens the channel notes for the current call.
+        ///
+        /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
+        /// can be copied via "Copy link to section" in the context menu of the channel notes
+        /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
         Mute,
         Deafen,
@@ -7035,6 +7089,11 @@ async fn open_ssh_project_inner(
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
             workspace.set_serialized_ssh_project(serialized_ssh_project);
             workspace.update_history(cx);
+
+            if let Some(ref serialized) = serialized_workspace {
+                workspace.centered_layout = serialized.centered_layout;
+            }
+
             workspace
         });
     })?;
@@ -7410,7 +7469,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            Some(&hitbox),
+                            &hitbox,
                         );
                     },
                 )
@@ -7533,6 +7592,7 @@ pub fn move_item(
     destination: &Entity<Pane>,
     item_id_to_move: EntityId,
     destination_index: usize,
+    activate: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -7556,8 +7616,18 @@ pub fn move_item(
 
     // This automatically removes duplicate items in the pane
     destination.update(cx, |destination, cx| {
-        destination.add_item(item_handle, true, true, Some(destination_index), window, cx);
-        window.focus(&destination.focus_handle(cx))
+        destination.add_item_inner(
+            item_handle,
+            activate,
+            activate,
+            activate,
+            Some(destination_index),
+            window,
+            cx,
+        );
+        if activate {
+            window.focus(&destination.focus_handle(cx))
+        }
     });
 }
 
@@ -7588,6 +7658,35 @@ pub fn move_active_item(
                 cx,
             );
         });
+    });
+}
+
+pub fn clone_active_item(
+    workspace_id: Option<WorkspaceId>,
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
+    focus_destination: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if source == destination {
+        return;
+    }
+    let Some(active_item) = source.read(cx).active_item() else {
+        return;
+    };
+    destination.update(cx, |target_pane, cx| {
+        let Some(clone) = active_item.clone_on_split(workspace_id, window, cx) else {
+            return;
+        };
+        target_pane.add_item(
+            clone,
+            focus_destination,
+            focus_destination,
+            Some(target_pane.items_len()),
+            window,
+            cx,
+        );
     });
 }
 
@@ -7647,6 +7746,33 @@ pub fn ssh_workspace_position_from_db(
             centered_layout,
         })
     })
+}
+
+pub fn with_active_or_new_workspace(
+    cx: &mut App,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
+) {
+    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
+        Some(workspace) => {
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
+                    .log_err();
+            });
+        }
+        None => {
+            let app_state = AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(
+                    OpenOptions::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| f(workspace, window, cx),
+                )
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -9223,6 +9349,332 @@ mod tests {
         );
     }
 
+    /// Tests that when `close_on_file_delete` is enabled, files are automatically
+    /// closed when they are deleted from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_disk_deletion setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a test item that simulates a file
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Verify the item is in the pane
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 1);
+        });
+
+        // Simulate file deletion by setting the item's deleted state
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow the close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item was automatically closed
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                0,
+                "Item should be automatically closed when file is deleted"
+            );
+        });
+    }
+
+    /// Tests that when `close_on_file_delete` is disabled (default), files remain
+    /// open with a strikethrough when they are deleted from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Ensure close_on_disk_deletion is disabled (default)
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(false);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a test item that simulates a file
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Verify the item is in the pane
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 1);
+        });
+
+        // Simulate file deletion
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow any potential close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item remains open (with strikethrough)
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Item should remain open when close_on_disk_deletion is disabled"
+            );
+        });
+
+        // Verify the item shows as deleted
+        item.read_with(cx, |item, _| {
+            assert!(
+                item.has_deleted_file,
+                "Item should be marked as having deleted file"
+            );
+        });
+    }
+
+    /// Tests that dirty files are not automatically closed when deleted from disk,
+    /// even when `close_on_file_delete` is enabled. This ensures users don't lose
+    /// unsaved changes without being prompted.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_with_dirty_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_file_delete setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a dirty test item
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Simulate file deletion
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow any potential close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item remains open (dirty files are not auto-closed)
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Dirty items should not be automatically closed even when file is deleted"
+            );
+        });
+
+        // Verify the item is marked as deleted and still dirty
+        item.read_with(cx, |item, _| {
+            assert!(
+                item.has_deleted_file,
+                "Item should be marked as having deleted file"
+            );
+            assert!(item.is_dirty, "Item should still be dirty");
+        });
+    }
+
+    /// Tests that navigation history is cleaned up when files are auto-closed
+    /// due to deletion from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_cleans_navigation_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_file_delete setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create test items
+        let item1 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test1.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test1.txt", cx)])
+        });
+        let item1_id = item1.item_id();
+
+        let item2 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test2.txt")
+                .with_project_items(&[TestProjectItem::new(2, "test2.txt", cx)])
+        });
+
+        // Add items to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item1.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item2.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Activate item1 to ensure it gets navigation entries
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+
+        // Switch to item2 and back to create navigation history
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Simulate file deletion for item1
+        item1.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        item1.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+        cx.run_until_parked();
+
+        // Verify item1 was closed
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Should have 1 item remaining after auto-close"
+            );
+        });
+
+        // Check navigation history after close
+        let has_item = pane.read_with(cx, |pane, cx| {
+            let mut has_item = false;
+            pane.nav_history().for_each_entry(cx, |entry, _| {
+                if entry.item.id() == item1_id {
+                    has_item = true;
+                }
+            });
+            has_item
+        });
+
+        assert!(
+            !has_item,
+            "Navigation history should not contain closed item entries"
+        );
+    }
+
     #[gpui::test]
     async fn test_no_save_prompt_when_dirty_multi_buffer_closed_with_all_of_its_dirty_items_present_in_the_pane(
         cx: &mut TestAppContext,
@@ -9421,6 +9873,7 @@ mod tests {
                 &MoveItemToPaneInDirection {
                     direction: SplitDirection::Right,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9429,6 +9882,7 @@ mod tests {
                 &MoveItemToPane {
                     destination: 3,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9455,6 +9909,7 @@ mod tests {
                 &MoveItemToPaneInDirection {
                     direction: SplitDirection::Right,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9491,6 +9946,7 @@ mod tests {
                 &MoveItemToPane {
                     destination: 3,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9512,6 +9968,61 @@ mod tests {
                 "New item should have been moved to the new pane"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_moving_items_can_clone_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item_1 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_1), None, true, window, cx);
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 3, "Two new panes were created");
+            for pane in workspace.panes() {
+                assert_eq!(
+                    pane_items_paths(pane, cx),
+                    vec!["first.txt".to_string()],
+                    "Single item exists in all panes"
+                );
+            }
+        });
+
+        // verify that the active pane has been updated after waiting for the
+        // pane focus event to fire and resolve
+        workspace.read_with(cx, |workspace, _app| {
+            assert_eq!(
+                workspace.active_pane(),
+                &workspace.panes[2],
+                "The third pane should be the active one: {:?}",
+                workspace.panes
+            );
+        })
     }
 
     mod register_project_item_tests {

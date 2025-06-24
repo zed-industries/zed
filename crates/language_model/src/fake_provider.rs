@@ -169,11 +169,11 @@ impl LanguageModel for FakeLanguageModel {
         "fake".to_string()
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         1000000
     }
 
-    fn count_tokens(&self, _: LanguageModelRequest, _: &App) -> BoxFuture<'static, Result<usize>> {
+    fn count_tokens(&self, _: LanguageModelRequest, _: &App) -> BoxFuture<'static, Result<u64>> {
         futures::future::ready(Ok(0)).boxed()
     }
 
@@ -185,6 +185,7 @@ impl LanguageModel for FakeLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let (tx, rx) = mpsc::unbounded();

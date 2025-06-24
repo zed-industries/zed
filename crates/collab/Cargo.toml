@@ -78,9 +78,8 @@ zed_llm_client.workspace = true
 
 [dev-dependencies]
 agent_settings.workspace = true
-assistant_context_editor.workspace = true
+assistant_context.workspace = true
 assistant_slash_command.workspace = true
-assistant_tool.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 buffer_diff.workspace = true

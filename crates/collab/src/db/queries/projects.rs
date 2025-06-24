@@ -98,7 +98,9 @@ impl Database {
                 user_id: ActiveValue::set(participant.user_id),
                 replica_id: ActiveValue::set(ReplicaId(replica_id)),
                 is_host: ActiveValue::set(true),
-                ..Default::default()
+                id: ActiveValue::NotSet,
+                committer_name: ActiveValue::Set(None),
+                committer_email: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
@@ -784,13 +786,27 @@ impl Database {
         project_id: ProjectId,
         connection: ConnectionId,
         user_id: UserId,
+        committer_name: Option<String>,
+        committer_email: Option<String>,
     ) -> Result<TransactionGuard<(Project, ReplicaId)>> {
-        self.project_transaction(project_id, |tx| async move {
-            let (project, role) = self
-                .access_project(project_id, connection, Capability::ReadOnly, &tx)
-                .await?;
-            self.join_project_internal(project, user_id, connection, role, &tx)
+        self.project_transaction(project_id, move |tx| {
+            let committer_name = committer_name.clone();
+            let committer_email = committer_email.clone();
+            async move {
+                let (project, role) = self
+                    .access_project(project_id, connection, Capability::ReadOnly, &tx)
+                    .await?;
+                self.join_project_internal(
+                    project,
+                    user_id,
+                    committer_name,
+                    committer_email,
+                    connection,
+                    role,
+                    &tx,
+                )
                 .await
+            }
         })
         .await
     }
@@ -799,6 +815,8 @@ impl Database {
         &self,
         project: project::Model,
         user_id: UserId,
+        committer_name: Option<String>,
+        committer_email: Option<String>,
         connection: ConnectionId,
         role: ChannelRole,
         tx: &DatabaseTransaction,
@@ -822,7 +840,9 @@ impl Database {
             user_id: ActiveValue::set(user_id),
             replica_id: ActiveValue::set(replica_id),
             is_host: ActiveValue::set(false),
-            ..Default::default()
+            id: ActiveValue::NotSet,
+            committer_name: ActiveValue::set(committer_name),
+            committer_email: ActiveValue::set(committer_email),
         }
         .insert(tx)
         .await?;
@@ -1026,6 +1046,8 @@ impl Database {
                     user_id: collaborator.user_id,
                     replica_id: collaborator.replica_id,
                     is_host: collaborator.is_host,
+                    committer_name: collaborator.committer_name,
+                    committer_email: collaborator.committer_email,
                 })
                 .collect(),
             worktrees,

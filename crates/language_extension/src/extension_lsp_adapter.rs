@@ -12,13 +12,13 @@ use fs::Fs;
 use futures::{Future, FutureExt};
 use gpui::AsyncApp;
 use language::{
-    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
-    LspAdapter, LspAdapterDelegate,
+    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageServerStatusUpdate,
+    LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
-use util::{ResultExt, maybe};
+use util::{ResultExt, fs::make_file_executable, maybe};
 
 use crate::LanguageServerRegistryProxy;
 
@@ -82,8 +82,10 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
-        self.language_registry
-            .update_lsp_status(language_server_id, status);
+        self.language_registry.update_lsp_status(
+            language_server_id,
+            LanguageServerStatusUpdate::Binary(status),
+        );
     }
 }
 
@@ -144,14 +146,9 @@ impl LspAdapter for ExtensionLspAdapter {
             if ["toml", "zig"].contains(&self.extension.manifest().id.as_ref())
                 && path.starts_with(&self.extension.work_dir())
             {
-                #[cfg(not(windows))]
-                {
-                    use std::fs::{self, Permissions};
-                    use std::os::unix::fs::PermissionsExt;
-
-                    fs::set_permissions(&path, Permissions::from_mode(0o755))
-                        .context("failed to set file permissions")?;
-                }
+                make_file_executable(&path)
+                    .await
+                    .context("failed to set file permissions")?;
             }
 
             Ok(LanguageServerBinary {

@@ -277,6 +277,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,

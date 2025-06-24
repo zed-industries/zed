@@ -4,7 +4,6 @@ mod file_finder_tests;
 mod open_path_prompt_tests;
 
 pub mod file_finder_settings;
-mod new_path_prompt;
 mod open_path_prompt;
 
 use futures::future::join_all;
@@ -20,7 +19,6 @@ use gpui::{
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
     Window, actions,
 };
-use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -85,8 +83,8 @@ pub fn init_settings(cx: &mut App) {
 pub fn init(cx: &mut App) {
     init_settings(cx);
     cx.observe_new(FileFinder::register).detach();
-    cx.observe_new(NewPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
+    cx.observe_new(OpenPathPrompt::register_new_path).detach();
 }
 
 impl FileFinder {
@@ -332,6 +330,7 @@ impl FileFinder {
                             worktree_id: WorktreeId::from_usize(m.0.worktree_id),
                             path: m.0.path.clone(),
                         },
+                        Match::CreateNew(p) => p.clone(),
                     };
                     let open_task = workspace.update(cx, move |workspace, cx| {
                         workspace.split_path_preview(path, false, Some(split_direction), window, cx)
@@ -456,13 +455,35 @@ enum Match {
         panel_match: Option<ProjectPanelOrdMatch>,
     },
     Search(ProjectPanelOrdMatch),
+    CreateNew(ProjectPath),
 }
 
 impl Match {
-    fn path(&self) -> &Arc<Path> {
+    fn relative_path(&self) -> Option<&Arc<Path>> {
         match self {
-            Match::History { path, .. } => &path.project.path,
-            Match::Search(panel_match) => &panel_match.0.path,
+            Match::History { path, .. } => Some(&path.project.path),
+            Match::Search(panel_match) => Some(&panel_match.0.path),
+            Match::CreateNew(_) => None,
+        }
+    }
+
+    fn abs_path(&self, project: &Entity<Project>, cx: &App) -> Option<PathBuf> {
+        match self {
+            Match::History { path, .. } => path.absolute.clone().or_else(|| {
+                project
+                    .read(cx)
+                    .worktree_for_id(path.project.worktree_id, cx)?
+                    .read(cx)
+                    .absolutize(&path.project.path)
+                    .ok()
+            }),
+            Match::Search(ProjectPanelOrdMatch(path_match)) => project
+                .read(cx)
+                .worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?
+                .read(cx)
+                .absolutize(&path_match.path)
+                .ok(),
+            Match::CreateNew(_) => None,
         }
     }
 
@@ -470,6 +491,7 @@ impl Match {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(&panel_match),
+            Match::CreateNew(_) => None,
         }
     }
 }
@@ -499,7 +521,10 @@ impl Matches {
             // reason for the matches set to change.
             self.matches
                 .iter()
-                .position(|m| path.project.path == *m.path())
+                .position(|m| match m.relative_path() {
+                    Some(p) => path.project.path == *p,
+                    None => false,
+                })
                 .ok_or(0)
         } else {
             self.matches.binary_search_by(|m| {
@@ -576,6 +601,12 @@ impl Matches {
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
+        // Handle CreateNew variant - always put it at the end
+        match (a, b) {
+            (Match::CreateNew(_), _) => return cmp::Ordering::Less,
+            (_, Match::CreateNew(_)) => return cmp::Ordering::Greater,
+            _ => {}
+        }
         debug_assert!(a.panel_match().is_some() && b.panel_match().is_some());
 
         match (&a, &b) {
@@ -908,6 +939,23 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
             );
+            let worktree = self.project.read(cx).visible_worktrees(cx).next();
+            let filename = query.raw_query.to_string();
+            let path = Path::new(&filename);
+
+            // add option of creating new file only if path is relative
+            if let Some(worktree) = worktree {
+                let worktree = worktree.read(cx);
+                if path.is_relative()
+                    && worktree.entry_for_path(&path).is_none()
+                    && !filename.ends_with("/")
+                {
+                    self.matches.matches.push(Match::CreateNew(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: Arc::from(path),
+                    }));
+                }
+            }
 
             self.selected_index = selected_match.map_or_else(
                 || self.calculate_selected_index(cx),
@@ -988,6 +1036,12 @@ impl FileFinderDelegate {
                     }
                 }
                 Match::Search(path_match) => self.labels_for_path_match(&path_match.0),
+                Match::CreateNew(project_path) => (
+                    format!("Create file: {}", project_path.path.display()),
+                    vec![],
+                    String::from(""),
+                    vec![],
+                ),
             };
 
         if file_name_positions.is_empty() {
@@ -1372,6 +1426,29 @@ impl PickerDelegate for FileFinderDelegate {
                             }
                         };
                     match &m {
+                        Match::CreateNew(project_path) => {
+                            // Create a new file with the given filename
+                            if secondary {
+                                workspace.split_path_preview(
+                                    project_path.clone(),
+                                    false,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            } else {
+                                workspace.open_path_preview(
+                                    project_path.clone(),
+                                    None,
+                                    true,
+                                    false,
+                                    true,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }
+
                         Match::History { path, .. } => {
                             let worktree_id = path.project.worktree_id;
                             if workspace
@@ -1502,6 +1579,10 @@ impl PickerDelegate for FileFinderDelegate {
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
+            Match::CreateNew(_) => Icon::new(IconName::Plus)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+                .into_any_element(),
         };
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx, ix);
 
@@ -1509,7 +1590,8 @@ impl PickerDelegate for FileFinderDelegate {
             if !settings.file_icons {
                 return None;
             }
-            let file_name = path_match.path().file_name()?;
+            let abs_path = path_match.abs_path(&self.project, cx)?;
+            let file_name = abs_path.file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
             Some(Icon::from_path(icon).color(Color::Muted))
         });

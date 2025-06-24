@@ -38,7 +38,7 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN =
-  /(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of)\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
+  /(?:- )?(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of):?\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
 
 const bodyWithoutReleaseNotes = hasReleaseNotes ? body.split(/Release Notes:/)[0] : body;
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
@@ -65,7 +65,8 @@ const PROMPT_PATHS = [
   "crates/agent/src/prompts/summarize_thread_detailed_prompt.txt",
   "crates/agent/src/prompts/summarize_thread_prompt.txt",
   "crates/assistant_tools/src/templates/create_file_prompt.hbs",
-  "crates/assistant_tools/src/templates/edit_file_prompt.hbs",
+  "crates/assistant_tools/src/templates/edit_file_prompt_xml.hbs",
+  "crates/assistant_tools/src/templates/edit_file_prompt_diff_fenced.hbs",
   "crates/git_ui/src/commit_message_prompt.txt",
 ];
 

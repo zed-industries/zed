@@ -82,7 +82,10 @@ fn view_release_notes_locally(
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, cx)
+                                let buffer = project.create_local_buffer("", markdown, cx);
+                                project
+                                    .mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
+                                buffer
                             });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)

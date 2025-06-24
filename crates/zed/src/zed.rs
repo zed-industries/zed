@@ -9,27 +9,25 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent::AgentDiffToolbar;
+use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant_context_editor::AgentPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
-    image_cache, point, px, retain_all,
+    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -49,8 +47,8 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile, KeymapFileLoadResult,
+    Settings, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
     initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use std::path::PathBuf;
@@ -70,7 +68,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, RestoreBanner};
+use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -86,7 +84,6 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
-        OpenProjectDebugTasks,
         OpenTasks,
         OpenDebugTasks,
         ResetDatabase,
@@ -111,6 +108,98 @@ pub fn init(cx: &mut App) {
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
+
+    cx.on_action(|_: &OpenLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                asset_str::<Assets>("licenses.md"),
+                "Open Source License Attribution",
+                "Markdown",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_telemetry_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|&zed_actions::OpenKeymap, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::keymap_file(),
+                || settings::initial_keymap_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenSettings, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenAccountSettings, cx| {
+        with_active_or_new_workspace(cx, |_, _, cx| {
+            cx.open_url(&zed_urls::account_url(cx));
+        });
+    });
+    cx.on_action(|_: &OpenTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::tasks_file(),
+                || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDebugTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::debug_scenarios_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDefaultSettings, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_keymap(),
+                "Default Key Bindings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -255,7 +344,7 @@ pub fn initialize_workspace(
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously
-                    workspace.close_window(&Default::default(), window, cx);
+                    workspace.close_window(&CloseWindow, window, cx);
                     false
                 })
                 .unwrap_or(true)
@@ -380,6 +469,7 @@ fn initialize_panels(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
@@ -388,56 +478,43 @@ fn initialize_panels(
             workspace_handle.clone(),
             cx.clone(),
         );
+        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
 
         let (
             project_panel,
             outline_panel,
             terminal_panel,
+            git_panel,
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
+            git_panel,
             terminal_panel,
             channels_panel,
             chat_panel,
             notification_panel,
+            debug_panel,
         )?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
+            workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-            cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |_, window, cx| {
-                cx.spawn_in(
-                    window,
-                    async move |workspace: gpui::WeakEntity<Workspace>,
-                                cx: &mut AsyncWindowContext| {
-                        let debug_panel = DebugPanel::load(workspace.clone(), cx).await?;
-                        workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.add_panel(debug_panel, window, cx);
-                        })?;
-                        anyhow::Ok(())
-                    },
-                )
-                .detach()
-            });
-
-            let entity = cx.entity();
-            let project = workspace.project().clone();
-            let app_state = workspace.app_state().clone();
-            let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
-            workspace.add_panel(git_panel, window, cx);
+            workspace.add_panel(debug_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
             let agent_panel =
-                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+                agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
             Some(agent_panel)
@@ -458,13 +535,13 @@ fn initialize_panels(
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
             if is_assistant2_enabled {
                 <dyn AgentPanelDelegate>::set_global(
-                    Arc::new(agent::ConcreteAssistantPanelDelegate),
+                    Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(agent::AgentPanel::toggle_focus)
-                    .register_action(agent::InlineAssistant::inline_assist);
+                    .register_action(agent_ui::AgentPanel::toggle_focus)
+                    .register_action(agent_ui::InlineAssistant::inline_assist);
             }
         })?;
 
@@ -492,7 +569,10 @@ fn register_actions(
             window.toggle_fullscreen();
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
-            OpenListener::global(cx).open_urls(vec![action.url.clone()])
+            OpenListener::global(cx).open(RawOpenRequest {
+                urls: vec![action.url.clone()],
+                ..Default::default()
+            })
         })
         .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, window, cx| {
@@ -503,7 +583,10 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                 },
-                DirectoryLister::Local(workspace.app_state().fs.clone()),
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
                 window,
                 cx,
             );
@@ -680,99 +763,9 @@ fn register_actions(
                 |_, _, _| None,
             );
         })
-        .register_action(|workspace, _: &OpenLog, window, cx| {
-            open_log_file(workspace, window, cx);
-        })
-        .register_action(|workspace, _: &zed_actions::OpenLicenses, window, cx| {
-            open_bundled_file(
-                workspace,
-                asset_str::<Assets>("licenses.md"),
-                "Open Source License Attribution",
-                "Markdown",
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            move |workspace: &mut Workspace,
-                  _: &zed_actions::OpenTelemetryLog,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_telemetry_log_file(workspace, window, cx);
-            },
-        )
-        .register_action(
-            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
-                cx.open_url(&zed_urls::account_url(cx));
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenTasks, window, cx| {
-            open_settings_file(
-                paths::tasks_file(),
-                || settings::initial_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
         .register_action(open_project_debug_tasks_file)
-        .register_action(
-            move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_keymap(),
-                    "Default Key Bindings",
-                    "JSON",
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
-                cx,
-            );
-        })
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
@@ -950,12 +943,23 @@ fn about(
     let message = format!("{release_channel} {version} {debug}");
     let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
 
-    let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
-    cx.foreground_executor()
-        .spawn(async {
-            prompt.await.ok();
-        })
-        .detach();
+    let prompt = window.prompt(
+        PromptLevel::Info,
+        &message,
+        detail.as_deref(),
+        &["Copy", "OK"],
+        cx,
+    );
+    cx.spawn(async move |_, cx| {
+        if let Ok(0) = prompt.await {
+            let content = format!("{}\n{}", message, detail.as_deref().unwrap_or(""));
+            cx.update(|cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(content));
+            })
+            .ok();
+        }
+    })
+    .detach();
 }
 
 fn test_panic(_: &TestPanic, _: &mut App) {
@@ -1216,19 +1220,27 @@ pub fn handle_keymap_file_changes(
     cx: &mut App,
 ) {
     BaseKeymap::register(cx);
-    VimModeSetting::register(cx);
+    vim_mode_setting::init(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
     let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
+    let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
+        let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
 
-        if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
+        if new_base_keymap != old_base_keymap
+            || new_vim_enabled != old_vim_enabled
+            || new_helix_enabled != old_helix_enabled
+        {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
+            old_helix_enabled = new_helix_enabled;
+
             base_keymap_tx.unbounded_send(()).unwrap();
         }
     })
@@ -1391,10 +1403,15 @@ fn show_markdown_app_notification<F>(
     .detach();
 }
 
-fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
+
+    for key_binding in &mut user_key_bindings {
+        key_binding.set_meta(KeybindSource::User.meta());
+    }
     cx.bind_keys(user_key_bindings);
+
     cx.set_menus(app_menus());
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
@@ -1410,14 +1427,18 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
+    cx.bind_keys(
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
+    );
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
-    if VimModeSetting::get_global(cx).0 {
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
+    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+        cx.bind_keys(
+            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+        );
     }
 }
 
@@ -1509,7 +1530,7 @@ fn open_project_tasks_file(
 
 fn open_project_debug_tasks_file(
     workspace: &mut Workspace,
-    _: &OpenProjectDebugTasks,
+    _: &zed_actions::OpenProjectDebugTasks,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -1749,6 +1770,7 @@ mod tests {
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
     };
     use language::{LanguageMatcher, LanguageRegistry};
+    use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath, WorktreeSettings, project_settings::ProjectSettings};
     use serde_json::json;
     use settings::{SettingsStore, watch_config_file};
@@ -1757,10 +1779,11 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, separator};
+    use util::path;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
+        item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
@@ -2860,8 +2883,8 @@ mod tests {
             opened_paths,
             vec![
                 None,
-                Some(separator!(".git/HEAD").to_string()),
-                Some(separator!("excluded_dir/file").to_string()),
+                Some(path!(".git/HEAD").to_string()),
+                Some(path!("excluded_dir/file").to_string()),
             ],
             "Excluded files should get opened, excluded dir should not get opened"
         );
@@ -2887,7 +2910,7 @@ mod tests {
                 opened_buffer_paths.sort();
                 assert_eq!(
                     opened_buffer_paths,
-                    vec![separator!(".git/HEAD").to_string(), separator!("excluded_dir/file").to_string()],
+                    vec![path!(".git/HEAD").to_string(), path!("excluded_dir/file").to_string()],
                     "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
                 );
             });
@@ -3022,7 +3045,7 @@ mod tests {
         });
         cx.read(|cx| {
             assert!(editor.is_dirty(cx));
-            assert_eq!(editor.read(cx).title(cx), "untitled");
+            assert_eq!(editor.read(cx).title(cx), "hi");
         });
 
         // When the save completes, the buffer's title is updated and the language is assigned based
@@ -3353,7 +3376,15 @@ mod tests {
                     editor.newline(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
                     editor.move_down(&Default::default(), window, cx);
-                    editor.save(true, project.clone(), window, cx)
+                    editor.save(
+                        SaveOptions {
+                            format: true,
+                            autosave: false,
+                        },
+                        project.clone(),
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -3904,6 +3935,8 @@ mod tests {
         })
     }
 
+    actions!(test_only, [ActionA, ActionB]);
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();
@@ -3912,7 +3945,6 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        actions!(test1, [A, B]);
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
@@ -3932,7 +3964,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test1::A"}}]"#.into(),
+                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3959,8 +3991,8 @@ mod tests {
         });
         workspace
             .update(cx, |workspace, _, cx| {
-                workspace.register_action(|_, _: &A, _window, _cx| {});
-                workspace.register_action(|_, _: &B, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionA, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionB, _window, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _window, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousItem, _window, _cx| {});
                 cx.notify();
@@ -3971,7 +4003,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            vec![("backspace", &ActionA), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
@@ -3980,7 +4012,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test1::B"}}]"#.into(),
+                &r#"[{"bindings": {"backspace": "test_only::ActionB"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -3991,7 +4023,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+            vec![("backspace", &ActionB), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
@@ -4011,7 +4043,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("{", &ActivatePreviousItem)],
+            vec![("backspace", &ActionB), ("{", &ActivatePreviousItem)],
             line!(),
         );
     }
@@ -4024,7 +4056,6 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        actions!(test2, [A, B]);
         // From the Atom keymap
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
@@ -4032,8 +4063,8 @@ mod tests {
 
         workspace
             .update(cx, |workspace, _, _| {
-                workspace.register_action(|_, _: &A, _window, _cx| {});
-                workspace.register_action(|_, _: &B, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionA, _window, _cx| {});
+                workspace.register_action(|_, _: &ActionB, _window, _cx| {});
                 workspace.register_action(|_, _: &Deploy, _window, _cx| {});
             })
             .unwrap();
@@ -4050,7 +4081,7 @@ mod tests {
             .fs
             .save(
                 "/keymap.json".as_ref(),
-                &r#"[{"bindings": {"backspace": "test2::A"}}]"#.into(),
+                &r#"[{"bindings": {"backspace": "test_only::ActionA"}}]"#.into(),
                 Default::default(),
             )
             .await
@@ -4084,7 +4115,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            vec![("backspace", &ActionA), ("k", &ActivatePreviousPane)],
             line!(),
         );
 
@@ -4197,6 +4228,122 @@ mod tests {
         });
     }
 
+    /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
+    /// and let you know when introducing a new namespace.
+    #[gpui::test]
+    async fn test_action_namespaces(cx: &mut gpui::TestAppContext) {
+        use itertools::Itertools;
+
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+
+            let mut actions_without_namespace = Vec::new();
+            let all_namespaces = all_actions
+                .iter()
+                .filter_map(|action_name| {
+                    let namespace = action_name
+                        .split("::")
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .skip(1)
+                        .rev()
+                        .join("::");
+                    if namespace.is_empty() {
+                        actions_without_namespace.push(*action_name);
+                    }
+                    if &namespace == "test_only" || &namespace == "stories" {
+                        None
+                    } else {
+                        Some(namespace)
+                    }
+                })
+                .sorted()
+                .dedup()
+                .collect::<Vec<_>>();
+            assert_eq!(actions_without_namespace, Vec::<&str>::new());
+
+            let expected_namespaces = vec![
+                "activity_indicator",
+                "agent",
+                #[cfg(not(target_os = "macos"))]
+                "app_menu",
+                "assistant",
+                "assistant2",
+                "auto_update",
+                "branches",
+                "buffer_search",
+                "channel_modal",
+                "chat_panel",
+                "cli",
+                "client",
+                "collab",
+                "collab_panel",
+                "command_palette",
+                "console",
+                "context_server",
+                "copilot",
+                "debug_panel",
+                "debugger",
+                "dev",
+                "diagnostics",
+                "edit_prediction",
+                "editor",
+                "feedback",
+                "file_finder",
+                "git",
+                "git_onboarding",
+                "git_panel",
+                "go_to_line",
+                "icon_theme_selector",
+                "jj",
+                "journal",
+                "language_selector",
+                "markdown",
+                "menu",
+                "notebook",
+                "notification_panel",
+                "outline",
+                "outline_panel",
+                "pane",
+                "panel",
+                "picker",
+                "project_panel",
+                "project_search",
+                "project_symbols",
+                "projects",
+                "repl",
+                "rules_library",
+                "search",
+                "snippets",
+                "supermaven",
+                "tab_switcher",
+                "task",
+                "terminal",
+                "terminal_panel",
+                "theme_selector",
+                "toast",
+                "toolchain",
+                "variable_list",
+                "vim",
+                "welcome",
+                "workspace",
+                "zed",
+                "zed_predict_onboarding",
+                "zeta",
+            ];
+            assert_eq!(
+                all_namespaces,
+                expected_namespaces
+                    .into_iter()
+                    .map(|namespace| namespace.to_string())
+                    .sorted()
+                    .collect::<Vec<_>>()
+            );
+        });
+    }
+
     #[gpui::test]
     fn test_bundled_settings_and_themes(cx: &mut App) {
         cx.text_system()
@@ -4281,7 +4428,12 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(app_state.fs.clone(), app_state.client.http_client(), cx);
+            copilot::copilot_chat::init(
+                app_state.fs.clone(),
+                app_state.client.http_client(),
+                copilot::copilot_chat::CopilotChatConfiguration::default(),
+                cx,
+            );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
             language_models::init(
@@ -4293,7 +4445,7 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            agent::init(
+            agent_ui::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
                 prompt_builder.clone(),

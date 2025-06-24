@@ -15,7 +15,9 @@ use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 mod add_arg_to_trait_method;
 mod code_block_citations;
 mod comment_translation;
+mod file_change_notification;
 mod file_search;
+mod grep_params_escapement;
 mod overwrite_file;
 mod planets;
 
@@ -27,6 +29,8 @@ pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
         Rc::new(planets::Planets),
         Rc::new(comment_translation::CommentTranslation),
         Rc::new(overwrite_file::FileOverwriteExample),
+        Rc::new(file_change_notification::FileChangeNotificationExample),
+        Rc::new(grep_params_escapement::GrepParamsEscapementExample),
     ];
 
     for example_path in list_declarative_examples(examples_dir).unwrap() {

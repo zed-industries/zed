@@ -10,6 +10,10 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 | Claude 3.7 Sonnet | Anthropic | ✅        | 200k           | N/A              | $0.05             |
 | Claude Sonnet 4   | Anthropic | ❌        | 120k           | $0.04            | N/A               |
 | Claude Sonnet 4   | Anthropic | ✅        | 200k           | N/A              | $0.05             |
+| Claude Opus 4     | Anthropic | ❌        | 120k           | $0.20            | N/A               |
+| Claude Opus 4     | Anthropic | ✅        | 200k           | N/A              | $0.25             |
+
+> Note: Because of the 5x token cost for [Opus relative to Sonnet](https://www.anthropic.com/pricing#api), each Opus prompt consumes 5 prompts against your billing meter
 
 ## Usage {#usage}
 
@@ -22,7 +26,6 @@ Non-Burn Mode usage will use up to 25 tool calls per one prompt. If your prompt 
 ## Burn Mode {#burn-mode}
 
 > Note: "Burn Mode" is the new name for what was previously called "Max Mode".
-> Currently, the new terminology is only available in Preview and will follow to Stable in the next version.
 
 In Burn Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience.
 

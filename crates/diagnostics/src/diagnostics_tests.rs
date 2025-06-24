@@ -1,7 +1,7 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings, InlayId,
+    DisplayPoint, EditorSettings,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
     display_map::{DisplayRow, Inlay},
     test::{
@@ -11,7 +11,7 @@ use editor::{
 };
 use gpui::{TestAppContext, VisualTestContext};
 use indoc::indoc;
-use language::Rope;
+use language::{DiagnosticSourceKind, Rope};
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -105,7 +105,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             }
             ],
             version: None
-        }, &[], cx).unwrap();
+        }, None, DiagnosticSourceKind::Pushed, &[], cx).unwrap();
     });
 
     // Open the project diagnostics view while there are already diagnostics.
@@ -176,6 +176,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -261,6 +263,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     ],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -368,6 +372,8 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -465,6 +471,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -507,6 +515,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -548,6 +558,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -560,6 +572,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -600,6 +614,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -732,6 +748,8 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                                 diagnostics: diagnostics.clone(),
                                 version: None,
                             },
+                            None,
+                            DiagnosticSourceKind::Pushed,
                             &[],
                             cx,
                         )
@@ -852,11 +870,11 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
                         editor.splice_inlays(
                             &[],
-                            vec![Inlay {
-                                id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
-                                position: snapshot.buffer_snapshot.anchor_before(position),
-                                text: Rope::from(format!("Test inlay {next_inlay_id}")),
-                            }],
+                            vec![Inlay::inline_completion(
+                                post_inc(&mut next_inlay_id),
+                                snapshot.buffer_snapshot.anchor_before(position),
+                                format!("Test inlay {next_inlay_id}"),
+                            )],
                             cx,
                         );
                     }
@@ -919,6 +937,8 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                                 diagnostics: diagnostics.clone(),
                                 version: None,
                             },
+                            None,
+                            DiagnosticSourceKind::Pushed,
                             &[],
                             cx,
                         )
@@ -974,6 +994,8 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                             ..Default::default()
                         }],
                     },
+                    None,
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1007,6 +1029,8 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                         version: None,
                         diagnostics: Vec::new(),
                     },
+                    None,
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1088,6 +1112,8 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
                             },
                         ],
                     },
+                    None,
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1226,6 +1252,8 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1277,6 +1305,8 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1378,6 +1408,8 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
                     ],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )

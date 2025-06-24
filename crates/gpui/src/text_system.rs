@@ -209,6 +209,20 @@ impl TextSystem {
         Ok(self.advance(font_id, font_size, 'm')?.width)
     }
 
+    /// Returns the width of an `ch`.
+    ///
+    /// Uses the width of the `0` character in the given font and size.
+    pub fn ch_width(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        Ok(self.typographic_bounds(font_id, font_size, '0')?.size.width)
+    }
+
+    /// Returns the advance width of an `ch`.
+    ///
+    /// Uses the advance width of the `0` character in the given font and size.
+    pub fn ch_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        Ok(self.advance(font_id, font_size, '0')?.width)
+    }
+
     /// Get the number of font size units per 'em square',
     /// Per MDN: "an abstract square whose height is the intended distance between
     /// lines of type in the same type size"

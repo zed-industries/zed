@@ -520,7 +520,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.element_hover, // todo update theme
+                        |theme| theme.colors().element_hover, // todo update theme
                         cx,
                     );
                 }
@@ -869,6 +869,7 @@ impl InfoPopover {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         div()
             .id("info_popover")
+            .occlude()
             .elevation_2(cx)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.

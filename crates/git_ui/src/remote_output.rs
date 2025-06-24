@@ -6,7 +6,7 @@ use util::ResultExt as _;
 
 #[derive(Clone)]
 pub enum RemoteAction {
-    Fetch,
+    Fetch(Option<Remote>),
     Pull(Remote),
     Push(SharedString, Remote),
 }
@@ -14,7 +14,7 @@ pub enum RemoteAction {
 impl RemoteAction {
     pub fn name(&self) -> &'static str {
         match self {
-            RemoteAction::Fetch => "fetch",
+            RemoteAction::Fetch(_) => "fetch",
             RemoteAction::Pull(_) => "pull",
             RemoteAction::Push(_, _) => "push",
         }
@@ -34,15 +34,19 @@ pub struct SuccessMessage {
 
 pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> SuccessMessage {
     match action {
-        RemoteAction::Fetch => {
+        RemoteAction::Fetch(remote) => {
             if output.stderr.is_empty() {
                 SuccessMessage {
                     message: "Already up to date".into(),
                     style: SuccessStyle::Toast,
                 }
             } else {
+                let message = match remote {
+                    Some(remote) => format!("Synchronized with {}", remote.name),
+                    None => "Synchronized with remotes".into(),
+                };
                 SuccessMessage {
-                    message: "Synchronized with remotes".into(),
+                    message,
                     style: SuccessStyle::ToastWithLog { output },
                 }
             }
