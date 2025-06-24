@@ -28,31 +28,24 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
-#[derive(Clone, PartialEq, Default, Deserialize, JsonSchema, Action)]
+#[derive(Clone, PartialEq, Default, Action)]
+#[action(no_json, no_register)]
 pub struct DiffText {
-    #[serde(skip)]
     pub old_text_data: TextData,
-    #[serde(skip)]
     pub new_text_data: TextData,
 }
 
-#[derive(Clone, PartialEq, Default, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Default)]
 pub struct TextData {
-    #[serde(skip)]
     pub text: String,
-    #[serde(skip)]
     pub file_path: FilePath,
-    #[serde(skip)]
     pub language: Option<String>,
-    #[serde(skip)]
     pub selection_data: Option<SelectionData>,
 }
 
-#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq)]
 pub enum FilePath {
-    #[serde(skip)]
     Path(Option<PathBuf>),
-    #[serde(skip)]
     Custom(String),
 }
 
@@ -62,15 +55,11 @@ impl Default for FilePath {
     }
 }
 
-#[derive(Clone, PartialEq, Default, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Default)]
 pub struct SelectionData {
-    #[serde(skip)]
     pub start_row: u32,
-    #[serde(skip)]
     pub start_column: u32,
-    #[serde(skip)]
     pub end_row: u32,
-    #[serde(skip)]
     pub end_column: u32,
 }
 
