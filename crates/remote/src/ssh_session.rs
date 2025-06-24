@@ -2023,108 +2023,110 @@ impl SshRemoteConnection {
             .await?;
 
             let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok(path);
-        }
-        let Some(triple) = platform.triple() else {
-            anyhow::bail!("can't cross compile for: {:?}", platform);
-        };
-        smol::fs::create_dir_all("target/remote_server").await?;
-
-        if build_remote_server.contains("cross") {
-            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-            log::info!("installing cross");
-            run_cmd(Command::new("cargo").args([
-                "install",
-                "cross",
-                "--git",
-                "https://github.com/cross-rs/cross",
-            ]))
-            .await?;
-
-            delegate.set_status(
-                Some(&format!(
-                    "Building remote server binary from source for {} with Docker",
-                    &triple
-                )),
-                cx,
-            );
-            log::info!("building remote server binary from source for {}", &triple);
-            run_cmd(
-                Command::new("cross")
-                    .args([
-                        "build",
-                        "--package",
-                        "remote_server",
-                        "--features",
-                        "debug-embed",
-                        "--target-dir",
-                        "target/remote_server",
-                        "--target",
-                        &triple,
-                    ])
-                    .env(
-                        "CROSS_CONTAINER_OPTS",
-                        "--mount type=bind,src=./target,dst=/app/target",
-                    ),
-            )
-            .await?;
+            Ok(path)
         } else {
-            let which = cx
-                .background_spawn(async move { which::which("zig") })
-                .await;
+            let Some(triple) = platform.triple() else {
+                anyhow::bail!("can't cross compile for: {:?}", platform);
+            };
+            smol::fs::create_dir_all("target/remote_server").await?;
 
-            if which.is_err() {
-                anyhow::bail!(
-                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+            if build_remote_server.contains("cross") {
+                delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+                log::info!("installing cross");
+                run_cmd(Command::new("cargo").args([
+                    "install",
+                    "cross",
+                    "--git",
+                    "https://github.com/cross-rs/cross",
+                ]))
+                .await?;
+
+                delegate.set_status(
+                    Some(&format!(
+                        "Building remote server binary from source for {} with Docker",
+                        &triple
+                    )),
+                    cx,
+                );
+                log::info!("building remote server binary from source for {}", &triple);
+                run_cmd(
+                    Command::new("cross")
+                        .args([
+                            "build",
+                            "--package",
+                            "remote_server",
+                            "--features",
+                            "debug-embed",
+                            "--target-dir",
+                            "target/remote_server",
+                            "--target",
+                            &triple,
+                        ])
+                        .env(
+                            "CROSS_CONTAINER_OPTS",
+                            "--mount type=bind,src=./target,dst=/app/target",
+                        ),
                 )
+                .await?;
+            } else {
+                let which = cx
+                    .background_spawn(async move { which::which("zig") })
+                    .await;
+
+                if which.is_err() {
+                    anyhow::bail!(
+                        "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    )
+                }
+
+                delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+                log::info!("adding rustup target");
+                run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+
+                delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+                log::info!("installing cargo-zigbuild");
+                run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"]))
+                    .await?;
+
+                delegate.set_status(
+                    Some(&format!(
+                        "Building remote binary from source for {triple} with Zig"
+                    )),
+                    cx,
+                );
+                log::info!("building remote binary from source for {triple} with Zig");
+                run_cmd(Command::new("cargo").args([
+                    "zigbuild",
+                    "--package",
+                    "remote_server",
+                    "--features",
+                    "debug-embed",
+                    "--target-dir",
+                    "target/remote_server",
+                    "--target",
+                    &triple,
+                ]))
+                .await?;
+            };
+
+            let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
+            if !build_remote_server.contains("nocompress") {
+                delegate.set_status(Some("Compressing binary"), cx);
+
+                run_cmd(Command::new("gzip").args([
+                    "-9",
+                    "-f",
+                    &format!("target/remote_server/{}/debug/remote_server", triple),
+                ]))
+                .await?;
+
+                path = std::env::current_dir()?.join(format!(
+                    "target/remote_server/{triple}/debug/remote_server.gz"
+                ));
             }
 
-            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
-            log::info!("adding rustup target");
-            run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
-
-            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-            log::info!("installing cargo-zigbuild");
-            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
-
-            delegate.set_status(
-                Some(&format!(
-                    "Building remote binary from source for {triple} with Zig"
-                )),
-                cx,
-            );
-            log::info!("building remote binary from source for {triple} with Zig");
-            run_cmd(Command::new("cargo").args([
-                "zigbuild",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-                "--target",
-                &triple,
-            ]))
-            .await?;
-        };
-
-        let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
-        if !build_remote_server.contains("nocompress") {
-            delegate.set_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                &format!("target/remote_server/{}/debug/remote_server", triple),
-            ]))
-            .await?;
-
-            path = std::env::current_dir()?.join(format!(
-                "target/remote_server/{triple}/debug/remote_server.gz"
-            ));
+            Ok(path)
         }
-
-        return Ok(path);
     }
 }
 
