@@ -4,6 +4,7 @@ members = [
     "crates/activity_indicator",
     "crates/agent_ui",
     "crates/agent",
+    "crates/agent2",
     "crates/agent_settings",
     "crates/anthropic",
     "crates/askpass",
@@ -215,6 +216,7 @@ edition = "2024"
 
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
+agent2 = { path = "crates/agent2" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
 ai = { path = "crates/ai" }
@@ -394,6 +396,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
+agentic-coding-protocol = { path = "../agentic-coding-protocol" }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"

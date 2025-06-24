@@ -106,6 +106,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures 0.3.31",
+ "gpui",
+ "uuid",
+]
+
+[[package]]
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
