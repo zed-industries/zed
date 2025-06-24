@@ -358,7 +358,14 @@ impl PickerDelegate for LspPickerDelegate {
                 server_id = None;
                 server_name = language_server_name;
             }
-            LspItem::Header(header) => return Some(Label::new(header.clone()).into_any_element()),
+            LspItem::Header(header) => {
+                return Some(
+                    h_flex()
+                        .justify_center()
+                        .child(Label::new(header.clone()))
+                        .into_any_element(),
+                );
+            }
         };
 
         let workspace = self.state.read(cx).workspace.clone();
@@ -491,6 +498,7 @@ impl PickerDelegate for LspPickerDelegate {
                                             if !buffers.is_empty() {
                                                 lsp_store
                                                     .update(cx, |lsp_store, cx| {
+                                                        // TODO kb this is not right for "other servers" that do not belong to the current buffer
                                                         lsp_store
                                                             .restart_language_servers_for_buffers(
                                                                 buffers,
@@ -530,7 +538,8 @@ impl PickerDelegate for LspPickerDelegate {
                     .child(
                         Button::new("stop-all-servers", "Stop all servers")
                             .disabled(true)
-                            .on_click(move |_, _, _| {}),
+                            .on_click(move |_, _, _| {})
+                            .full_width(),
                     )
                     .into_any_element(),
             )
@@ -541,15 +550,17 @@ impl PickerDelegate for LspPickerDelegate {
                     .w_full()
                     .border_color(cx.theme().colors().border_variant)
                     .child(
-                        Button::new("stop-all-servers", "Stop all servers").on_click({
-                            move |_, _, cx| {
-                                lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.stop_all_language_servers(cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
+                        Button::new("stop-all-servers", "Stop all servers")
+                            .on_click({
+                                move |_, _, cx| {
+                                    lsp_store
+                                        .update(cx, |lsp_store, cx| {
+                                            lsp_store.stop_all_language_servers(cx);
+                                        })
+                                        .ok();
+                                }
+                            })
+                            .full_width(),
                     )
                     .into_any_element(),
             )
