@@ -1,9 +1,9 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future};
+use std::convert::TryFrom;
 use strum::EnumIter;
 
 pub const VERCEL_API_URL: &str = "https://api.v0.dev/v1";
@@ -280,9 +280,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -371,68 +371,5 @@ pub async fn stream_completion(
                 body,
             ),
         }
-    }
-}
-
-#[derive(Copy, Clone, Serialize, Deserialize)]
-pub enum VercelEmbeddingModel {
-    #[serde(rename = "text-embedding-3-small")]
-    TextEmbedding3Small,
-    #[serde(rename = "text-embedding-3-large")]
-    TextEmbedding3Large,
-}
-
-#[derive(Serialize)]
-struct VercelEmbeddingRequest<'a> {
-    model: VercelEmbeddingModel,
-    input: Vec<&'a str>,
-}
-
-#[derive(Deserialize)]
-pub struct VercelEmbeddingResponse {
-    pub data: Vec<VercelEmbedding>,
-}
-
-#[derive(Deserialize)]
-pub struct VercelEmbedding {
-    pub embedding: Vec<f32>,
-}
-
-pub fn embed<'a>(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    model: VercelEmbeddingModel,
-    texts: impl IntoIterator<Item = &'a str>,
-) -> impl 'static + Future<Output = Result<VercelEmbeddingResponse>> {
-    let uri = format!("{api_url}/embeddings");
-
-    let request = VercelEmbeddingRequest {
-        model,
-        input: texts.into_iter().collect(),
-    };
-    let body = AsyncBody::from(serde_json::to_string(&request).unwrap());
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .body(body)
-        .map(|request| client.send(request));
-
-    async move {
-        let mut response = request?.await?;
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        anyhow::ensure!(
-            response.status().is_success(),
-            "error during embedding, status: {:?}, body: {:?}",
-            response.status(),
-            body
-        );
-        let response: VercelEmbeddingResponse =
-            serde_json::from_str(&body).context("failed to parse Vercel embedding response")?;
-        Ok(response)
     }
 }

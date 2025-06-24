@@ -11,10 +11,9 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
 use menu;
-use open_ai::{ImageUrl, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -23,6 +22,7 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use vercel::Model;
+use vercel::{ImageUrl, ResponseStreamEvent, stream_completion};
 
 use ui::{ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
@@ -259,7 +259,7 @@ pub struct VercelLanguageModel {
 impl VercelLanguageModel {
     fn stream_completion(
         &self,
-        request: open_ai::Request,
+        request: vercel::Request,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
@@ -368,7 +368,7 @@ pub fn into_vercel(
     request: LanguageModelRequest,
     model: &vercel::Model,
     max_output_tokens: Option<u64>,
-) -> open_ai::Request {
+) -> vercel::Request {
     let stream = !model.id().starts_with("o1-");
 
     let mut messages = Vec::new();
@@ -377,7 +377,7 @@ pub fn into_vercel(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     add_message_content_part(
-                        open_ai::MessagePart::Text { text: text },
+                        vercel::MessagePart::Text { text: text },
                         message.role,
                         &mut messages,
                     )
@@ -385,7 +385,7 @@ pub fn into_vercel(
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
-                        open_ai::MessagePart::Image {
+                        vercel::MessagePart::Image {
                             image_url: ImageUrl {
                                 url: image.to_base64_url(),
                                 detail: None,
@@ -396,10 +396,10 @@ pub fn into_vercel(
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
-                    let tool_call = open_ai::ToolCall {
+                    let tool_call = vercel::ToolCall {
                         id: tool_use.id.to_string(),
-                        content: open_ai::ToolCallContent::Function {
-                            function: open_ai::FunctionContent {
+                        content: vercel::ToolCallContent::Function {
+                            function: vercel::FunctionContent {
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
@@ -407,12 +407,12 @@ pub fn into_vercel(
                         },
                     };
 
-                    if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) =
+                    if let Some(vercel::RequestMessage::Assistant { tool_calls, .. }) =
                         messages.last_mut()
                     {
                         tool_calls.push(tool_call);
                     } else {
-                        messages.push(open_ai::RequestMessage::Assistant {
+                        messages.push(vercel::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
                         });
@@ -421,12 +421,12 @@ pub fn into_vercel(
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
                         LanguageModelToolResultContent::Text(text) => {
-                            vec![open_ai::MessagePart::Text {
+                            vec![vercel::MessagePart::Text {
                                 text: text.to_string(),
                             }]
                         }
                         LanguageModelToolResultContent::Image(image) => {
-                            vec![open_ai::MessagePart::Image {
+                            vec![vercel::MessagePart::Image {
                                 image_url: ImageUrl {
                                     url: image.to_base64_url(),
                                     detail: None,
@@ -435,7 +435,7 @@ pub fn into_vercel(
                         }
                     };
 
-                    messages.push(open_ai::RequestMessage::Tool {
+                    messages.push(vercel::RequestMessage::Tool {
                         content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
@@ -444,7 +444,7 @@ pub fn into_vercel(
         }
     }
 
-    open_ai::Request {
+    vercel::Request {
         model: model.id().into(),
         messages,
         stream,
@@ -460,8 +460,8 @@ pub fn into_vercel(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| open_ai::ToolDefinition::Function {
-                function: open_ai::FunctionDefinition {
+            .map(|tool| vercel::ToolDefinition::Function {
+                function: vercel::FunctionDefinition {
                     name: tool.name,
                     description: Some(tool.description),
                     parameters: Some(tool.input_schema),
@@ -469,41 +469,41 @@ pub fn into_vercel(
             })
             .collect(),
         tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
-            LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
-            LanguageModelToolChoice::None => open_ai::ToolChoice::None,
+            LanguageModelToolChoice::Auto => vercel::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => vercel::ToolChoice::Required,
+            LanguageModelToolChoice::None => vercel::ToolChoice::None,
         }),
     }
 }
 
 fn add_message_content_part(
-    new_part: open_ai::MessagePart,
+    new_part: vercel::MessagePart,
     role: Role,
-    messages: &mut Vec<open_ai::RequestMessage>,
+    messages: &mut Vec<vercel::RequestMessage>,
 ) {
     match (role, messages.last_mut()) {
-        (Role::User, Some(open_ai::RequestMessage::User { content }))
+        (Role::User, Some(vercel::RequestMessage::User { content }))
         | (
             Role::Assistant,
-            Some(open_ai::RequestMessage::Assistant {
+            Some(vercel::RequestMessage::Assistant {
                 content: Some(content),
                 ..
             }),
         )
-        | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
+        | (Role::System, Some(vercel::RequestMessage::System { content, .. })) => {
             content.push_part(new_part);
         }
         _ => {
             messages.push(match role {
-                Role::User => open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::from(vec![new_part]),
+                Role::User => vercel::RequestMessage::User {
+                    content: vercel::MessageContent::from(vec![new_part]),
                 },
-                Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: Some(open_ai::MessageContent::from(vec![new_part])),
+                Role::Assistant => vercel::RequestMessage::Assistant {
+                    content: Some(vercel::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                 },
-                Role::System => open_ai::RequestMessage::System {
-                    content: open_ai::MessageContent::from(vec![new_part]),
+                Role::System => vercel::RequestMessage::System {
+                    content: vercel::MessageContent::from(vec![new_part]),
                 },
             });
         }
@@ -538,11 +538,20 @@ impl VercelEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
         let Some(choice) = event.choices.first() else {
-            return Vec::new();
+            return events;
         };
 
-        let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
