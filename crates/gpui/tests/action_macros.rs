@@ -32,7 +32,7 @@ fn test_action_macros() {
             unimplemented!()
         }
 
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             unimplemented!()
         }
 

@@ -13,10 +13,12 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let mut deprecated_aliases = Vec::new();
     let mut internal = false;
     let mut namespace = None;
+    let mut deprecated = None;
 
     let mut has_name = false;
     let mut has_namespace = false;
     let mut has_deprecated_aliases = false;
+    let mut has_deprecated = false;
 
     for attr in &input.attrs {
         if attr.path().is_ident("action") {
@@ -58,6 +60,14 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                         Token![,],
                     )?;
                     deprecated_aliases.extend(aliases.into_iter().map(|lit| lit.value()));
+                } else if meta.path.is_ident("deprecated") {
+                    if has_deprecated {
+                        return Err(meta.error("'deprecated' argument specified multiple times"));
+                    }
+                    has_deprecated = true;
+                    meta.input.parse::<Token![=]>()?;
+                    let lit: LitStr = meta.input.parse()?;
+                    deprecated = Some(lit.value());
                 }
                 Ok(())
             })
@@ -154,6 +164,26 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     };
 
+    let deprecation_fn = if let Some(message) = deprecated {
+        quote! {
+            fn deprecation_message() -> Option<&'static str>
+            where
+                Self: Sized
+            {
+                Some(#message)
+            }
+        }
+    } else {
+        quote! {
+            fn deprecation_message() -> Option<&'static str>
+            where
+                Self: Sized
+            {
+                None
+            }
+        }
+    };
+
     let registration = generate_register_action(struct_name);
 
     TokenStream::from(quote! {
@@ -187,6 +217,8 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
             #json_schema_fn
 
             #deprecated_aliases_fn
+
+            #deprecation_fn
         }
     })
 }

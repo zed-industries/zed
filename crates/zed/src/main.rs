@@ -1308,7 +1308,7 @@ fn dump_all_gpui_actions() {
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.aliases,
+            aliases: action.deprecated_aliases,
         })
         .collect::<Vec<ActionDef>>();
 

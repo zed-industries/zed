@@ -1393,9 +1393,14 @@ impl App {
         self.actions.action_schemas(generator)
     }
 
-    /// Get a list of all deprecated action aliases and their canonical names.
-    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
-        self.actions.action_deprecations()
+    /// Get a map from a deprecated action name to the canonical name.
+    pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecated_aliases()
+    }
+
+    /// Get a list of all action deprecation messages.
+    pub fn action_deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecation_messages()
     }
 
     /// Register a callback to be invoked when the application is about to quit.

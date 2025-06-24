@@ -59,6 +59,7 @@ use std::{
 /// - `namespace = identifier` - Set just the namespace (name will be struct name)
 /// - `internal` - Mark the action as internal-only and so does not support json deserialization
 /// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
+/// - `deprecated = "Message about why this action is deprecation"`
 ///
 /// ## Examples
 ///
@@ -98,7 +99,7 @@ pub trait Action: Any + Send {
     fn partial_eq(&self, action: &dyn Action) -> bool;
 
     /// Get the name of this action, for displaying in UI
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     /// Get the name of this action type (static)
     fn name_for_type() -> &'static str
@@ -121,12 +122,21 @@ pub trait Action: Any + Send {
         None
     }
 
-    /// A list of alternate, deprecated names for this action.
+    /// A list of alternate, deprecated names for this action. In Zed these names will still be
+    /// accepted in keymap JSON.
     fn deprecated_aliases() -> &'static [&'static str]
     where
         Self: Sized,
     {
         &[]
+    }
+
+    /// Returns the deprecation message for this action, if any.
+    fn deprecation_message() -> Option<&'static str>
+    where
+        Self: Sized,
+    {
+        None
     }
 }
 
@@ -192,7 +202,8 @@ pub(crate) struct ActionRegistry {
     by_name: HashMap<SharedString, ActionData>,
     names_by_type_id: HashMap<TypeId, SharedString>,
     all_names: Vec<SharedString>, // So we can return a static slice.
-    deprecations: HashMap<SharedString, SharedString>,
+    deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
+    deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
 }
 
 impl Default for ActionRegistry {
@@ -201,7 +212,8 @@ impl Default for ActionRegistry {
             by_name: Default::default(),
             names_by_type_id: Default::default(),
             all_names: Default::default(),
-            deprecations: Default::default(),
+            deprecated_aliases: Default::default(),
+            deprecation_messages: Default::default(),
         };
 
         this.load_actions();
@@ -225,10 +237,11 @@ pub struct MacroActionBuilder(pub fn() -> MacroActionData);
 #[doc(hidden)]
 pub struct MacroActionData {
     pub name: &'static str,
-    pub aliases: &'static [&'static str],
     pub type_id: TypeId,
     pub build: ActionBuilder,
     pub json_schema: fn(&mut schemars::r#gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
+    pub deprecated_aliases: &'static [&'static str],
+    pub deprecation_message: Option<&'static str>,
 }
 
 inventory::collect!(MacroActionBuilder);
@@ -246,10 +259,11 @@ impl ActionRegistry {
     pub(crate) fn load_action<A: Action>(&mut self) {
         self.insert_action(MacroActionData {
             name: A::name_for_type(),
-            aliases: A::deprecated_aliases(),
             type_id: TypeId::of::<A>(),
             build: A::build,
             json_schema: A::action_json_schema,
+            deprecated_aliases: A::deprecated_aliases(),
+            deprecation_message: A::deprecation_message(),
         });
     }
 
@@ -262,20 +276,26 @@ impl ActionRegistry {
                 json_schema: action.json_schema,
             },
         );
-        for &alias in action.aliases {
-            let alias: SharedString = alias.into();
+        for &alias in action.deprecated_aliases {
+            let alias_string: SharedString = alias.into();
             self.by_name.insert(
-                alias.clone(),
+                alias_string.clone(),
                 ActionData {
                     build: action.build,
                     json_schema: action.json_schema,
                 },
             );
-            self.deprecations.insert(alias.clone(), name.clone());
-            self.all_names.push(alias);
+            self.deprecated_aliases.insert(alias, action.name);
+            self.all_names.push(alias_string);
         }
         self.names_by_type_id.insert(action.type_id, name.clone());
-        self.all_names.push(name);
+        self.all_names.push(name.clone());
+
+        // Check if the action itself has a deprecation message
+        if let Some(deprecation_msg) = action.deprecation_message {
+            self.deprecation_messages
+                .insert(action.name, deprecation_msg);
+        }
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
@@ -331,8 +351,12 @@ impl ActionRegistry {
             .collect::<Vec<_>>()
     }
 
-    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
-        &self.deprecations
+    pub fn deprecated_aliases(&self) -> &HashMap<&'static str, &'static str> {
+        &self.deprecated_aliases
+    }
+
+    pub fn deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
+        &self.deprecation_messages
     }
 }
 
