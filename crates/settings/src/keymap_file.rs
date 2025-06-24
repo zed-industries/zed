@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, NoAction,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, NoAction,
 };
 use schemars::{
     JsonSchema,
@@ -151,9 +151,21 @@ impl KeymapFile {
         parse_json_with_comments::<Self>(content)
     }
 
-    pub fn load_asset(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
+    pub fn load_asset(
+        asset_path: &str,
+        source: Option<KeybindSource>,
+        cx: &App,
+    ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { key_bindings } => Ok(key_bindings),
+            KeymapFileLoadResult::Success { mut key_bindings } => match source {
+                Some(source) => Ok({
+                    for key_binding in &mut key_bindings {
+                        key_binding.set_meta(source.meta());
+                    }
+                    key_bindings
+                }),
+                None => Ok(key_bindings),
+            },
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
             }
@@ -616,6 +628,61 @@ impl KeymapFile {
                 Err(err)
             }
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum KeybindSource {
+    User,
+    Default,
+    Base,
+    Vim,
+}
+
+impl KeybindSource {
+    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
+    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
+    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
+    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            KeybindSource::User => "User",
+            KeybindSource::Default => "Default",
+            KeybindSource::Base => "Base",
+            KeybindSource::Vim => "Vim",
+        }
+    }
+
+    pub fn meta(&self) -> KeyBindingMetaIndex {
+        match self {
+            KeybindSource::User => Self::USER,
+            KeybindSource::Default => Self::DEFAULT,
+            KeybindSource::Base => Self::BASE,
+            KeybindSource::Vim => Self::VIM,
+        }
+    }
+
+    pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
+        match index {
+            _ if index == Self::USER => KeybindSource::User,
+            _ if index == Self::USER => KeybindSource::Base,
+            _ if index == Self::DEFAULT => KeybindSource::Default,
+            _ if index == Self::VIM => KeybindSource::Vim,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<KeyBindingMetaIndex> for KeybindSource {
+    fn from(index: KeyBindingMetaIndex) -> Self {
+        Self::from_meta(index)
+    }
+}
+
+impl From<KeybindSource> for KeyBindingMetaIndex {
+    fn from(source: KeybindSource) -> Self {
+        return source.meta();
     }
 }
 
