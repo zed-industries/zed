@@ -65,7 +65,7 @@ pub struct Arena {
     chunks: Vec<Chunk>,
     elements: Vec<ArenaElement>,
     valid: Rc<Cell<bool>>,
-    current_chunk: usize,
+    current_chunk_index: usize,
     chunk_size: usize,
 }
 
@@ -75,7 +75,7 @@ impl Arena {
             chunks: vec![Chunk::new(chunk_size)],
             elements: Vec::new(),
             valid: Rc::new(Cell::new(true)),
-            current_chunk: 0,
+            current_chunk_index: 0,
             chunk_size,
         }
     }
@@ -95,7 +95,7 @@ impl Arena {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
-        self.current_chunk = 0;
+        self.current_chunk_index = 0;
         for chunk in &mut self.chunks {
             chunk.reset()
         }
@@ -121,26 +121,26 @@ impl Arena {
 
         unsafe {
             let layout = alloc::Layout::new::<T>();
-            let mut current_chunk = self.chunks.get_mut(self.current_chunk).unwrap();
+            let mut current_chunk = &mut self.chunks[self.current_chunk_index];
             let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
                 ptr
-            } else if self.current_chunk + 1 < self.chunks.len()
-                && self.chunks[self.current_chunk + 1].size_in_bytes > layout.size()
-            {
-                self.current_chunk += 1;
-                self.chunks[self.current_chunk].allocate(layout).unwrap()
             } else {
-                let chunk_size = self.chunk_size.max(layout.size().next_power_of_two());
-                self.chunks.push(Chunk::new(chunk_size));
-                self.current_chunk += 1;
-                let ptr = self.chunks.last_mut().unwrap().allocate(layout).unwrap();
-                log::info!(
-                    "elevated element arena capacity to: {} with total usage: {}.",
-                    self.capacity(),
-                    self.len()
-                );
-
-                ptr
+                if self.current_chunk_index + 1 >= self.chunks.len() {
+                    self.chunks.push(Chunk::new(self.chunk_size));
+                    self.current_chunk_index = self.chunks.len() - 1;
+                } else {
+                    self.current_chunk_index += 1;
+                }
+                current_chunk = &mut self.chunks[self.current_chunk_index];
+                if let Some(ptr) = current_chunk.allocate(layout) {
+                    ptr
+                } else {
+                    panic!(
+                        "Arena chunk_size of {} is too small to allocate {} bytes",
+                        self.chunk_size,
+                        layout.size()
+                    );
+                }
             };
 
             inner_writer(ptr.cast(), f);
