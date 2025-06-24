@@ -24,11 +24,10 @@ use workspace::{
     item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
-
 use zed_actions::{
-    self, DiffText,
+    self, DiffText, FilePath,
     FilePath::{Custom, Path},
-    SelectionData, TextData,
+    SelectionData,
 };
 
 pub struct DiffView {
@@ -64,39 +63,22 @@ impl DiffView {
             let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let old_file = old_buffer.read(cx).file();
-                let new_file = new_buffer.read(cx).file();
+                let old_path = old_buffer
+                    .read(cx)
+                    .file()
+                    .and_then(|file| Some(file.full_path(cx).to_path_buf()));
+                let new_path = new_buffer
+                    .read(cx)
+                    .file()
+                    .and_then(|file| Some(file.full_path(cx).to_path_buf()));
 
-                let untitled = "untitled";
-                let old_filename = old_file
-                    .and_then(|file| {
-                        Some(
-                            file.full_path(cx)
-                                .file_name()?
-                                .to_string_lossy()
-                                .to_string(),
-                        )
-                    })
-                    .unwrap_or_else(|| untitled.into());
-                let new_filename = new_file
-                    .and_then(|file| {
-                        Some(
-                            file.full_path(cx)
-                                .file_name()?
-                                .to_string_lossy()
-                                .to_string(),
-                        )
-                    })
-                    .unwrap_or_else(|| untitled.into());
-                let tab_content_text = diff_tab_text(old_filename, new_filename);
+                let old_filename = filename(&Path(old_path.clone()));
+                let old_path = full_path(&Path(old_path));
+                let new_filename = filename(&Path(new_path.clone()));
+                let new_path = full_path(&Path(new_path));
 
-                let old_path = old_file
-                    .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
-                    .unwrap_or_else(|| untitled.into());
-                let new_path = new_file
-                    .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
-                    .unwrap_or_else(|| untitled.into());
-                let tab_tooltip_text = diff_tab_text(old_path, new_path);
+                let tab_content_text = diff_tab_text(&old_filename, &new_filename);
+                let tab_tooltip_text = diff_tab_text(&old_path, &new_path);
 
                 let diff_view = cx.new(|cx| {
                     DiffView::new(
@@ -131,16 +113,18 @@ impl DiffView {
         let workspace = workspace.weak_handle();
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+            let old_text_data = action.old_text_data;
+            let new_text_data = action.new_text_data;
 
             let old_buffer =
-                cx.new(|cx| language::Buffer::local(action.old_text_data.text.clone(), cx))?;
+                cx.new(|cx| language::Buffer::local(old_text_data.text.clone(), cx))?;
             let new_buffer =
-                cx.new(|cx| language::Buffer::local(action.new_text_data.text.clone(), cx))?;
+                cx.new(|cx| language::Buffer::local(new_text_data.text.clone(), cx))?;
 
             let language_registry =
                 project.read_with(cx, |project, _| project.languages().clone())?;
 
-            if let Some(language_name) = &action.old_text_data.language {
+            if let Some(language_name) = &old_text_data.language {
                 if let Ok(language) = language_registry.language_for_name(language_name).await {
                     old_buffer.update(cx, |buffer, cx| {
                         buffer.set_language(Some(language.clone()), cx);
@@ -148,7 +132,7 @@ impl DiffView {
                 }
             }
 
-            if let Some(language_name) = &action.new_text_data.language {
+            if let Some(language_name) = &new_text_data.language {
                 if let Ok(language) = language_registry.language_for_name(language_name).await {
                     new_buffer.update(cx, |buffer, cx| {
                         buffer.set_language(Some(language), cx);
@@ -158,11 +142,23 @@ impl DiffView {
 
             let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
-            let (old_filename, old_path) = source_location_text(action.old_text_data);
-            let (new_filename, new_path) = source_location_text(action.new_text_data);
+            let mut old_filename = filename(&old_text_data.file_path);
+            let mut old_path = full_path(&old_text_data.file_path);
+            let mut new_filename = filename(&new_text_data.file_path);
+            let mut new_path = full_path(&new_text_data.file_path);
 
-            let tab_content_text = diff_tab_text(old_filename, new_filename);
-            let tab_tooltip_text = diff_tab_text(old_path, new_path);
+            if let Some(selection_data) = old_text_data.selection_data {
+                old_filename = add_line_location(&old_filename, &selection_data);
+                old_path = add_line_location(&old_path, &selection_data);
+            };
+
+            if let Some(selection_data) = new_text_data.selection_data {
+                new_filename = add_line_location(&new_filename, &selection_data);
+                new_path = add_line_location(&new_path, &selection_data);
+            }
+
+            let tab_content_text = diff_tab_text(&old_filename, &new_filename);
+            let tab_tooltip_text = diff_tab_text(&old_path, &new_path);
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
@@ -279,33 +275,30 @@ impl DiffView {
     }
 }
 
-fn source_location_text(text_data: TextData) -> (String, String) {
+fn filename(file_path: &FilePath) -> String {
     let untitled = "untitled";
-    let (filename, full_path) = match text_data.file_path {
-        Path(path) => path
-            .map(|p| {
-                let filename = p
-                    .file_name()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or(untitled.to_string());
-                let full_path = p.compact().to_string_lossy().to_string();
 
-                (filename, full_path)
-            })
-            .unwrap_or((untitled.to_string(), untitled.to_string())),
-        Custom(path) => (path.clone(), path),
-    };
-
-    if let Some(selection_data) = text_data.selection_data {
-        let filename = add_line_location(filename, &selection_data);
-        let full_path = add_line_location(full_path, &selection_data);
-        return (filename, full_path);
+    match file_path {
+        Path(Some(p)) => match p.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => untitled.to_string(),
+        },
+        Path(None) => untitled.to_string(),
+        Custom(path) => path.clone(),
     }
-
-    (filename, full_path)
 }
 
-fn add_line_location(source: String, selection_data: &SelectionData) -> String {
+fn full_path(file_path: &FilePath) -> String {
+    let untitled = "untitled";
+
+    match file_path {
+        Path(Some(p)) => p.compact().to_string_lossy().to_string(),
+        Path(None) => untitled.to_string(),
+        Custom(path) => path.clone(),
+    }
+}
+
+fn add_line_location(source: &String, selection_data: &SelectionData) -> String {
     let start_row = selection_data.start_row;
     let end_row = selection_data.end_row;
     let start_col = selection_data.start_column;
@@ -326,7 +319,7 @@ fn add_line_location(source: String, selection_data: &SelectionData) -> String {
     format!("{} @ {}", source, range_text)
 }
 
-fn diff_tab_text(old: String, new: String) -> SharedString {
+fn diff_tab_text(old: &String, new: &String) -> SharedString {
     format!("{old} ↔ {new}").into()
 }
 
