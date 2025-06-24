@@ -1,5 +1,5 @@
 use std::{
-    alloc,
+    alloc::{self, handle_alloc_error},
     cell::Cell,
     ops::{Deref, DerefMut},
     ptr,
@@ -43,6 +43,9 @@ impl Chunk {
             // this only fails if chunk_size is unreasonably huge
             let layout = alloc::Layout::from_size_align(chunk_size, 1).unwrap();
             let start = alloc::alloc(layout);
+            if start.is_null() {
+                handle_alloc_error(layout);
+            }
             let end = start.add(chunk_size);
             Self {
                 start,
