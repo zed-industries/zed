@@ -100,7 +100,7 @@ actions!(
 );
 
 #[derive(PartialEq, Clone, Action)]
-#[action(namespace = assistant, no_json)]
+#[action(namespace = assistant, no_json, no_register)]
 pub enum InsertDraggedFiles {
     ProjectPaths(Vec<ProjectPath>),
     ExternalFiles(Vec<PathBuf>),

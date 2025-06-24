@@ -59,7 +59,7 @@ pub struct FindCommand {
 }
 
 #[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = vim, no_json)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct ReplaceCommand {
     pub(crate) range: CommandRange,
     pub(crate) replacement: Replacement,

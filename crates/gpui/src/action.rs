@@ -70,8 +70,11 @@ macro_rules! actions {
 ///
 /// - `name = "ActionName"` overrides the action's name. This must not contain `::`.
 ///
-/// - `no_json` is used in Zed for internal actions that cannot be used in the keymap. It causes the
-/// `build` method to always error and `action_json_schema` to return None.
+/// - `no_json` causes the `build` method to always error and `action_json_schema` to return `None`,
+/// and allows actions not implement `serde::Serialize` and `schemars::JsonSchema`.
+///
+/// - `no_register` skips registering the action. This is useful for implementing the `Action` trait
+/// while not being invokeable by the usual mechanisms.
 ///
 /// - `deprecated_aliases = ["editor::SomeAction"]` specifies deprecated old names for the action.
 /// These action names should *not* correspond to any actions that are registered. These old names

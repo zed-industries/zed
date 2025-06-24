@@ -11,6 +11,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let mut name_argument = None;
     let mut deprecated_aliases = Vec::new();
     let mut no_json = false;
+    let mut no_register = false;
     let mut namespace = None;
     let mut deprecated = None;
 
@@ -36,6 +37,11 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                         return Err(meta.error("'no_json' argument specified multiple times"));
                     }
                     no_json = true;
+                } else if meta.path.is_ident("no_register") {
+                    if no_register {
+                        return Err(meta.error("'no_register' argument specified multiple times"));
+                    }
+                    no_register = true;
                 } else if meta.path.is_ident("deprecated_aliases") {
                     if !deprecated_aliases.is_empty() {
                         return Err(
@@ -59,7 +65,11 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     let lit: LitStr = meta.input.parse()?;
                     deprecated = Some(lit.value());
                 } else {
-                    return Err(meta.error(format!("'{:?}' argument not recognized", meta.path)));
+                    return Err(meta.error(format!(
+                        "'{:?}' argument not recognized, expected \
+                        'namespace', 'no_json', 'no_register, 'deprecated_aliases', or 'deprecated'",
+                        meta.path
+                    )));
                 }
                 Ok(())
             })
@@ -158,7 +168,11 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         }
     };
 
-    let registration = generate_register_action(struct_name);
+    let registration = if no_register {
+        quote! {}
+    } else {
+        generate_register_action(struct_name)
+    };
 
     TokenStream::from(quote! {
         #registration
