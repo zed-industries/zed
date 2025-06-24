@@ -216,66 +216,78 @@ impl Editor {
                             ..Default::default()
                         };
                         let scroll_handle = ScrollHandle::new();
-                        let signatures = signature_help
-                            .signatures
-                            .into_iter()
-                            .map(|s| {
-                                let parameter_doc = s
-                                    .active_parameter
-                                    .and_then(|idx| s.parameters.get(idx))
-                                    .and_then(|param| param.documentation.clone())
-                                    .map(|documentation| {
-                                        cx.new(|cx| {
-                                            Markdown::new(
-                                                documentation.into(),
-                                                Some(languages.clone()),
-                                                None,
-                                                cx,
-                                            )
-                                        })
-                                    });
+                        
+                        // Defer the entire popover creation to prevent blinking
+                        let editor_handle = cx.entity();
+                        let languages_clone = languages.clone();
+                        let text_style_clone = text_style.clone();
+                        let scroll_handle_clone = scroll_handle.clone();
+                        
+                        cx.defer(move |cx| {
+                            editor_handle.update(cx, |editor, cx| {
+                                let signatures = signature_help
+                                    .signatures
+                                    .into_iter()
+                                    .map(|s| {
+                                        let parameter_doc = s
+                                            .active_parameter
+                                            .and_then(|idx| s.parameters.get(idx))
+                                            .and_then(|param| param.documentation.clone())
+                                            .map(|documentation| {
+                                                cx.new(|cx| {
+                                                    Markdown::new(
+                                                        documentation.into(),
+                                                        Some(languages_clone.clone()),
+                                                        None,
+                                                        cx,
+                                                    )
+                                                })
+                                            });
 
-                                SignatureHelp {
-                                    label: s.label.into(),
-                                    documentation: s.documentation.map(|documentation| {
-                                        cx.new(|cx| {
-                                            Markdown::new(
-                                                documentation.into(),
-                                                Some(languages.clone()),
-                                                None,
-                                                cx,
-                                            )
-                                        })
-                                    }),
-                                    highlights: s.highlights,
-                                    active_parameter: s.active_parameter,
-                                    parameter_documentation: parameter_doc,
+                                        SignatureHelp {
+                                            label: s.label.into(),
+                                            documentation: s.documentation.map(|documentation| {
+                                                cx.new(|cx| {
+                                                    Markdown::new(
+                                                        documentation.into(),
+                                                        Some(languages_clone.clone()),
+                                                        None,
+                                                        cx,
+                                                    )
+                                                })
+                                            }),
+                                            highlights: s.highlights,
+                                            active_parameter: s.active_parameter,
+                                            parameter_documentation: parameter_doc,
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                if signatures.is_empty() {
+                                    editor
+                                        .signature_help_state
+                                        .hide(SignatureHelpHiddenBy::AutoClose);
+                                    return;
                                 }
-                            })
-                            .collect::<Vec<_>>();
 
-                        if signatures.is_empty() {
-                            editor
-                                .signature_help_state
-                                .hide(SignatureHelpHiddenBy::AutoClose);
-                            return;
-                        }
+                                let current_signature = signature_help
+                                    .active_signature
+                                    .min(signatures.len().saturating_sub(1));
 
-                        let current_signature = signature_help
-                            .active_signature
-                            .min(signatures.len().saturating_sub(1));
-
-                        let signature_help_popover = SignatureHelpPopover {
-                            style: text_style,
-                            signature: signatures,
-                            current_signature,
-                            scroll_handle: scroll_handle.clone(),
-                            scrollbar_state: ScrollbarState::new(scroll_handle),
-                        };
-                        editor
-                            .signature_help_state
-                            .set_popover(signature_help_popover);
-                        cx.notify();
+                                let signature_help_popover = SignatureHelpPopover {
+                                    style: text_style_clone,
+                                    signature: signatures,
+                                    current_signature,
+                                    scroll_handle: scroll_handle_clone.clone(),
+                                    scrollbar_state: ScrollbarState::new(scroll_handle_clone),
+                                };
+                                
+                                editor
+                                    .signature_help_state
+                                    .set_popover(signature_help_popover);
+                                cx.notify();
+                            });
+                        });
                     })
                     .ok();
             }));
