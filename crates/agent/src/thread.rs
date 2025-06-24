@@ -1,22 +1,25 @@
-use std::io::Write;
-use std::ops::Range;
-use std::sync::Arc;
-use std::time::Instant;
-
+use crate::{
+    agent_profile::AgentProfile,
+    context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext},
+    thread_store::{
+        SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
+        SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
+        ThreadStore,
+    },
+    tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
+};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::{HashMap, HashSet};
-use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
-use futures::future::Shared;
-use futures::{FutureExt, StreamExt as _};
+use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
-    WeakEntity,
+    WeakEntity, Window,
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -27,28 +30,20 @@ use language_model::{
     TokenUsage,
 };
 use postage::stream::Stream as _;
-use project::Project;
-use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
+use project::{
+    Project,
+    git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
+};
 use prompt_store::{ModelContext, PromptBuilder};
 use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::{io::Write, ops::Range, sync::Arc, time::Instant};
 use thiserror::Error;
-use ui::Window;
 use util::{ResultExt as _, post_inc};
-
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
-
-use crate::ThreadStore;
-use crate::agent_profile::AgentProfile;
-use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
-use crate::thread_store::{
-    SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
-    SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
-};
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -98,13 +93,18 @@ impl MessageId {
     fn post_inc(&mut self) -> Self {
         Self(post_inc(&mut self.0))
     }
+
+    pub fn as_usize(&self) -> usize {
+        self.0
+    }
 }
 
 /// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
 #[derive(Clone, Debug)]
 pub struct MessageCrease {
     pub range: Range<usize>,
-    pub metadata: CreaseMetadata,
+    pub icon_path: SharedString,
+    pub label: SharedString,
     /// None for a deserialized message, Some otherwise.
     pub context: Option<AgentContextHandle>,
 }
@@ -540,10 +540,8 @@ impl Thread {
                         .into_iter()
                         .map(|crease| MessageCrease {
                             range: crease.start..crease.end,
-                            metadata: CreaseMetadata {
-                                icon_path: crease.icon_path,
-                                label: crease.label,
-                            },
+                            icon_path: crease.icon_path,
+                            label: crease.label,
                             context: None,
                         })
                         .collect(),
@@ -1170,8 +1168,8 @@ impl Thread {
                             .map(|crease| SerializedCrease {
                                 start: crease.range.start,
                                 end: crease.range.end,
-                                icon_path: crease.metadata.icon_path.clone(),
-                                label: crease.metadata.label.clone(),
+                                icon_path: crease.icon_path.clone(),
+                                label: crease.label.clone(),
                             })
                             .collect(),
                         is_hidden: message.is_hidden,
@@ -2997,11 +2995,13 @@ fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
+    use crate::{
+        context::load_context, context_store::ContextStore, thread_store, thread_store::ThreadStore,
+    };
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
-    use editor::EditorSettings;
     use gpui::TestAppContext;
+    use icons::IconName;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
@@ -3009,7 +3009,6 @@ mod tests {
     use settings::{Settings, SettingsStore};
     use std::sync::Arc;
     use theme::ThemeSettings;
-    use ui::IconName;
     use util::path;
     use workspace::Workspace;
 
@@ -3837,7 +3836,6 @@ fn main() {{
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
     }

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use agent::context_store::ContextStore;
 use anyhow::{Context as _, Result, bail};
 use futures::AsyncReadExt as _;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
@@ -12,7 +13,6 @@ use ui::{Context, ListItem, Window, prelude::*};
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
-use crate::context_store::ContextStore;
 
 pub struct FetchContextPicker {
     picker: Entity<Picker<FetchContextPickerDelegate>>,

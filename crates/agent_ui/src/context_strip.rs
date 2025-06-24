@@ -1,7 +1,15 @@
-use std::path::Path;
-use std::rc::Rc;
-
-use assistant_context_editor::AssistantContext;
+use crate::{
+    AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
+    ModelUsageContext, RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
+    context_picker::ContextPicker,
+    ui::{AddedContext, ContextPill},
+};
+use agent::context_store::SuggestedContext;
+use agent::{
+    context::AgentContextHandle,
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
@@ -10,21 +18,10 @@ use gpui::{
     Subscription, WeakEntity,
 };
 use itertools::Itertools;
-use language::Buffer;
 use project::ProjectItem;
+use std::{path::Path, rc::Rc};
 use ui::{PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
-
-use crate::context::{AgentContextHandle, ContextKind};
-use crate::context_picker::ContextPicker;
-use crate::context_store::ContextStore;
-use crate::thread::Thread;
-use crate::thread_store::{TextThreadStore, ThreadStore};
-use crate::ui::{AddedContext, ContextPill};
-use crate::{
-    AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
-    ModelUsageContext, RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
-};
 
 pub struct ContextStrip {
     context_store: Entity<ContextStore>,
@@ -574,47 +571,4 @@ impl EventEmitter<ContextStripEvent> for ContextStrip {}
 pub enum SuggestContextKind {
     File,
     Thread,
-}
-
-#[derive(Clone)]
-pub enum SuggestedContext {
-    File {
-        name: SharedString,
-        icon_path: Option<SharedString>,
-        buffer: WeakEntity<Buffer>,
-    },
-    Thread {
-        name: SharedString,
-        thread: WeakEntity<Thread>,
-    },
-    TextThread {
-        name: SharedString,
-        context: WeakEntity<AssistantContext>,
-    },
-}
-
-impl SuggestedContext {
-    pub fn name(&self) -> &SharedString {
-        match self {
-            Self::File { name, .. } => name,
-            Self::Thread { name, .. } => name,
-            Self::TextThread { name, .. } => name,
-        }
-    }
-
-    pub fn icon_path(&self) -> Option<SharedString> {
-        match self {
-            Self::File { icon_path, .. } => icon_path.clone(),
-            Self::Thread { .. } => None,
-            Self::TextThread { .. } => None,
-        }
-    }
-
-    pub fn kind(&self) -> ContextKind {
-        match self {
-            Self::File { .. } => ContextKind::File,
-            Self::Thread { .. } => ContextKind::Thread,
-            Self::TextThread { .. } => ContextKind::TextThread,
-        }
-    }
 }

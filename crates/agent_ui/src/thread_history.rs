@@ -1,7 +1,5 @@
-use std::fmt::Display;
-use std::ops::Range;
-use std::sync::Arc;
-
+use crate::{AgentPanel, RemoveSelectedThread};
+use agent::history_store::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -9,15 +7,13 @@ use gpui::{
     App, ClickEvent, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
+use std::{fmt::Display, ops::Range, sync::Arc};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
     Tooltip, prelude::*,
 };
 use util::ResultExt;
-
-use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::{AgentPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     agent_panel: WeakEntity<AgentPanel>,

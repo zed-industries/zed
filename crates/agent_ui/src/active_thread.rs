@@ -1,18 +1,17 @@
-use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
-use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
-use crate::thread::{
-    LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback, ThreadSummary,
-};
-use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
-use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
 use crate::{AgentPanel, ModelUsageContext};
+use agent::{
+    ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
+    Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary,
+    context::{self, AgentContextHandle, RULES_ICON},
+    thread_store::RulesLoadingError,
+    tool_use::{PendingToolUseStatus, ToolUse},
+};
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
@@ -1583,8 +1582,7 @@ impl ActiveThread {
         let git_store = project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
 
-        let load_context_task =
-            crate::context::load_context(new_context, &project, &prompt_store, cx);
+        let load_context_task = context::load_context(new_context, &project, &prompt_store, cx);
         self._load_edited_message_context_task =
             Some(cx.spawn_in(window, async move |this, cx| {
                 let (context, checkpoint) =
@@ -1737,7 +1735,7 @@ impl ActiveThread {
             telemetry::event!(
                 "Assistant Thread Feedback Comments",
                 thread_id,
-                message_id = message_id.0,
+                message_id = message_id.as_usize(),
                 message_content,
                 comments = comments_value
             );
@@ -3723,8 +3721,10 @@ fn open_editor_at_position(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use agent::{MessageSegment, context::ContextLoadResult, thread_store};
     use assistant_tool::{ToolRegistry, ToolWorkingSet};
-    use editor::{EditorSettings, display_map::CreaseMetadata};
+    use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, VisualTestContext};
     use language_model::{
@@ -3737,10 +3737,6 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use workspace::CollaboratorId;
-
-    use crate::{ContextLoadResult, thread::MessageSegment, thread_store};
-
-    use super::*;
 
     #[gpui::test]
     async fn test_agent_is_unfollowed_after_cancelling_completion(cx: &mut TestAppContext) {
@@ -3813,10 +3809,8 @@ mod tests {
 
         let creases = vec![MessageCrease {
             range: 14..22,
-            metadata: CreaseMetadata {
-                icon_path: "icon".into(),
-                label: "foo.txt".into(),
-            },
+            icon_path: "icon".into(),
+            label: "foo.txt".into(),
             context: None,
         }];
 

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/agent_ui",
     "crates/agent",
     "crates/agent_settings",
     "crates/anthropic",
@@ -214,6 +215,7 @@ edition = "2024"
 
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
+agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }

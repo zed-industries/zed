@@ -531,7 +531,7 @@ pub fn main() {
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        agent::init(
+        agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             prompt_builder.clone(),

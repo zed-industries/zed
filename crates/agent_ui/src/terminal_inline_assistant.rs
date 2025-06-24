@@ -1,10 +1,12 @@
-use crate::context::load_context;
-use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
-use crate::thread_store::{TextThreadStore, ThreadStore};
+use agent::{
+    context::load_context,
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;

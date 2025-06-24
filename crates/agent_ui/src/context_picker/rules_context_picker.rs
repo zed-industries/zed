@@ -7,9 +7,9 @@ use prompt_store::{PromptId, PromptStore, UserPromptId};
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 
-use crate::context::RULES_ICON;
 use crate::context_picker::ContextPicker;
-use crate::context_store::{self, ContextStore};
+use agent::context::RULES_ICON;
+use agent::context_store::{self, ContextStore};
 
 pub struct RulesContextPicker {
     picker: Entity<Picker<RulesContextPickerDelegate>>,
