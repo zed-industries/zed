@@ -142,6 +142,10 @@ impl Arena {
                 if self.current_chunk_index >= self.chunks.len() {
                     self.chunks.push(Chunk::new(self.chunk_size));
                     assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
+                    log::info!(
+                        "increased element arena capacity to {}kb",
+                        self.capacity() / 1024,
+                    );
                 }
                 current_chunk = &mut self.chunks[self.current_chunk_index];
                 if let Some(ptr) = current_chunk.allocate(layout) {
