@@ -1,6 +1,5 @@
-mod markdown_preview;
+mod preview;
 mod repl_menu;
-mod svg_preview;
 
 use agent_settings::AgentSettings;
 use editor::actions::{
@@ -573,8 +572,7 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
-            .children(self.render_toggle_svg_preview(self.workspace.clone(), cx))
+            .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
                 AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
