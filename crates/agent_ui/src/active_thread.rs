@@ -1147,14 +1147,16 @@ impl ActiveThread {
                 max_attempts,
                 provider_name,
             } => {
-                let message_segments = self
-                    .thread
-                    .read(cx)
-                    .message(*message_id)
-                    .map(|message| message.segments.clone());
-
-                if let Some(message_segments) = message_segments {
-                    self.push_message(message_id, &message_segments, window, cx);
+                if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
+                    thread.message(*message_id).map(|message| {
+                        RenderedMessage::from_segments(
+                            &message.segments,
+                            self.language_registry.clone(),
+                            cx,
+                        )
+                    })
+                }) {
+                    self.push_rendered_message(*message_id, rendered_message);
                 }
 
                 let notification_text = if *max_attempts == 1 {
