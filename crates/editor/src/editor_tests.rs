@@ -21771,9 +21771,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     cx.set_state(indoc! {"
         def main():
         ˇ    try:
-        ˇ       fetch()
+        ˇ        fetch()
         ˇ    except ValueError:
-        ˇ       handle_error()
+        ˇ        handle_error()
         ˇ    else:
         ˇ        match value:
         ˇ            case _:
