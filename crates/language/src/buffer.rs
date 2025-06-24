@@ -3076,18 +3076,21 @@ impl BufferSnapshot {
             let row_start = Point::new(row, self.indent_size_for_line(row).len);
 
             let mut from_new_logic = false;
-            let new_logic_basis_row = if !config.outdent_rules.is_empty() {
+            let new_logic_basis_row = if !config.decrease_indent_patterns.is_empty() {
                 let mut basis_row = None;
                 let line_range = Point::new(row, 0)..Point::new(row, self.line_len(row));
                 let line = self.text_for_range(line_range).collect::<String>();
-                for rule in &config.outdent_rules {
-                    if rule.regex.as_ref().map_or(false, |r| r.is_match(&line)) {
-                        dbg!(&rule.regex, &line);
+                for rule in &config.decrease_indent_patterns {
+                    if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
+                        dbg!(&rule.pattern, &line);
                         let current_line_indent = self.indent_size_for_line(row).len;
                         if let Some(parent_block) = typed_indent_blocks.iter().rfind(|block| {
                             block.start_point.row < row
                                 && block.start_point.column <= current_line_indent
-                                && rule.parents.iter().any(|p| p == block.block_type.as_ref())
+                                && rule
+                                    .valid_after
+                                    .iter()
+                                    .any(|p| p == block.block_type.as_ref())
                         }) {
                             basis_row = Some(parent_block.start_point.row);
                             from_new_logic = true;

@@ -719,7 +719,7 @@ pub struct LanguageConfig {
     pub decrease_indent_pattern: Option<Regex>,
     /// TODO: comment here
     #[serde(default)]
-    pub outdent_rules: Vec<OutdentRule>,
+    pub decrease_indent_patterns: Vec<DecreaseIndentConfig>,
     /// A list of characters that trigger the automatic insertion of a closing
     /// bracket when they immediately precede the point where an opening
     /// bracket is inserted.
@@ -779,17 +779,13 @@ pub struct LanguageConfig {
     pub documentation: Option<DocumentationConfig>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
-pub struct OutdentRule {
-    #[serde(
-        default,
-        serialize_with = "serialize_regex",
-        deserialize_with = "deserialize_regex"
-    )]
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
+pub struct DecreaseIndentConfig {
+    #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
-    pub regex: Option<Regex>,
+    pub pattern: Option<Regex>,
     #[serde(default)]
-    pub parents: Vec<String>,
+    pub valid_after: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -915,7 +911,7 @@ impl Default for LanguageConfig {
             auto_indent_on_paste: None,
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
-            outdent_rules: Default::default(),
+            decrease_indent_patterns: Default::default(),
             autoclose_before: Default::default(),
             line_comments: Default::default(),
             block_comment: Default::default(),
