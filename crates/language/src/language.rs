@@ -696,10 +696,6 @@ pub struct LanguageConfig {
     #[serde(default)]
     #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
-    /// If set to true, indicates the language uses significant whitespace/indentation
-    /// for syntax structure (like Python) rather than brackets/braces for code blocks.
-    #[serde(default)]
-    pub significant_indentation: bool,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
@@ -927,7 +923,6 @@ impl Default for LanguageConfig {
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
-            significant_indentation: Default::default(),
             documentation: None,
         }
     }

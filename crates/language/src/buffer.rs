@@ -2911,11 +2911,8 @@ impl BufferSnapshot {
         &self,
         row_range: Range<u32>,
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
-        dbg!(&row_range);
-
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
-        let significant_indentation = config.significant_indentation;
 
         #[derive(Debug, Clone)]
         struct IndentBlock {
@@ -2938,13 +2935,10 @@ impl BufferSnapshot {
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
-            let mut outdent: Option<Point> = None;
 
             let grammar = &grammars[mat.grammar_index];
             let config = grammar.indents_config.as_ref().unwrap();
-            dbg!(mat.captures.len());
             for capture in mat.captures {
-                dbg!(&capture.index);
                 if capture.index == config.indent_capture_ix {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
                     end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
@@ -2953,15 +2947,9 @@ impl BufferSnapshot {
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
-                    let point = Point::from_ts_point(capture.node.start_position());
-                    outdent.get_or_insert(point);
-                    outdent_positions.push(point);
+                    outdent_positions.push(Point::from_ts_point(capture.node.start_position());
                 }
-
-                dbg!(&config.query.capture_names());
-
                 let capture_name = &config.query.capture_names()[capture.index as usize];
-                dbg!(&capture_name);
                 if let Some(block_type) = capture_name.strip_prefix("indent.") {
                     if !block_type.is_empty() {
                         typed_indent_blocks.push(IndentBlock {
@@ -2973,14 +2961,8 @@ impl BufferSnapshot {
             }
 
             matches.advance();
-            // in case of significant indentation expand end to outdent position
-            let end = if significant_indentation {
-                outdent.or(end)
-            } else {
-                end
-            };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && (!significant_indentation || start.column < end.column) {
+                if start.row == end.row {
                     continue;
                 }
                 let range = start..end;
@@ -2993,8 +2975,6 @@ impl BufferSnapshot {
                 }
             }
         }
-
-        dbg!(&indent_ranges);
 
         typed_indent_blocks.sort_by_key(|b| b.start_point);
 
@@ -3022,20 +3002,16 @@ impl BufferSnapshot {
             matches.advance();
         }
 
-        // we don't use outdent positions to truncate in case of significant indentation
-        // rather we use them to expand (handled above)
-        if !significant_indentation {
-            outdent_positions.sort();
-            for outdent_position in outdent_positions {
-                // find the innermost indent range containing this outdent_position
-                // set its end to the outdent position
-                if let Some(range_to_truncate) = indent_ranges
-                    .iter_mut()
-                    .filter(|indent_range| indent_range.contains(&outdent_position))
-                    .next_back()
-                {
-                    range_to_truncate.end = outdent_position;
-                }
+        outdent_positions.sort();
+        for outdent_position in outdent_positions {
+            // find the innermost indent range containing this outdent_position
+            // set its end to the outdent position
+            if let Some(range_to_truncate) = indent_ranges
+                .iter_mut()
+                .filter(|indent_range| indent_range.contains(&outdent_position))
+                .next_back()
+            {
+                range_to_truncate.end = outdent_position;
             }
         }
 
@@ -3136,14 +3112,8 @@ impl BufferSnapshot {
                 if range.start.row == prev_row && range.end > row_start {
                     indent_from_prev_row = true;
                 }
-                if significant_indentation && self.is_line_blank(row) && range.start.row == prev_row
-                {
-                    indent_from_prev_row = true;
-                }
-                if !significant_indentation || !self.is_line_blank(row) {
-                    if range.end > prev_row_start && range.end <= row_start {
-                        outdent_to_row = outdent_to_row.min(range.start.row);
-                    }
+                if range.end > prev_row_start && range.end <= row_start {
+                    outdent_to_row = outdent_to_row.min(range.start.row);
                 }
             }
 
