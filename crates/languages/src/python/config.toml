@@ -31,9 +31,9 @@ debuggers = ["Debugpy"]
 # increase_indent_pattern = "^[^#].*:\\s*$"
 # decrease_indent_pattern = "^\\s*(else|elif|except|finally)\\b.*:"
 outdent_rules = [
-  { regex = "^\\s*elif\\b",   parents = ["if", "elif"] },
-  { regex = "^\\s*else\\b",   parents = ["if", "elif", "for", "while", "try"] },
-  { regex = "^\\s*except\\b", parents = ["try", "except"] },
-  { regex = "^\\s*finally\\b",parents = ["try", "except"] },
-  { regex = "^\\s*case\\b",   parents = ["case"] },
+  { regex = "^\\s*elif\\b.*:",   parents = ["if", "elif"] },
+  { regex = "^\\s*else\\b.*:",   parents = ["if", "elif", "for", "while", "try"] },
+  { regex = "^\\s*except\\b.*:", parents = ["try", "except"] },
+  { regex = "^\\s*finally\\b.*:",parents = ["try", "except", "else"] },
+  { regex = "^\\s*case\\b.*:",   parents = ["match", "case"] }
 ]

@@ -2911,6 +2911,8 @@ impl BufferSnapshot {
         &self,
         row_range: Range<u32>,
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
+        dbg!(&row_range);
+
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
         let significant_indentation = config.significant_indentation;
@@ -2940,7 +2942,9 @@ impl BufferSnapshot {
 
             let grammar = &grammars[mat.grammar_index];
             let config = grammar.indents_config.as_ref().unwrap();
+            dbg!(mat.captures.len());
             for capture in mat.captures {
+                dbg!(&capture.index);
                 if capture.index == config.indent_capture_ix {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
                     end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
@@ -2952,15 +2956,18 @@ impl BufferSnapshot {
                     let point = Point::from_ts_point(capture.node.start_position());
                     outdent.get_or_insert(point);
                     outdent_positions.push(point);
-                } else {
-                    let capture_name = &config.query.capture_names()[capture.index as usize];
-                    if let Some(block_type) = capture_name.strip_prefix("indent.") {
-                        if !block_type.is_empty() {
-                            typed_indent_blocks.push(IndentBlock {
-                                start_point: Point::from_ts_point(capture.node.start_position()),
-                                block_type: block_type.to_string().into(),
-                            });
-                        }
+                }
+
+                dbg!(&config.query.capture_names());
+
+                let capture_name = &config.query.capture_names()[capture.index as usize];
+                dbg!(&capture_name);
+                if let Some(block_type) = capture_name.strip_prefix("indent.") {
+                    if !block_type.is_empty() {
+                        typed_indent_blocks.push(IndentBlock {
+                            start_point: Point::from_ts_point(capture.node.start_position()),
+                            block_type: block_type.to_string().into(),
+                        });
                     }
                 }
             }
@@ -3059,6 +3066,9 @@ impl BufferSnapshot {
         } else {
             row_range.start.saturating_sub(1)
         };
+
+        dbg!(&typed_indent_blocks);
+
         let mut prev_row_start = Point::new(prev_row, self.indent_size_for_line(prev_row).len);
         Some(row_range.map(move |row| {
             let row_start = Point::new(row, self.indent_size_for_line(row).len);
@@ -3070,7 +3080,11 @@ impl BufferSnapshot {
                 let line = self.text_for_range(line_range).collect::<String>();
                 for rule in &config.outdent_rules {
                     if rule.regex.as_ref().map_or(false, |r| r.is_match(&line)) {
+                        println!("matched");
+                        dbg!(&rule.regex, &line);
                         if let Some(parent_block) = typed_indent_blocks.iter().rfind(|block| {
+                            dbg!(&block);
+
                             block.start_point.row < row
                                 && rule.parents.iter().any(|p| p == block.block_type.as_ref())
                         }) {
@@ -3136,6 +3150,7 @@ impl BufferSnapshot {
             let from_regex = from_regex || from_new_logic;
 
             let suggestion = if let Some(basis_row) = new_logic_basis_row {
+                dbg!(&row, &basis_row);
                 Some(IndentSuggestion {
                     basis_row,
                     delta: Ordering::Equal,
