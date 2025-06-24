@@ -12168,17 +12168,13 @@ impl Editor {
             return;
         };
 
-        let clipboard_text = cx
-            .read_from_clipboard()
-            .map(|item| {
-                item.entries()
-                    .first()
-                    .map_or("".to_string(), |entry| match entry {
-                        ClipboardEntry::String(text) => text.text().to_string(),
-                        _ => "".to_string(),
-                    })
-            })
-            .unwrap_or_else(|| "".to_string());
+        let clipboard_text = match cx.read_from_clipboard() {
+            Some(item) => match item.entries().first() {
+                Some(ClipboardEntry::String(text)) => text.text().to_string(),
+                _ => "".to_string(),
+            },
+            None => "".to_string(),
+        };
 
         let buffer = self.buffer.read(cx).snapshot(cx);
 
