@@ -1168,7 +1168,7 @@ impl ActiveThread {
                         delay.as_secs(),
                     )
                 };
-                self.show_notification(&notification_text, IconName::ArrowCircle, window, cx);
+                self.show_notification(notification_text, IconName::ArrowCircle, window, cx);
                 cx.notify();
             }
         }
