@@ -72,6 +72,7 @@ struct PushObject {
 #[serde(deny_unknown_fields)]
 struct PushFindForward {
     before: bool,
+    multiline: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -79,6 +80,7 @@ struct PushFindForward {
 #[serde(deny_unknown_fields)]
 struct PushFindBackward {
     after: bool,
+    multiline: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -500,6 +502,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindForward {
                         before: action.before,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -510,6 +513,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindBackward {
                         after: action.after,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -1513,11 +1517,11 @@ impl Vim {
         }
 
         match self.active_operator() {
-            Some(Operator::FindForward { before }) => {
+            Some(Operator::FindForward { before, multiline }) => {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1527,11 +1531,11 @@ impl Vim {
                 Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, window, cx)
             }
-            Some(Operator::FindBackward { after }) => {
+            Some(Operator::FindBackward { after, multiline }) => {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1729,7 +1733,6 @@ struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
-    pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
@@ -1741,7 +1744,6 @@ struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
@@ -1793,9 +1795,6 @@ impl Settings for VimSettings {
                 .ok_or_else(Self::missing_default)?,
             use_system_clipboard: settings
                 .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_multiline_find: settings
-                .use_multiline_find
                 .ok_or_else(Self::missing_default)?,
             use_smartcase_find: settings
                 .use_smartcase_find
