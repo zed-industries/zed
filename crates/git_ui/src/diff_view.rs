@@ -21,7 +21,7 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -352,14 +352,14 @@ impl Item for DiffView {
 
     fn save(
         &mut self,
-        options: SaveOptions,
+        format: bool,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         // Delegate saving to the editor, which manages the new buffer
         self.editor
-            .update(cx, |editor, cx| editor.save(options, project, window, cx))
+            .update(cx, |editor, cx| editor.save(format, project, window, cx))
     }
 }
 
@@ -556,13 +556,7 @@ mod tests {
         });
 
         let save_task = diff_view.update_in(cx, |diff_view, window, cx| {
-            workspace::Item::save(
-                diff_view,
-                workspace::item::SaveOptions::default(),
-                project.clone(),
-                window,
-                cx,
-            )
+            workspace::Item::save(diff_view, true, project.clone(), window, cx)
         });
 
         save_task.await.expect("Save should succeed");
