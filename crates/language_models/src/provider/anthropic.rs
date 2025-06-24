@@ -561,9 +561,7 @@ pub fn into_anthropic(
                         }
                         MessageContent::RedactedThinking(data) => {
                             if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking {
-                                    data: String::from_utf8(data).ok()?,
-                                })
+                                Some(anthropic::RequestContent::RedactedThinking { data })
                             } else {
                                 None
                             }
@@ -737,10 +735,8 @@ impl AnthropicEventMapper {
                         signature: None,
                     })]
                 }
-                ResponseContent::RedactedThinking { .. } => {
-                    // Redacted thinking is encrypted and not accessible to the user, see:
-                    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
-                    Vec::new()
+                ResponseContent::RedactedThinking { data } => {
+                    vec![Ok(LanguageModelCompletionEvent::RedactedThinking { data })]
                 }
                 ResponseContent::ToolUse { id, name, .. } => {
                     self.tool_uses_by_index.insert(
