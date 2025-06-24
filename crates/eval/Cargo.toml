@@ -19,7 +19,7 @@ path = "src/explorer.rs"
 
 [dependencies]
 agent_core.workspace = true
-agent.workspace = true
+agent_ui.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true

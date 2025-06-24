@@ -1,5 +1,5 @@
 [package]
-name = "agent"
+name = "agent_ui"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true

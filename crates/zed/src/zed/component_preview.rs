@@ -5,8 +5,8 @@
 mod persistence;
 mod preview_support;
 
-use agent::ActiveThread;
 use agent_core::{TextThreadStore, ThreadStore};
+use agent_ui::ActiveThread;
 use client::UserStore;
 use collections::HashMap;
 use component::{ComponentId, ComponentMetadata, ComponentStatus, components};
@@ -639,7 +639,7 @@ impl ComponentPreview {
         // Check if the component's scope is Agent
         if scope == ComponentScope::Agent {
             if let Some(active_thread) = self.active_thread.clone() {
-                if let Some(element) = agent::get_agent_preview(
+                if let Some(element) = agent_ui::get_agent_preview(
                     &component.id(),
                     self.workspace.clone(),
                     active_thread,
@@ -1137,7 +1137,7 @@ impl ComponentPreviewPage {
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         // Try to get agent preview first if we have an active thread
         let maybe_agent_preview = if let Some(active_thread) = self.active_thread.as_ref() {
-            agent::get_agent_preview(
+            agent_ui::get_agent_preview(
                 &self.component.id(),
                 self.workspace.clone(),
                 active_thread.clone(),

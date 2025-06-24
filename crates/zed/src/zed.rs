@@ -9,7 +9,7 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent::AgentDiffToolbar;
+use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -515,7 +515,7 @@ fn initialize_panels(
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
             let agent_panel =
-                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+                agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
             Some(agent_panel)
@@ -536,13 +536,13 @@ fn initialize_panels(
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
             if is_assistant2_enabled {
                 <dyn AgentPanelDelegate>::set_global(
-                    Arc::new(agent::ConcreteAssistantPanelDelegate),
+                    Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(agent::AgentPanel::toggle_focus)
-                    .register_action(agent::InlineAssistant::inline_assist);
+                    .register_action(agent_ui::AgentPanel::toggle_focus)
+                    .register_action(agent_ui::InlineAssistant::inline_assist);
             }
         })?;
 
@@ -4320,7 +4320,7 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            agent::init(
+            agent_ui::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
                 prompt_builder.clone(),
