@@ -12170,10 +12170,15 @@ impl Editor {
 
         let clipboard_text = match cx.read_from_clipboard() {
             Some(item) => match item.entries().first() {
-                Some(ClipboardEntry::String(text)) => text.text().to_string(),
-                _ => "".to_string(),
+                Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
+                _ => None,
             },
-            None => "".to_string(),
+            None => None,
+        };
+
+        let Some(clipboard_text) = clipboard_text else {
+            log::warn!("Clipboard doesn't contain text.");
+            return;
         };
 
         let buffer = self.buffer.read(cx).snapshot(cx);
