@@ -4243,14 +4243,14 @@ mod tests {
                         .rev()
                         .join("::");
                     if namespace.is_empty() {
-                        actions_without_namespace.push(action_name);
+                        actions_without_namespace.push(*action_name);
                     }
                     namespace
                 })
                 .sorted()
                 .dedup()
                 .collect::<Vec<_>>();
-            assert_eq!(actions_without_namespace, Vec::new::<String>());
+            assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
                 "activity_indicator",
