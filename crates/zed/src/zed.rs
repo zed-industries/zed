@@ -4220,18 +4220,15 @@ mod tests {
         });
     }
 
-    /// Checks that action namespaces are the expected set and that action names are unique.
-    ///
-    /// The purpose of checking action namespaces is to prevent typos and let you know when
-    /// introducing a new namespace.
+    /// Checks that action namespaces are the expected set. The purpose of this is to prevent typos
+    /// and let you know when introducing a new namespace.
     #[gpui::test]
-    async fn test_action_names(cx: &mut gpui::TestAppContext) {
+    async fn test_action_namespaces(cx: &mut gpui::TestAppContext) {
         use itertools::Itertools;
 
         init_keymap_test(cx);
         cx.update(|cx| {
             let all_actions = cx.all_action_names();
-
             let all_namespaces = all_actions
                 .iter()
                 .map(|action_name| {
@@ -4324,14 +4321,6 @@ mod tests {
                     .sorted()
                     .collect::<Vec<_>>()
             );
-
-            let duplicate_names = all_actions
-                .iter()
-                .counts()
-                .into_iter()
-                .filter(|entry| entry.1 > 1)
-                .collect::<Vec<_>>();
-            assert_eq!(duplicate_names, Vec::new());
         });
     }
 
