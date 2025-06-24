@@ -407,13 +407,7 @@ impl AnthropicModel {
             let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            match request.await {
-                Ok(data) => Ok(data),
-                Err(err) => {
-                    dbg!(&err);
-                    Err(err.into())
-                }
-            }
+            request.await.map_err(Into::into)
         }
         .boxed()
     }
