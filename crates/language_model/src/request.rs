@@ -303,7 +303,7 @@ pub enum MessageContent {
         text: String,
         signature: Option<String>,
     },
-    RedactedThinking(Vec<u8>),
+    RedactedThinking(String),
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),

@@ -731,7 +731,7 @@ pub enum SerializedMessageSegment {
         signature: Option<String>,
     },
     RedactedThinking {
-        data: Vec<u8>,
+        data: String,
     },
 }
 
