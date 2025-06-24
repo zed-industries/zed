@@ -64,32 +64,23 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                 }
                 Ok(())
             })
-            .unwrap_or_else(|e| panic!("In #[action] attribute: {}", e));
+            .unwrap_or_else(|e| panic!("in #[action] attribute: {}", e));
         }
     }
 
-    let full_name = if let Some(name) = name_argument {
-        if name.contains("::") {
-            if let Some(namespace) = namespace {
-                panic!(
-                    "Action derive macro received `name = \"{name}\"`, which contains `::` \
-                    and so `namespace = \"{namespace}\"` should not be specified."
-                )
-            }
-            name
-        } else {
-            if let Some(namespace) = namespace {
-                format!("{namespace}::{name}")
-            } else {
-                name
-            }
-        }
+    let name = name_argument.unwrap_or_else(|| struct_name.to_string());
+
+    if name.contains("::") {
+        panic!(
+            "in #[action] attribute: `name = \"{name}\"` must not contain `::`, \
+            also specify `namespace` instead"
+        );
+    }
+
+    let full_name = if let Some(namespace) = namespace {
+        format!("{namespace}::{name}")
     } else {
-        if let Some(namespace) = namespace {
-            format!("{namespace}::{struct_name}")
-        } else {
-            format!("{struct_name}")
-        }
+        name
     };
 
     let is_unit_struct = matches!(&input.data, Data::Struct(data) if data.fields.is_empty());

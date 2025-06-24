@@ -68,8 +68,7 @@ macro_rules! actions {
 ///
 /// - `namespace = some_namespace` sets the namespace. In Zed this is required.
 ///
-/// - `name = "ActionName"` overrides the action's name. If this contains `::` then `namespace` must
-/// not be specified.
+/// - `name = "ActionName"` overrides the action's name. This must not contain `::`.
 ///
 /// - `no_json` is used in Zed for internal actions that cannot be used in the keymap. It causes the
 /// `build` method to always error and `action_json_schema` to return None.
