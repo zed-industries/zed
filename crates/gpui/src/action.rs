@@ -1,11 +1,32 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+pub use gpui_macros::Action;
 pub use no_action::{NoAction, is_no_action};
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
     fmt::Display,
 };
+
+/// Defines and registers unit structs that can be used as actions. For more complex data types, derive `Action`.
+#[macro_export]
+macro_rules! actions {
+    ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
+        $(
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
+            #[action(namespace = $namespace)]
+            $(#[$attr])*
+            pub struct $name;
+        )*
+    };
+    ([ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
+        $(
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
+            $(#[$attr])*
+            pub struct $name;
+        )*
+    };
+}
 
 /// Actions are used to implement keyboard-driven UI. When you declare an action, you can bind keys
 /// to the action in the keymap and listeners for that action in the element tree.
@@ -372,21 +393,6 @@ pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
         actions.push(builder.0());
     }
     actions
-}
-
-pub use gpui_macros::Action;
-
-/// Defines and registers unit structs that can be used as actions. For more complex data types, derive `Action`.
-#[macro_export]
-macro_rules! actions {
-    ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
-        $(
-            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
-            #[action(namespace = $namespace)]
-            $(#[$attr])*
-            pub struct $name;
-        )*
-    };
 }
 
 mod no_action {

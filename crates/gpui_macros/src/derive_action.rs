@@ -81,20 +81,14 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
             if let Some(namespace) = namespace {
                 format!("{namespace}::{name}")
             } else {
-                panic!(
-                    "Action derive macro received `name = \"{name}\"`, \
-                    but `namespace` was not specified."
-                );
+                name
             }
         }
     } else {
         if let Some(namespace) = namespace {
             format!("{namespace}::{struct_name}")
         } else {
-            panic!(
-                "Action derive macro for {struct_name} \
-                must specify #[action(namespace = some_namespace)]"
-            );
+            format!("{struct_name}")
         }
     };
 
