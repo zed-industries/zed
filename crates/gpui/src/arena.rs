@@ -90,6 +90,7 @@ impl Drop for Arena {
 
 impl Arena {
     pub fn new(chunk_size: usize) -> Self {
+        assert!(chunk_size > 0);
         Self {
             chunks: vec![Chunk::new(chunk_size)],
             elements: Vec::new(),
