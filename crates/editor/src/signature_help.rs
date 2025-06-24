@@ -441,7 +441,7 @@ impl SignatureHelpPopover {
             .flex_row()
             .when_some(controls, |this, controls| {
                 this.children(vec![
-                    div().flex().items_center().child(controls),
+                    div().flex().items_end().child(controls),
                     div().w_px().bg(cx.theme().colors().border_variant),
                 ])
             })
