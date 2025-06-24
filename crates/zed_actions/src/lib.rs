@@ -38,20 +38,20 @@ pub struct DiffText {
 #[derive(Clone, PartialEq, Default)]
 pub struct TextData {
     pub text: String,
-    pub file_path: FilePath,
+    pub source_location: SourceLocation,
     pub language: Option<String>,
     pub selection_data: Option<SelectionData>,
 }
 
 #[derive(Clone, PartialEq)]
-pub enum FilePath {
+pub enum SourceLocation {
     Path(Option<PathBuf>),
     Custom(String),
 }
 
-impl Default for FilePath {
+impl Default for SourceLocation {
     fn default() -> Self {
-        FilePath::Path(None)
+        SourceLocation::Path(None)
     }
 }
 

@@ -213,7 +213,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
-use zed_actions::{self, DiffText, FilePath, SelectionData, TextData};
+use zed_actions::{self, DiffText, SelectionData, SourceLocation, TextData};
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -12214,14 +12214,14 @@ impl Editor {
             Box::new(DiffText {
                 old_text_data: TextData {
                     text: clipboard_text,
-                    file_path: FilePath::Custom("clipboard".into()),
+                    source_location: SourceLocation::Custom("clipboard".into()),
                     // We assume that the text in the clipboard is of the same language as the selected text
                     language: language_name.clone(),
                     selection_data: None,
                 },
                 new_text_data: TextData {
                     text: selected_text,
-                    file_path: FilePath::Path(full_path),
+                    source_location: SourceLocation::Path(full_path),
                     language: language_name,
                     selection_data: Some(SelectionData {
                         start_row: selection_start.row,

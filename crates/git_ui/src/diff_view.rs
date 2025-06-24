@@ -25,9 +25,8 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 use zed_actions::{
-    self, DiffText, FilePath,
-    FilePath::{Custom, Path},
-    SelectionData,
+    self, DiffText, SelectionData, SourceLocation,
+    SourceLocation::{Custom, Path},
 };
 
 pub struct DiffView {
@@ -142,10 +141,10 @@ impl DiffView {
 
             let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
 
-            let mut old_filename = filename(&old_text_data.file_path);
-            let mut old_path = full_path(&old_text_data.file_path);
-            let mut new_filename = filename(&new_text_data.file_path);
-            let mut new_path = full_path(&new_text_data.file_path);
+            let mut old_filename = filename(&old_text_data.source_location);
+            let mut old_path = full_path(&old_text_data.source_location);
+            let mut new_filename = filename(&new_text_data.source_location);
+            let mut new_path = full_path(&new_text_data.source_location);
 
             if let Some(selection_data) = old_text_data.selection_data {
                 old_filename = add_line_location(&old_filename, &selection_data);
@@ -275,10 +274,10 @@ impl DiffView {
     }
 }
 
-fn filename(file_path: &FilePath) -> String {
+fn filename(source_location: &SourceLocation) -> String {
     let untitled = "untitled";
 
-    match file_path {
+    match source_location {
         Path(Some(p)) => match p.file_name() {
             Some(name) => name.to_string_lossy().to_string(),
             None => untitled.to_string(),
@@ -288,10 +287,10 @@ fn filename(file_path: &FilePath) -> String {
     }
 }
 
-fn full_path(file_path: &FilePath) -> String {
+fn full_path(source_location: &SourceLocation) -> String {
     let untitled = "untitled";
 
-    match file_path {
+    match source_location {
         Path(Some(p)) => p.compact().to_string_lossy().to_string(),
         Path(None) => untitled.to_string(),
         Custom(path) => path.clone(),
@@ -659,7 +658,7 @@ mod tests {
                     &DiffText {
                         old_text_data: TextData {
                             text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
-                            file_path: Path(Some(PathBuf::from("a/b/text_1.txt"))),
+                            source_location: Path(Some(PathBuf::from("a/b/text_1.txt"))),
                             language: None,
                             selection_data: Some(SelectionData {
                                 start_row: 0,
@@ -670,7 +669,7 @@ mod tests {
                         },
                         new_text_data: TextData {
                             text: "new line 1\nline 2\nnew line 3\nline 4\n".to_string(),
-                            file_path: Path(Some(PathBuf::from("a/b/text_2.txt"))),
+                            source_location: Path(Some(PathBuf::from("a/b/text_2.txt"))),
                             language: None,
                             selection_data: Some(SelectionData {
                                 start_row: 0,
@@ -732,13 +731,13 @@ mod tests {
                     &DiffText {
                         old_text_data: TextData {
                             text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
-                            file_path: Custom("clipboard".to_string()),
+                            source_location: Custom("clipboard".to_string()),
                             language: None,
                             selection_data: None,
                         },
                         new_text_data: TextData {
                             text: "new line 1\nline 2\nnew line 3\nline 4\n".to_string(),
-                            file_path: Path(Some(PathBuf::from("a/b/text.txt"))),
+                            source_location: Path(Some(PathBuf::from("a/b/text.txt"))),
                             language: None,
                             selection_data: Some(SelectionData {
                                 start_row: 0,
