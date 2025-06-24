@@ -21,7 +21,6 @@ use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
     WeakEntity, Window,
 };
-use icons::IconName;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
@@ -2218,15 +2217,19 @@ impl Thread {
             true
         } else {
             // Max retries exceeded; clear retry state and notify user that the thread stopped.
+            let max_attempts = self.retry_state.as_ref().unwrap().max_attempts;
             self.retry_state = None;
 
-            let notification_text = if retry_state.max_attempts == 1 {
-                format!("Failed after retrying.");
+            let notification_text = if max_attempts == 1 {
+                "Failed after retrying.".into()
             } else {
-                format!("Failed after retrying {} times.", retry_state.max_attempts);
+                format!("Failed after retrying {} times.", max_attempts).into()
             };
 
-            self.show_notification(notification_text, IconName::ArrowCircle, window, cx);
+            cx.emit(ThreadEvent::RetriesFailed {
+                message: notification_text,
+                max_attempts,
+            });
 
             false
         }
@@ -3167,6 +3170,10 @@ pub enum ThreadEvent {
     ProfileChanged,
     RetryScheduled {
         message_id: MessageId,
+    },
+    RetriesFailed {
+        message: SharedString,
+        max_attempts: u8,
     },
 }
 

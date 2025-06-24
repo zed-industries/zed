@@ -1154,6 +1154,9 @@ impl ActiveThread {
                     cx.notify();
                 }
             }
+            ThreadEvent::RetriesFailed { message, .. } => {
+                self.show_notification(message.clone(), ui::IconName::Warning, window, cx);
+            }
         }
     }
 
