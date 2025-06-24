@@ -24,6 +24,7 @@ futures.workspace = true
 gpui.workspace = true
 project.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, "features" = ["test-support"] }
