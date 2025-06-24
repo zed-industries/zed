@@ -21,7 +21,7 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent, TabContentParams},
+    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -344,6 +344,23 @@ impl Item for DiffView {
             editor.added_to_workspace(workspace, window, cx)
         });
     }
+
+    fn can_save(&self, cx: &App) -> bool {
+        // The editor handles the new buffer, so delegate to it
+        self.editor.read(cx).can_save(cx)
+    }
+
+    fn save(
+        &mut self,
+        options: SaveOptions,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // Delegate saving to the editor, which manages the new buffer
+        self.editor
+            .update(cx, |editor, cx| editor.save(options, project, window, cx))
+    }
 }
 
 impl Render for DiffView {
@@ -493,5 +510,72 @@ mod tests {
                 ",
             ),
         );
+    }
+
+    #[gpui::test]
+    async fn test_save_changes_in_diff_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            serde_json::json!({
+                "old_file.txt": "old line 1\nline 2\nold line 3\nline 4\n",
+                "new_file.txt": "new line 1\nline 2\nnew line 3\nline 4\n"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                DiffView::open(
+                    PathBuf::from(path!("/test/old_file.txt")),
+                    PathBuf::from(path!("/test/new_file.txt")),
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        diff_view.update_in(cx, |diff_view, window, cx| {
+            diff_view.editor.update(cx, |editor, cx| {
+                editor.insert("modified ", window, cx);
+            });
+        });
+
+        diff_view.update_in(cx, |diff_view, _, cx| {
+            let buffer = diff_view.new_buffer.read(cx);
+            assert!(buffer.is_dirty(), "Buffer should be dirty after edits");
+        });
+
+        let save_task = diff_view.update_in(cx, |diff_view, window, cx| {
+            workspace::Item::save(
+                diff_view,
+                workspace::item::SaveOptions::default(),
+                project.clone(),
+                window,
+                cx,
+            )
+        });
+
+        save_task.await.expect("Save should succeed");
+
+        let saved_content = fs.load(path!("/test/new_file.txt").as_ref()).await.unwrap();
+        assert_eq!(
+            saved_content,
+            "modified new line 1\nline 2\nnew line 3\nline 4\n"
+        );
+
+        diff_view.update_in(cx, |diff_view, _, cx| {
+            let buffer = diff_view.new_buffer.read(cx);
+            assert!(!buffer.is_dirty(), "Buffer should not be dirty after save");
+        });
     }
 }
