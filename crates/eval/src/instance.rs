@@ -1024,6 +1024,7 @@ pub fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
+            Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => {}
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Stop**: {:?}\n\n", reason));
@@ -1120,6 +1121,7 @@ impl ThreadDialog {
 
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
                 | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}

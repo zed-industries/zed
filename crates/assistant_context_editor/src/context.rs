@@ -2110,6 +2110,7 @@ impl AssistantContext {
                                             );
                                         }
                                     }
+                                    LanguageModelCompletionEvent::RedactedThinking { .. } => {},
                                     LanguageModelCompletionEvent::Text(mut chunk) => {
                                         if let Some(start) = thought_process_stack.pop() {
                                             let end = buffer.anchor_before(message_old_end_offset);
