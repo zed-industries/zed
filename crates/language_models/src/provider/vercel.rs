@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::{BTreeMap, HashMap};
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 
 use futures::Stream;
@@ -198,35 +198,33 @@ impl LanguageModelProvider for VercelLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
+        let mut models = Vec::new();
 
-        // Add base models from vercel::Model::iter()
         for model in vercel::Model::iter() {
             if !matches!(model, vercel::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
+                models.push((model.id().to_string(), model));
             }
         }
 
-        // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
             .vercel
             .available_models
         {
-            models.insert(
-                model.name.clone(),
-                vercel::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    max_completion_tokens: model.max_completion_tokens,
-                },
-            );
+            let custom_model = vercel::Model::Custom {
+                name: model.name.clone(),
+                display_name: model.display_name.clone(),
+                max_tokens: model.max_tokens,
+                max_output_tokens: model.max_output_tokens,
+                max_completion_tokens: model.max_completion_tokens,
+            };
+
+            models.retain(|(name, _)| name != &model.name);
+            models.push((model.name.clone(), custom_model));
         }
 
         models
-            .into_values()
-            .map(|model| self.create_language_model(model))
+            .into_iter()
+            .map(|(_, model)| self.create_language_model(model))
             .collect()
     }
 
@@ -305,11 +303,11 @@ impl LanguageModel for VercelLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.supports_tools()
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -656,7 +654,9 @@ pub fn count_vercel_tokens(
             }
             // Map Vercel models to appropriate OpenAI models for token counting
             // since Vercel uses OpenAI-compatible API
-            Model::VZero => {
+            Model::VZeroOnePointFiveSm
+            | Model::VZeroOnePointFiveMd
+            | Model::VZeroOnePointFiveLg => {
                 // Vercel v0 is similar to GPT-4o, so use gpt-4o for token counting
                 tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
             }
