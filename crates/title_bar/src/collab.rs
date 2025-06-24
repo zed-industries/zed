@@ -11,10 +11,7 @@ use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
 
-actions!(
-    collab,
-    [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
-);
+actions!(collab, [ToggleScreenSharing, ToggleMute, ToggleDeafen]);
 
 fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut App) {
     let call = ActiveCall::global(cx).read(cx);

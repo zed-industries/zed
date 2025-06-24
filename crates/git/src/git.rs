@@ -9,9 +9,7 @@ pub use crate::hosting_provider::*;
 pub use crate::remote::*;
 use anyhow::{Context as _, Result};
 pub use git2 as libgit;
-use gpui::action_with_deprecated_aliases;
-use gpui::actions;
-use gpui::impl_action_with_deprecated_aliases;
+use gpui::{Action, actions};
 pub use repository::WORK_DIRECTORY_REPO_PATH;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,7 +34,11 @@ actions!(
         ToggleStaged,
         StageAndNext,
         UnstageAndNext,
+        #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
+        Restore,
         // per-file
+        #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
+        Blame,
         StageFile,
         UnstageFile,
         // repo-wide
@@ -61,15 +63,12 @@ actions!(
     ]
 );
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = git, deprecated_aliases = ["editor::RevertFile"])]
 pub struct RestoreFile {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
-action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
-action_with_deprecated_aliases!(git, Blame, ["editor::ToggleGitBlame"]);
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
