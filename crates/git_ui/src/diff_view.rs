@@ -86,6 +86,7 @@ impl DiffView {
                         buffer_diff,
                         tab_content_text,
                         tab_tooltip_text,
+                        false,
                         project.clone(),
                         window,
                         cx,
@@ -167,6 +168,7 @@ impl DiffView {
                         buffer_diff,
                         tab_content_text,
                         tab_tooltip_text,
+                        true,
                         project.clone(),
                         window,
                         cx,
@@ -189,6 +191,7 @@ impl DiffView {
         diff: Entity<BufferDiff>,
         tab_content_text: SharedString,
         tab_tooltip_text: SharedString,
+        is_read_only: bool,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -204,6 +207,7 @@ impl DiffView {
             editor.start_temporary_diff_override();
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.set_read_only(is_read_only);
             editor.set_render_diff_hunk_controls(
                 Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                 cx,
