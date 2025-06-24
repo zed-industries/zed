@@ -333,10 +333,10 @@ pub fn initialize_workspace(
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
+            status_bar.add_left_item(lsp_tool, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
-            status_bar.add_right_item(lsp_tool, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
@@ -4304,6 +4304,7 @@ mod tests {
                 "jj",
                 "journal",
                 "language_selector",
+                "lsp_tool",
                 "markdown",
                 "menu",
                 "notebook",
