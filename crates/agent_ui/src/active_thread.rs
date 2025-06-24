@@ -1140,6 +1140,34 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
+            ThreadEvent::RetryScheduled {
+                message_id,
+                delay,
+                attempt,
+                max_attempts,
+            } => {
+                // The retry message is already added to the thread as a system message
+                // We just need to ensure the UI updates
+                let message_segments = self
+                    .thread
+                    .read(cx)
+                    .message(*message_id)
+                    .map(|message| message.segments.clone());
+
+                if let Some(message_segments) = message_segments {
+                    self.push_message(message_id, &message_segments, window, cx);
+                }
+
+                // Show a notification to the user
+                let notification_text = format!(
+                    "API overloaded. Retrying in {}s (attempt {}/{})",
+                    delay.as_secs(),
+                    attempt,
+                    max_attempts
+                );
+                self.show_notification(&notification_text, IconName::ArrowCircle, window, cx);
+                cx.notify();
+            }
         }
     }
 

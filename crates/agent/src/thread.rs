@@ -39,7 +39,12 @@ use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{io::Write, ops::Range, sync::Arc, time::Instant};
+use std::{
+    io::Write,
+    ops::Range,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
@@ -364,6 +369,8 @@ pub struct Thread {
     exceeded_window_error: Option<ExceededWindowError>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
+    retry_state: Option<RetryState>,
+    current_completion_intent: Option<CompletionIntent>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
     last_received_chunk_at: Option<Instant>,
@@ -373,6 +380,12 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+}
+
+#[derive(Clone, Debug)]
+struct RetryState {
+    attempt: u32,
+    max_attempts: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -456,6 +469,8 @@ impl Thread {
             exceeded_window_error: None,
             tool_use_limit_reached: false,
             feedback: None,
+            retry_state: None,
+            current_completion_intent: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             last_received_chunk_at: None,
@@ -522,6 +537,8 @@ impl Thread {
             detailed_summary_tx,
             detailed_summary_rx,
             completion_mode,
+            retry_state: None,
+            current_completion_intent: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -1226,6 +1243,9 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
+        // Store the intent for potential retries
+        self.current_completion_intent = Some(intent.clone());
+
         let request = self.to_completion_request(model.clone(), intent, cx);
 
         self.stream_completion(request, model, window, cx);
@@ -1460,6 +1480,8 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        // Clear any previous retry state when starting a new completion
+        self.retry_state = None;
         self.tool_use_limit_reached = false;
 
         let pending_completion_id = post_inc(&mut self.completion_count);
@@ -1864,8 +1886,81 @@ impl Thread {
                                         emit_generic_error(error, cx);
                                     }
                                     LanguageModelKnownError::Overloaded => {
-                                        // In the future we will wait and then retry, up to N times.
-                                        emit_generic_error(error, cx);
+                                        const MAX_RETRY_ATTEMPTS: u32 = 3;
+                                        const BASE_RETRY_DELAY_SECS: u64 = 5;
+
+                                        // Check if we should create or update retry state
+                                        let should_retry = if let Some(retry_state) = &mut thread.retry_state {
+                                            retry_state.attempt += 1;
+                                            retry_state.attempt <= retry_state.max_attempts
+                                        } else {
+                                            thread.retry_state = Some(RetryState {
+                                                attempt: 1,
+                                                max_attempts: MAX_RETRY_ATTEMPTS,
+                                            });
+                                            true
+                                        };
+
+                                        if should_retry {
+                                            let retry_state = thread.retry_state.as_ref().unwrap();
+                                            let attempt = retry_state.attempt;
+                                            let max_attempts = retry_state.max_attempts;
+
+                                            // Calculate exponential backoff
+                                            let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow(attempt - 1);
+                                            let delay = Duration::from_secs(delay_secs);
+
+                                            // Add a transient message to inform the user
+                                            let retry_message = format!(
+                                                "The API is currently overloaded. Automatically retrying in {} seconds... (attempt {}/{})",
+                                                delay_secs,
+                                                attempt,
+                                                max_attempts
+                                            );
+
+                                            let message_id = thread.insert_message(
+                                                Role::System,
+                                                vec![MessageSegment::Text(retry_message)],
+                                                LoadedContext::default(),
+                                                Vec::new(),
+                                                true, // is_hidden - won't be persisted
+                                                cx,
+                                            );
+
+                                            cx.emit(ThreadEvent::RetryScheduled {
+                                                message_id,
+                                                delay,
+                                                attempt,
+                                                max_attempts,
+                                            });
+
+                                            // Schedule the retry
+                                            let thread_handle = cx.entity().downgrade();
+                                            let model = model.clone();
+                                            let intent = thread.current_completion_intent.clone().unwrap_or(CompletionIntent::UserPrompt);
+
+                                            cx.spawn(async move |_thread, cx| {
+                                                cx.background_executor().timer(delay).await;
+
+                                                thread_handle.update(cx, |thread, cx| {
+                                                    // Remove the retry notification message
+                                                    if let Some(index) = thread.messages.iter().position(|m| m.id == message_id) {
+                                                        thread.messages.remove(index);
+                                                        cx.emit(ThreadEvent::MessageDeleted(message_id));
+                                                    }
+
+                                                    // Retry the completion
+                                                    thread.send_to_model(model, intent, window, cx);
+                                                }).log_err();
+                                            }).detach();
+
+                                            // Don't emit a generic error or cancel the completion yet
+                                            return;
+                                        } else {
+                                            // Max retries exceeded, clear retry state and show error
+                                            thread.retry_state = None;
+                                            emit_generic_error(error, cx);
+                                        }
                                     }
                                     LanguageModelKnownError::ApiInternalServerError => {
                                         // In the future we will retry the request, but only once.
@@ -1882,8 +1977,15 @@ impl Thread {
                                 emit_generic_error(error, cx);
                             }
 
+                            // Clear retry state on any other error
+                            thread.retry_state = None;
                             thread.cancel_last_completion(window, cx);
                         }
+                    }
+
+                    // Clear retry state on successful completion
+                    if result.is_ok() && thread.retry_state.is_some() {
+                        thread.retry_state = None;
                     }
 
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
@@ -2933,6 +3035,12 @@ pub enum ThreadEvent {
     CancelEditing,
     CompletionCanceled,
     ProfileChanged,
+    RetryScheduled {
+        message_id: MessageId,
+        delay: Duration,
+        attempt: u32,
+        max_attempts: u32,
+    },
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
