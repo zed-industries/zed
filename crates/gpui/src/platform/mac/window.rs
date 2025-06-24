@@ -885,7 +885,7 @@ impl MacWindow {
             };
 
             match value_str.as_ref() {
-                "never" => Some(UserTabbingPreference::Never),
+                "manual" => Some(UserTabbingPreference::Never),
                 "always" => Some(UserTabbingPreference::Always),
                 _ => Some(UserTabbingPreference::InFullScreen),
             }
