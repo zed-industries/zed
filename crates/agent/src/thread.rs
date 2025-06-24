@@ -3000,7 +3000,6 @@ mod tests {
     };
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
-    use editor::EditorSettings;
     use gpui::TestAppContext;
     use icons::IconName;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
@@ -3837,7 +3836,6 @@ fn main() {{
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
     }
