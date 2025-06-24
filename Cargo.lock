@@ -13213,6 +13213,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_tokio",
