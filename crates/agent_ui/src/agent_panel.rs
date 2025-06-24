@@ -7,17 +7,35 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use crate::language_model_selector::ToggleModelSelector;
+use crate::{
+    AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
+    DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
+    NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
+    ResetTrialUpsell, ToggleBurnMode, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    active_thread::{self, ActiveThread, ActiveThreadEvent},
+    agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
+    agent_diff::AgentDiff,
+    message_editor::{MessageEditor, MessageEditorEvent},
+    slash_command::SlashCommandCompletionProvider,
+    text_thread_editor::{
+        AgentPanelDelegate, TextThreadEditor, humanize_token_count, make_lsp_adapter_delegate,
+        render_remaining_tokens,
+    },
+    thread_history::{HistoryEntryElement, ThreadHistory},
+    ui::AgentOnboardingModal,
+};
+use agent::{
+    Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
+    context_store::ContextStore,
+    history_store::{HistoryEntryId, HistoryStore},
+    thread_store::{TextThreadStore, ThreadStore},
+};
 use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
 use anyhow::{Result, anyhow};
-use assistant_context_editor::{
-    AgentPanelDelegate, AssistantContext, ContextEditor, ContextEvent, ContextSummary,
-    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
-    render_remaining_tokens,
-};
+use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-
-use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
@@ -55,25 +73,6 @@ use zed_actions::{
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 use zed_llm_client::{CompletionIntent, UsageLimit};
-
-use crate::{
-    AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
-    DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
-    NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
-    ResetTrialUpsell, ToggleBurnMode, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
-    active_thread::{self, ActiveThread, ActiveThreadEvent},
-    agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
-    agent_diff::AgentDiff,
-    message_editor::{MessageEditor, MessageEditorEvent},
-    thread_history::{HistoryEntryElement, ThreadHistory},
-    ui::AgentOnboardingModal,
-};
-use agent::{
-    Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
-    context_store::ContextStore,
-    history_store::{HistoryEntryId, HistoryStore},
-    thread_store::{TextThreadStore, ThreadStore},
-};
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
@@ -179,7 +178,7 @@ enum ActiveView {
         _subscriptions: Vec<gpui::Subscription>,
     },
     TextThread {
-        context_editor: Entity<ContextEditor>,
+        context_editor: Entity<TextThreadEditor>,
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
@@ -260,7 +259,7 @@ impl ActiveView {
     }
 
     pub fn prompt_editor(
-        context_editor: Entity<ContextEditor>,
+        context_editor: Entity<TextThreadEditor>,
         history_store: Entity<HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
@@ -434,7 +433,7 @@ impl AgentPanel {
             let context_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    assistant_context_editor::ContextStore::new(
+                    assistant_context::ContextStore::new(
                         project,
                         prompt_builder.clone(),
                         slash_commands,
@@ -546,7 +545,7 @@ impl AgentPanel {
                     context_store.update(cx, |context_store, cx| context_store.create(cx));
                 let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
                 let context_editor = cx.new(|cx| {
-                    let mut editor = ContextEditor::for_context(
+                    let mut editor = TextThreadEditor::for_context(
                         context,
                         fs.clone(),
                         workspace.clone(),
@@ -841,7 +840,7 @@ impl AgentPanel {
             .flatten();
 
         let context_editor = cx.new(|cx| {
-            let mut editor = ContextEditor::for_context(
+            let mut editor = TextThreadEditor::for_context(
                 context,
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -933,7 +932,7 @@ impl AgentPanel {
             .log_err()
             .flatten();
         let editor = cx.new(|cx| {
-            ContextEditor::for_context(
+            TextThreadEditor::for_context(
                 context,
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -1321,7 +1320,7 @@ impl AgentPanel {
         });
     }
 
-    pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
+    pub(crate) fn active_context_editor(&self) -> Option<Entity<TextThreadEditor>> {
         match &self.active_view {
             ActiveView::TextThread { context_editor, .. } => Some(context_editor.clone()),
             _ => None,
@@ -2899,7 +2898,7 @@ impl AgentPanel {
 
     fn render_prompt_editor(
         &self,
-        context_editor: &Entity<ContextEditor>,
+        context_editor: &Entity<TextThreadEditor>,
         buffer_search_bar: &Entity<BufferSearchBar>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3026,7 +3025,7 @@ impl AgentPanel {
             }
             ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {
-                    ContextEditor::insert_dragged_files(
+                    TextThreadEditor::insert_dragged_files(
                         context_editor,
                         paths,
                         added_worktrees,
@@ -3205,7 +3204,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
         workspace: &mut Workspace,
         _window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Option<Entity<ContextEditor>> {
+    ) -> Option<Entity<TextThreadEditor>> {
         let panel = workspace.panel::<AgentPanel>(cx)?;
         panel.read(cx).active_context_editor()
     }
@@ -3229,10 +3228,10 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     fn open_remote_context(
         &self,
         _workspace: &mut Workspace,
-        _context_id: assistant_context_editor::ContextId,
+        _context_id: assistant_context::ContextId,
         _window: &mut Window,
         _cx: &mut Context<Workspace>,
-    ) -> Task<Result<Entity<ContextEditor>>> {
+    ) -> Task<Result<Entity<TextThreadEditor>>> {
         Task::ready(Err(anyhow!("opening remote context not implemented")))
     }
 

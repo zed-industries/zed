@@ -1,13 +1,14 @@
+use crate::{
+    ModelUsageContext,
+    language_model_selector::{
+        LanguageModelSelector, ToggleModelSelector, language_model_selector,
+    },
+};
 use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use picker::popover_menu::PickerPopoverMenu;
-
-use crate::ModelUsageContext;
-use assistant_context_editor::language_model_selector::{
-    LanguageModelSelector, ToggleModelSelector, language_model_selector,
-};
 use language_model::{ConfiguredModel, LanguageModelRegistry};
+use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};

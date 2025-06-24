@@ -22,7 +22,7 @@ test-support = [
 agent.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
-assistant_context_editor.workspace = true
+assistant_context.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
@@ -101,7 +101,10 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
+languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+tree-sitter-md.workspace = true
+unindent.workspace = true

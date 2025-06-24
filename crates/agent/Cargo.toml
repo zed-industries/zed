@@ -21,7 +21,7 @@ test-support = [
 [dependencies]
 agent_settings.workspace = true
 anyhow.workspace = true
-assistant_context_editor.workspace = true
+assistant_context.workspace = true
 assistant_tool.workspace = true
 chrono.workspace = true
 client.workspace = true

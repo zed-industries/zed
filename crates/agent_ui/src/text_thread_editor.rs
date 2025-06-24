@@ -76,14 +76,11 @@ use workspace::{
     searchable::{SearchEvent, SearchableItem},
 };
 
-use crate::{
+use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
+use assistant_context::{
     AssistantContext, CacheStatus, Content, ContextEvent, ContextId, InvokedSlashCommandId,
     InvokedSlashCommandStatus, Message, MessageId, MessageMetadata, MessageStatus,
-    ParsedSlashCommand, PendingSlashCommandStatus,
-};
-use crate::{
-    ThoughtProcessOutputSection, slash_command::SlashCommandCompletionProvider,
-    slash_command_picker,
+    ParsedSlashCommand, PendingSlashCommandStatus, ThoughtProcessOutputSection,
 };
 
 actions!(
@@ -131,7 +128,7 @@ pub trait AgentPanelDelegate {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Option<Entity<ContextEditor>>;
+    ) -> Option<Entity<TextThreadEditor>>;
 
     fn open_saved_context(
         &self,
@@ -147,7 +144,7 @@ pub trait AgentPanelDelegate {
         context_id: ContextId,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Task<Result<Entity<ContextEditor>>>;
+    ) -> Task<Result<Entity<TextThreadEditor>>>;
 
     fn quote_selection(
         &self,
@@ -176,7 +173,7 @@ struct GlobalAssistantPanelDelegate(Arc<dyn AgentPanelDelegate>);
 
 impl Global for GlobalAssistantPanelDelegate {}
 
-pub struct ContextEditor {
+pub struct TextThreadEditor {
     context: Entity<AssistantContext>,
     fs: Arc<dyn Fs>,
     slash_commands: Arc<SlashCommandWorkingSet>,
@@ -206,10 +203,24 @@ pub struct ContextEditor {
     language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
-pub const DEFAULT_TAB_TITLE: &str = "New Chat";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
-impl ContextEditor {
+impl TextThreadEditor {
+    pub fn init(cx: &mut App) {
+        workspace::FollowableViewRegistry::register::<TextThreadEditor>(cx);
+
+        cx.observe_new(
+            |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+                workspace
+                    .register_action(TextThreadEditor::quote_selection)
+                    .register_action(TextThreadEditor::insert_selection)
+                    .register_action(TextThreadEditor::copy_code)
+                    .register_action(TextThreadEditor::handle_insert_dragged_files);
+            },
+        )
+        .detach();
+    }
+
     pub fn for_context(
         context: Entity<AssistantContext>,
         fs: Arc<dyn Fs>,
@@ -1279,7 +1290,7 @@ impl ContextEditor {
     /// Returns either the selected text, or the content of the Markdown code
     /// block surrounding the cursor.
     fn get_selection_or_code_block(
-        context_editor_view: &Entity<ContextEditor>,
+        context_editor_view: &Entity<TextThreadEditor>,
         cx: &mut Context<Workspace>,
     ) -> Option<(String, bool)> {
         const CODE_FENCE_DELIMITER: &'static str = "```";
@@ -2029,7 +2040,7 @@ impl ContextEditor {
     /// Whether or not we should allow messages to be sent.
     /// Will return false if the selected provided has a configuration error or
     /// if the user has not accepted the terms of service for this provider.
-    fn sending_disabled(&self, cx: &mut Context<'_, ContextEditor>) -> bool {
+    fn sending_disabled(&self, cx: &mut Context<'_, TextThreadEditor>) -> bool {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let Some(configuration_error) =
             model_registry.configuration_error(model_registry.default_model(), cx)
@@ -2546,10 +2557,10 @@ struct SelectedCreaseMetadata {
     crease: CreaseMetadata,
 }
 
-impl EventEmitter<EditorEvent> for ContextEditor {}
-impl EventEmitter<SearchEvent> for ContextEditor {}
+impl EventEmitter<EditorEvent> for TextThreadEditor {}
+impl EventEmitter<SearchEvent> for TextThreadEditor {}
 
-impl Render for ContextEditor {
+impl Render for TextThreadEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let provider = LanguageModelRegistry::read_global(cx)
             .default_model()
@@ -2568,15 +2579,15 @@ impl Render for ContextEditor {
 
         v_flex()
             .key_context("ContextEditor")
-            .capture_action(cx.listener(ContextEditor::cancel))
-            .capture_action(cx.listener(ContextEditor::save))
-            .capture_action(cx.listener(ContextEditor::copy))
-            .capture_action(cx.listener(ContextEditor::cut))
-            .capture_action(cx.listener(ContextEditor::paste))
-            .capture_action(cx.listener(ContextEditor::cycle_message_role))
-            .capture_action(cx.listener(ContextEditor::confirm_command))
-            .on_action(cx.listener(ContextEditor::assist))
-            .on_action(cx.listener(ContextEditor::split))
+            .capture_action(cx.listener(TextThreadEditor::cancel))
+            .capture_action(cx.listener(TextThreadEditor::save))
+            .capture_action(cx.listener(TextThreadEditor::copy))
+            .capture_action(cx.listener(TextThreadEditor::cut))
+            .capture_action(cx.listener(TextThreadEditor::paste))
+            .capture_action(cx.listener(TextThreadEditor::cycle_message_role))
+            .capture_action(cx.listener(TextThreadEditor::confirm_command))
+            .on_action(cx.listener(TextThreadEditor::assist))
+            .on_action(cx.listener(TextThreadEditor::split))
             .on_action(move |_: &ToggleModelSelector, window, cx| {
                 language_model_selector.toggle(window, cx);
             })
@@ -2631,13 +2642,13 @@ impl Render for ContextEditor {
     }
 }
 
-impl Focusable for ContextEditor {
+impl Focusable for TextThreadEditor {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl Item for ContextEditor {
+impl Item for TextThreadEditor {
     type Event = editor::EditorEvent;
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
@@ -2710,7 +2721,7 @@ impl Item for ContextEditor {
     }
 }
 
-impl SearchableItem for ContextEditor {
+impl SearchableItem for TextThreadEditor {
     type Match = <Editor as SearchableItem>::Match;
 
     fn clear_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2791,7 +2802,7 @@ impl SearchableItem for ContextEditor {
     }
 }
 
-impl FollowableItem for ContextEditor {
+impl FollowableItem for TextThreadEditor {
     fn remote_id(&self) -> Option<workspace::ViewId> {
         self.remote_id
     }
@@ -2914,21 +2925,14 @@ impl FollowableItem for ContextEditor {
 }
 
 pub struct ContextEditorToolbarItem {
-    active_context_editor: Option<WeakEntity<ContextEditor>>,
+    active_context_editor: Option<WeakEntity<TextThreadEditor>>,
     model_summary_editor: Entity<Editor>,
 }
 
-impl ContextEditorToolbarItem {
-    pub fn new(model_summary_editor: Entity<Editor>) -> Self {
-        Self {
-            active_context_editor: None,
-            model_summary_editor,
-        }
-    }
-}
+impl ContextEditorToolbarItem {}
 
 pub fn render_remaining_tokens(
-    context_editor: &Entity<ContextEditor>,
+    context_editor: &Entity<TextThreadEditor>,
     cx: &App,
 ) -> Option<impl IntoElement + use<>> {
     let context = &context_editor.read(cx).context;
@@ -3044,7 +3048,7 @@ impl ToolbarItemView for ContextEditorToolbarItem {
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         self.active_context_editor = active_pane_item
-            .and_then(|item| item.act_as::<ContextEditor>(cx))
+            .and_then(|item| item.act_as::<TextThreadEditor>(cx))
             .map(|editor| editor.downgrade());
         cx.notify();
         if self.active_context_editor.is_none() {
@@ -3405,7 +3409,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (
         Entity<AssistantContext>,
-        Entity<ContextEditor>,
+        Entity<TextThreadEditor>,
         VisualTestContext,
     ) {
         cx.update(init_test);
@@ -3421,7 +3425,7 @@ mod tests {
         let context_editor = window
             .update(&mut cx, |_, window, cx| {
                 cx.new(|cx| {
-                    let editor = ContextEditor::for_context(
+                    let editor = TextThreadEditor::for_context(
                         context.clone(),
                         fs,
                         workspace.downgrade(),
@@ -3454,7 +3458,7 @@ mod tests {
     }
 
     fn assert_copy_paste_context_editor<T: editor::ToOffset>(
-        context_editor: &Entity<ContextEditor>,
+        context_editor: &Entity<TextThreadEditor>,
         range: Range<T>,
         expected_text: &str,
         cx: &mut VisualTestContext,
