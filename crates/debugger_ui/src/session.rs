@@ -5,9 +5,8 @@ use dap::client::SessionId;
 use gpui::{
     App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::Project;
 use project::debugger::session::Session;
-use project::worktree_store::WorktreeStore;
+use project::{Project, worktree_store::WorktreeStore};
 use rpc::proto;
 use running::RunningState;
 use std::{cell::OnceCell, sync::OnceLock};
