@@ -10228,7 +10228,7 @@ impl Editor {
         self.manipulate_immutable_lines(window, cx, |lines| lines.shuffle(&mut thread_rng()))
     }
 
-    fn manipulate_generic_lines<M>(
+    fn manipulate_lines<M>(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -10339,7 +10339,7 @@ impl Editor {
     ) where
         Fn: FnMut(&mut Vec<&str>),
     {
-        self.manipulate_generic_lines(window, cx, |text| {
+        self.manipulate_lines(window, cx, |text| {
             let mut lines: Vec<&str> = text.split('\n').collect();
             let lines_before = lines.len();
 
@@ -10357,7 +10357,7 @@ impl Editor {
     ) where
         Fn: FnMut(&mut Vec<String>),
     {
-        self.manipulate_generic_lines(window, cx, |text| {
+        self.manipulate_lines(window, cx, |text| {
             let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
             let lines_before = lines.len();
 
@@ -10378,7 +10378,7 @@ impl Editor {
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized buffer once for the whole loop
-            let mut new_indent = String::with_capacity(MAX_LINE_LEN);
+            let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
             // Avoids recomputing spaces that could be inserted many times
             let space_cache: Vec<Vec<char>> = (1..=tab_size)
                 .map(|n| IndentSize::spaces(n as u32).chars().collect())
@@ -10391,28 +10391,28 @@ impl Editor {
                 while let Some(ch) = chars.next() {
                     match ch {
                         ' ' => {
-                            new_indent.push(' ');
+                            reindented_line.push(' ');
                             col += 1;
                         }
                         '\t' => {
                             // \t are converted to spaces depending on the current column
                             let spaces_len = tab_size - (col % tab_size);
-                            new_indent.extend(&space_cache[spaces_len - 1]);
+                            reindented_line.extend(&space_cache[spaces_len - 1]);
                             col += spaces_len;
                         }
                         _ => {
                             // If we dont append before break, the character is consumed
-                            new_indent.push(ch);
+                            reindented_line.push(ch);
                             break;
                         }
                     }
                 }
                 // Append the rest of the line
-                new_indent.extend(chars);
+                reindented_line.extend(chars);
 
                 line.clear();
-                line.push_str(&new_indent);
-                new_indent.clear();
+                line.push_str(&reindented_line);
+                reindented_line.clear();
             }
         });
     }
@@ -10428,7 +10428,7 @@ impl Editor {
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized buffer once for the whole loop
-            let mut new_indent = String::with_capacity(MAX_LINE_LEN);
+            let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
             // Avoids recomputing spaces that could be inserted many times
             let space_cache: Vec<Vec<char>> = (1..=tab_size)
                 .map(|n| IndentSize::spaces(n as u32).chars().collect())
@@ -10445,12 +10445,12 @@ impl Editor {
                             // Keep track of spaces. Append \t when we reach tab_size
                             spaces_count += 1;
                             if spaces_count == tab_size {
-                                new_indent.push('\t');
+                                reindented_line.push('\t');
                                 spaces_count = 0;
                             }
                         }
                         '\t' => {
-                            new_indent.push('\t');
+                            reindented_line.push('\t');
                             spaces_count = 0;
                         }
                         _ => {
@@ -10462,18 +10462,18 @@ impl Editor {
                 }
                 // Remaining spaces that didn't make a full tab stop
                 if spaces_count > 0 {
-                    new_indent.extend(&space_cache[spaces_count - 1]);
+                    reindented_line.extend(&space_cache[spaces_count - 1]);
                 }
                 // If we consume an extra character that was not indentation, add it back
                 if let Some(extra_char) = first_non_indent_char {
-                    new_indent.push(extra_char);
+                    reindented_line.push(extra_char);
                 }
                 // Append the rest of the line
-                new_indent.extend(chars);
+                reindented_line.extend(chars);
 
                 line.clear();
-                line.push_str(&new_indent);
-                new_indent.clear();
+                line.push_str(&reindented_line);
+                reindented_line.clear();
             }
         });
     }
