@@ -3,11 +3,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::agent_model_selector::AgentModelSelector;
-use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
+};
+use agent::{
+    context::{AgentContextKey, ContextLoadResult, load_context},
+    context_store::ContextStoreEvent,
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
@@ -15,9 +18,10 @@ use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
+use editor::display_map::CreaseId;
 use editor::{
-    AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
-    EditorMode, EditorStyle, MultiBuffer,
+    Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
+    EditorEvent, EditorMode, EditorStyle, MultiBuffer,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -46,15 +50,17 @@ use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
-use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
-use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+};
+use agent::{
+    MessageCrease, Thread, TokenUsageRatio,
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
 };
 
 #[derive(RegisterComponent)]
@@ -1466,6 +1472,69 @@ impl MessageEditor {
     }
 }
 
+#[derive(Default)]
+pub struct ContextCreasesAddon {
+    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
+    _subscription: Option<Subscription>,
+}
+
+impl Addon for ContextCreasesAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl ContextCreasesAddon {
+    pub fn new() -> Self {
+        Self {
+            creases: HashMap::default(),
+            _subscription: None,
+        }
+    }
+
+    pub fn add_creases(
+        &mut self,
+        context_store: &Entity<ContextStore>,
+        key: AgentContextKey,
+        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
+        cx: &mut Context<Editor>,
+    ) {
+        self.creases.entry(key).or_default().extend(creases);
+        self._subscription = Some(cx.subscribe(
+            &context_store,
+            |editor, _, event, cx| match event {
+                ContextStoreEvent::ContextRemoved(key) => {
+                    let Some(this) = editor.addon_mut::<Self>() else {
+                        return;
+                    };
+                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
+                        .creases
+                        .remove(key)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .unzip();
+                    let ranges = editor
+                        .remove_creases(crease_ids, cx)
+                        .into_iter()
+                        .map(|(_, range)| range)
+                        .collect::<Vec<_>>();
+                    editor.unfold_ranges(&ranges, false, false, cx);
+                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
+                    cx.notify();
+                }
+            },
+        ))
+    }
+
+    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
+        self.creases
+    }
+}
+
 pub fn extract_message_creases(
     editor: &mut Editor,
     cx: &mut Context<'_, Editor>,
@@ -1504,8 +1573,9 @@ pub fn extract_message_creases(
                 let context = contexts_by_crease_id.remove(&id);
                 MessageCrease {
                     range,
-                    metadata,
                     context,
+                    label: metadata.label,
+                    icon_path: metadata.icon_path,
                 }
             })
             .collect()
@@ -1577,8 +1647,8 @@ pub fn insert_message_creases(
             let start = buffer_snapshot.anchor_after(crease.range.start);
             let end = buffer_snapshot.anchor_before(crease.range.end);
             crease_for_mention(
-                crease.metadata.label.clone(),
-                crease.metadata.icon_path.clone(),
+                crease.label.clone(),
+                crease.icon_path.clone(),
                 start..end,
                 cx.weak_entity(),
             )
@@ -1590,12 +1660,7 @@ pub fn insert_message_creases(
         for (crease, id) in message_creases.iter().zip(ids) {
             if let Some(context) = crease.context.as_ref() {
                 let key = AgentContextKey(context.clone());
-                addon.add_creases(
-                    context_store,
-                    key,
-                    vec![(id, crease.metadata.label.clone())],
-                    cx,
-                );
+                addon.add_creases(context_store, key, vec![(id, crease.label.clone())], cx);
             }
         }
     }

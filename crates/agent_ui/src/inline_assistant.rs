@@ -4,18 +4,27 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::{
+    AgentPanel,
+    buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent},
+    inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
+    terminal_inline_assistant::TerminalInlineAssistant,
+};
+use agent::{
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
-use editor::display_map::EditorMargins;
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
     MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
-        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
-        ToDisplayPoint,
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
+        RenderBlock, ToDisplayPoint,
     },
 };
 use fs::Fs;
@@ -24,16 +33,13 @@ use gpui::{
     WeakEntity, Window, point,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::ConfigurationError;
-use language_model::ConfiguredModel;
-use language_model::{LanguageModelRegistry, report_assistant_event};
+use language_model::{
+    ConfigurationError, ConfiguredModel, LanguageModelRegistry, report_assistant_event,
+};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::LspAction;
-use project::Project;
-use project::{CodeAction, ProjectTransaction};
-use prompt_store::PromptBuilder;
-use prompt_store::PromptStore;
+use project::{CodeAction, LspAction, Project, ProjectTransaction};
+use prompt_store::{PromptBuilder, PromptStore};
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
@@ -42,14 +48,6 @@ use ui::prelude::*;
 use util::{RangeExt, ResultExt, maybe};
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenConfiguration;
-
-use crate::AgentPanel;
-use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
-use crate::context_store::ContextStore;
-use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
-use crate::terminal_inline_assistant::TerminalInlineAssistant;
-use crate::thread_store::TextThreadStore;
-use crate::thread_store::ThreadStore;
 
 pub fn init(
     fs: Arc<dyn Fs>,

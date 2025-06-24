@@ -14,7 +14,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
-use crate::context_store::{ContextStore, FileInclusion};
+use agent::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: Entity<Picker<FileContextPickerDelegate>>,

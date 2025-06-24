@@ -701,6 +701,16 @@ impl RunningState {
             BreakpointList::new(Some(session.clone()), workspace.clone(), &project, cx);
 
         let _subscriptions = vec![
+            cx.on_app_quit(move |this, cx| {
+                let shutdown = this
+                    .session
+                    .update(cx, |session, cx| session.on_app_quit(cx));
+                let terminal = this.debug_terminal.clone();
+                async move {
+                    shutdown.await;
+                    drop(terminal)
+                }
+            }),
             cx.observe(&module_list, |_, _, cx| cx.notify()),
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {

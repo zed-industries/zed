@@ -1,14 +1,15 @@
 use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
-use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::message_editor::{extract_message_creases, insert_message_creases};
+use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 use crate::{RemoveAllContext, ToggleContextPicker};
+use agent::{
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::ErrorExt;
 use collections::VecDeque;

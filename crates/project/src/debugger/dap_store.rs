@@ -40,7 +40,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use settings::{Settings, WorktreeId};
+use settings::{Settings, SettingsLocation, WorktreeId};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -190,17 +190,23 @@ impl DapStore {
                     return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
                 };
 
-                let user_installed_path = ProjectSettings::get_global(cx)
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: Path::new(""),
+                };
+                let dap_settings = ProjectSettings::get(Some(settings_location), cx)
                     .dap
-                    .get(&adapter.name())
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                    .get(&adapter.name());
+                let user_installed_path =
+                    dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                let user_args = dap_settings.map(|s| s.args.clone());
 
                 let delegate = self.delegate(&worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
-                        .get_binary(&delegate, &definition, user_installed_path, cx)
+                        .get_binary(&delegate, &definition, user_installed_path, user_args, cx)
                         .await?;
 
                     let env = this

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use agent::context_store::ContextStore;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
@@ -20,10 +21,11 @@ use ui::prelude::*;
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::Thread;
-use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
-use crate::context_store::ContextStore;
-use crate::thread_store::{TextThreadStore, ThreadStore};
+use agent::{
+    Thread,
+    context::{AgentContextHandle, AgentContextKey, RULES_ICON},
+    thread_store::{TextThreadStore, ThreadStore},
+};
 
 use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::{FileMatch, search_files};
@@ -35,6 +37,7 @@ use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
     available_context_picker_entries, recent_context_picker_entries, selection_ranges,
 };
+use crate::message_editor::ContextCreasesAddon;
 
 pub(crate) enum Match {
     File(FileMatch),

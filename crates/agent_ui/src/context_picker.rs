@@ -37,10 +37,12 @@ use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::AgentPanel;
-use crate::context::RULES_ICON;
-use crate::context_store::ContextStore;
-use crate::thread::ThreadId;
-use crate::thread_store::{TextThreadStore, ThreadStore};
+use agent::{
+    ThreadId,
+    context::RULES_ICON,
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerEntry {

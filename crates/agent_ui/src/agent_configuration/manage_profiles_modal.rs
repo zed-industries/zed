@@ -15,8 +15,8 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::agent_profile::AgentProfile;
 use crate::{AgentPanel, ManageProfiles};
+use agent::agent_profile::AgentProfile;
 
 use super::tool_picker::ToolPickerMode;
 

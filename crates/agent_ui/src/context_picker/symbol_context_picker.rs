@@ -14,9 +14,9 @@ use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::AgentContextHandle;
 use crate::context_picker::ContextPicker;
-use crate::context_store::ContextStore;
+use agent::context::AgentContextHandle;
+use agent::context_store::ContextStore;
 
 pub struct SymbolContextPicker {
     picker: Entity<Picker<SymbolContextPickerDelegate>>,

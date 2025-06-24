@@ -1,4 +1,5 @@
-use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent};
+use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
+use agent::{Thread, ThreadEvent};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -1748,7 +1749,8 @@ impl editor::Addon for EditorAgentDiffAddon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Keep, ThreadStore, thread_store};
+    use crate::Keep;
+    use agent::thread_store::{self, ThreadStore};
     use agent_settings::AgentSettings;
     use assistant_tool::ToolWorkingSet;
     use editor::EditorSettings;

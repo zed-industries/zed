@@ -12,7 +12,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{
+use agent::context::{
     AgentContext, AgentContextHandle, ContextId, ContextKind, DirectoryContext,
     DirectoryContextHandle, FetchedUrlContext, FileContext, FileContextHandle, ImageContext,
     ImageStatus, RulesContext, RulesContextHandle, SelectionContext, SelectionContextHandle,
