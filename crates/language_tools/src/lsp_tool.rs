@@ -35,6 +35,7 @@ struct LspPickerDelegate {
     state: Entity<PickerState>,
     selected_index: usize,
     items: Vec<LspItem>,
+    other_servers_start_index: Option<usize>,
 }
 
 struct ActiveEditor {
@@ -179,6 +180,7 @@ impl LspPickerDelegate {
 
             buffer_servers.sort_by_key(|data| data.name().clone());
             other_servers.sort_by_key(|data| data.name().clone());
+            let mut other_servers_start_index = None;
             let mut new_lsp_items =
                 Vec::with_capacity(buffer_servers.len() + other_servers.len() + 2);
             if !buffer_servers.is_empty() {
@@ -186,11 +188,13 @@ impl LspPickerDelegate {
                 new_lsp_items.extend(buffer_servers.into_iter().map(ServerData::into_lsp_item));
             }
             if !other_servers.is_empty() {
+                other_servers_start_index = Some(new_lsp_items.len());
                 new_lsp_items.push(LspItem::Header(SharedString::new("Other Active Servers")));
                 new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
             }
 
             self.items = new_lsp_items;
+            self.other_servers_start_index = other_servers_start_index;
         });
     }
 }
@@ -334,6 +338,9 @@ impl PickerDelegate for LspPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let is_other_server = self
+            .other_servers_start_index
+            .map_or(false, |start| ix >= start);
         let server_binary_status;
         let server_health;
         let server_message;
@@ -349,14 +356,14 @@ impl PickerDelegate for LspPickerDelegate {
                 server_health = language_server_health_status.health();
                 server_message = language_server_health_status.message();
                 server_id = Some(*language_server_id);
-                server_name = &language_server_health_status.name;
+                server_name = language_server_health_status.name.clone();
             }
             LspItem::WithBinaryStatus(language_server_name, language_server_binary_status) => {
                 server_binary_status = Some(language_server_binary_status);
                 server_health = None;
                 server_message = language_server_binary_status.message.clone();
                 server_id = None;
-                server_name = language_server_name;
+                server_name = language_server_name.clone();
             }
             LspItem::Header(header) => {
                 return Some(
@@ -471,10 +478,10 @@ impl PickerDelegate for LspPickerDelegate {
                                 .icon_size(IconSize::XSmall)
                                 .tooltip(|_, cx| Tooltip::simple("Restart server", cx))
                                 .on_click({
+                                    let state = self.state.clone();
                                     let workspace = workspace.clone();
                                     let lsp_store = lsp_store.downgrade();
-                                    let editor_buffers = self
-                                        .state
+                                    let editor_buffers = state
                                         .read(cx)
                                         .active_editor
                                         .as_ref()
@@ -483,22 +490,53 @@ impl PickerDelegate for LspPickerDelegate {
                                     let server_selector = server_selector.clone();
                                     move |_, _, cx| {
                                         if let Some(workspace) = workspace.upgrade() {
-                                            let buffer_store = workspace
-                                                .read(cx)
-                                                .project()
-                                                .read(cx)
-                                                .buffer_store()
-                                                .clone();
-                                            let buffers = editor_buffers
-                                                .iter()
-                                                .flat_map(|buffer_id| {
-                                                    buffer_store.read(cx).get(*buffer_id)
-                                                })
-                                                .collect::<Vec<_>>();
+                                            let project = workspace.read(cx).project().clone();
+                                            let buffer_store =
+                                                project.read(cx).buffer_store().clone();
+                                            let buffers = if is_other_server {
+                                                let worktree_store =
+                                                    project.read(cx).worktree_store();
+                                                state
+                                                    .read(cx)
+                                                    .language_servers
+                                                    .servers_per_buffer_abs_path
+                                                    .iter()
+                                                    .filter_map(|(abs_path, servers)| {
+                                                        if servers.values().any(|server| {
+                                                            server.as_ref() == Some(&server_name)
+                                                        }) {
+                                                            worktree_store
+                                                                .read(cx)
+                                                                .find_worktree(abs_path, cx)
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .filter_map(|(worktree, relative_path)| {
+                                                        let entry = worktree
+                                                            .read(cx)
+                                                            .entry_for_path(&relative_path)?;
+                                                        project
+                                                            .read(cx)
+                                                            .path_for_entry(entry.id, cx)
+                                                    })
+                                                    .filter_map(|project_path| {
+                                                        buffer_store
+                                                            .read(cx)
+                                                            .get_by_path(&project_path)
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            } else {
+                                                editor_buffers
+                                                    .iter()
+                                                    .flat_map(|buffer_id| {
+                                                        buffer_store.read(cx).get(*buffer_id)
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            };
                                             if !buffers.is_empty() {
                                                 lsp_store
                                                     .update(cx, |lsp_store, cx| {
-                                                        // TODO kb this is not right for "other servers" that do not belong to the current buffer
                                                         lsp_store
                                                             .restart_language_servers_for_buffers(
                                                                 buffers,
@@ -716,6 +754,7 @@ impl LspTool {
         cx.new(|cx| {
             let mut delegate = LspPickerDelegate {
                 selected_index: 0,
+                other_servers_start_index: None,
                 items: Vec::new(),
                 state,
             };

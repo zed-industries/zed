@@ -7233,7 +7233,7 @@ impl LspStore {
             path: relative_path.into(),
         };
 
-        if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
+        if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
             let snapshot = buffer_handle.read(cx).snapshot();
             let buffer = buffer_handle.read(cx);
             let reused_diagnostics = buffer
@@ -9826,7 +9826,7 @@ impl LspStore {
         Some(
             self.buffer_store()
                 .read(cx)
-                .get_by_path(&project_path, cx)?
+                .get_by_path(&project_path)?
                 .read(cx),
         )
     }

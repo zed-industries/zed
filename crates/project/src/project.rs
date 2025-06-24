@@ -1789,7 +1789,7 @@ impl Project {
     pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &App) -> bool {
         self.buffer_store
             .read(cx)
-            .get_by_path(&path.into(), cx)
+            .get_by_path(&path.into())
             .is_some()
     }
 
@@ -2589,7 +2589,7 @@ impl Project {
     }
 
     pub fn get_open_buffer(&self, path: &ProjectPath, cx: &App) -> Option<Entity<Buffer>> {
-        self.buffer_store.read(cx).get_by_path(path, cx)
+        self.buffer_store.read(cx).get_by_path(path)
     }
 
     fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
