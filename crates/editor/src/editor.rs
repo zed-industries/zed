@@ -2340,7 +2340,7 @@ impl Editor {
         }
 
         if self.signature_help_state.has_multiple_signatures() {
-            key_context.add("showing_signature_helps");
+            key_context.add("showing_signature_help");
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
