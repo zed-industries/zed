@@ -2947,7 +2947,7 @@ impl BufferSnapshot {
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
-                    outdent_positions.push(Point::from_ts_point(capture.node.start_position());
+                    outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
                 }
                 let capture_name = &config.query.capture_names()[capture.index as usize];
                 if let Some(block_type) = capture_name.strip_prefix("indent.") {
