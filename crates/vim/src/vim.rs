@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
+    Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -52,65 +52,77 @@ use crate::state::ReplayableAction;
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 struct Number(usize);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 struct SelectRegister(String);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushFindForward {
     before: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushFindBackward {
     after: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushSneak {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushSneakBackward {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
-struct PushAddSurrounds {}
+struct PushAddSurrounds;
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushChangeSurrounds {
     target: Option<Object>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushJump {
     line: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushDigraph {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushLiteral {
     prefix: Option<String>,
@@ -168,24 +180,6 @@ actions!(
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
 actions!(workspace, [ToggleVimMode,]);
-
-impl_actions!(
-    vim,
-    [
-        Number,
-        SelectRegister,
-        PushObject,
-        PushFindForward,
-        PushFindBackward,
-        PushSneak,
-        PushSneakBackward,
-        PushAddSurrounds,
-        PushChangeSurrounds,
-        PushJump,
-        PushDigraph,
-        PushLiteral
-    ]
-);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {

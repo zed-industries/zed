@@ -4,8 +4,7 @@ use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task,
-    action_with_deprecated_aliases,
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task, actions,
 };
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
@@ -16,12 +15,11 @@ use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 
-action_with_deprecated_aliases!(
+actions!(
     agent,
-    ToggleModelSelector,
     [
-        "assistant::ToggleModelSelector",
-        "assistant2::ToggleModelSelector"
+        #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
+        ToggleModelSelector
     ]
 );
 

@@ -8,8 +8,7 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use fs::Fs;
 use gpui::{
-    App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions,
-    impl_actions,
+    Action, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -27,19 +26,19 @@ impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
 pub struct ImportVsCodeSettings {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
 pub struct ImportCursorSettings {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_actions!(zed, [ImportVsCodeSettings, ImportCursorSettings]);
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {

@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, NoAction,
 };
 use schemars::{
     JsonSchema,
@@ -414,14 +414,21 @@ impl KeymapFile {
             .into_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
-        let deprecations = cx.action_deprecations();
-        KeymapFile::generate_json_schema(generator, action_schemas, deprecations)
+        let deprecations = cx.deprecated_actions_to_preferred_actions();
+        let deprecation_messages = cx.action_deprecation_messages();
+        KeymapFile::generate_json_schema(
+            generator,
+            action_schemas,
+            deprecations,
+            deprecation_messages,
+        )
     }
 
     fn generate_json_schema(
         generator: SchemaGenerator,
-        action_schemas: Vec<(SharedString, Option<Schema>)>,
-        deprecations: &HashMap<SharedString, SharedString>,
+        action_schemas: Vec<(&'static str, Option<Schema>)>,
+        deprecations: &HashMap<&'static str, &'static str>,
+        deprecation_messages: &HashMap<&'static str, &'static str>,
     ) -> serde_json::Value {
         fn set<I, O>(input: I) -> Option<O>
         where
@@ -492,9 +499,9 @@ impl KeymapFile {
         };
         let mut keymap_action_alternatives = vec![plain_action.into(), action_with_input.into()];
 
-        for (name, action_schema) in action_schemas.iter() {
+        for (name, action_schema) in action_schemas.into_iter() {
             let schema = if let Some(Schema::Object(schema)) = action_schema {
-                Some(schema.clone())
+                Some(schema)
             } else {
                 None
             };
@@ -509,7 +516,7 @@ impl KeymapFile {
             let deprecation = if name == NoAction.name() {
                 Some("null")
             } else {
-                deprecations.get(name).map(|new_name| new_name.as_ref())
+                deprecations.get(name).copied()
             };
 
             // Add an alternative for plain action names.
@@ -518,7 +525,9 @@ impl KeymapFile {
                 const_value: Some(Value::String(name.to_string())),
                 ..Default::default()
             };
-            if let Some(new_name) = deprecation {
+            if let Some(message) = deprecation_messages.get(name) {
+                add_deprecation(&mut plain_action, message.to_string());
+            } else if let Some(new_name) = deprecation {
                 add_deprecation_preferred_name(&mut plain_action, new_name);
             }
             if let Some(description) = description.clone() {
@@ -538,9 +547,11 @@ impl KeymapFile {
                         ..Default::default()
                     };
                     if let Some(description) = description.clone() {
-                        add_description(&mut matches_action_name, description.to_string());
+                        add_description(&mut matches_action_name, description);
                     }
-                    if let Some(new_name) = deprecation {
+                    if let Some(message) = deprecation_messages.get(name) {
+                        add_deprecation(&mut matches_action_name, message.to_string());
+                    } else if let Some(new_name) = deprecation {
                         add_deprecation_preferred_name(&mut matches_action_name, new_name);
                     }
                     let action_with_input = SchemaObject {

@@ -94,7 +94,7 @@ impl DiffView {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             editor.start_temporary_diff_override();
-            editor.disable_inline_diagnostics();
+            editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.set_render_diff_hunk_controls(
                 Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
