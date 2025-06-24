@@ -65,11 +65,11 @@ impl DiffView {
                 let old_path = old_buffer
                     .read(cx)
                     .file()
-                    .and_then(|file| Some(file.full_path(cx).to_path_buf()));
+                    .map(|file| file.full_path(cx).to_path_buf());
                 let new_path = new_buffer
                     .read(cx)
                     .file()
-                    .and_then(|file| Some(file.full_path(cx).to_path_buf()));
+                    .map(|file| file.full_path(cx).to_path_buf());
 
                 let old_filename = filename(&Path(old_path.clone()));
                 let old_path = full_path(&Path(old_path));
