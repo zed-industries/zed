@@ -384,7 +384,7 @@ impl SignatureHelpPopover {
             let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
-                .icon_size(IconSize::XSmall)
+                .icon_size(IconSize::Small)
                 .tooltip(move |window, cx| {
                     ui::Tooltip::for_action(
                         "Previous Signature",
@@ -400,7 +400,7 @@ impl SignatureHelpPopover {
             let next_button = IconButton::new("signature_help_next", IconName::ChevronDown)
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
-                .icon_size(IconSize::XSmall)
+                .icon_size(IconSize::Small)
                 .tooltip(move |window, cx| {
                     ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, window, cx)
                 })
