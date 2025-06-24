@@ -2994,6 +2994,8 @@ impl BufferSnapshot {
             }
         }
 
+        dbg!(&indent_ranges);
+
         typed_indent_blocks.sort_by_key(|b| b.start_point);
 
         let mut error_ranges = Vec::<Range<Point>>::new();
@@ -3080,12 +3082,11 @@ impl BufferSnapshot {
                 let line = self.text_for_range(line_range).collect::<String>();
                 for rule in &config.outdent_rules {
                     if rule.regex.as_ref().map_or(false, |r| r.is_match(&line)) {
-                        println!("matched");
                         dbg!(&rule.regex, &line);
+                        let current_line_indent = self.indent_size_for_line(row).len;
                         if let Some(parent_block) = typed_indent_blocks.iter().rfind(|block| {
-                            dbg!(&block);
-
                             block.start_point.row < row
+                                && block.start_point.column <= current_line_indent
                                 && rule.parents.iter().any(|p| p == block.block_type.as_ref())
                         }) {
                             basis_row = Some(parent_block.start_point.row);
