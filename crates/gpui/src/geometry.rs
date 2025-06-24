@@ -1590,11 +1590,11 @@ impl Size<DevicePixels> {
 }
 
 impl Size<Pixels> {
-    /// Converts the size from physical to logical pixels.
+    /// Converts the size from logical to physical pixels.
     pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
-            DevicePixels((self.width.0 * scale_factor) as i32),
-            DevicePixels((self.height.0 * scale_factor) as i32),
+            DevicePixels((self.width.0 * scale_factor).round() as i32),
+            DevicePixels((self.height.0 * scale_factor).round() as i32),
         )
     }
 }
@@ -1641,8 +1641,8 @@ impl Bounds<Pixels> {
     pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
         Bounds {
             origin: point(
-                DevicePixels((self.origin.x.0 * factor) as i32),
-                DevicePixels((self.origin.y.0 * factor) as i32),
+                DevicePixels((self.origin.x.0 * factor).round() as i32),
+                DevicePixels((self.origin.y.0 * factor).round() as i32),
             ),
             size: self.size.to_device_pixels(factor),
         }

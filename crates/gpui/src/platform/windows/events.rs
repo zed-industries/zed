@@ -48,7 +48,7 @@ pub(crate) fn handle_msg(
         WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
-        WM_CLOSE => handle_close_msg(state_ptr),
+        WM_CLOSE => handle_close_msg(handle, state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
         WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
@@ -92,7 +92,7 @@ pub(crate) fn handle_msg(
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
-        WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
+        WM_SETCURSOR => handle_set_cursor(handle, lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
@@ -148,22 +148,18 @@ fn handle_get_min_max_info_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let lock = state_ptr.state.borrow();
-    if let Some(min_size) = lock.min_size {
-        let scale_factor = lock.scale_factor;
-        let boarder_offset = lock.border_offset;
-        drop(lock);
-
-        unsafe {
-            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x =
-                min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
-            minmax_info.ptMinTrackSize.y =
-                min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
-        }
-        Some(0)
-    } else {
-        None
+    let min_size = lock.min_size?;
+    let scale_factor = lock.scale_factor;
+    let boarder_offset = lock.border_offset;
+    drop(lock);
+    unsafe {
+        let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+        minmax_info.ptMinTrackSize.x =
+            min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+        minmax_info.ptMinTrackSize.y =
+            min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
     }
+    Some(0)
 }
 
 fn handle_size_msg(
@@ -252,16 +248,30 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     Some(0)
 }
 
-fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_close_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.should_close.take() {
+    let output = if let Some(mut callback) = lock.callbacks.should_close.take() {
         drop(lock);
         let should_close = callback();
         state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
         if should_close { None } else { Some(0) }
     } else {
         None
+    };
+
+    // Workaround as window close animation is not played with `WS_EX_LAYERED` enabled.
+    if output.is_none() {
+        unsafe {
+            let current_style = get_window_long(handle, GWL_EXSTYLE);
+            set_window_long(
+                handle,
+                GWL_EXSTYLE,
+                current_style & !WS_EX_LAYERED.0 as isize,
+            );
+        }
     }
+
+    output
 }
 
 fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -1112,11 +1122,24 @@ fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     Some(0)
 }
 
-fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    if matches!(
-        lparam.loword() as u32,
-        HTLEFT | HTRIGHT | HTTOP | HTTOPLEFT | HTTOPRIGHT | HTBOTTOM | HTBOTTOMLEFT | HTBOTTOMRIGHT
-    ) {
+fn handle_set_cursor(
+    handle: HWND,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    if unsafe { !IsWindowEnabled(handle).as_bool() }
+        || matches!(
+            lparam.loword() as u32,
+            HTLEFT
+                | HTRIGHT
+                | HTTOP
+                | HTTOPLEFT
+                | HTTOPRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+                | HTBOTTOMRIGHT
+        )
+    {
         return None;
     }
     unsafe {
@@ -1227,7 +1250,6 @@ where
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
-    let capslock = current_capslock();
 
     match virtual_key {
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
@@ -1238,6 +1260,20 @@ where
                 return None;
             }
             state.last_reported_modifiers = Some(modifiers);
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock: current_capslock(),
+            }))
+        }
+        VK_CAPITAL => {
+            let capslock = current_capslock();
+            if state
+                .last_reported_capslock
+                .is_some_and(|prev_capslock| prev_capslock == capslock)
+            {
+                return None;
+            }
+            state.last_reported_capslock = Some(capslock);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
                 capslock,

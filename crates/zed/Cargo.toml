@@ -21,11 +21,11 @@ path = "src/main.rs"
 [dependencies]
 activity_indicator.workspace = true
 agent.workspace = true
+agent_ui.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
-assistant_context_editor.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 audio.workspace = true
@@ -65,6 +65,7 @@ git_ui.workspace = true
 go_to_line.workspace = true
 gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 gpui_tokio.workspace = true
+
 http_client.workspace = true
 image_viewer.workspace = true
 indoc.workspace = true
@@ -166,7 +167,9 @@ dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
+itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true

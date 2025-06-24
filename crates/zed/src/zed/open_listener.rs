@@ -296,7 +296,7 @@ pub async fn handle_cli_connection(
                 env,
                 user_data_dir: _,
             } => {
-                if !urls.is_empty() || !diff_paths.is_empty() {
+                if !urls.is_empty() {
                     cx.update(|cx| {
                         match OpenRequest::parse(RawOpenRequest { urls, diff_paths }, cx) {
                             Ok(open_request) => {
@@ -346,7 +346,7 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let grouped_locations = if paths.is_empty() {
+    let grouped_locations = if paths.is_empty() && diff_paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()

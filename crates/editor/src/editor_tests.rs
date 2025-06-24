@@ -15,7 +15,7 @@ use crate::{
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    BackgroundExecutor, DismissEvent, SemanticVersion, TestAppContext, UpdateGlobal,
+    BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
@@ -14551,6 +14551,58 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 20, seeds(31))]
+async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.update_buffer(|buffer, _| {
+        // This causes autoindent to be async.
+        buffer.set_sync_parse_timeout(Duration::ZERO)
+    });
+
+    cx.set_state("fn c() {\n    d()ˇ\n}\n");
+    cx.simulate_keystroke("\n");
+    cx.run_until_parked();
+
+    let buffer_cloned =
+        cx.multibuffer(|multi_buffer, _| multi_buffer.as_singleton().unwrap().clone());
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, _, mut cx| {
+            let buffer_cloned = buffer_cloned.clone();
+            async move {
+                buffer_cloned.update(&mut cx, |buffer, _| {
+                    assert_eq!(
+                        buffer.text(),
+                        "fn c() {\n    d()\n        .\n}\n",
+                        "OnTypeFormatting should triggered after autoindent applied"
+                    )
+                })?;
+
+                Ok(Some(vec![]))
+            }
+        });
+
+    cx.simulate_keystroke(".");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("fn c() {\n    d()\n        .ˇ\n}\n");
+    assert!(request.next().await.is_some());
+    request.close();
+    assert!(request.next().await.is_none());
+}
+
 #[gpui::test]
 async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -22268,4 +22320,186 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
         final_count, 4,
         "Should have 4 cursors after moving and adding another"
     );
+}
+
+#[gpui::test]
+async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
+    let expected_color = Rgba {
+        r: 0.33,
+        g: 0.33,
+        b: 0.33,
+        a: 0.33,
+    };
+
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "first.rs": "fn main() { let a = 5; }",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/a/first.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let fake_language_server = fake_servers.next().await.unwrap();
+    let requests_made = Arc::new(AtomicUsize::new(0));
+    let closure_requests_made = Arc::clone(&requests_made);
+    let mut color_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
+            let requests_made = Arc::clone(&closure_requests_made);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
+                );
+                requests_made.fetch_add(1, atomic::Ordering::Release);
+                Ok(vec![lsp::ColorInformation {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: lsp::Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    },
+                    color: lsp::Color {
+                        red: 0.33,
+                        green: 0.33,
+                        blue: 0.33,
+                        alpha: 0.33,
+                    },
+                }])
+            }
+        });
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        2,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per editor open and once after the language server startup"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(500));
+    let save = editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "Should have an initial inlay"
+        );
+
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input("dirty", window, cx);
+        editor.save(
+            SaveOptions {
+                format: true,
+                autosave: true,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save.await.unwrap();
+
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per save and once per formatting after save"
+    );
+
+    drop(editor);
+    let close = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+            })
+        })
+        .unwrap();
+    close.await.unwrap();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After saving and closing the editor, no extra requests should be made"
+    );
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.navigate_backward(window, cx);
+            })
+        })
+        .unwrap();
+    color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        5,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After navigating back to an editor and reopening it, another color request should be made"
+    );
+    let editor = workspace
+        .update(cx, |workspace, _, cx| {
+            workspace
+                .active_item(cx)
+                .expect("Should have reopened the editor again after navigating back")
+                .downcast::<Editor>()
+                .expect("Should be an editor")
+        })
+        .unwrap();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "Should have an initial inlay"
+        );
+    });
+}
+
+#[track_caller]
+fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
+    editor
+        .all_inlays(cx)
+        .into_iter()
+        .filter_map(|inlay| inlay.get_color())
+        .map(Rgba::from)
+        .collect()
 }

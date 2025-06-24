@@ -491,7 +491,7 @@ impl LocalLspStore {
                                 None,
                                 DiagnosticSourceKind::Pushed,
                                 &adapter.disk_based_diagnostic_sources,
-                                |diagnostic, cx| match diagnostic.source_kind {
+                                |_, diagnostic, cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
                                         adapter.retain_old_diagnostic(diagnostic, cx)
                                     }
@@ -4169,7 +4169,7 @@ impl LspStore {
                         // and reused later in the invisible worktrees.
                         plain_text_buffers.sort_by_key(|buffer| {
                             Reverse(
-                                crate::File::from_dyn(buffer.read(cx).file())
+                                File::from_dyn(buffer.read(cx).file())
                                     .map(|file| file.worktree.read(cx).is_visible()),
                             )
                         });
@@ -4513,7 +4513,7 @@ impl LspStore {
                 let mut rebase = lsp_tree.rebase();
                 for buffer_handle in buffer_store.read(cx).buffers().sorted_by_key(|buffer| {
                     Reverse(
-                        crate::File::from_dyn(buffer.read(cx).file())
+                        File::from_dyn(buffer.read(cx).file())
                             .map(|file| file.worktree.read(cx).is_visible()),
                     )
                 }) {
@@ -4914,7 +4914,7 @@ impl LspStore {
         } else {
             let path = match buffer
                 .update(cx, |buffer, cx| {
-                    Some(crate::File::from_dyn(buffer.file())?.abs_path(cx))
+                    Some(File::from_dyn(buffer.file())?.abs_path(cx))
                 })
                 .context("buffer with the missing path")
             {
@@ -5098,17 +5098,30 @@ impl LspStore {
                 .as_ref(),
             )
         });
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            OnTypeFormatting {
-                position,
-                trigger,
-                options,
-                push_to_history,
-            },
-            cx,
-        )
+
+        cx.spawn(async move |this, cx| {
+            if let Some(waiter) =
+                buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())?
+            {
+                waiter.await?;
+            }
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::FirstCapable,
+                        OnTypeFormatting {
+                            position,
+                            trigger,
+                            options,
+                            push_to_history,
+                        },
+                        cx,
+                    )
+                })
+            })??
+            .await
+        })
     }
 
     pub fn code_actions(
@@ -5545,7 +5558,6 @@ impl LspStore {
             .into_response()
             .context("resolve completion")?;
 
-        let mut updated_insert_range = None;
         if let Some(text_edit) = resolved_completion.text_edit.as_ref() {
             // Technically we don't have to parse the whole `text_edit`, since the only
             // language server we currently use that does update `text_edit` in `completionItem/resolve`
@@ -5561,22 +5573,21 @@ impl LspStore {
 
                 completion.new_text = parsed_edit.new_text;
                 completion.replace_range = parsed_edit.replace_range;
-
-                updated_insert_range = parsed_edit.insert_range;
+                if let CompletionSource::Lsp { insert_range, .. } = &mut completion.source {
+                    *insert_range = parsed_edit.insert_range;
+                }
             }
         }
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
-            insert_range,
             lsp_completion,
             resolved,
             server_id: completion_server_id,
             ..
         } = &mut completion.source
         {
-            *insert_range = updated_insert_range;
             if *resolved {
                 return Ok(());
             }
@@ -6008,10 +6019,15 @@ impl LspStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
+        let buffer_id = buffer.read(cx).remote_id();
         let diagnostics = self.pull_diagnostics(buffer, cx);
         cx.spawn(async move |lsp_store, cx| {
             let diagnostics = diagnostics.await.context("pulling diagnostics")?;
             lsp_store.update(cx, |lsp_store, cx| {
+                if lsp_store.as_local().is_none() {
+                    return;
+                }
+
                 for diagnostics_set in diagnostics {
                     let LspPullDiagnostics::Response {
                         server_id,
@@ -6040,7 +6056,7 @@ impl LspStore {
                                     Some(result_id),
                                     DiagnosticSourceKind::Pulled,
                                     disk_based_sources,
-                                    |_, _| true,
+                                    |_, _, _| true,
                                     cx,
                                 )
                                 .log_err();
@@ -6060,8 +6076,10 @@ impl LspStore {
                                     result_id,
                                     DiagnosticSourceKind::Pulled,
                                     disk_based_sources,
-                                    |old_diagnostic, _| match old_diagnostic.source_kind {
-                                        DiagnosticSourceKind::Pulled => false,
+                                    |buffer, old_diagnostic, _| match old_diagnostic.source_kind {
+                                        DiagnosticSourceKind::Pulled => {
+                                            buffer.remote_id() != buffer_id
+                                        }
                                         DiagnosticSourceKind::Other
                                         | DiagnosticSourceKind::Pushed => true,
                                     },
@@ -6077,32 +6095,30 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        update_on_edit: bool,
         for_server_id: Option<LanguageServerId>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let buffer_mtime = buffer.read(cx).saved_mtime()?;
-        let abs_path = crate::File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
         let buffer_version = buffer.read(cx).version();
-        let ignore_existing_mtime = update_on_edit
-            && self.lsp_data.as_ref().is_none_or(|lsp_data| {
-                lsp_data.last_version_queried.get(&abs_path) != Some(&buffer_version)
-            });
+        let abs_path = File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
 
-        let mut has_other_versions = false;
         let mut received_colors_data = false;
-        let mut outdated_lsp_data = false;
         let buffer_lsp_data = self
             .lsp_data
             .as_ref()
             .into_iter()
             .filter(|lsp_data| {
-                if ignore_existing_mtime {
-                    return false;
+                if buffer_mtime == lsp_data.mtime {
+                    lsp_data
+                        .last_version_queried
+                        .get(&abs_path)
+                        .is_none_or(|version_queried| {
+                            !buffer_version.changed_since(version_queried)
+                        })
+                } else {
+                    !buffer_mtime.bad_is_greater_than(lsp_data.mtime)
                 }
-                has_other_versions |= lsp_data.mtime != buffer_mtime;
-                lsp_data.mtime == buffer_mtime
             })
             .flat_map(|lsp_data| lsp_data.buffer_lsp_data.values())
             .filter_map(|buffer_data| buffer_data.get(&abs_path))
@@ -6118,16 +6134,22 @@ impl LspStore {
         if buffer_lsp_data.is_empty() || for_server_id.is_some() {
             if received_colors_data && for_server_id.is_none() {
                 return None;
-            } else if has_other_versions && !ignore_existing_mtime {
-                return None;
             }
 
-            if ignore_existing_mtime
-                || self.lsp_data.is_none()
-                || self
-                    .lsp_data
-                    .as_ref()
-                    .is_some_and(|lsp_data| buffer_mtime != lsp_data.mtime)
+            let mut outdated_lsp_data = false;
+            if self.lsp_data.is_none()
+                || self.lsp_data.as_ref().is_some_and(|lsp_data| {
+                    if buffer_mtime == lsp_data.mtime {
+                        lsp_data
+                            .last_version_queried
+                            .get(&abs_path)
+                            .is_none_or(|version_queried| {
+                                buffer_version.changed_since(version_queried)
+                            })
+                    } else {
+                        buffer_mtime.bad_is_greater_than(lsp_data.mtime)
+                    }
+                })
             {
                 self.lsp_data = Some(LspData {
                     mtime: buffer_mtime,
@@ -6207,6 +6229,7 @@ impl LspStore {
             lsp_data
                 .last_version_queried
                 .insert(abs_path, buffer_version);
+            lsp_data.mtime = buffer_mtime;
             Some(new_task)
         } else {
             Some(Task::ready(Ok(buffer_lsp_data)).shared())
@@ -7072,19 +7095,19 @@ impl LspStore {
             result_id,
             version,
             diagnostics,
-            |_, _| false,
+            |_, _, _| false,
             cx,
         )
     }
 
-    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
+    pub fn merge_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
         result_id: Option<String>,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
-        filter: F,
+        filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let Some((worktree, relative_path)) =
@@ -7106,26 +7129,30 @@ impl LspStore {
                 .get_diagnostics(server_id)
                 .into_iter()
                 .flat_map(|diag| {
-                    diag.iter().filter(|v| filter(&v.diagnostic, cx)).map(|v| {
-                        let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
-                        let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
-                        DiagnosticEntry {
-                            range: start..end,
-                            diagnostic: v.diagnostic.clone(),
-                        }
-                    })
+                    diag.iter()
+                        .filter(|v| filter(buffer, &v.diagnostic, cx))
+                        .map(|v| {
+                            let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
+                            let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
+                            DiagnosticEntry {
+                                range: start..end,
+                                diagnostic: v.diagnostic.clone(),
+                            }
+                        })
                 })
                 .collect::<Vec<_>>();
 
-            self.as_local_mut().unwrap().update_buffer_diagnostics(
-                &buffer_handle,
-                server_id,
-                result_id,
-                version,
-                diagnostics.clone(),
-                reused_diagnostics.clone(),
-                cx,
-            )?;
+            self.as_local_mut()
+                .context("cannot merge diagnostics on a remote LspStore")?
+                .update_buffer_diagnostics(
+                    &buffer_handle,
+                    server_id,
+                    result_id,
+                    version,
+                    diagnostics.clone(),
+                    reused_diagnostics.clone(),
+                    cx,
+                )?;
 
             diagnostics.extend(reused_diagnostics);
         }
@@ -7673,55 +7700,15 @@ impl LspStore {
                         buffer.wait_for_version(deserialize_version(&message.version))
                     })?
                     .await?;
-                let pull_diagnostics = lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let server_ids = buffer.update(cx, |buffer, cx| {
-                        lsp_store
-                            .language_servers_for_local_buffer(buffer, cx)
-                            .map(|(_, server)| server.server_id())
-                            .collect::<Vec<_>>()
-                    });
-
-                    server_ids
-                        .into_iter()
-                        .map(|server_id| {
-                            let result_id = lsp_store.result_id(server_id, buffer_id, cx);
-                            let task = lsp_store.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(server_id),
-                                GetDocumentDiagnostics {
-                                    previous_result_id: result_id,
-                                },
-                                cx,
-                            );
-                            async move { (server_id, task.await) }
-                        })
-                        .collect::<Vec<_>>()
-                })?;
-
-                let all_diagnostics_responses = join_all(pull_diagnostics).await;
-                let mut all_diagnostics = Vec::new();
-                for (server_id, response) in all_diagnostics_responses {
-                    all_diagnostics.push((server_id, response?));
-                }
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: all_diagnostics
-                        .into_iter()
-                        .map(|(server_id, lsp_diagnostic)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(
-                                proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
-                                    GetDocumentDiagnostics::response_to_proto(
-                                        lsp_diagnostic,
-                                        project,
-                                        sender_id,
-                                        &buffer_version,
-                                        cx,
-                                    ),
-                                ),
-                            ),
-                        })
-                        .collect(),
+                lsp_store
+                    .update(&mut cx, |lsp_store, cx| {
+                        lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                    })?
+                    .await?;
+                // `pull_diagnostics_for_buffer` will merge in the new diagnostics and send them to the client.
+                // The client cannot merge anything into its non-local LspStore, so we do not need to return anything.
+                Ok(proto::MultiLspQueryResponse {
+                    responses: Vec::new(),
                 })
             }
             Some(proto::multi_lsp_query::Request::GetDocumentColor(message)) => {
@@ -9505,24 +9492,22 @@ impl LspStore {
             result_id,
             source_kind,
             disk_based_sources,
-            |_, _| false,
+            |_, _, _| false,
             cx,
         )
     }
 
-    pub fn merge_diagnostics<F: Fn(&Diagnostic, &App) -> bool + Clone>(
+    pub fn merge_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
         result_id: Option<String>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
-        filter: F,
+        filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if !self.mode.is_local() {
-            anyhow::bail!("called update_diagnostics on remote");
-        }
+        anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
         let abs_path = params
             .uri
             .to_file_path()
@@ -10465,7 +10450,7 @@ fn lsp_workspace_diagnostics_refresh(
                                                     Some(result_id),
                                                     DiagnosticSourceKind::Pulled,
                                                     disk_based_sources,
-                                                    |_, _| true,
+                                                    |_, _, _| true,
                                                     cx,
                                                 )
                                                 .log_err();
@@ -10485,8 +10470,12 @@ fn lsp_workspace_diagnostics_refresh(
                                                     result_id,
                                                     DiagnosticSourceKind::Pulled,
                                                     disk_based_sources,
-                                                    |old_diagnostic, _| match old_diagnostic.source_kind {
-                                                        DiagnosticSourceKind::Pulled => false,
+                                                    |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
+                                                        DiagnosticSourceKind::Pulled => {
+                                                            let buffer_url = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx))
+                                                                .and_then(|abs_path| file_path_to_lsp_url(&abs_path).ok());
+                                                            buffer_url.is_none_or(|buffer_url| buffer_url != uri)
+                                                        },
                                                         DiagnosticSourceKind::Other
                                                         | DiagnosticSourceKind::Pushed => true,
                                                     },

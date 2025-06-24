@@ -1,53 +1,49 @@
-use std::fmt::Write as _;
-use std::io::Write;
-use std::ops::Range;
-use std::sync::Arc;
-use std::time::Instant;
-
+use crate::{
+    agent_profile::AgentProfile,
+    context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext},
+    thread_store::{
+        SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
+        SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
+        ThreadStore,
+    },
+    tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
+};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use collections::HashMap;
-use editor::display_map::CreaseMetadata;
+use client::{ModelRequestUsage, RequestUsage};
+use collections::{HashMap, HashSet};
 use feature_flags::{self, FeatureFlagAppExt};
-use futures::future::Shared;
-use futures::{FutureExt, StreamExt as _};
+use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
-    WeakEntity,
+    WeakEntity, Window,
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
-use project::Project;
-use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
+use project::{
+    Project,
+    git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
+};
 use prompt_store::{ModelContext, PromptBuilder};
 use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::{io::Write, ops::Range, sync::Arc, time::Instant};
 use thiserror::Error;
-use ui::Window;
 use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
-
-use crate::ThreadStore;
-use crate::agent_profile::AgentProfile;
-use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
-use crate::thread_store::{
-    SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
-    SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
-};
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
+use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -97,13 +93,18 @@ impl MessageId {
     fn post_inc(&mut self) -> Self {
         Self(post_inc(&mut self.0))
     }
+
+    pub fn as_usize(&self) -> usize {
+        self.0
+    }
 }
 
 /// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
 #[derive(Clone, Debug)]
 pub struct MessageCrease {
     pub range: Range<usize>,
-    pub metadata: CreaseMetadata,
+    pub icon_path: SharedString,
+    pub label: SharedString,
     /// None for a deserialized message, Some otherwise.
     pub context: Option<AgentContextHandle>,
 }
@@ -350,7 +351,6 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
-    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -443,7 +443,6 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -541,10 +540,8 @@ impl Thread {
                         .into_iter()
                         .map(|crease| MessageCrease {
                             range: crease.start..crease.end,
-                            metadata: CreaseMetadata {
-                                icon_path: crease.icon_path,
-                                label: crease.label,
-                            },
+                            icon_path: crease.icon_path,
+                            label: crease.label,
                             context: None,
                         })
                         .collect(),
@@ -568,7 +565,6 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
-            last_usage: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -875,10 +871,6 @@ impl Thread {
             .unwrap_or(false)
     }
 
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
-    }
-
     pub fn tool_use_limit_reached(&self) -> bool {
         self.tool_use_limit_reached
     }
@@ -938,14 +930,13 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            self.profile
-                .enabled_tools(cx)
+            resolve_tool_name_conflicts(self.profile.enabled_tools(cx).as_slice())
                 .into_iter()
-                .filter_map(|tool| {
+                .filter_map(|(name, tool)| {
                     // Skip tools that cannot be supported
                     let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
                     Some(LanguageModelRequestTool {
-                        name: tool.name(),
+                        name,
                         description: tool.description(),
                         input_schema,
                     })
@@ -1177,8 +1168,8 @@ impl Thread {
                             .map(|crease| SerializedCrease {
                                 start: crease.range.start,
                                 end: crease.range.end,
-                                icon_path: crease.metadata.icon_path.clone(),
-                                label: crease.metadata.label.clone(),
+                                icon_path: crease.icon_path.clone(),
+                                label: crease.label.clone(),
                             })
                             .collect(),
                         is_hidden: message.is_hidden,
@@ -1389,8 +1380,6 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attach_tracked_files_state(&mut request.messages, cx);
-
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
             Some(self.completion_mode.into())
@@ -1453,60 +1442,6 @@ impl Thread {
         request
     }
 
-    fn attach_tracked_files_state(
-        &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
-    ) {
-        let mut stale_files = String::new();
-
-        let action_log = self.action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
-            if let Some(file) = stale_file.read(cx).file() {
-                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
-            }
-        }
-
-        if stale_files.is_empty() {
-            return;
-        }
-
-        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-        let content = MessageContent::Text(
-            format!("{STALE_FILES_HEADER}{stale_files}").replace("\r\n", "\n"),
-        );
-
-        // Insert our message before the last Assistant message.
-        // Inserting it to the tail distracts the agent too much
-        let insert_position = messages
-            .iter()
-            .enumerate()
-            .rfind(|(_, message)| message.role == Role::Assistant)
-            .map_or(messages.len(), |(i, _)| i);
-
-        let request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![content],
-            cache: false,
-        };
-
-        messages.insert(insert_position, request_message);
-
-        // It makes no sense to cache messages after this one because
-        // the cache is invalidated when this message is gone.
-        // Move the cache marker before this message.
-        let has_cached_messages_after = messages
-            .iter()
-            .skip(insert_position + 1)
-            .any(|message| message.cache);
-
-        if has_cached_messages_after {
-            messages[insert_position - 1].cache = true;
-        }
-    }
-
     pub fn stream_completion(
         &mut self,
         request: LanguageModelRequest,
@@ -1558,27 +1493,76 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         let event = match event {
                             Ok(event) => event,
-                            Err(LanguageModelCompletionError::BadInputJson {
-                                id,
-                                tool_name,
-                                raw_input: invalid_input_json,
-                                json_parse_error,
-                            }) => {
-                                thread.receive_invalid_tool_json(
-                                    id,
-                                    tool_name,
-                                    invalid_input_json,
-                                    json_parse_error,
-                                    window,
-                                    cx,
-                                );
-                                return Ok(());
-                            }
-                            Err(LanguageModelCompletionError::Other(error)) => {
-                                return Err(error);
-                            }
-                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
-                                return Err(err.into());
+                            Err(error) => {
+                                match error {
+                                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
+                                        anyhow::bail!(LanguageModelKnownError::RateLimitExceeded { retry_after });
+                                    }
+                                    LanguageModelCompletionError::Overloaded => {
+                                        anyhow::bail!(LanguageModelKnownError::Overloaded);
+                                    }
+                                    LanguageModelCompletionError::ApiInternalServerError =>{
+                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
+                                    }
+                                    LanguageModelCompletionError::PromptTooLarge { tokens } => {
+                                        let tokens = tokens.unwrap_or_else(|| {
+                                            // We didn't get an exact token count from the API, so fall back on our estimate.
+                                            thread.total_token_usage()
+                                                .map(|usage| usage.total)
+                                                .unwrap_or(0)
+                                                // We know the context window was exceeded in practice, so if our estimate was
+                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
+                                                .max(model.max_token_count().saturating_add(1))
+                                        });
+
+                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens })
+                                    }
+                                    LanguageModelCompletionError::ApiReadResponseError(io_error) => {
+                                        anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
+                                    }
+                                    LanguageModelCompletionError::UnknownResponseFormat(error) => {
+                                        anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
+                                    }
+                                    LanguageModelCompletionError::HttpResponseError { status, ref body } => {
+                                        if let Some(known_error) = LanguageModelKnownError::from_http_response(status, body) {
+                                            anyhow::bail!(known_error);
+                                        } else {
+                                            return Err(error.into());
+                                        }
+                                    }
+                                    LanguageModelCompletionError::DeserializeResponse(error) => {
+                                        anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
+                                    }
+                                    LanguageModelCompletionError::BadInputJson {
+                                        id,
+                                        tool_name,
+                                        raw_input: invalid_input_json,
+                                        json_parse_error,
+                                    } => {
+                                        thread.receive_invalid_tool_json(
+                                            id,
+                                            tool_name,
+                                            invalid_input_json,
+                                            json_parse_error,
+                                            window,
+                                            cx,
+                                        );
+                                        return Ok(());
+                                    }
+                                    // These are all errors we can't automatically attempt to recover from (e.g. by retrying)
+                                    err @ LanguageModelCompletionError::BadRequestFormat |
+                                    err @ LanguageModelCompletionError::AuthenticationError |
+                                    err @ LanguageModelCompletionError::PermissionError |
+                                    err @ LanguageModelCompletionError::ApiEndpointNotFound |
+                                    err @ LanguageModelCompletionError::SerializeRequest(_) |
+                                    err @ LanguageModelCompletionError::BuildRequestBody(_) |
+                                    err @ LanguageModelCompletionError::HttpSend(_) => {
+                                        anyhow::bail!(err);
+                                    }
+                                    LanguageModelCompletionError::Other(error) => {
+                                        return Err(error);
+                                    }
+                                }
                             }
                         };
 
@@ -1714,9 +1698,7 @@ impl Thread {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            let usage = RequestUsage { limit, amount: amount as i32 };
-
-                                            thread.last_usage = Some(usage);
+                                            thread.update_model_request_usage(amount as u32, limit, cx);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1816,6 +1798,18 @@ impl Thread {
                                 project.set_agent_location(None, cx);
                             });
 
+                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<Thread>) {
+                                let error_message = error
+                                    .chain()
+                                    .map(|err| err.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                    header: "Error interacting with language model".into(),
+                                    message: SharedString::from(error_message.clone()),
+                                }));
+                            }
+
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
                             } else if let Some(error) =
@@ -1828,26 +1822,34 @@ impl Thread {
                                 error.downcast_ref::<LanguageModelKnownError>()
                             {
                                 match known_error {
-                                    LanguageModelKnownError::ContextWindowLimitExceeded {
-                                        tokens,
-                                    } => {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
                                             token_count: *tokens,
                                         });
                                         cx.notify();
                                     }
+                                    LanguageModelKnownError::RateLimitExceeded { .. } => {
+                                        // In the future we will report the error to the user, wait retry_after, and then retry.
+                                        emit_generic_error(error, cx);
+                                    }
+                                    LanguageModelKnownError::Overloaded => {
+                                        // In the future we will wait and then retry, up to N times.
+                                        emit_generic_error(error, cx);
+                                    }
+                                    LanguageModelKnownError::ApiInternalServerError => {
+                                        // In the future we will retry the request, but only once.
+                                        emit_generic_error(error, cx);
+                                    }
+                                    LanguageModelKnownError::ReadResponseError(_) |
+                                    LanguageModelKnownError::DeserializeResponse(_) |
+                                    LanguageModelKnownError::UnknownResponseFormat(_) => {
+                                        // In the future we will attempt to re-roll response, but only once
+                                        emit_generic_error(error, cx);
+                                    }
                                 }
                             } else {
-                                let error_message = error
-                                    .chain()
-                                    .map(|err| err.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Error interacting with language model".into(),
-                                    message: SharedString::from(error_message.clone()),
-                                }));
+                                emit_generic_error(error, cx);
                             }
 
                             thread.cancel_last_completion(window, cx);
@@ -1927,11 +1929,8 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |thread, _cx| {
-                                thread.last_usage = Some(RequestUsage {
-                                    limit,
-                                    amount: amount as i32,
-                                });
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount as u32, limit, cx);
                             })?;
                             continue;
                         }
@@ -2813,6 +2812,20 @@ impl Thread {
         }
     }
 
+    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            project.user_store().update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            })
+        });
+    }
+
     pub fn deny_tool_use(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -2900,14 +2913,95 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+/// Resolves tool name conflicts by ensuring all tool names are unique.
+///
+/// When multiple tools have the same name, this function applies the following rules:
+/// 1. Native tools always keep their original name
+/// 2. Context server tools get prefixed with their server ID and an underscore
+/// 3. All tool names are truncated to MAX_TOOL_NAME_LENGTH (64 characters)
+/// 4. If conflicts still exist after prefixing, the conflicting tools are filtered out
+///
+/// Note: This function assumes that built-in tools occur before MCP tools in the tools list.
+fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn Tool>)> {
+    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
+        let mut tool_name = tool.name();
+        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+        tool_name
+    }
+
+    const MAX_TOOL_NAME_LENGTH: usize = 64;
+
+    let mut duplicated_tool_names = HashSet::default();
+    let mut seen_tool_names = HashSet::default();
+    for tool in tools {
+        let tool_name = resolve_tool_name(tool);
+        if seen_tool_names.contains(&tool_name) {
+            debug_assert!(
+                tool.source() != assistant_tool::ToolSource::Native,
+                "There are two built-in tools with the same name: {}",
+                tool_name
+            );
+            duplicated_tool_names.insert(tool_name);
+        } else {
+            seen_tool_names.insert(tool_name);
+        }
+    }
+
+    if duplicated_tool_names.is_empty() {
+        return tools
+            .into_iter()
+            .map(|tool| (resolve_tool_name(tool), tool.clone()))
+            .collect();
+    }
+
+    tools
+        .into_iter()
+        .filter_map(|tool| {
+            let mut tool_name = resolve_tool_name(tool);
+            if !duplicated_tool_names.contains(&tool_name) {
+                return Some((tool_name, tool.clone()));
+            }
+            match tool.source() {
+                assistant_tool::ToolSource::Native => {
+                    // Built-in tools always keep their original name
+                    Some((tool_name, tool.clone()))
+                }
+                assistant_tool::ToolSource::ContextServer { id } => {
+                    // Context server tools are prefixed with the context server ID, and truncated if necessary
+                    tool_name.insert(0, '_');
+                    if tool_name.len() + id.len() > MAX_TOOL_NAME_LENGTH {
+                        let len = MAX_TOOL_NAME_LENGTH - tool_name.len();
+                        let mut id = id.to_string();
+                        id.truncate(len);
+                        tool_name.insert_str(0, &id);
+                    } else {
+                        tool_name.insert_str(0, &id);
+                    }
+
+                    tool_name.truncate(MAX_TOOL_NAME_LENGTH);
+
+                    if seen_tool_names.contains(&tool_name) {
+                        log::error!("Cannot resolve tool name conflict for tool {}", tool.name());
+                        None
+                    } else {
+                        Some((tool_name, tool.clone()))
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
+    use crate::{
+        context::load_context, context_store::ContextStore, thread_store, thread_store::ThreadStore,
+    };
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
-    use editor::EditorSettings;
     use gpui::TestAppContext;
+    use icons::IconName;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
@@ -3230,106 +3324,6 @@ fn main() {{
     }
 
     #[gpui::test]
-    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        init_test_settings(cx);
-
-        let project = create_test_project(
-            cx,
-            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
-        )
-        .await;
-
-        let (_workspace, _thread_store, thread, context_store, model) =
-            setup_test_environment(cx, project.clone()).await;
-
-        // Open buffer and add it to context
-        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
-            .await
-            .unwrap();
-
-        let context =
-            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
-        let loaded_context = cx
-            .update(|cx| load_context(vec![context], &project, &None, cx))
-            .await;
-
-        // Insert user message with the buffer as context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
-        });
-
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
-        assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
-        );
-
-        // Modify the buffer
-        buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
-            buffer.edit(
-                [(1..1, "\n    println!(\"Added a new line\");\n")],
-                None,
-                cx,
-            );
-        });
-
-        // Insert another user message without context
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What does the code do now?",
-                ContextLoadResult::default(),
-                None,
-                Vec::new(),
-                cx,
-            )
-        });
-
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // We should have a stale file warning as the last message
-        let last_message = new_request
-            .messages
-            .last()
-            .expect("Request should have messages");
-
-        // The last message should be the stale buffer notification
-        assert_eq!(last_message.role, Role::User);
-
-        // Check the exact content of the message
-        let expected_content = "[The following is an auto-generated notification; do not reply]
-
-These files have changed since the last read:
-- code.rs
-";
-        assert_eq!(
-            last_message.string_contents(),
-            expected_content,
-            "Last message should be exactly the stale buffer notification"
-        );
-
-        // The message before the notification should be cached
-        let index = new_request.messages.len() - 2;
-        let previous_message = new_request.messages.get(index).unwrap();
-        assert!(
-            previous_message.cache,
-            "Message before the stale buffer notification should be cached"
-        );
-    }
-
-    #[gpui::test]
     async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
@@ -3646,6 +3640,148 @@ These files have changed since the last read:
         });
     }
 
+    #[gpui::test]
+    fn test_resolve_tool_name_conflicts() {
+        use assistant_tool::{Tool, ToolSource};
+
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+            ],
+            vec!["tool1", "tool2", "tool3"],
+        );
+
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+            ],
+            vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
+        );
+
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool1", ToolSource::Native),
+                TestTool::new("tool2", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::Native),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+            ],
+            vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
+        );
+
+        // Test that tool with very long name is always truncated
+        assert_resolve_tool_name_conflicts(
+            vec![TestTool::new(
+                "tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-blah-blah",
+                ToolSource::Native,
+            )],
+            vec!["tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-"],
+        );
+
+        // Test deduplication of tools with very long names, in this case the mcp server name should be truncated
+        assert_resolve_tool_name_conflicts(
+            vec![
+                TestTool::new("tool-with-very-very-very-long-name", ToolSource::Native),
+                TestTool::new(
+                    "tool-with-very-very-very-long-name",
+                    ToolSource::ContextServer {
+                        id: "mcp-with-very-very-very-long-name".into(),
+                    },
+                ),
+            ],
+            vec![
+                "tool-with-very-very-very-long-name",
+                "mcp-with-very-very-very-long-_tool-with-very-very-very-long-name",
+            ],
+        );
+
+        fn assert_resolve_tool_name_conflicts(
+            tools: Vec<TestTool>,
+            expected: Vec<impl Into<String>>,
+        ) {
+            let tools: Vec<Arc<dyn Tool>> = tools
+                .into_iter()
+                .map(|t| Arc::new(t) as Arc<dyn Tool>)
+                .collect();
+            let tools = resolve_tool_name_conflicts(&tools);
+            assert_eq!(tools.len(), expected.len());
+            for (i, expected_name) in expected.into_iter().enumerate() {
+                let expected_name = expected_name.into();
+                let actual_name = &tools[i].0;
+                assert_eq!(
+                    actual_name, &expected_name,
+                    "Expected '{}' got '{}' at index {}",
+                    expected_name, actual_name, i
+                );
+            }
+        }
+
+        struct TestTool {
+            name: String,
+            source: ToolSource,
+        }
+
+        impl TestTool {
+            fn new(name: impl Into<String>, source: ToolSource) -> Self {
+                Self {
+                    name: name.into(),
+                    source,
+                }
+            }
+        }
+
+        impl Tool for TestTool {
+            fn name(&self) -> String {
+                self.name.clone()
+            }
+
+            fn icon(&self) -> IconName {
+                IconName::Ai
+            }
+
+            fn may_perform_edits(&self) -> bool {
+                false
+            }
+
+            fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+                true
+            }
+
+            fn source(&self) -> ToolSource {
+                self.source.clone()
+            }
+
+            fn description(&self) -> String {
+                "Test tool".to_string()
+            }
+
+            fn ui_text(&self, _input: &serde_json::Value) -> String {
+                "Test tool".to_string()
+            }
+
+            fn run(
+                self: Arc<Self>,
+                _input: serde_json::Value,
+                _request: Arc<LanguageModelRequest>,
+                _project: Entity<Project>,
+                _action_log: Entity<ActionLog>,
+                _model: Arc<dyn LanguageModel>,
+                _window: Option<AnyWindowHandle>,
+                _cx: &mut App,
+            ) -> assistant_tool::ToolResult {
+                assistant_tool::ToolResult {
+                    output: Task::ready(Err(anyhow::anyhow!("No content"))),
+                    card: None,
+                }
+            }
+        }
+    }
+
     fn test_summarize_error(
         model: &Arc<dyn LanguageModel>,
         thread: &Entity<Thread>,
@@ -3700,7 +3836,6 @@ These files have changed since the last read:
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
     }

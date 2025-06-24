@@ -24,13 +24,11 @@ chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
+derive_more.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
-# Don't update `hickory-resolver`, it has a bug that causes it to not resolve DNS queries correctly.
-# See https://github.com/hickory-dns/hickory-dns/issues/3048
-hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
 http_client.workspace = true
 http_client_tls.workspace = true
 httparse = "1.10"
@@ -60,6 +58,7 @@ worktree.workspace = true
 telemetry.workspace = true
 tokio.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

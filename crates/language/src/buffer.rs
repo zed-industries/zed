@@ -106,6 +106,7 @@ pub struct Buffer {
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
+    wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
@@ -944,6 +945,7 @@ impl Buffer {
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
+            wait_for_autoindent_txs: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
             remote_selections: Default::default(),
@@ -1449,7 +1451,7 @@ impl Buffer {
         self.syntax_map.lock().contains_unknown_injections()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
         self.sync_parse_timeout = timeout;
     }
@@ -1600,6 +1602,9 @@ impl Buffer {
             }
         } else {
             self.autoindent_requests.clear();
+            for tx in self.wait_for_autoindent_txs.drain(..) {
+                tx.send(()).ok();
+            }
         }
     }
 
@@ -1781,6 +1786,9 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
+        for tx in self.wait_for_autoindent_txs.drain(..) {
+            tx.send(()).ok();
+        }
 
         let edits: Vec<_> = indent_sizes
             .into_iter()
@@ -2118,6 +2126,16 @@ impl Buffer {
     /// [`Buffer::wait_for_version`] to resolve with an error.
     pub fn give_up_waiting(&mut self) {
         self.text.give_up_waiting();
+    }
+
+    pub fn wait_for_autoindent_applied(&mut self) -> Option<oneshot::Receiver<()>> {
+        let mut rx = None;
+        if !self.autoindent_requests.is_empty() {
+            let channel = oneshot::channel();
+            self.wait_for_autoindent_txs.push(channel.0);
+            rx = Some(channel.1);
+        }
+        rx
     }
 
     /// Stores a set of selections that should be broadcasted to all of the buffer's replicas.
