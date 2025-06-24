@@ -227,5 +227,25 @@ impl<T: AgentThread> Thread<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+    use gpui::{BackgroundExecutor, TestAppContext};
+
+    #[gpui::test]
+    async fn test_basic(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let agent = GeminiAgent::start("~/gemini-cli/change-me.js", &cx.executor())
+            .await
+            .unwrap();
+        let thread_store = ThreadStore::load(Arc::new(agent), &mut cx.to_async()).await.unwrap();
+    }
+
+    struct GeminiAgent {}
+
+    impl GeminiAgent {
+        pub fn start(path: impl AsRef<Path>, executor: &BackgroundExecutor) -> Task<Result<Self>> {
+            executor.spawn(async move { Ok(GeminiAgent {}) })
+        }
+    }
 }
