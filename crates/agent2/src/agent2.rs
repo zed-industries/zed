@@ -1,3 +1,5 @@
+mod acp;
+
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::{
@@ -9,7 +11,6 @@ use futures::{
 use gpui::{AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use project::Project;
 use std::{future, ops::Range, path::PathBuf, pin::pin, sync::Arc};
-use uuid::Uuid;
 
 pub trait Agent: 'static {
     type Thread: AgentThread;
@@ -53,7 +54,7 @@ impl ReadFileRequest {
     }
 }
 
-pub struct ThreadId(Uuid);
+pub struct ThreadId(String);
 
 pub struct FileVersion(u64);
 
@@ -363,14 +364,27 @@ impl<T: AgentThread> Thread<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentic_coding_protocol::Client;
     use gpui::{BackgroundExecutor, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
-    use std::path::Path;
+    use settings::SettingsStore;
+    use smol::process::Child;
+    use std::env;
     use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+        });
+    }
 
     #[gpui::test]
     async fn test_basic(cx: &mut TestAppContext) {
+        init_test(cx);
+
         cx.executor().allow_parking();
 
         let fs = FakeFs::new(cx.executor());
@@ -380,19 +394,43 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-        let agent = GeminiAgent::start("~/gemini-cli/change-me.js", &cx.executor())
-            .await
-            .unwrap();
+        let agent = GeminiAgent::start(&cx.executor()).await.unwrap();
         let thread_store = ThreadStore::load(Arc::new(agent), project, &mut cx.to_async())
             .await
             .unwrap();
     }
 
-    struct GeminiAgent {}
+    struct TestClient;
+
+    #[async_trait]
+    impl Client for TestClient {
+        async fn read_file(&self, _request: ReadFileParams) -> Result<ReadFileResponse> {
+            Ok(ReadFileResponse {
+                version: FileVersion(0),
+                content: "the content".into(),
+            })
+        }
+    }
+
+    struct GeminiAgent {
+        child: Child,
+        _task: Task<()>,
+    }
 
     impl GeminiAgent {
-        pub fn start(path: impl AsRef<Path>, executor: &BackgroundExecutor) -> Task<Result<Self>> {
-            executor.spawn(async move { Ok(GeminiAgent {}) })
+        pub fn start(executor: &BackgroundExecutor) -> Task<Result<Self>> {
+            executor.spawn(async move {
+                // todo!
+                let child = util::command::new_smol_command("node")
+                    .arg("../gemini-cli/packages/cli")
+                    .arg("--acp")
+                    .env("GEMINI_API_KEY", env::var("GEMINI_API_KEY").unwrap())
+                    .kill_on_drop(true)
+                    .spawn()
+                    .unwrap();
+
+                Ok(GeminiAgent { child })
+            })
         }
     }
 

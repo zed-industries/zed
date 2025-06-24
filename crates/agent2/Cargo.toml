@@ -15,18 +15,27 @@ doctest = false
 [features]
 test-support = [
     "gpui/test-support",
+    "project/test-support",
 ]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
+collections.workspace = true
 chrono.workspace = true
 futures.workspace = true
+language.workspace = true
 gpui.workspace = true
 project.workspace = true
+smol.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
+util.workspace = true
+agentic-coding-protocol = { path = "../../../agentic-coding-protocol" }
 
 [dev-dependencies]
 gpui = { workspace = true, "features" = ["test-support"] }
+project = { workspace = true, "features" = ["test-support"] }
 serde_json.workspace = true
 util.workspace = true
+settings.workspace = true
