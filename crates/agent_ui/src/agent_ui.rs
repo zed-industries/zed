@@ -27,7 +27,7 @@ use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{App, Entity, actions, impl_actions};
+use gpui::{Action, App, Entity, actions};
 use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
@@ -84,13 +84,15 @@ actions!(
     ]
 );
 
-#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema)]
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
 pub struct ManageProfiles {
     #[serde(default)]
     pub customize_tools: Option<AgentProfileId>,
@@ -103,8 +105,6 @@ impl ManageProfiles {
         }
     }
 }
-
-impl_actions!(agent, [NewThread, ManageProfiles]);
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
