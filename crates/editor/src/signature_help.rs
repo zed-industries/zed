@@ -216,13 +216,13 @@ impl Editor {
                             ..Default::default()
                         };
                         let scroll_handle = ScrollHandle::new();
-
+                        
                         // Defer the entire popover creation to prevent blinking
                         let editor_handle = cx.entity();
                         let languages_clone = languages.clone();
                         let text_style_clone = text_style.clone();
                         let scroll_handle_clone = scroll_handle.clone();
-
+                        
                         cx.defer(move |cx| {
                             editor_handle.update(cx, |editor, cx| {
                                 let signatures = signature_help
@@ -281,7 +281,7 @@ impl Editor {
                                     scroll_handle: scroll_handle_clone.clone(),
                                     scrollbar_state: ScrollbarState::new(scroll_handle_clone),
                                 };
-
+                                
                                 editor
                                     .signature_help_state
                                     .set_popover(signature_help_popover);
