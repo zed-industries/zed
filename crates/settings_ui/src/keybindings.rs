@@ -1,5 +1,6 @@
 use std::{fmt::Write as _, ops::Range, sync::Arc};
 
+use collections::HashSet;
 use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -152,6 +153,7 @@ impl KeymapEditor {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
+        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names());
 
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
@@ -173,6 +175,7 @@ impl KeymapEditor {
                 .map(|meta| settings::KeybindSource::from_meta(meta).name().into());
 
             let action_name = key_binding.action().name();
+            unmapped_action_names.remove(&action_name);
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
@@ -185,6 +188,21 @@ impl KeymapEditor {
             });
             string_match_candidates.push(string_match_candidate);
         }
+
+        let empty = SharedString::new_static("");
+        for action_name in unmapped_action_names.into_iter() {
+            let index = processed_bindings.len();
+            let string_match_candidate = StringMatchCandidate::new(index, &action_name);
+            processed_bindings.push(ProcessedKeybinding {
+                keystroke_text: empty.clone(),
+                action: (*action_name).into(),
+                action_input: None,
+                context: empty.clone(),
+                source: None,
+            });
+            string_match_candidates.push(string_match_candidate);
+        }
+
         (processed_bindings, string_match_candidates)
     }
 
