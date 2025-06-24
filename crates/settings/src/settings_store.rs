@@ -1335,7 +1335,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use crate::VsCodeSettingsSource;
 
     use super::*;
@@ -1517,6 +1517,197 @@ pub(crate) mod tests {
         );
     }
 
+    fn check_settings_update<T: Settings>(
+        store: &mut SettingsStore,
+        old_json: String,
+        update: fn(&mut T::FileContent),
+        expected_new_json: String,
+        cx: &mut App,
+    ) {
+        store.set_user_settings(&old_json, cx).ok();
+        let edits = store.edits_for_update::<T>(&old_json, update);
+        let mut new_json = old_json;
+        for (range, replacement) in edits.into_iter() {
+            new_json.replace_range(range, &replacement);
+        }
+        pretty_assertions::assert_eq!(new_json, expected_new_json);
+    }
+
+    #[gpui::test]
+    fn test_setting_store_update(cx: &mut App) {
+        let mut store = SettingsStore::new(cx);
+        store.register_setting::<MultiKeySettings>(cx);
+        store.register_setting::<UserSettings>(cx);
+        store.register_setting::<LanguageSettings>(cx);
+
+        // entries added and updated
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "JSON": {
+                        "language_setting_1": true
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings
+                    .languages
+                    .get_mut("JSON")
+                    .unwrap()
+                    .language_setting_1 = Some(false);
+                settings.languages.insert(
+                    "Rust".into(),
+                    LanguageSettingEntry {
+                        language_setting_2: Some(true),
+                        ..Default::default()
+                    },
+                );
+            },
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        // entries removed
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("JSON").unwrap();
+            },
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("Rust").unwrap();
+            },
+            r#"{
+                "languages": {
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        // weird formatting
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+                "user":   { "age": 36, "name": "Max", "staff": true }
+                }"#
+            .unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user":   { "age": 37, "name": "Max", "staff": true }
+                }"#
+            .unindent(),
+            cx,
+        );
+
+        // single-line formatting, other keys
+        check_settings_update::<MultiKeySettings>(
+            &mut store,
+            r#"{ "one": 1, "two": 2 }"#.unindent(),
+            |settings| settings.key1 = Some("x".into()),
+            r#"{ "key1": "x", "one": 1, "two": 2 }"#.unindent(),
+            cx,
+        );
+
+        // empty object
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+                "user": {}
+            }"#
+            .unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        // no content
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#""#.unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+    }
+
     #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx);
@@ -1692,7 +1883,7 @@ pub(crate) mod tests {
     }
 
     #[derive(Debug, PartialEq, Deserialize)]
-    pub(crate) struct UserSettings {
+    struct UserSettings {
         name: String,
         age: u32,
         staff: bool,
@@ -1700,10 +1891,10 @@ pub(crate) mod tests {
 
     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
     #[schemars(deny_unknown_fields)]
-    pub(crate) struct UserSettingsContent {
-        pub(crate) name: Option<String>,
-        pub(crate) age: Option<u32>,
-        pub(crate) staff: Option<bool>,
+    struct UserSettingsContent {
+        name: Option<String>,
+        age: Option<u32>,
+        staff: Option<bool>,
     }
 
     impl Settings for UserSettings {
@@ -1734,7 +1925,7 @@ pub(crate) mod tests {
     }
 
     #[derive(Clone, Debug, PartialEq, Deserialize)]
-    pub(crate) struct MultiKeySettings {
+    struct MultiKeySettings {
         #[serde(default)]
         key1: String,
         #[serde(default)]
@@ -1743,9 +1934,9 @@ pub(crate) mod tests {
 
     #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
     #[schemars(deny_unknown_fields)]
-    pub(crate) struct MultiKeySettingsJson {
-        pub(crate) key1: Option<String>,
-        pub(crate) key2: Option<String>,
+    struct MultiKeySettingsJson {
+        key1: Option<String>,
+        key2: Option<String>,
     }
 
     impl Settings for MultiKeySettings {
@@ -1870,16 +2061,16 @@ pub(crate) mod tests {
     }
 
     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-    pub(crate) struct LanguageSettings {
+    struct LanguageSettings {
         #[serde(default)]
-        pub(crate) languages: HashMap<String, LanguageSettingEntry>,
+        languages: HashMap<String, LanguageSettingEntry>,
     }
 
     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
     #[schemars(deny_unknown_fields)]
-    pub(crate) struct LanguageSettingEntry {
-        pub(crate) language_setting_1: Option<bool>,
-        pub(crate) language_setting_2: Option<bool>,
+    struct LanguageSettingEntry {
+        language_setting_1: Option<bool>,
+        language_setting_2: Option<bool>,
     }
 
     impl Settings for LanguageSettings {
