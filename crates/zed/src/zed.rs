@@ -24,10 +24,10 @@ use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
-    Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
-    image_cache, point, px, retain_all,
+    Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -1408,7 +1408,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     load_default_keymap(cx);
 
     for key_binding in &mut user_key_bindings {
-        key_binding.set_meta(KeybindSource::USER);
+        key_binding.set_meta(KeybindSource::User.meta());
     }
     cx.bind_keys(user_key_bindings);
 
@@ -1428,23 +1428,16 @@ pub fn load_default_keymap(cx: &mut App) {
     }
 
     cx.bind_keys(
-        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::DEFAULT), cx).unwrap(),
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
     );
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(
-            KeymapFile::load_asset(
-                asset_path,
-                Some(KeybindSource::BASE /* todo! which base? */),
-                cx,
-            )
-            .unwrap(),
-        );
+        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
         cx.bind_keys(
-            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::VIM), cx).unwrap(),
+            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
         );
     }
 }

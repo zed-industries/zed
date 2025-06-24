@@ -19,7 +19,7 @@ impl Clone for KeyBinding {
             action: self.action.boxed_clone(),
             keystrokes: self.keystrokes.clone(),
             context_predicate: self.context_predicate.clone(),
-            meta: self.meta.clone(),
+            meta: self.meta,
         }
     }
 }
@@ -65,15 +65,15 @@ impl KeyBinding {
         })
     }
 
-    /// Set the source of this binding.
-    pub fn with_meta(mut self, source: KeyBindingMetaIndex) -> Self {
-        self.meta = Some(source);
+    /// Set the metadata for this binding.
+    pub fn with_meta(mut self, meta: KeyBindingMetaIndex) -> Self {
+        self.meta = Some(meta);
         self
     }
 
-    /// Set the source of this binding.
-    pub fn set_meta(&mut self, source: KeyBindingMetaIndex) {
-        self.meta = Some(source);
+    /// Set the metadata for this binding.
+    pub fn set_meta(&mut self, meta: KeyBindingMetaIndex) {
+        self.meta = Some(meta);
     }
 
     /// Check if the given keystrokes match this binding.
@@ -106,8 +106,8 @@ impl KeyBinding {
         self.context_predicate.as_ref().map(|rc| rc.clone())
     }
 
-    /// Get the source of this binding, if one was set
-    pub fn source(&self) -> Option<KeyBindingMetaIndex> {
+    /// Get the metadata for this binding
+    pub fn meta(&self) -> Option<KeyBindingMetaIndex> {
         self.meta
     }
 }

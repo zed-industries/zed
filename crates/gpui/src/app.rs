@@ -1328,8 +1328,6 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
-    /// Register key binding source
-
     /// Clear all key bindings in the app.
     pub fn clear_key_bindings(&mut self) {
         self.keymap.borrow_mut().clear();

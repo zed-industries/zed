@@ -76,7 +76,7 @@ impl VimTestContext {
         if enabled {
             let vim_key_bindings = settings::KeymapFile::load_asset(
                 "keymaps/vim.json",
-                Some(settings::KeybindSource::VIM),
+                Some(settings::KeybindSource::Vim),
                 cx,
             )
             .unwrap();

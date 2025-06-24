@@ -153,14 +153,14 @@ impl KeymapFile {
 
     pub fn load_asset(
         asset_path: &str,
-        source: Option<KeyBindingMetaIndex>,
+        source: Option<KeybindSource>,
         cx: &App,
     ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::Success { mut key_bindings } => match source {
                 Some(source) => Ok({
                     for key_binding in &mut key_bindings {
-                        key_binding.set_meta(source);
+                        key_binding.set_meta(source.meta());
                     }
                     key_bindings
                 }),
@@ -633,18 +633,17 @@ impl KeymapFile {
 
 #[derive(Clone, Copy)]
 pub enum KeybindSource {
-    /// User-defined keybinding, the usize is the index of the keybinding in the keymap file.
     User,
-    Default, // todo! move base_keymap_setting.rs from welcome to settings
+    Default,
     Base,
     Vim,
 }
 
 impl KeybindSource {
-    pub const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
-    pub const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
-    pub const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
-    pub const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
+    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
+    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
+    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -655,7 +654,16 @@ impl KeybindSource {
         }
     }
 
-    pub fn from_meta_index(index: KeyBindingMetaIndex) -> Self {
+    pub fn meta(&self) -> KeyBindingMetaIndex {
+        match self {
+            KeybindSource::User => Self::USER,
+            KeybindSource::Default => Self::DEFAULT,
+            KeybindSource::Base => Self::BASE,
+            KeybindSource::Vim => Self::VIM,
+        }
+    }
+
+    pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
         match index {
             _ if index == Self::USER => KeybindSource::User,
             _ if index == Self::USER => KeybindSource::Base,
@@ -663,6 +671,18 @@ impl KeybindSource {
             _ if index == Self::VIM => KeybindSource::Vim,
             _ => unreachable!(),
         }
+    }
+}
+
+impl From<KeyBindingMetaIndex> for KeybindSource {
+    fn from(index: KeyBindingMetaIndex) -> Self {
+        Self::from_meta(index)
+    }
+}
+
+impl From<KeybindSource> for KeyBindingMetaIndex {
+    fn from(source: KeybindSource) -> Self {
+        return source.meta();
     }
 }
 

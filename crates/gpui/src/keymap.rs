@@ -3,12 +3,11 @@ mod context;
 
 pub use binding::*;
 pub use context::*;
-use util::arc_cow::ArcCow;
 
 use crate::{Action, Keystroke, is_no_action};
 use collections::HashMap;
 use smallvec::SmallVec;
-use std::{any::TypeId, path::Path};
+use std::any::TypeId;
 
 /// An opaque identifier of which version of the keymap is currently active.
 /// The keymap's version is changed whenever bindings are added or removed.
