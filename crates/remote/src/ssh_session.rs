@@ -1999,7 +1999,9 @@ impl SshRemoteConnection {
             Ok(())
         }
 
-        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+        let bin_path = if platform.arch == std::env::consts::ARCH
+            && platform.os == std::env::consts::OS
+        {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
             run_cmd(Command::new("cargo").args([
@@ -2013,17 +2015,7 @@ impl SshRemoteConnection {
             ]))
             .await?;
 
-            delegate.set_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            Ok(path)
+            "target/remote_server/debug/remote_server".into()
         } else {
             let Some(triple) = platform.triple() else {
                 anyhow::bail!("can't cross compile for: {:?}", platform);
@@ -2107,26 +2099,21 @@ impl SshRemoteConnection {
                     &triple,
                 ]))
                 .await?;
-            };
-
-            let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
-            if !build_remote_server.contains("nocompress") {
-                delegate.set_status(Some("Compressing binary"), cx);
-
-                run_cmd(Command::new("gzip").args([
-                    "-9",
-                    "-f",
-                    &format!("target/remote_server/{}/debug/remote_server", triple),
-                ]))
-                .await?;
-
-                path = std::env::current_dir()?.join(format!(
-                    "target/remote_server/{triple}/debug/remote_server.gz"
-                ));
             }
 
-            Ok(path)
-        }
+            format!("target/remote_server/{triple}/debug/remote_server")
+        };
+
+        let path = if !build_remote_server.contains("nocompress") {
+            delegate.set_status(Some("Compressing binary"), cx);
+            run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path])).await?;
+
+            std::env::current_dir()?.join(format!("{bin_path}.gz"))
+        } else {
+            bin_path.into()
+        };
+
+        Ok(path)
     }
 }
 
