@@ -15,8 +15,8 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
-use agent_core::context::AgentContextHandle;
-use agent_core::context_store::ContextStore;
+use agent::context::AgentContextHandle;
+use agent::context_store::ContextStore;
 
 pub struct SymbolContextPicker {
     picker: Entity<Picker<SymbolContextPickerDelegate>>,

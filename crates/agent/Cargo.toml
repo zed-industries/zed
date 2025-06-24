@@ -1,5 +1,5 @@
 [package]
-name = "agent_core"
+name = "agent"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/agent_core.rs"
+path = "src/agent.rs"
 doctest = false
 
 [features]

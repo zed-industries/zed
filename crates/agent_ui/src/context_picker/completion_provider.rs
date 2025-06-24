@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agent_core::context_store::ContextStore;
+use agent::context_store::ContextStore;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
@@ -21,7 +21,7 @@ use ui::prelude::*;
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use agent_core::{
+use agent::{
     Thread,
     context::{AgentContextHandle, AgentContextKey, RULES_ICON},
     thread_store::{TextThreadStore, ThreadStore},

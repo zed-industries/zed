@@ -5,7 +5,7 @@ use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
 use crate::{AgentPanel, ModelUsageContext};
-use agent_core::{
+use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
     Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary,
     context::{self, AgentContextHandle, RULES_ICON},
@@ -3722,7 +3722,7 @@ fn open_editor_at_position(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::{MessageSegment, context::ContextLoadResult, thread_store};
+    use agent::{MessageSegment, context::ContextLoadResult, thread_store};
     use assistant_tool::{ToolRegistry, ToolWorkingSet};
     use editor::EditorSettings;
     use fs::FakeFs;

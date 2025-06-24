@@ -5,7 +5,7 @@
 mod persistence;
 mod preview_support;
 
-use agent_core::{TextThreadStore, ThreadStore};
+use agent::{TextThreadStore, ThreadStore};
 use agent_ui::ActiveThread;
 use client::UserStore;
 use collections::HashMap;

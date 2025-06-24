@@ -4,8 +4,8 @@ use crate::{
     context_picker::ContextPicker,
     ui::{AddedContext, ContextPill},
 };
-use agent_core::context_store::SuggestedContext;
-use agent_core::{
+use agent::context_store::SuggestedContext;
+use agent::{
     context::AgentContextHandle,
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},

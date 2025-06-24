@@ -1,5 +1,5 @@
 use crate::inline_prompt_editor::CodegenStatus;
-use agent_core::{
+use agent::{
     ContextStore,
     context::{ContextLoadResult, load_context},
 };

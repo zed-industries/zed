@@ -6,7 +6,7 @@ use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 use crate::{RemoveAllContext, ToggleContextPicker};
-use agent_core::{
+use agent::{
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };

@@ -1,12 +1,13 @@
-use std::sync::Arc;
-
+use crate::{
+    thread::{MessageId, PromptId, ThreadId},
+    thread_store::SerializedMessage,
+};
 use anyhow::Result;
 use assistant_tool::{
     AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
 };
 use collections::HashMap;
-use futures::FutureExt as _;
-use futures::future::Shared;
+use futures::{FutureExt as _, future::Shared};
 use gpui::{App, Entity, SharedString, Task, Window};
 use icons::IconName;
 use language_model::{
@@ -14,10 +15,8 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, Role,
 };
 use project::Project;
+use std::sync::Arc;
 use util::truncate_lines_to_byte_limit;
-
-use crate::thread::{MessageId, PromptId, ThreadId};
-use crate::thread_store::SerializedMessage;
 
 #[derive(Debug)]
 pub struct ToolUse {

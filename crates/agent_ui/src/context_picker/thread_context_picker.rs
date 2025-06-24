@@ -9,7 +9,7 @@ use picker::{Picker, PickerDelegate};
 use ui::{ListItem, prelude::*};
 
 use crate::context_picker::ContextPicker;
-use agent_core::{
+use agent::{
     ThreadId,
     context_store::{self, ContextStore},
     thread_store::{TextThreadStore, ThreadStore},

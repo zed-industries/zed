@@ -2,7 +2,7 @@ use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
-use agent_core::{
+use agent::{
     context::load_context,
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},

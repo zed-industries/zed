@@ -1,4 +1,4 @@
-use agent_core::{ContextStore, MessageSegment, TextThreadStore, ThreadStore};
+use agent::{ContextStore, MessageSegment, TextThreadStore, ThreadStore};
 use agent_ui::ActiveThread;
 use anyhow::{Result, anyhow};
 use assistant_tool::ToolWorkingSet;

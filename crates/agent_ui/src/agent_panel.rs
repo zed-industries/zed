@@ -68,7 +68,7 @@ use crate::{
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::AgentOnboardingModal,
 };
-use agent_core::{
+use agent::{
     Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
     context_store::ContextStore,
     history_store::{HistoryEntryId, HistoryStore},

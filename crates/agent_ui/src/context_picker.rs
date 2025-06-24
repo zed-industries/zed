@@ -37,7 +37,7 @@ use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use crate::AgentPanel;
-use agent_core::{
+use agent::{
     ThreadId,
     context::RULES_ICON,
     context_store::ContextStore,

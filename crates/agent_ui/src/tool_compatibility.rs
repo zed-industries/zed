@@ -1,4 +1,4 @@
-use agent_core::{Thread, ThreadEvent};
+use agent::{Thread, ThreadEvent};
 use assistant_tool::{Tool, ToolSource};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};

@@ -10,7 +10,7 @@ use crate::{
     inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
     terminal_inline_assistant::TerminalInlineAssistant,
 };
-use agent_core::{
+use agent::{
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };

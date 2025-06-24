@@ -1,5 +1,5 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
-use agent_core::{
+use agent::{
     Thread,
     agent_profile::{AgentProfile, AvailableProfiles},
 };

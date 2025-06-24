@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent_core::{ContextLoadResult, Thread, ThreadEvent};
+use agent::{ContextLoadResult, Thread, ThreadEvent};
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -89,7 +89,7 @@ impl Error for FailedAssertion {}
 pub struct ExampleContext {
     meta: ExampleMetadata,
     log_prefix: String,
-    agent_thread: Entity<agent_core::Thread>,
+    agent_thread: Entity<agent::Thread>,
     app: AsyncApp,
     model: Arc<dyn LanguageModel>,
     pub assertions: AssertionsReport,

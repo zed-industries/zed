@@ -8,7 +8,7 @@ use crate::ui::{
     MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
-use agent_core::{
+use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
 };
@@ -57,7 +57,7 @@ use crate::{
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
-use agent_core::{
+use agent::{
     MessageCrease, Thread, TokenUsageRatio,
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},

@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/agent.rs"
+path = "src/agent_ui.rs"
 doctest = false
 
 [features]
@@ -19,7 +19,7 @@ test-support = [
 ]
 
 [dependencies]
-agent_core.workspace = true
+agent.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_context_editor.workspace = true
