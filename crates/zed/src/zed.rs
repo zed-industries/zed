@@ -4233,7 +4233,7 @@ mod tests {
             let mut actions_without_namespace = Vec::new();
             let all_namespaces = all_actions
                 .iter()
-                .map(|action_name| {
+                .filter_map(|action_name| {
                     let namespace = action_name
                         .split("::")
                         .collect::<Vec<_>>()
@@ -4245,7 +4245,11 @@ mod tests {
                     if namespace.is_empty() {
                         actions_without_namespace.push(*action_name);
                     }
-                    namespace
+                    if &namespace == "test_only" || &namespace == "stories" {
+                        None
+                    } else {
+                        Some(namespace)
+                    }
                 })
                 .sorted()
                 .dedup()
@@ -4255,6 +4259,7 @@ mod tests {
             let expected_namespaces = vec![
                 "activity_indicator",
                 "agent",
+                #[cfg(not(target_os = "macos"))]
                 "app_menu",
                 "assistant",
                 "assistant2",
@@ -4309,7 +4314,6 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
-                "test_only",
                 "theme_selector",
                 "toast",
                 "toolchain",

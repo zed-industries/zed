@@ -74,7 +74,7 @@ macro_rules! actions {
 /// and allows actions not implement `serde::Serialize` and `schemars::JsonSchema`.
 ///
 /// - `no_register` skips registering the action. This is useful for implementing the `Action` trait
-/// while not being invokeable by the usual mechanisms.
+/// while not supporting invocation by name or JSON deserialization.
 ///
 /// - `deprecated_aliases = ["editor::SomeAction"]` specifies deprecated old names for the action.
 /// These action names should *not* correspond to any actions that are registered. These old names
