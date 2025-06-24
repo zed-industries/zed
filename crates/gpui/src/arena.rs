@@ -104,10 +104,10 @@ impl Arena {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
-        self.current_chunk_index = 0;
-        for chunk in &mut self.chunks {
-            chunk.reset()
+        for chunk_index in 0..=self.current_chunk_index {
+            self.chunks[chunk_index].reset();
         }
+        self.current_chunk_index = 0;
     }
 
     #[inline(always)]
