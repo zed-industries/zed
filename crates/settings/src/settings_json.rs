@@ -145,6 +145,10 @@ pub fn update_value_in_json_text<'a>(
     }
 }
 
+const TS_DOCUMENT_KIND: &'static str = "document";
+const TS_ARRAY_KIND: &'static str = "array";
+const TS_COMMENT_KIND: &'static str = "comment";
+
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,
     key_path: &[&str],
@@ -152,10 +156,6 @@ pub fn replace_top_level_array_value_in_json_text(
     array_index: usize,
     tab_size: usize,
 ) -> Result<(Range<usize>, String)> {
-    const DOCUMENT_KIND: &'static str = "document";
-    const ARRAY_KIND: &'static str = "array";
-    const COMMENT_KIND: &'static str = "comment";
-
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
@@ -164,14 +164,14 @@ pub fn replace_top_level_array_value_in_json_text(
 
     let mut cursor = syntax_tree.walk();
 
-    if cursor.node().kind() == DOCUMENT_KIND {
+    if cursor.node().kind() == TS_DOCUMENT_KIND {
         anyhow::ensure!(
             cursor.goto_first_child(),
             "Document empty - No top level array"
         );
     }
 
-    while cursor.node().kind() != ARRAY_KIND {
+    while cursor.node().kind() != TS_ARRAY_KIND {
         anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
     }
 
@@ -184,7 +184,7 @@ pub fn replace_top_level_array_value_in_json_text(
 
     while index <= array_index {
         dbg!(cursor.node().kind());
-        if !matches!(cursor.node().kind(), "[" | "]" | COMMENT_KIND | ",") {
+        if !matches!(cursor.node().kind(), "[" | "]" | TS_COMMENT_KIND | ",") {
             if index == array_index {
                 break;
             }
@@ -212,10 +212,6 @@ pub fn append_top_level_array_value_in_json_text(
     new_value: &Value,
     tab_size: usize,
 ) -> Result<(Range<usize>, String)> {
-    const DOCUMENT_KIND: &'static str = "document";
-    const ARRAY_KIND: &'static str = "array";
-    const COMMENT_KIND: &'static str = "comment";
-
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
@@ -224,53 +220,111 @@ pub fn append_top_level_array_value_in_json_text(
 
     let mut cursor = syntax_tree.walk();
 
-    if cursor.node().kind() == DOCUMENT_KIND {
+    if cursor.node().kind() == TS_DOCUMENT_KIND {
         anyhow::ensure!(
             cursor.goto_first_child(),
             "Document empty - No top level array"
         );
     }
 
-    while cursor.node().kind() != ARRAY_KIND {
+    while cursor.node().kind() != TS_ARRAY_KIND {
         anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
     }
+
+    let array_range = cursor.node().range();
 
     // false if no children
     if !cursor.goto_last_child() {
         todo!("appends (if index is 0)")
     }
-
-    while matches!(cursor.node().kind(), "[" | "]" | COMMENT_KIND | ",") {
-        if !cursor.goto_previous_sibling() {
-            // false if we hit start of array, in which case it's empty and following logic works
-            break;
-        }
+    debug_assert_eq!(cursor.node().kind(), "]");
+    let close_bracket_start = cursor.node().start_byte();
+    cursor.goto_previous_sibling();
+    while (cursor.node().is_extra() || cursor.node().is_missing()) && cursor.goto_previous_sibling()
+    {
     }
-    let offset = cursor.node().end_byte();
-    let mut array_is_empty = true;
-    while array_is_empty {
-        if !cursor.goto_previous_sibling() {
-            break;
-        }
-        if !matches!(cursor.node().kind(), "[" | "]" | COMMENT_KIND | ",") {
-            array_is_empty = false;
+
+    let mut comma_range = None;
+    let mut prev_item_range = None;
+    let mut bracket_range = None;
+
+    if cursor.node().kind() == "," {
+        comma_range = Some(cursor.node().byte_range());
+        while cursor.goto_previous_sibling() && cursor.node().is_extra() {}
+
+        debug_assert_ne!(cursor.node().kind(), "[");
+        prev_item_range = Some(cursor.node().range());
+        dbg!(cursor.node().kind());
+    } else {
+        while (cursor.node().is_extra() || cursor.node().is_missing())
+            && cursor.goto_previous_sibling()
+        {}
+        if cursor.node().kind() != "[" {
+            prev_item_range = Some(cursor.node().range());
+            dbg!(cursor.node().kind());
+        } else {
+            bracket_range = Some(cursor.node().byte_range());
+            dbg!(cursor.node().kind());
         }
     }
 
     let (mut replace_range, mut replace_value) =
         replace_value_in_json_text("", &[], tab_size, Some(new_value));
 
-    replace_range.start += offset;
-    replace_range.end += offset;
+    let offset = if let Some(comma_range) = &comma_range {
+        comma_range.end
+    } else if let Some(prev_item_range) = &prev_item_range {
+        prev_item_range.end_byte
+    } else {
+        bracket_range.unwrap().end
+    };
 
-    if !array_is_empty {
-        replace_value.insert_str(0, ", ");
+    replace_range.start += offset;
+    replace_range.end = close_bracket_start;
+
+    let space = ' ';
+    if let Some(prev_item_range) = prev_item_range {
+        let preceding_text = text.get(0..replace_range.start).unwrap_or("");
+
+        let needs_newline = prev_item_range.start_point.row > 0;
+        let indent_width = prev_item_range.start_point.column;
+
+        if needs_newline {
+            let increased_indent = format!("\n{space:width$}", width = indent_width);
+            replace_value = replace_value.replace('\n', &increased_indent);
+            replace_value.push('\n');
+        }
+
+        if let Some(comma_pos) = preceding_text.rfind(',') {
+            // Check if there are only whitespace characters between the comma and our key
+            let between_comma_and_key = text.get(comma_pos + 1..replace_range.start).unwrap_or("");
+            let needs_comma = !between_comma_and_key.trim().is_empty();
+            if needs_comma {
+                if needs_newline {
+                    replace_value
+                        .insert_str(0, &format!(",\n{space:width$}", width = indent_width));
+                } else {
+                    replace_value.insert_str(0, ", ");
+                }
+            } else if between_comma_and_key.len() == 0 {
+                if needs_newline {
+                    replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
+                } else {
+                    replace_value.insert_str(0, " ");
+                }
+            }
+        }
+    } else {
+        let indent = format!("\n{space:width$}", width = tab_size);
+        replace_value = replace_value.replace('\n', &indent);
+        replace_value.insert_str(0, &indent);
+        replace_value.push('\n');
     }
 
     return Ok((replace_range, replace_value));
 }
 
-pub fn replace_value_in_json_text(
+fn replace_value_in_json_text(
     text: &str,
     key_path: &[&str],
     tab_size: usize,
@@ -296,6 +350,7 @@ pub fn replace_value_in_json_text(
     let mut last_value_range = 0..0;
     let mut first_key_start = None;
     let mut existing_value_range = 0..text.len();
+
     let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
     while let Some(mat) = matches.next() {
         if mat.captures.len() != 2 {
@@ -476,6 +531,23 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     Ok(serde_json_lenient::from_str(content)?)
 }
 
+pub enum KeyPathItem<'a> {
+    Idx(usize),
+    Key(&'a str),
+}
+
+impl<'a> From<&'a str> for KeyPathItem<'a> {
+    fn from(key: &'a str) -> Self {
+        KeyPathItem::Key(key)
+    }
+}
+
+impl<'a> From<usize> for KeyPathItem<'a> {
+    fn from(idx: usize) -> Self {
+        KeyPathItem::Idx(idx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,41 +555,426 @@ mod tests {
     use unindent::Unindent;
 
     // todo! tests for update and replace in obj
-    fn check_array_replace(input: &str, index: usize, value: Value, expected: &str) {
-        let result = replace_top_level_array_value_in_json_text(input, &[], Some(&value), index, 4)
-            .expect("replace succeeded");
-        let mut result_str = input.to_string();
-        result_str.replace_range(result.0, &result.1);
-        pretty_assertions::assert_eq!(expected, result_str);
-    }
 
-    fn check_array_append(input: &str, value: Value, expected: &str) {
-        let result =
-            append_top_level_array_value_in_json_text(input, &value, 4).expect("append succeeded");
-        let mut result_str = input.to_string();
-        result_str.replace_range(result.0, &result.1);
-        pretty_assertions::assert_eq!(expected, result_str);
+    #[test]
+    fn object_replace() {
+        fn check_object_replace(
+            input: String,
+            key_path: &[&str],
+            value: Option<Value>,
+            expected: String,
+        ) {
+            let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref());
+            let mut result_str = input.to_string();
+            result_str.replace_range(result.0, &result.1);
+            pretty_assertions::assert_eq!(expected, result_str);
+        }
+        check_object_replace(
+            r#"{
+                "a": 1,
+                "b": 2
+            }"#
+            .unindent(),
+            &["b"],
+            Some(json!(3)),
+            r#"{
+                "a": 1,
+                "b": 3
+            }"#
+            .unindent(),
+        );
+        check_object_replace(
+            r#"{
+                "a": 1,
+                "b": 2
+            }"#
+            .unindent(),
+            &["b"],
+            None,
+            r#"{
+                "a": 1
+            }"#
+            .unindent(),
+        );
+        check_object_replace(
+            r#"{
+                "a": 1,
+                "b": 2
+            }"#
+            .unindent(),
+            &["c"],
+            Some(json!(3)),
+            r#"{
+                "c": 3,
+                "a": 1,
+                "b": 2
+            }"#
+            .unindent(),
+        );
+        check_object_replace(
+            r#"{
+                "a": 1,
+                "b": {
+                    "c": 2,
+                    "d": 3,
+                }
+            }"#
+            .unindent(),
+            &["b", "c"],
+            Some(json!([1, 2, 3])),
+            r#"{
+                "a": 1,
+                "b": {
+                    "c": [
+                        1,
+                        2,
+                        3
+                    ],
+                    "d": 3,
+                }
+            }"#
+            .unindent(),
+        );
+
+        // Test string value replacement
+        check_object_replace(
+            r#"{
+                "name": "old_name",
+                "id": 123
+            }"#
+            .unindent(),
+            &["name"],
+            Some(json!("new_name")),
+            r#"{
+                "name": "new_name",
+                "id": 123
+            }"#
+            .unindent(),
+        );
+
+        // Test boolean value replacement
+        check_object_replace(
+            r#"{
+                "enabled": false,
+                "count": 5
+            }"#
+            .unindent(),
+            &["enabled"],
+            Some(json!(true)),
+            r#"{
+                "enabled": true,
+                "count": 5
+            }"#
+            .unindent(),
+        );
+
+        // Test null value replacement
+        check_object_replace(
+            r#"{
+                "value": null,
+                "other": "test"
+            }"#
+            .unindent(),
+            &["value"],
+            Some(json!(42)),
+            r#"{
+                "value": 42,
+                "other": "test"
+            }"#
+            .unindent(),
+        );
+
+        // Test object value replacement
+        check_object_replace(
+            r#"{
+                "config": {
+                    "old": true
+                },
+                "name": "test"
+            }"#
+            .unindent(),
+            &["config"],
+            Some(json!({"new": false, "count": 3})),
+            r#"{
+                "config": {
+                    "new": false,
+                    "count": 3
+                },
+                "name": "test"
+            }"#
+            .unindent(),
+        );
+
+        // Test with JSON comments
+        check_object_replace(
+            r#"{
+                // This is a comment
+                "a": 1,
+                "b": 2 // Another comment
+            }"#
+            .unindent(),
+            &["b"],
+            Some(json!({"foo": "bar"})),
+            r#"{
+                // This is a comment
+                "a": 1,
+                "b": {
+                    "foo": "bar"
+                } // Another comment
+            }"#
+            .unindent(),
+        );
+
+        // Test empty object
+        check_object_replace(
+            r#"{}"#.to_string(),
+            &["new_key"],
+            Some(json!("value")),
+            r#"{
+                "new_key": "value"
+            }
+            "#
+            .unindent(),
+        );
+
+        // Test deleting last key
+        check_object_replace(
+            r#"{
+                "only_key": 123
+            }"#
+            .unindent(),
+            &["only_key"],
+            None,
+            "{\n    \n}".to_string(),
+        );
+
+        // Test deeply nested path
+        check_object_replace(
+            r#"{
+                "level1": {
+                    "level2": {
+                        "level3": {
+                            "target": "old"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            &["level1", "level2", "level3", "target"],
+            Some(json!("new")),
+            r#"{
+                "level1": {
+                    "level2": {
+                        "level3": {
+                            "target": "new"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+        );
+
+        // Test adding to nested empty object
+        check_object_replace(
+            r#"{
+                "parent": {}
+            }"#
+            .unindent(),
+            &["parent", "child"],
+            Some(json!("value")),
+            r#"{
+                "parent": {
+                    "child": "value"
+                }
+            }"#
+            .unindent(),
+        );
+
+        // Test replacing in object with trailing comma
+        check_object_replace(
+            r#"{
+                "a": 1,
+                "b": 2,
+            }"#
+            .unindent(),
+            &["b"],
+            Some(json!(3)),
+            r#"{
+                "a": 1,
+                "b": 3,
+            }"#
+            .unindent(),
+        );
+
+        // Test array within object
+        check_object_replace(
+            r#"{
+                "items": [1, 2, 3],
+                "count": 3
+            }"#
+            .unindent(),
+            &["items", "1"],
+            Some(json!(5)),
+            r#"{
+                "items": {
+                    "1": 5
+                },
+                "count": 3
+            }"#
+            .unindent(),
+        );
+
+        // Test deleting array element within object
+        check_object_replace(
+            r#"{
+                "items": [1, 2, 3],
+                "count": 3
+            }"#
+            .unindent(),
+            &["items", "1"],
+            None,
+            r#"{
+                "items": {
+                    "1": null
+                },
+                "count": 3
+            }"#
+            .unindent(),
+        );
+
+        // Test replacing entire array
+        check_object_replace(
+            r#"{
+                "items": [1, 2, 3],
+                "count": 3
+            }"#
+            .unindent(),
+            &["items"],
+            Some(json!(["a", "b", "c", "d"])),
+            r#"{
+                "items": [
+                    "a",
+                    "b",
+                    "c",
+                    "d"
+                ],
+                "count": 3
+            }"#
+            .unindent(),
+        );
+
+        check_object_replace(
+            r#"{
+                "0": "zero",
+                "1": "one"
+            }"#
+            .unindent(),
+            &["1"],
+            Some(json!("ONE")),
+            r#"{
+                "0": "zero",
+                "1": "ONE"
+            }"#
+            .unindent(),
+        );
     }
 
     #[test]
     fn array_replace() {
+        fn check_array_replace(input: &str, index: usize, value: Value, expected: &str) {
+            let result =
+                replace_top_level_array_value_in_json_text(input, &[], Some(&value), index, 4)
+                    .expect("replace succeeded");
+            let mut result_str = input.to_string();
+            result_str.replace_range(result.0, &result.1);
+            pretty_assertions::assert_eq!(expected, result_str);
+        }
+
         check_array_replace(r#"[1, 3, 3]"#, 1, json!(2), r#"[1, 2, 3]"#);
     }
 
     #[test]
     fn array_append() {
+        #[track_caller]
+        fn check_array_append(input: impl ToString, value: Value, expected: impl ToString) {
+            let input = input.to_string();
+            let result = append_top_level_array_value_in_json_text(&input, &value, 4)
+                .expect("append succeeded");
+            let mut result_str = input;
+            result_str.replace_range(result.0, &result.1);
+            pretty_assertions::assert_eq!(expected.to_string(), result_str);
+        }
         check_array_append(r#"[1, 3, 3]"#, json!(4), r#"[1, 3, 3, 4]"#);
+        check_array_append(r#"[1, 3, 3,]"#, json!(4), r#"[1, 3, 3, 4]"#);
+        check_array_append(r#"[1, 3, 3   ]"#, json!(4), r#"[1, 3, 3, 4]"#);
+        check_array_append(r#"[1, 3, 3,   ]"#, json!(4), r#"[1, 3, 3, 4]"#);
         check_array_append(
-            &r#"[
+            r#"[
                 1,
                 2,
+                3
             ]"#
             .unindent(),
-            json!(3),
-            &r#"
+            json!(4),
+            r#"[
                 1,
                 2,
                 3,
+                4
+            ]"#
+            .unindent(),
+        );
+        check_array_append(
+            r#"[
+                1,
+                2,
+                3,
+            ]"#
+            .unindent(),
+            json!(4),
+            r#"[
+                1,
+                2,
+                3,
+                4
+            ]"#
+            .unindent(),
+        );
+        check_array_append(
+            r#"[
+                1,
+                2,
+                3,
+            ]"#
+            .unindent(),
+            json!({"foo": "bar", "baz": "qux"}),
+            r#"[
+                1,
+                2,
+                3,
+                {
+                    "foo": "bar",
+                    "baz": "qux"
+                }
+            ]"#
+            .unindent(),
+        );
+        check_array_append(
+            r#"[ 1, 2, 3, ]"#.unindent(),
+            json!({"foo": "bar", "baz": "qux"}),
+            r#"[ 1, 2, 3, {
+                "foo": "bar",
+                "baz": "qux"
+            }]"#
+            .unindent(),
+        );
+        check_array_append(
+            r#"[]"#,
+            json!({"foo": "bar"}),
+            r#"[
+                {
+                    "foo": "bar"
+                }
             ]"#
             .unindent(),
         );
