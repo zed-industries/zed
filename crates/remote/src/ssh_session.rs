@@ -1807,7 +1807,13 @@ impl SshRemoteConnection {
             self.socket
                 .run_command(
                     "sh",
-                    &["-c", &format!("mkdir -p '{}'", parent.to_string_lossy())],
+                    &[
+                        "-c",
+                        &shell_script!(
+                            "mkdir -p {parent}",
+                            parent = parent.to_string_lossy().as_ref()
+                        ),
+                    ],
                 )
                 .await?;
         }
@@ -1880,7 +1886,16 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .run_command(
+                    "sh",
+                    &[
+                        "-c",
+                        &shell_script!(
+                            "mkdir -p {parent}",
+                            parent = parent.to_string_lossy().as_ref()
+                        ),
+                    ],
+                )
                 .await?;
         }
 
