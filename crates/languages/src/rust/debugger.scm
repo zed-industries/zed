@@ -7,6 +7,10 @@
 ; Capture self
 (self) @debug-variable
 
+; Capture static and const variable declarations
+(static_item (identifier) @debug-variable)
+(const_item (identifier) @debug-variable)
+
 ; Capture variables at their declaration sites (left side of assignments)
 (let_declaration pattern: (identifier) @debug-variable)
 

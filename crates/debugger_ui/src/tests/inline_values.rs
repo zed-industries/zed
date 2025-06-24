@@ -1866,41 +1866,20 @@ fn python_lang() -> Language {
 /// * `executor` - Background executor for async operations
 /// * `cx` - Test app context
 async fn test_inline_values_util(
-    variables: &[(&str, &str)],
+    local_variables: &[(&str, &str)],
+    global_variables: &[(&str, &str)],
     before: &str,
     after: &str,
+    active_debug_line: Option<usize>,
     language: Language,
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
-) {
-    test_inline_values_util_with_evaluate(variables, before, after, language, executor, cx, &[])
-        .await
-}
-
-/// Test utility function for inline values testing with evaluate support
-///
-/// # Arguments
-/// * `variables` - List of tuples containing (variable_name, variable_value)
-/// * `before` - Source code before inline values are applied
-/// * `after` - Expected source code after inline values are applied
-/// * `language` - Language configuration to use for parsing
-/// * `executor` - Background executor for async operations
-/// * `cx` - Test app context
-/// * `evaluate_expressions` - List of tuples containing (expression, expected_value) for evaluate requests
-async fn test_inline_values_util_with_evaluate(
-    variables: &[(&str, &str)],
-    before: &str,
-    after: &str,
-    language: Language,
-    executor: BackgroundExecutor,
-    cx: &mut TestAppContext,
-    evaluate_expressions: &[(&str, &str)],
 ) {
     init_test(cx);
 
-    // Calculate the second to last line number
     let lines_count = before.lines().count();
-    let stop_line = if lines_count > 1 { lines_count - 1 } else { 1 };
+    let stop_line =
+        active_debug_line.unwrap_or_else(|| if lines_count > 6 { 6 } else { lines_count - 1 });
 
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(path!("/project"), json!({ "main.rs": before.to_string() }))
@@ -1918,22 +1897,20 @@ async fn test_inline_values_util_with_evaluate(
     let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    // Set up threads handler
-    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+    client.on_request::<dap::requests::Threads, _>(|_, _| {
         Ok(dap::ThreadsResponse {
             threads: vec![dap::Thread {
                 id: 1,
-                name: "Thread 1".into(),
+                name: "main".into(),
             }],
         })
     });
 
-    // Set up stack trace handler
     client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
         Ok(dap::StackTraceResponse {
-            stack_frames: vec![StackFrame {
+            stack_frames: vec![dap::StackFrame {
                 id: 1,
-                name: "Stack Frame 1".into(),
+                name: "main".into(),
                 source: Some(dap::Source {
                     name: Some("main.rs".into()),
                     path: Some(path!("/project/main.rs").into()),
@@ -1957,8 +1934,7 @@ async fn test_inline_values_util_with_evaluate(
         })
     });
 
-    // Convert variable tuples to Variable structs
-    let local_variables: Vec<Variable> = variables
+    let local_vars: Vec<Variable> = local_variables
         .iter()
         .map(|(name, value)| Variable {
             name: (*name).into(),
@@ -1975,44 +1951,77 @@ async fn test_inline_values_util_with_evaluate(
         })
         .collect();
 
-    // Set up variables handler
+    let global_vars: Vec<Variable> = global_variables
+        .iter()
+        .map(|(name, value)| Variable {
+            name: (*name).into(),
+            value: (*value).into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        })
+        .collect();
+
     client.on_request::<Variables, _>({
-        let local_variables = Arc::new(local_variables.clone());
-        move |_, _| {
-            Ok(dap::VariablesResponse {
-                variables: (*local_variables).clone(),
-            })
+        let local_vars = Arc::new(local_vars.clone());
+        let global_vars = Arc::new(global_vars.clone());
+        move |_, args| {
+            let variables = match args.variables_reference {
+                2 => (*local_vars).clone(),
+                3 => (*global_vars).clone(),
+                _ => vec![],
+            };
+            Ok(dap::VariablesResponse { variables })
         }
     });
 
-    // Set up scopes handler
     client.on_request::<dap::requests::Scopes, _>(move |_, _| {
         Ok(dap::ScopesResponse {
-            scopes: vec![Scope {
-                name: "Locale".into(),
-                presentation_hint: None,
-                variables_reference: 2,
-                named_variables: None,
-                indexed_variables: None,
-                expensive: false,
-                source: None,
-                line: None,
-                column: None,
-                end_line: None,
-                end_column: None,
-            }],
+            scopes: vec![
+                Scope {
+                    name: "Local".into(),
+                    presentation_hint: None,
+                    variables_reference: 2,
+                    named_variables: None,
+                    indexed_variables: None,
+                    expensive: false,
+                    source: None,
+                    line: None,
+                    column: None,
+                    end_line: None,
+                    end_column: None,
+                },
+                Scope {
+                    name: "Global".into(),
+                    presentation_hint: None,
+                    variables_reference: 3,
+                    named_variables: None,
+                    indexed_variables: None,
+                    expensive: false,
+                    source: None,
+                    line: None,
+                    column: None,
+                    end_line: None,
+                    end_column: None,
+                },
+            ],
         })
     });
 
-    // Set up evaluate handler if expressions are provided
-    if !evaluate_expressions.is_empty() {
-        let evaluate_map: std::collections::HashMap<String, String> = evaluate_expressions
+    if !global_variables.is_empty() {
+        let global_evaluate_map: std::collections::HashMap<String, String> = global_variables
             .iter()
-            .map(|(expr, value)| (expr.to_string(), value.to_string()))
+            .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect();
 
         client.on_request::<dap::requests::Evaluate, _>(move |_, args| {
-            let value = evaluate_map
+            let value = global_evaluate_map
                 .get(&args.expression)
                 .unwrap_or(&"undefined".to_string())
                 .clone();
@@ -2030,7 +2039,6 @@ async fn test_inline_values_util_with_evaluate(
         });
     }
 
-    // Send stopped event
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
             reason: dap::StoppedEventReason::Pause,
@@ -2045,7 +2053,6 @@ async fn test_inline_values_util_with_evaluate(
 
     cx.run_until_parked();
 
-    // Open the buffer and set up the editor
     let project_path = Path::new(path!("/project"));
     let worktree = project
         .update(cx, |project, cx| project.find_worktree(project_path, cx))
@@ -2086,7 +2093,6 @@ async fn test_inline_values_util_with_evaluate(
 
     cx.run_until_parked();
 
-    // Assert the result matches expected output
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(after, editor.snapshot(window, cx).text());
     });
@@ -2094,7 +2100,6 @@ async fn test_inline_values_util_with_evaluate(
 
 #[gpui::test]
 async fn test_inline_values_example(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-    // Example usage of the test utility function
     let variables = [("x", "10"), ("y", "20"), ("result", "30")];
 
     let before = r#"
@@ -2117,14 +2122,22 @@ fn main() {
 "#
     .unindent();
 
-    test_inline_values_util(&variables, &before, &after, rust_lang(), executor, cx).await;
+    test_inline_values_util(
+        &variables,
+        &[],
+        &before,
+        &after,
+        None,
+        rust_lang(),
+        executor,
+        cx,
+    )
+    .await;
 }
 
 #[gpui::test]
 async fn test_inline_values_with_globals(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-    // Example usage with global variables
     let variables = [("x", "5"), ("y", "10")];
-    let evaluate_expressions = [("GLOBAL_COUNTER", "42")];
 
     let before = r#"
 static mut GLOBAL_COUNTER: usize = 42;
@@ -2154,14 +2167,15 @@ fn main() {
 "#
     .unindent();
 
-    test_inline_values_util_with_evaluate(
+    test_inline_values_util(
         &variables,
+        &[("GLOBAL_COUNTER", "42")],
         &before,
         &after,
+        None,
         rust_lang(),
         executor,
         cx,
-        &evaluate_expressions,
     )
     .await;
 }
