@@ -116,7 +116,7 @@ pub struct ThreadEntryId(usize);
 
 impl ThreadEntryId {
     pub fn post_inc(&mut self) -> Self {
-        let ed = *self;
+        let id = *self;
         self.0 += 1;
         id
     }
