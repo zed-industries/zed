@@ -1,18 +1,17 @@
-use std::sync::Arc;
-
+use crate::{ManageProfiles, ToggleProfileSelector};
+use agent::{
+    Thread,
+    agent_profile::{AgentProfile, AvailableProfiles},
+};
 use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
 use fs::Fs;
 use gpui::{Action, Empty, Entity, FocusHandle, Subscription, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
+use std::sync::Arc;
 use ui::{
     ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
     prelude::*,
-};
-
-use crate::{
-    ManageProfiles, Thread, ToggleProfileSelector,
-    agent_profile::{AgentProfile, AvailableProfiles},
 };
 
 pub struct ProfileSelector {

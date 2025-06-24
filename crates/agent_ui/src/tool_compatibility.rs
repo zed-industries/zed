@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
+use agent::{Thread, ThreadEvent};
 use assistant_tool::{Tool, ToolSource};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};
 use language_model::{LanguageModel, LanguageModelToolSchemaFormat};
+use std::sync::Arc;
 use ui::prelude::*;
-
-use crate::{Thread, ThreadEvent};
 
 pub struct IncompatibleToolsState {
     cache: HashMap<LanguageModelToolSchemaFormat, Vec<Arc<dyn Tool>>>,

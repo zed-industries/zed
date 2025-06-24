@@ -1,6 +1,8 @@
-use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
-use crate::{context::load_context, context_store::ContextStore};
+use agent::{
+    ContextStore,
+    context::{ContextLoadResult, load_context},
+};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -18,8 +20,7 @@ use language_model::{
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::Project;
-use prompt_store::PromptBuilder;
-use prompt_store::PromptStore;
+use prompt_store::{PromptBuilder, PromptStore};
 use rope::Rope;
 use smol::future::FutureExt;
 use std::{

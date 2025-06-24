@@ -45,30 +45,34 @@ use ui::{
     PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
 };
-use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
-use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
-use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
+use zed_actions::{
+    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
+    agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding},
+    assistant::{OpenRulesLibrary, ToggleFocus},
+};
 use zed_llm_client::{CompletionIntent, UsageLimit};
 
-use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
-use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
-use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryEntryId, HistoryStore};
-use crate::message_editor::{MessageEditor, MessageEditorEvent};
-use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
-use crate::thread_history::{HistoryEntryElement, ThreadHistory};
-use crate::thread_store::ThreadStore;
-use crate::ui::AgentOnboardingModal;
 use crate::{
-    AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
+    AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
     NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
-    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleBurnMode, ToggleContextPicker,
-    ToggleNavigationMenu, ToggleOptionsMenu,
+    ResetTrialUpsell, ToggleBurnMode, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    active_thread::{self, ActiveThread, ActiveThreadEvent},
+    agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
+    agent_diff::AgentDiff,
+    message_editor::{MessageEditor, MessageEditorEvent},
+    thread_history::{HistoryEntryElement, ThreadHistory},
+    ui::AgentOnboardingModal,
+};
+use agent::{
+    Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
+    context_store::ContextStore,
+    history_store::{HistoryEntryId, HistoryStore},
+    thread_store::{TextThreadStore, ThreadStore},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -369,7 +373,7 @@ pub struct AgentPanel {
     _default_model_subscription: Subscription,
     context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    inline_assist_context_store: Entity<crate::context_store::ContextStore>,
+    inline_assist_context_store: Entity<ContextStore>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -490,18 +494,10 @@ impl AgentPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
-        let message_editor_context_store = cx.new(|_cx| {
-            crate::context_store::ContextStore::new(
-                project.downgrade(),
-                Some(thread_store.downgrade()),
-            )
-        });
-        let inline_assist_context_store = cx.new(|_cx| {
-            crate::context_store::ContextStore::new(
-                project.downgrade(),
-                Some(thread_store.downgrade()),
-            )
-        });
+        let message_editor_context_store =
+            cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
+        let inline_assist_context_store =
+            cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
 
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
@@ -708,9 +704,7 @@ impl AgentPanel {
         &self.prompt_store
     }
 
-    pub(crate) fn inline_assist_context_store(
-        &self,
-    ) -> &Entity<crate::context_store::ContextStore> {
+    pub(crate) fn inline_assist_context_store(&self) -> &Entity<ContextStore> {
         &self.inline_assist_context_store
     }
 
@@ -742,7 +736,7 @@ impl AgentPanel {
         self.set_active_view(thread_view, window, cx);
 
         let context_store = cx.new(|_cx| {
-            crate::context_store::ContextStore::new(
+            ContextStore::new(
                 self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
             )
@@ -990,7 +984,7 @@ impl AgentPanel {
         let thread_view = ActiveView::thread(thread.clone(), window, cx);
         self.set_active_view(thread_view, window, cx);
         let context_store = cx.new(|_cx| {
-            crate::context_store::ContextStore::new(
+            ContextStore::new(
                 self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
             )

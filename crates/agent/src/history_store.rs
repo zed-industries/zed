@@ -1,20 +1,16 @@
-use std::{collections::VecDeque, path::Path, sync::Arc};
-
+use crate::{
+    ThreadId,
+    thread_store::{SerializedThreadMetadata, ThreadStore},
+};
 use anyhow::{Context as _, Result};
 use assistant_context_editor::SavedContextMetadata;
 use chrono::{DateTime, Utc};
-use gpui::{AsyncApp, Entity, SharedString, Task, prelude::*};
+use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
 use itertools::Itertools;
 use paths::contexts_dir;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use ui::App;
+use std::{collections::VecDeque, path::Path, sync::Arc, time::Duration};
 use util::ResultExt as _;
-
-use crate::{
-    thread::ThreadId,
-    thread_store::{SerializedThreadMetadata, ThreadStore},
-};
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
 const NAVIGATION_HISTORY_PATH: &str = "agent-navigation-history.json";

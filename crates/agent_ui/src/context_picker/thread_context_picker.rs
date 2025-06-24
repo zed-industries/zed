@@ -9,9 +9,11 @@ use picker::{Picker, PickerDelegate};
 use ui::{ListItem, prelude::*};
 
 use crate::context_picker::ContextPicker;
-use crate::context_store::{self, ContextStore};
-use crate::thread::ThreadId;
-use crate::thread_store::{TextThreadStore, ThreadStore};
+use agent::{
+    ThreadId,
+    context_store::{self, ContextStore},
+    thread_store::{TextThreadStore, ThreadStore},
+};
 
 pub struct ThreadContextPicker {
     picker: Entity<Picker<ThreadContextPickerDelegate>>,
