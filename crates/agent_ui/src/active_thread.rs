@@ -3796,7 +3796,13 @@ mod tests {
         thread.update(cx, |thread, cx| {
             let request =
                 thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx);
-            thread.stream_completion(request, model, cx.active_window(), cx)
+            thread.stream_completion(
+                request,
+                model,
+                CompletionIntent::UserPrompt,
+                cx.active_window(),
+                cx,
+            )
         });
         // Follow the agent
         cx.update(|window, cx| {

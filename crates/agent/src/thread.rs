@@ -371,7 +371,6 @@ pub struct Thread {
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
-    current_completion_intent: Option<CompletionIntent>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
     last_received_chunk_at: Option<Instant>,
@@ -387,6 +386,7 @@ pub struct Thread {
 struct RetryState {
     attempt: u8,
     max_attempts: u8,
+    intent: CompletionIntent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -471,7 +471,6 @@ impl Thread {
             tool_use_limit_reached: false,
             feedback: None,
             retry_state: None,
-            current_completion_intent: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             last_received_chunk_at: None,
@@ -539,7 +538,6 @@ impl Thread {
             detailed_summary_rx,
             completion_mode,
             retry_state: None,
-            current_completion_intent: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -1247,12 +1245,9 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
-        // Store the intent for potential retries
-        self.current_completion_intent = Some(intent);
-
         let request = self.to_completion_request(model.clone(), intent, cx);
 
-        self.stream_completion(request, model, window, cx);
+        self.stream_completion(request, model, intent, window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -1486,6 +1481,7 @@ impl Thread {
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
@@ -1906,6 +1902,7 @@ impl Thread {
                                             &error_message,
                                             *retry_after,
                                             model.clone(),
+                                            intent,
                                             window,
                                             cx,
                                         );
@@ -1920,6 +1917,7 @@ impl Thread {
                                         if !thread.handle_retryable_error(
                                             &error_message,
                                             model.clone(),
+                                            intent,
                                             window,
                                             cx,
                                         ) {
@@ -1936,6 +1934,7 @@ impl Thread {
                                         if !thread.handle_retryable_error(
                                             &error_message,
                                             model.clone(),
+                                            intent,
                                             window,
                                             cx,
                                         ) {
@@ -2078,6 +2077,7 @@ impl Thread {
         error_message: &str,
         retry_after: Duration,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
@@ -2104,17 +2104,16 @@ impl Thread {
         cx.emit(ThreadEvent::RetryScheduled {
             message_id,
             delay: retry_after,
-            attempt: 1,
-            max_attempts: 1,
+            retry: RetryState {
+                attempt: 1,
+                max_attempts: 1,
+                intent,
+            },
             provider_name: model.provider_name(),
         });
 
         // Schedule the retry
         let thread_handle = cx.entity().downgrade();
-        let intent = self
-            .current_completion_intent
-            .clone()
-            .unwrap_or(CompletionIntent::UserPrompt);
 
         cx.spawn(async move |_thread, cx| {
             cx.background_executor().timer(retry_after).await;
@@ -2139,10 +2138,11 @@ impl Thread {
         &mut self,
         error_message: &str,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.handle_retryable_error_with_delay(error_message, None, model, window, cx)
+        self.handle_retryable_error_with_delay(error_message, None, model, intent, window, cx)
     }
 
     fn handle_retryable_error_with_delay(
@@ -2150,28 +2150,25 @@ impl Thread {
         error_message: &str,
         custom_delay: Option<Duration>,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
         const MAX_RETRY_ATTEMPTS: u8 = 3;
         const BASE_RETRY_DELAY_SECS: u64 = 5;
 
-        // Check if we should create or update retry state
-        let should_retry = if let Some(retry_state) = &mut self.retry_state {
-            retry_state.attempt += 1;
-            retry_state.attempt <= retry_state.max_attempts
-        } else {
-            self.retry_state = Some(RetryState {
-                attempt: 1,
-                max_attempts: MAX_RETRY_ATTEMPTS,
-            });
-            true
-        };
+        let retry_state = self.retry_state.get_or_insert(RetryState {
+            attempt: 0, // This will be immediately incremented
+            max_attempts: MAX_RETRY_ATTEMPTS,
+            intent,
+        });
+        retry_state.attempt += 1;
 
-        if should_retry {
+        if retry_state.attempt <= retry_state.max_attempts {
             let retry_state = self.retry_state.as_ref().unwrap();
             let attempt = retry_state.attempt;
             let max_attempts = retry_state.max_attempts;
+            let intent = retry_state.intent;
 
             // Use custom delay if provided (e.g., from rate limit), otherwise exponential backoff
             let delay = if let Some(custom_delay) = custom_delay {
@@ -2205,17 +2202,12 @@ impl Thread {
             cx.emit(ThreadEvent::RetryScheduled {
                 message_id,
                 delay,
-                attempt,
-                max_attempts,
+                retry: retry_state,
                 provider_name: model.provider_name(),
             });
 
             // Schedule the retry
             let thread_handle = cx.entity().downgrade();
-            let intent = self
-                .current_completion_intent
-                .clone()
-                .unwrap_or(CompletionIntent::UserPrompt);
 
             cx.spawn(async move |_thread, cx| {
                 cx.background_executor().timer(delay).await;
@@ -3180,8 +3172,7 @@ pub enum ThreadEvent {
     RetryScheduled {
         message_id: MessageId,
         delay: Duration,
-        attempt: u8,
-        max_attempts: u8,
+        retry: RetryState,
         provider_name: LanguageModelProviderName,
     },
 }
@@ -4210,7 +4201,7 @@ fn main() {{
         assert_eq!(
             events[0].1,
             Duration::from_secs(5),
-            "Should have 5 second delay for first retry"
+            "Should have 5 second delay"
         );
 
         // Check that a retry message was added
@@ -4271,11 +4262,11 @@ fn main() {{
         // Check that a retry was scheduled
         let events = retry_events.lock();
         assert_eq!(events.len(), 1, "Should have scheduled one retry");
-        assert_eq!(events[0].0, 1, "Should be first retry attempt");
+        assert_eq!(events[0].0, 1, "Should be first attempt");
         assert_eq!(
             events[0].1,
             Duration::from_secs(5),
-            "Should have 5 second delay for first retry"
+            "Should have 5 second delay"
         );
 
         // Check that a retry message was added with provider name
