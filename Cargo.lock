@@ -4304,6 +4304,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "tree-sitter",
+ "tree-sitter-go",
  "tree-sitter-json",
  "ui",
  "unindent",
