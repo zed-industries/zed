@@ -15,27 +15,20 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let mut namespace = None;
     let mut deprecated = None;
 
-    let mut has_name = false;
-    let mut has_namespace = false;
-    let mut has_deprecated_aliases = false;
-    let mut has_deprecated = false;
-
     for attr in &input.attrs {
         if attr.path().is_ident("action") {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
-                    if has_name {
+                    if name_argument.is_some() {
                         return Err(meta.error("'name' argument specified multiple times"));
                     }
-                    has_name = true;
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     name_argument = Some(lit.value());
                 } else if meta.path.is_ident("namespace") {
-                    if has_namespace {
+                    if namespace.is_some() {
                         return Err(meta.error("'namespace' argument specified multiple times"));
                     }
-                    has_namespace = true;
                     meta.input.parse::<Token![=]>()?;
                     let ident: Ident = meta.input.parse()?;
                     namespace = Some(ident.to_string());
@@ -45,12 +38,11 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     }
                     internal = true;
                 } else if meta.path.is_ident("deprecated_aliases") {
-                    if has_deprecated_aliases {
+                    if !deprecated_aliases.is_empty() {
                         return Err(
                             meta.error("'deprecated_aliases' argument specified multiple times")
                         );
                     }
-                    has_deprecated_aliases = true;
                     meta.input.parse::<Token![=]>()?;
                     // Parse array of string literals
                     let content;
@@ -61,10 +53,9 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     )?;
                     deprecated_aliases.extend(aliases.into_iter().map(|lit| lit.value()));
                 } else if meta.path.is_ident("deprecated") {
-                    if has_deprecated {
+                    if deprecated.is_some() {
                         return Err(meta.error("'deprecated' argument specified multiple times"));
                     }
-                    has_deprecated = true;
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     deprecated = Some(lit.value());
