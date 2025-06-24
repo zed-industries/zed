@@ -1,4 +1,3 @@
-use crate::SharedString;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use no_action::{NoAction, is_no_action};
@@ -199,9 +198,9 @@ impl Display for ActionBuildError {
 type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
 
 pub(crate) struct ActionRegistry {
-    by_name: HashMap<SharedString, ActionData>,
-    names_by_type_id: HashMap<TypeId, SharedString>,
-    all_names: Vec<SharedString>, // So we can return a static slice.
+    by_name: HashMap<&'static str, ActionData>,
+    names_by_type_id: HashMap<TypeId, &'static str>,
+    all_names: Vec<&'static str>, // So we can return a static slice.
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
 }
@@ -268,28 +267,26 @@ impl ActionRegistry {
     }
 
     fn insert_action(&mut self, action: MacroActionData) {
-        let name: SharedString = action.name.into();
         self.by_name.insert(
-            name.clone(),
+            action.name,
             ActionData {
                 build: action.build,
                 json_schema: action.json_schema,
             },
         );
         for &alias in action.deprecated_aliases {
-            let alias_string: SharedString = alias.into();
             self.by_name.insert(
-                alias_string.clone(),
+                alias,
                 ActionData {
                     build: action.build,
                     json_schema: action.json_schema,
                 },
             );
             self.deprecated_aliases.insert(alias, action.name);
-            self.all_names.push(alias_string);
+            self.all_names.push(alias);
         }
-        self.names_by_type_id.insert(action.type_id, name.clone());
-        self.all_names.push(name.clone());
+        self.names_by_type_id.insert(action.type_id, action.name);
+        self.all_names.push(action.name);
 
         // Check if the action itself has a deprecation message
         if let Some(deprecation_msg) = action.deprecation_message {
@@ -303,10 +300,9 @@ impl ActionRegistry {
         let name = self
             .names_by_type_id
             .get(type_id)
-            .with_context(|| format!("no action type registered for {type_id:?}"))?
-            .clone();
+            .with_context(|| format!("no action type registered for {type_id:?}"))?;
 
-        Ok(self.build_action(&name, None)?)
+        Ok(self.build_action(name, None)?)
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
@@ -330,14 +326,14 @@ impl ActionRegistry {
         })
     }
 
-    pub fn all_action_names(&self) -> &[SharedString] {
+    pub fn all_action_names(&self) -> &[&'static str] {
         self.all_names.as_slice()
     }
 
     pub fn action_schemas(
         &self,
         generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+    ) -> Vec<(&'static str, Option<schemars::schema::Schema>)> {
         // Use the order from all_names so that the resulting schema has sensible order.
         self.all_names
             .iter()
@@ -346,7 +342,7 @@ impl ActionRegistry {
                     .by_name
                     .get(name)
                     .expect("All actions in all_names should be registered");
-                (name.clone(), (action_data.json_schema)(generator))
+                (*name, (action_data.json_schema)(generator))
             })
             .collect::<Vec<_>>()
     }

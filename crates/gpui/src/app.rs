@@ -39,8 +39,8 @@ use crate::{
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1374,7 +1374,7 @@ impl App {
 
     /// Get all action names that have been registered. Note that registration only allows for
     /// actions to be built dynamically, and is unrelated to binding actions in the element tree.
-    pub fn all_action_names(&self) -> &[SharedString] {
+    pub fn all_action_names(&self) -> &[&'static str] {
         self.actions.all_action_names()
     }
 
@@ -1389,7 +1389,7 @@ impl App {
     pub fn action_schemas(
         &self,
         generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+    ) -> Vec<(&'static str, Option<schemars::schema::Schema>)> {
         self.actions.action_schemas(generator)
     }
 
