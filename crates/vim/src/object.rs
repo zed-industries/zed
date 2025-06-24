@@ -10,7 +10,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
 };
-use gpui::{Window, actions, impl_actions};
+use gpui::{Action, Window, actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
@@ -46,20 +46,23 @@ pub enum Object {
     EntireFile,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
@@ -251,8 +254,6 @@ fn find_mini_brackets(
 ) -> Option<Range<DisplayPoint>> {
     find_mini_delimiters(map, display_point, around, &is_bracket_delimiter)
 }
-
-impl_actions!(vim, [Word, Subword, IndentObj]);
 
 actions!(
     vim,

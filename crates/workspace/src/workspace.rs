@@ -39,8 +39,8 @@ use gpui::{
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions,
-    canvas, impl_action_as, impl_actions, point, relative, size, transparent_black,
+    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
+    point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -213,10 +213,12 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
     pub destination: usize,
@@ -226,7 +228,8 @@ pub struct MoveItemToPane {
     pub clone: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
@@ -236,64 +239,59 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
 
-#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
+#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
-action_as!(project_symbols, ToggleProjectSymbols as Toggle);
+actions!(
+    project_symbols,
+    [
+        #[action(name = "Toggle")]
+        ToggleProjectSymbols
+    ]
+);
 
-#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = file_finder, name = "Toggle")]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
 }
-
-impl_action_as!(file_finder, ToggleFileFinder as Toggle);
-
-impl_actions!(
-    workspace,
-    [
-        ActivatePane,
-        CloseAllItemsAndPanes,
-        CloseInactiveTabsAndPanes,
-        MoveItemToPane,
-        MoveItemToPaneInDirection,
-        OpenTerminal,
-        Reload,
-        Save,
-        SaveAll,
-        SendKeystrokes,
-    ]
-);
 
 actions!(
     workspace,
@@ -360,7 +358,8 @@ impl PartialEq for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
@@ -6492,6 +6491,11 @@ pub fn last_session_workspace_locations(
 actions!(
     collab,
     [
+        /// Opens the channel notes for the current call.
+        ///
+        /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
+        /// can be copied via "Copy link to section" in the context menu of the channel notes
+        /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
         Mute,
         Deafen,

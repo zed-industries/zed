@@ -27,11 +27,11 @@ use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem, Empty,
-    Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
+    Action, Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
     IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
     StatefulInteractiveElement, Styled, Subscription, Task, Transformation, WeakEntity, actions,
-    div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between, size,
+    div, img, percentage, point, prelude::*, pulsating_between, size,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -99,13 +99,12 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Action)]
+#[action(namespace = assistant, no_json, no_register)]
 pub enum InsertDraggedFiles {
     ProjectPaths(Vec<ProjectPath>),
     ExternalFiles(Vec<PathBuf>),
 }
-
-impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ScrollPosition {
