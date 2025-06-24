@@ -7,15 +7,16 @@ use std::{
     fmt::Display,
 };
 
-/// Actions are used to implement keyboard-driven UI.
-/// When you declare an action, you can bind keys to the action in the keymap and
-/// listeners for that action in the element tree.
+/// Actions are used to implement keyboard-driven UI. When you declare an action, you can bind keys
+/// to the action in the keymap and listeners for that action in the element tree.
 ///
-/// To declare a list of simple actions, you can use the actions! macro, which defines a simple unit struct
-/// action for each listed action name in the given namespace.
+/// To declare a list of simple actions, you can use the actions! macro, which defines a simple unit
+/// struct action for each listed action name in the given namespace.
+///
 /// ```rust
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
+///
 /// More complex data types can also be actions, providing they implement Clone, PartialEq,
 /// and serde_derive::Deserialize.
 /// Use `impl_actions!` to automatically implement the action in the given namespace.
@@ -55,9 +56,14 @@ use std::{
 /// The derive macro can be configured using the `#[action(...)]` attribute:
 ///
 /// - `name = "namespace::ActionName"` - Override the action's display name
+///
 /// - `namespace = identifier` - Set just the namespace (name will be struct name)
-/// - `internal` - Mark the action as internal-only and so does not support json deserialization
+///
+/// - `no_json` - In Zed this is used for internal actions that cannot be used in the keymap. It
+/// causes the `build` method to always error and `action_json_schema` to return None.
+///
 /// - `deprecated_aliases = ["alias1", "namespace::alias2"]` - Specify deprecated aliases
+///
 /// - `deprecated = "Message about why this action is deprecation"`
 ///
 /// ## Examples
