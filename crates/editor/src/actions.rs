@@ -382,7 +382,6 @@ actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
-        RevertFile,
         Rewrap,
         RunFlycheck,
         ScrollCursorBottom,

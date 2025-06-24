@@ -309,9 +309,11 @@ actions!(
     vim,
     [
         Left,
-        Backspace,
+        #[action(deprecated_aliases = ["vim::Backspace"])]
+        WrappingLeft,
         Right,
-        Space,
+        #[action(deprecated_aliases = ["vim::Space"])]
+        WrappingRight,
         CurrentLine,
         SentenceForward,
         SentenceBackward,
@@ -350,25 +352,11 @@ actions!(
     ]
 );
 
-actions!(
-    vim,
-    [
-        #[action(deprecated_aliases = ["vim::Backspace"])]
-        WrappingLeft,
-        #[action(deprecated_aliases = ["vim::Space"])]
-        WrappingRight
-    ]
-);
-
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingLeft, window, cx| {
-        vim.motion(Motion::WrappingLeft, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Backspace, window, cx| {
         vim.motion(Motion::WrappingLeft, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Down, window, cx| {
@@ -393,10 +381,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.motion(Motion::Right, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingRight, window, cx| {
-        vim.motion(Motion::WrappingRight, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Space, window, cx| {
         vim.motion(Motion::WrappingRight, window, cx)
     });
     Vim::action(
