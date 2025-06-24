@@ -21,13 +21,14 @@ use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
     WeakEntity, Window,
 };
+use icons::IconName;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelKnownError, LanguageModelProviderName, LanguageModelRegistry,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUseId,
-    MessageContent, ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel,
-    StopReason, TokenUsage,
+    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -2101,16 +2102,7 @@ impl Thread {
         cx.emit(ThreadEvent::MessageAdded(id));
         let message_id = id;
 
-        cx.emit(ThreadEvent::RetryScheduled {
-            message_id,
-            delay: retry_after,
-            retry: RetryState {
-                attempt: 1,
-                max_attempts: 1,
-                intent,
-            },
-            provider_name: model.provider_name(),
-        });
+        cx.emit(ThreadEvent::RetryScheduled { message_id });
 
         // Schedule the retry
         let thread_handle = cx.entity().downgrade();
@@ -2199,12 +2191,7 @@ impl Thread {
             cx.emit(ThreadEvent::MessageAdded(id));
             let message_id = id;
 
-            cx.emit(ThreadEvent::RetryScheduled {
-                message_id,
-                delay,
-                retry: retry_state,
-                provider_name: model.provider_name(),
-            });
+            cx.emit(ThreadEvent::RetryScheduled { message_id });
 
             // Schedule the retry
             let thread_handle = cx.entity().downgrade();
@@ -2230,8 +2217,17 @@ impl Thread {
 
             true
         } else {
-            // Max retries exceeded, clear retry state
+            // Max retries exceeded; clear retry state and notify user that the thread stopped.
             self.retry_state = None;
+
+            let notification_text = if retry_state.max_attempts == 1 {
+                format!("Failed after retrying.");
+            } else {
+                format!("Failed after retrying {} times.", retry_state.max_attempts);
+            };
+
+            self.show_notification(notification_text, IconName::ArrowCircle, window, cx);
+
             false
         }
     }
@@ -3171,9 +3167,6 @@ pub enum ThreadEvent {
     ProfileChanged,
     RetryScheduled {
         message_id: MessageId,
-        delay: Duration,
-        retry: RetryState,
-        provider_name: LanguageModelProviderName,
     },
 }
 
@@ -4181,7 +4174,7 @@ fn main() {{
 
         let _subscription = thread.update(cx, |_, cx| {
             cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetryScheduled { attempt, delay, .. } = event {
+                if let ThreadEvent::RetryScheduled { .. } = event {
                     retry_events_clone.lock().push((*attempt, *delay));
                 }
             })
@@ -4246,7 +4239,7 @@ fn main() {{
 
         let _subscription = thread.update(cx, |_, cx| {
             cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetryScheduled { attempt, delay, .. } = event {
+                if let ThreadEvent::RetryScheduled { .. } = event {
                     retry_events_clone.lock().push((*attempt, *delay));
                 }
             })
@@ -4314,7 +4307,7 @@ fn main() {{
 
         let _subscription = thread.update(cx, |_, cx| {
             cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| match event {
-                ThreadEvent::RetryScheduled { attempt, delay, .. } => {
+                ThreadEvent::RetryScheduled { .. } => {
                     retry_events_clone.lock().push((*attempt, *delay));
                 }
                 ThreadEvent::NewRequest => {
@@ -4730,13 +4723,7 @@ fn main() {{
 
         let _subscription = thread.update(cx, |_, cx| {
             cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetryScheduled {
-                    attempt,
-                    delay,
-                    max_attempts,
-                    ..
-                } = event
-                {
+                if let ThreadEvent::RetryScheduled { .. } = event {
                     retry_events_clone
                         .lock()
                         .push((*attempt, *delay, *max_attempts));

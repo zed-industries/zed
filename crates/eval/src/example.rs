@@ -221,6 +221,9 @@ impl ExampleContext {
                 ThreadEvent::ShowError(thread_error) => {
                     tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
+                ThreadEvent::RetryScheduled { .. } => {
+                    // Ignore retry events
+                }
                 ThreadEvent::Stopped(reason) => match reason {
                     Ok(StopReason::EndTurn) => {
                         tx.close_channel();

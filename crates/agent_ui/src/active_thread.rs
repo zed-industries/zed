@@ -1140,13 +1140,7 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
-            ThreadEvent::RetryScheduled {
-                message_id,
-                delay,
-                attempt,
-                max_attempts,
-                provider_name,
-            } => {
+            ThreadEvent::RetryScheduled { message_id } => {
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                     thread.message(*message_id).map(|message| {
                         RenderedMessage::from_segments(
@@ -1157,19 +1151,8 @@ impl ActiveThread {
                     })
                 }) {
                     self.push_rendered_message(*message_id, rendered_message);
+                    cx.notify();
                 }
-
-                let notification_text = if *max_attempts == 1 {
-                    format!("{} retry in {}s", provider_name.0.as_ref(), delay.as_secs())
-                } else {
-                    format!(
-                        "{} retry in {}s (attempt {attempt}/{max_attempts})",
-                        provider_name.0.as_ref(),
-                        delay.as_secs(),
-                    )
-                };
-                self.show_notification(notification_text, IconName::ArrowCircle, window, cx);
-                cx.notify();
             }
         }
     }
