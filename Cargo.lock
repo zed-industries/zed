@@ -106,6 +106,7 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "ref-cast",
+ "regex",
  "release_channel",
  "rope",
  "rules_library",
