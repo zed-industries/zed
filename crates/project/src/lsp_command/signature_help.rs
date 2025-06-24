@@ -1,7 +1,16 @@
+use std::collections::HashSet;
 use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle};
 use rpc::proto::{self, documentation};
+
+/// Key used for deduplicating signatures based on all content
+#[derive(Hash, Eq, PartialEq)]
+struct SignatureKey {
+    label: String,
+    documentation: Option<String>,
+    parameter_docs: Vec<Option<String>>,
+}
 
 #[derive(Debug)]
 pub struct SignatureHelp {
@@ -30,9 +39,47 @@ impl SignatureHelp {
         if help.signatures.is_empty() {
             return None;
         }
-        let active_signature = help.active_signature.unwrap_or(0) as usize;
+        let requested_active_signature = help.active_signature.unwrap_or(0) as usize;
         let mut signatures = Vec::<SignatureHelpData>::with_capacity(help.signatures.capacity());
+        let mut seen_signatures = HashSet::<SignatureKey>::new();
+        let mut actual_active_signature = 0;
+        let mut original_index = 0;
+
         for signature in &help.signatures {
+            let is_active = original_index == requested_active_signature;
+            original_index += 1;
+
+            let signature_key = SignatureKey {
+                label: signature.label.clone(),
+                documentation: signature.documentation.as_ref().map(|d| match d {
+                    lsp::Documentation::String(s) => s.clone(),
+                    lsp::Documentation::MarkupContent(m) => m.value.clone(),
+                }),
+                parameter_docs: signature
+                    .parameters
+                    .as_ref()
+                    .map(|params| {
+                        params
+                            .iter()
+                            .map(|p| {
+                                p.documentation.as_ref().map(|d| match d {
+                                    lsp::Documentation::String(s) => s.clone(),
+                                    lsp::Documentation::MarkupContent(m) => m.value.clone(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            };
+
+            if !seen_signatures.insert(signature_key) {
+                continue; // skip duplicated signature
+            }
+
+            if is_active {
+                // If this was the active signature, update our tracked index
+                actual_active_signature = signatures.len();
+            }
             let active_parameter = signature
                 .active_parameter
                 .unwrap_or_else(|| help.active_parameter.unwrap_or(0))
@@ -103,7 +150,7 @@ impl SignatureHelp {
         }
         Some(Self {
             signatures,
-            active_signature,
+            active_signature: actual_active_signature,
             original_data: help,
         })
     }
@@ -689,5 +736,105 @@ mod tests {
 
         // Check that the active parameter is correct
         assert_eq!(signature.active_parameter, Some(0));
+    }
+
+    #[test]
+    fn test_deduplication() {
+        let signature_help = lsp::SignatureHelp {
+            signatures: vec![
+                lsp::SignatureInformation {
+                    label: "fn test(foo: u8)".to_string(),
+                    documentation: Some(Documentation::String("First".to_string())),
+                    parameters: Some(vec![lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                        documentation: Some(Documentation::String("First foo".to_string())),
+                    }]),
+                    active_parameter: None,
+                },
+                lsp::SignatureInformation {
+                    label: "fn test(foo: u8)".to_string(), // Same label, different docs
+                    documentation: Some(Documentation::String("Second".to_string())),
+                    parameters: Some(vec![lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                        documentation: Some(Documentation::String("Second foo".to_string())),
+                    }]),
+                    active_parameter: None,
+                },
+                lsp::SignatureInformation {
+                    label: "fn test(foo: u8)".to_string(), // Exact duplicate of first
+                    documentation: Some(Documentation::String("First".to_string())),
+                    parameters: Some(vec![lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                        documentation: Some(Documentation::String("First foo".to_string())),
+                    }]),
+                    active_parameter: None,
+                },
+                lsp::SignatureInformation {
+                    label: "fn test(foo: u8, bar: &str)".to_string(),
+                    documentation: None,
+                    parameters: None,
+                    active_parameter: None,
+                },
+            ],
+            active_signature: Some(3), // Points to the fourth signature
+            active_parameter: None,
+        };
+
+        let maybe_help = SignatureHelp::new(signature_help);
+        assert!(maybe_help.is_some());
+
+        let help = maybe_help.unwrap();
+        // Should have 3 signatures after deduplication (two different "fn test(foo: u8)" and one "fn test(foo: u8, bar: &str)")
+        assert_eq!(help.signatures.len(), 3);
+        assert_eq!(help.signatures[0].label, "fn test(foo: u8)");
+        assert_eq!(help.signatures[0].documentation, Some("First".to_string()));
+        assert_eq!(help.signatures[1].label, "fn test(foo: u8)");
+        assert_eq!(help.signatures[1].documentation, Some("Second".to_string()));
+        assert_eq!(help.signatures[2].label, "fn test(foo: u8, bar: &str)");
+
+        // Active signature should be adjusted to point to the correct deduplicated index
+        assert_eq!(help.active_signature, 2);
+    }
+
+    #[test]
+    fn test_deduplication_with_markup_content() {
+        let signature_help = lsp::SignatureHelp {
+            signatures: vec![
+                lsp::SignatureInformation {
+                    label: "fn test()".to_string(),
+                    documentation: Some(Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: "First doc".to_string(),
+                    })),
+                    parameters: None,
+                    active_parameter: None,
+                },
+                lsp::SignatureInformation {
+                    label: "fn test()".to_string(),
+                    documentation: Some(Documentation::String("First doc".to_string())), // Same content, different format
+                    parameters: None,
+                    active_parameter: None,
+                },
+                lsp::SignatureInformation {
+                    label: "fn test()".to_string(),
+                    documentation: Some(Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::PlainText, // Different kind but same value
+                        value: "First doc".to_string(),
+                    })),
+                    parameters: None,
+                    active_parameter: None,
+                },
+            ],
+            active_signature: Some(1),
+            active_parameter: None,
+        };
+
+        let maybe_help = SignatureHelp::new(signature_help);
+        assert!(maybe_help.is_some());
+
+        let help = maybe_help.unwrap();
+        // All three should be deduplicated as they have same content
+        assert_eq!(help.signatures.len(), 1);
+        assert_eq!(help.active_signature, 0);
     }
 }
