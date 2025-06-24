@@ -15440,7 +15440,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     // Completions that have already been resolved are skipped.
     assert_eq!(
         *resolved_items.lock(),
-        items[items.len() - 16..items.len() - 4]
+        items[items.len() - 17..items.len() - 4]
             .iter()
             .cloned()
             .map(|mut item| {
