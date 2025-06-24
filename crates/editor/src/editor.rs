@@ -10234,7 +10234,7 @@ impl Editor {
         cx: &mut Context<Self>,
         mut manipulate: M,
     ) where
-        M: FnMut(&str) -> (String, usize, usize),
+        M: FnMut(&str) -> LineManipulationResult,
     {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
@@ -10267,14 +10267,18 @@ impl Editor {
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
 
-            let (new_text, lines_before, lines_after) = manipulate(&text);
+            let LineManipulationResult {
+                new_text,
+                line_count_before,
+                line_count_after,
+            } = manipulate(&text);
 
             edits.push((start_point..end_point, new_text));
 
             // Selections must change based on added and removed line count
             let start_row =
                 MultiBufferRow(start_point.row + added_lines as u32 - removed_lines as u32);
-            let end_row = MultiBufferRow(start_row.0 + lines_after.saturating_sub(1) as u32);
+            let end_row = MultiBufferRow(start_row.0 + line_count_after.saturating_sub(1) as u32);
             new_selections.push(Selection {
                 id: selection.id,
                 start: start_row,
@@ -10283,10 +10287,10 @@ impl Editor {
                 reversed: selection.reversed,
             });
 
-            if lines_after > lines_before {
-                added_lines += lines_after - lines_before;
-            } else if lines_before > lines_after {
-                removed_lines += lines_before - lines_after;
+            if line_count_after > line_count_before {
+                added_lines += line_count_after - line_count_before;
+            } else if line_count_before > line_count_after {
+                removed_lines += line_count_before - line_count_after;
             }
         }
 
@@ -10341,11 +10345,15 @@ impl Editor {
     {
         self.manipulate_lines(window, cx, |text| {
             let mut lines: Vec<&str> = text.split('\n').collect();
-            let lines_before = lines.len();
+            let line_count_before = lines.len();
 
             callback(&mut lines);
 
-            (lines.join("\n"), lines_before, lines.len())
+            LineManipulationResult {
+                new_text: lines.join("\n"),
+                line_count_before,
+                line_count_after: lines.len(),
+            }
         });
     }
 
@@ -10359,11 +10367,15 @@ impl Editor {
     {
         self.manipulate_lines(window, cx, |text| {
             let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
-            let lines_before = lines.len();
+            let line_count_before = lines.len();
 
             callback(&mut lines);
 
-            (lines.join("\n"), lines_before, lines.len())
+            LineManipulationResult {
+                new_text: lines.join("\n"),
+                line_count_before,
+                line_count_after: lines.len(),
+            }
         });
     }
 
@@ -22297,6 +22309,12 @@ pub struct LineHighlight {
     pub border: Option<gpui::Hsla>,
     pub include_gutter: bool,
     pub type_id: Option<TypeId>,
+}
+
+struct LineManipulationResult {
+    pub new_text: String,
+    pub line_count_before: usize,
+    pub line_count_after: usize,
 }
 
 fn render_diff_hunk_controls(
