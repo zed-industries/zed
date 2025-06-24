@@ -15,6 +15,14 @@ pub struct SignatureHelpData {
     pub label: String,
     pub documentation: Option<String>,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    pub active_parameter: Option<usize>,
+    pub parameters: Vec<ParameterInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParameterInfo {
+    pub label_range: Option<Range<usize>>,
+    pub documentation: Option<String>,
 }
 
 impl SignatureHelp {
@@ -30,31 +38,54 @@ impl SignatureHelp {
                 .unwrap_or_else(|| help.active_parameter.unwrap_or(0))
                 as usize;
             let mut highlights = Vec::new();
-            signature.parameters.as_ref().map(|parameters| {
-                parameters
-                    .get(active_parameter)
-                    .map(|parameter| match &parameter.label {
-                        lsp::ParameterLabel::LabelOffsets(offset) => highlights.push((
-                            offset[0] as usize..offset[1] as usize,
-                            HighlightStyle {
-                                font_weight: Some(FontWeight::EXTRA_BOLD),
-                                ..Default::default()
-                            },
-                        )),
-                        lsp::ParameterLabel::Simple(string) => {
-                            let Some(start) = signature.label.find(string) else {
-                                return;
-                            };
-                            highlights.push((
-                                start..start + string.len(),
-                                HighlightStyle {
-                                    font_weight: Some(FontWeight::EXTRA_BOLD),
-                                    ..Default::default()
-                                },
-                            ));
+            let mut parameter_infos = Vec::new();
+
+            if let Some(parameters) = &signature.parameters {
+                for (index, parameter) in parameters.iter().enumerate() {
+                    let label_range = match &parameter.label {
+                        lsp::ParameterLabel::LabelOffsets(offset) => {
+                            let range = offset[0] as usize..offset[1] as usize;
+                            if index == active_parameter {
+                                highlights.push((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        font_weight: Some(FontWeight::EXTRA_BOLD),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            Some(range)
                         }
-                    })
-            });
+                        lsp::ParameterLabel::Simple(string) => {
+                            if let Some(start) = signature.label.find(string) {
+                                let range = start..start + string.len();
+                                if index == active_parameter {
+                                    highlights.push((
+                                        range.clone(),
+                                        HighlightStyle {
+                                            font_weight: Some(FontWeight::EXTRA_BOLD),
+                                            ..Default::default()
+                                        },
+                                    ));
+                                }
+                                Some(range)
+                            } else {
+                                None
+                            }
+                        }
+                    };
+
+                    let documentation = parameter.documentation.as_ref().map(|doc| match doc {
+                        lsp::Documentation::String(string) => string.clone(),
+                        lsp::Documentation::MarkupContent(markup) => markup.value.clone(),
+                    });
+
+                    parameter_infos.push(ParameterInfo {
+                        label_range,
+                        documentation,
+                    });
+                }
+            }
 
             let label = signature.label.clone();
             let documentation = signature.documentation.clone().map(|doc| match doc {
@@ -66,6 +97,8 @@ impl SignatureHelp {
                 label,
                 documentation,
                 highlights,
+                active_parameter: Some(active_parameter),
+                parameters: parameter_infos,
             });
         }
         Some(Self {
@@ -612,5 +645,49 @@ mod tests {
                 vec![(8..15, current_parameter())]
             )
         );
+    }
+
+    #[test]
+    fn test_parameter_documentation() {
+        let signature_help = lsp::SignatureHelp {
+            signatures: vec![lsp::SignatureInformation {
+                label: "fn test(foo: u8, bar: &str)".to_string(),
+                documentation: Some(Documentation::String(
+                    "This is a test documentation".to_string(),
+                )),
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
+                        documentation: Some(Documentation::String("The foo parameter".to_string())),
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("bar: &str".to_string()),
+                        documentation: Some(Documentation::String("The bar parameter".to_string())),
+                    },
+                ]),
+                active_parameter: None,
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(0),
+        };
+        let maybe_signature_help = SignatureHelp::new(signature_help);
+        assert!(maybe_signature_help.is_some());
+
+        let signature_help = maybe_signature_help.unwrap();
+        let signature = &signature_help.signatures[signature_help.active_signature];
+
+        // Check that parameter documentation is extracted
+        assert_eq!(signature.parameters.len(), 2);
+        assert_eq!(
+            signature.parameters[0].documentation,
+            Some("The foo parameter".to_string())
+        );
+        assert_eq!(
+            signature.parameters[1].documentation,
+            Some("The bar parameter".to_string())
+        );
+
+        // Check that the active parameter is correct
+        assert_eq!(signature.active_parameter, Some(0));
     }
 }

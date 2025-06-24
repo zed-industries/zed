@@ -219,19 +219,38 @@ impl Editor {
                         let signatures = signature_help
                             .signatures
                             .into_iter()
-                            .map(|s| SignatureHelp {
-                                label: s.label.into(),
-                                documentation: s.documentation.map(|documentation| {
-                                    cx.new(|cx| {
-                                        Markdown::new(
-                                            documentation.into(),
-                                            Some(languages.clone()),
-                                            None,
-                                            cx,
-                                        )
-                                    })
-                                }),
-                                highlights: s.highlights,
+                            .map(|s| {
+                                let parameter_doc = s
+                                    .active_parameter
+                                    .and_then(|idx| s.parameters.get(idx))
+                                    .and_then(|param| param.documentation.clone())
+                                    .map(|documentation| {
+                                        cx.new(|cx| {
+                                            Markdown::new(
+                                                documentation.into(),
+                                                Some(languages.clone()),
+                                                None,
+                                                cx,
+                                            )
+                                        })
+                                    });
+
+                                SignatureHelp {
+                                    label: s.label.into(),
+                                    documentation: s.documentation.map(|documentation| {
+                                        cx.new(|cx| {
+                                            Markdown::new(
+                                                documentation.into(),
+                                                Some(languages.clone()),
+                                                None,
+                                                cx,
+                                            )
+                                        })
+                                    }),
+                                    highlights: s.highlights,
+                                    active_parameter: s.active_parameter,
+                                    parameter_documentation: parameter_doc,
+                                }
                             })
                             .collect::<Vec<_>>();
 
@@ -328,6 +347,8 @@ pub struct SignatureHelp {
     pub(crate) label: SharedString,
     documentation: Option<Entity<Markdown>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
+    active_parameter: Option<usize>,
+    parameter_documentation: Option<Entity<Markdown>>,
 }
 
 #[derive(Clone, Debug)]
@@ -365,6 +386,24 @@ impl SignatureHelpPopover {
                             &self.style,
                             signature.highlights.iter().cloned(),
                         ),
+                    )
+                    .when_some(
+                        signature.parameter_documentation.clone(),
+                        |this, param_doc| {
+                            this.child(div().h_px().bg(cx.theme().colors().border_variant).my_1())
+                                .child(
+                                    MarkdownElement::new(
+                                        param_doc,
+                                        hover_markdown_style(window, cx),
+                                    )
+                                    .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                        copy_button: false,
+                                        border: false,
+                                        copy_button_on_hover: false,
+                                    })
+                                    .on_url_click(open_markdown_url),
+                                )
+                        },
                     )
                     .when_some(signature.documentation.clone(), |this, description| {
                         this.child(div().h_px().bg(cx.theme().colors().border_variant).my_1())
