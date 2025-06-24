@@ -59,10 +59,12 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     deprecated = Some(lit.value());
+                } else {
+                    return Err(meta.error(format!("'{:?}' argument not recognized", meta.path)));
                 }
                 Ok(())
             })
-            .unwrap_or_else(|e| panic!("Failed to parse action attribute: {}", e));
+            .unwrap_or_else(|e| panic!("In #[action] attribute: {}", e));
         }
     }
 
