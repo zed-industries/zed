@@ -113,6 +113,9 @@ dependencies = [
  "chrono",
  "futures 0.3.31",
  "gpui",
+ "project",
+ "serde_json",
+ "util",
  "uuid",
 ]
 
