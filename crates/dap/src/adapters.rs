@@ -344,6 +344,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -434,6 +435,7 @@ impl DebugAdapter for FakeAdapter {
         _: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
+        _: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
