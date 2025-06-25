@@ -1485,8 +1485,6 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        // Clear any previous retry state when starting a new completion
-        self.retry_state = None;
         self.tool_use_limit_reached = false;
 
         let pending_completion_id = post_inc(&mut self.completion_count);
@@ -1797,6 +1795,7 @@ impl Thread {
             };
 
             let result = stream_completion.await;
+            let mut retry_scheduled = false;
 
             thread
                 .update(cx, |thread, cx| {
@@ -1906,6 +1905,7 @@ impl Thread {
                                             window,
                                             cx,
                                         );
+                                        retry_scheduled = true;
                                     }
                                     LanguageModelKnownError::Overloaded => {
                                         let provider_name = model.provider_name();
@@ -1914,13 +1914,14 @@ impl Thread {
                                             provider_name.0.as_ref()
                                         );
 
-                                        if !thread.handle_retryable_error(
+                                        retry_scheduled = thread.handle_retryable_error(
                                             &error_message,
                                             model.clone(),
                                             intent,
                                             window,
                                             cx,
-                                        ) {
+                                        );
+                                        if !retry_scheduled {
                                             emit_generic_error(error, cx);
                                         }
                                     }
@@ -1931,13 +1932,14 @@ impl Thread {
                                             provider_name.0.as_ref()
                                         );
 
-                                        if !thread.handle_retryable_error(
+                                        retry_scheduled = thread.handle_retryable_error(
                                             &error_message,
                                             model.clone(),
                                             intent,
                                             window,
                                             cx,
-                                        ) {
+                                        );
+                                        if !retry_scheduled {
                                             emit_generic_error(error, cx);
                                         }
                                     }
@@ -1952,11 +1954,15 @@ impl Thread {
                                 emit_generic_error(error, cx);
                             }
 
-                            thread.cancel_last_completion(window, cx);
+                            if !retry_scheduled {
+                                thread.cancel_last_completion(window, cx);
+                            }
                         }
                     }
 
-                    cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+                    if !retry_scheduled {
+                        cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+                    }
 
                     if let Some((request_callback, (request, response_events))) = thread
                         .request_callback
@@ -2095,7 +2101,7 @@ impl Thread {
             segments: vec![MessageSegment::Text(retry_message)],
             loaded_context: LoadedContext::default(),
             creases: Vec::new(),
-            is_hidden: true,
+            is_hidden: false,
             ui_only: true,
         });
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -2111,12 +2117,6 @@ impl Thread {
 
             thread_handle
                 .update(cx, |thread, cx| {
-                    // Remove the retry notification message
-                    if let Some(index) = thread.messages.iter().position(|m| m.id == message_id) {
-                        thread.messages.remove(index);
-                        cx.emit(ThreadEvent::MessageDeleted(message_id));
-                    }
-
                     // Retry the completion
                     thread.send_to_model(model, intent, window, cx);
                 })
@@ -2149,18 +2149,17 @@ impl Thread {
         const BASE_RETRY_DELAY_SECS: u64 = 5;
 
         let retry_state = self.retry_state.get_or_insert(RetryState {
-            attempt: 0, // This will be immediately incremented
+            attempt: 0,
             max_attempts: MAX_RETRY_ATTEMPTS,
             intent,
         });
+
         retry_state.attempt += 1;
+        let attempt = retry_state.attempt;
+        let max_attempts = retry_state.max_attempts;
+        let intent = retry_state.intent;
 
-        if retry_state.attempt <= retry_state.max_attempts {
-            let retry_state = self.retry_state.as_ref().unwrap();
-            let attempt = retry_state.attempt;
-            let max_attempts = retry_state.max_attempts;
-            let intent = retry_state.intent;
-
+        if attempt <= max_attempts {
             // Use custom delay if provided (e.g., from rate limit), otherwise exponential backoff
             let delay = if let Some(custom_delay) = custom_delay {
                 custom_delay
@@ -2184,7 +2183,7 @@ impl Thread {
                 segments: vec![MessageSegment::Text(retry_message)],
                 loaded_context: LoadedContext::default(),
                 creases: Vec::new(),
-                is_hidden: true,
+                is_hidden: false,
                 ui_only: true,
             });
             cx.emit(ThreadEvent::MessageAdded(id));
@@ -2200,13 +2199,6 @@ impl Thread {
 
                 thread_handle
                     .update(cx, |thread, cx| {
-                        // Remove the retry notification message
-                        if let Some(index) = thread.messages.iter().position(|m| m.id == message_id)
-                        {
-                            thread.messages.remove(index);
-                            cx.emit(ThreadEvent::MessageDeleted(message_id));
-                        }
-
                         // Retry the completion
                         thread.send_to_model(model, intent, window, cx);
                     })
@@ -2216,8 +2208,7 @@ impl Thread {
 
             true
         } else {
-            // Max retries exceeded; clear retry state and notify user that the thread stopped.
-            let max_attempts = self.retry_state.as_ref().unwrap().max_attempts;
+            // Max retries exceeded
             self.retry_state = None;
 
             let notification_text = if max_attempts == 1 {
@@ -2225,6 +2216,9 @@ impl Thread {
             } else {
                 format!("Failed after retrying {} times.", max_attempts).into()
             };
+
+            // Stop generating since we're giving up on retrying.
+            self.pending_completions.clear();
 
             cx.emit(ThreadEvent::RetriesFailed {
                 message: notification_text,
