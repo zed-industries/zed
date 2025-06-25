@@ -111,6 +111,13 @@ pub enum ContextServerSettings {
 }
 
 impl ContextServerSettings {
+    pub fn default_extension() -> Self {
+        Self::Extension {
+            enabled: true,
+            settings: serde_json::json!({}),
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         match self {
             ContextServerSettings::Custom { enabled, .. } => *enabled,

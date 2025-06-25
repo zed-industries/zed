@@ -505,10 +505,7 @@ impl ContextServerStore {
         {
             configured_servers
                 .entry(id)
-                .or_insert(ContextServerSettings::Extension {
-                    enabled: true,
-                    settings: serde_json::json!({}),
-                });
+                .or_insert(ContextServerSettings::default_extension());
         }
 
         let (enabled_servers, disabled_servers): (HashMap<_, _>, HashMap<_, _>) =
