@@ -888,7 +888,12 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(model) => model,
                     Err(err) => return async move { Err(anyhow!(err).into()) }.boxed(),
                 };
-                let request = into_open_ai(request, &model, None);
+                let request = into_open_ai(
+                    request,
+                    model.id(),
+                    model.supports_parallel_tool_calls(),
+                    None,
+                );
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
