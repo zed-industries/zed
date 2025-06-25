@@ -152,7 +152,7 @@ use lsp::{
 
 use language::BufferSnapshot;
 pub use lsp_ext::lsp_tasks;
-use movement::TextLayoutDetails;
+use movement::{FindRange, TextLayoutDetails};
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, PathKey,
     RowInfo, ToOffset, ToPoint,
@@ -12361,6 +12361,30 @@ impl Editor {
             this.insert("", window, cx);
         });
     }
+
+    pub fn delete_previous_whitespace(
+        &mut self,
+        action: &DeletePreviousWhitespace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        self.transact(window, cx, |this, window, cx| {
+            this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let range = if action.ignore_newlines {
+                        FindRange::MultiLine
+                    } else {
+                        FindRange::SingleLine
+                    };
+                    let cursor = movement::find_preceding_boundary_display_point(map, selection.head(), range, |c, _| !c.is_whitespace());
+                    selection.set_head(cursor, SelectionGoal::None);
+                });
+            });
+            this.insert("", window, cx);
+        });
+    }
+
 
     pub fn move_to_next_word_end(
         &mut self,

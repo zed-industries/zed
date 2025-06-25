@@ -221,6 +221,14 @@ pub struct DeleteToPreviousWordStart {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeletePreviousWhitespace {
+    #[serde(default = "default_true")]
+    pub ignore_newlines: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 pub struct FoldAtLevel(pub u32);
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]

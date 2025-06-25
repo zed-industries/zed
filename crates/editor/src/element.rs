@@ -244,6 +244,8 @@ impl EditorElement {
         register_action(editor, window, Editor::delete_to_previous_subword_start);
         register_action(editor, window, Editor::delete_to_next_word_end);
         register_action(editor, window, Editor::delete_to_next_subword_end);
+        register_action(editor, window, Editor::delete_previous_whitespace);
+        register_action(editor, window, Editor::delete_to_next_word_end);
         register_action(editor, window, Editor::delete_to_beginning_of_line);
         register_action(editor, window, Editor::delete_to_end_of_line);
         register_action(editor, window, Editor::cut_to_end_of_line);
