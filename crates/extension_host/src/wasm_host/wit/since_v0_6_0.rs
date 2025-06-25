@@ -945,7 +945,11 @@ impl ExtensionImports for WasmState {
                                     .get(key.as_str())
                             })
                             .cloned()
-                            .context("Failed to get context server configuration")?;
+                            .unwrap_or_else(|| {
+                                project::project_settings::ContextServerSettings::Extension {
+                                    settings: serde_json::json!({}),
+                                }
+                            });
 
                         match settings {
                             project::project_settings::ContextServerSettings::Custom {
