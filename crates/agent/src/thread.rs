@@ -198,6 +198,13 @@ impl MessageSegment {
             Self::RedactedThinking(_) => false,
         }
     }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            MessageSegment::Text(text) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
