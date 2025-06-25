@@ -1,14 +1,13 @@
 use std::{io::Write as _, path::Path, sync::Arc};
 
 use crate::{
-    Agent, AgentThreadEntryContent, AgentThreadSummary, Message, MessageChunk, ResponseEvent, Role,
-    Thread, ThreadEntryId, ThreadId,
+    Agent, AgentThreadEntryContent, AgentThreadSummary, Message, MessageChunk, Role, Thread,
+    ThreadEntryId, ThreadId,
 };
 use agentic_coding_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
@@ -31,10 +30,14 @@ struct AcpClientDelegate {
 }
 
 impl AcpClientDelegate {
-    fn new(project: Entity<Project>, cx: AsyncApp) -> Self {
+    fn new(
+        project: Entity<Project>,
+        threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<Thread>>>>,
+        cx: AsyncApp,
+    ) -> Self {
         Self {
             project,
-            threads: Default::default(),
+            threads,
             cx: cx,
         }
     }
@@ -186,8 +189,9 @@ impl AcpAgent {
         let stdin = process.stdin.take().expect("process didn't have stdin");
         let stdout = process.stdout.take().expect("process didn't have stdout");
 
+        let threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<Thread>>>> = Default::default();
         let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(project.clone(), cx.clone()),
+            AcpClientDelegate::new(project.clone(), threads.clone(), cx.clone()),
             stdin,
             stdout,
         );
@@ -200,7 +204,7 @@ impl AcpAgent {
         Self {
             project,
             connection: Arc::new(connection),
-            threads: Default::default(),
+            threads,
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         }
@@ -286,15 +290,14 @@ impl Agent for AcpAgent {
         thread_id: ThreadId,
         message: crate::Message,
         cx: &mut AsyncApp,
-    ) -> Result<UnboundedReceiver<Result<ResponseEvent>>> {
+    ) -> Result<()> {
         let thread = self
             .threads
             .lock()
             .get(&thread_id)
             .cloned()
             .ok_or_else(|| anyhow!("no such thread"))?;
-        let response = self
-            .connection
+        self.connection
             .request(acp::SendMessageParams {
                 thread_id: thread_id.clone().into(),
                 message: acp::Message {
@@ -317,7 +320,7 @@ impl Agent for AcpAgent {
                 },
             })
             .await?;
-        todo!()
+        Ok(())
     }
 }
 
