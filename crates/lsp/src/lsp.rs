@@ -889,9 +889,6 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
-            outbound_tx.close();
-
             let server = self.server.clone();
             let name = self.name.clone();
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
@@ -916,7 +913,8 @@ impl LanguageServer {
                     }
 
                     response_handlers.lock().take();
-                    exit?;
+                    Self::notify_internal::<notification::Exit>(&outbound_tx, &())?;
+                    outbound_tx.close();
                     output_done.recv().await;
                     server.lock().take().map(|mut child| child.kill());
                     log::debug!("language server shutdown finished");
@@ -1522,6 +1520,8 @@ impl FakeLanguageServer {
                 }
             }
         });
+
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         (server, fake)
     }

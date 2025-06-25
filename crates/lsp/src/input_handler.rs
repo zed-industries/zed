@@ -23,7 +23,7 @@ pub struct LspStdoutHandler {
     pub(super) notifications_channel: UnboundedReceiver<AnyNotification>,
 }
 
-async fn read_headers<Stdout>(reader: &mut BufReader<Stdout>, buffer: &mut Vec<u8>) -> Result<()>
+async fn read_headers<Stdout>(reader: &mut BufReader<Stdout>, buffer: &mut Vec<u8>) -> Result<bool>
 where
     Stdout: AsyncRead + Unpin + Send + 'static,
 {
@@ -31,11 +31,11 @@ where
         if buffer.len() >= HEADER_DELIMITER.len()
             && buffer[(buffer.len() - HEADER_DELIMITER.len())..] == HEADER_DELIMITER[..]
         {
-            return Ok(());
+            return Ok(true);
         }
 
         if reader.read_until(b'\n', buffer).await? == 0 {
-            anyhow::bail!("cannot read LSP message headers");
+            return Ok(false);
         }
     }
 }
@@ -74,7 +74,9 @@ impl LspStdoutHandler {
         loop {
             buffer.clear();
 
-            read_headers(&mut stdout, &mut buffer).await?;
+            if !read_headers(&mut stdout, &mut buffer).await? {
+                return Ok(());
+            }
 
             let headers = std::str::from_utf8(&buffer)?;
 
