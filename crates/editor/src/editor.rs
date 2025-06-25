@@ -90,7 +90,6 @@ use code_context_menus::{
     CompletionsMenu, ContextMenuOrigin,
 };
 use git::blame::{GitBlame, GlobalBlameRenderer};
-
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
