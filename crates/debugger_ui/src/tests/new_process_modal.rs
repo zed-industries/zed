@@ -192,7 +192,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     modal.update_in(cx, |modal, window, cx| {
         modal.set_configure("/project/main", "/project", false, window, cx);
-        modal.save_scenario(window, cx);
+        modal.save_debug_scenario(window, cx);
     });
 
     cx.executor().run_until_parked();
@@ -221,7 +221,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     modal.update_in(cx, |modal, window, cx| {
         modal.set_configure("/project/other", "/project", true, window, cx);
-        modal.save_scenario(window, cx);
+        modal.save_debug_scenario(window, cx);
     });
 
     cx.executor().run_until_parked();

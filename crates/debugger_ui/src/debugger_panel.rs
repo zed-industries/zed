@@ -16,11 +16,13 @@ use dap::{
     client::SessionId, debugger_settings::DebuggerSettings,
 };
 use dap::{DapRegistry, StartDebuggingRequestArguments};
+use editor::{Anchor, Editor, scroll::Autoscroll};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
     WeakEntity, anchored, deferred,
 };
+use text::Selection;
 
 use itertools::Itertools as _;
 use language::Buffer;
@@ -1056,6 +1058,80 @@ impl DebugPanel {
                 })
             })
             .unwrap_or_else(|err| Task::ready(Err(err)))
+    }
+
+    pub(crate) fn open_in_debug_json(
+        &self,
+        cx: &mut Context<Self>,
+        window: &mut Window,
+        path: ProjectPath,
+        label: SharedString,
+    ) -> Task<Option<()>> {
+        let this_entity = cx.weak_entity().clone();
+        window.spawn(cx, {
+            async move |cx| {
+                let editor = this_entity
+                    .update_in(cx, |this, window, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.open_path(path.clone(), None, true, window, cx)
+                        })
+                    })
+                    .ok()?
+                    .ok()?
+                    .await
+                    .ok()?;
+
+                cx.update(|window, cx| {
+                    if let Some(editor) = editor.act_as::<Editor>(cx) {
+                        // unfortunately debug tasks don't have an easy way to globally
+                        // identify them. to jump to the one that you just created or an
+                        // old one that you're choosing to edit we use a heuristic of searching for a line with `label:  <your label>` from the end rather than the start so we bias towards more renctly
+                        editor.update(cx, |editor, cx| {
+                            let row = editor.text(cx).lines().rev().enumerate().find_map(
+                                |(row, text)| {
+                                    if text.contains(label.as_ref()) && text.contains("\"label\": ")
+                                    {
+                                        Some(row)
+                                    } else {
+                                        None
+                                    }
+                                },
+                            )?;
+
+                            let buffer = editor.buffer().read(cx);
+                            let excerpt_id = *buffer.excerpt_ids().first()?;
+                            let snapshot = buffer.as_singleton()?.read(cx).snapshot();
+                            let anchor = snapshot.anchor_before(text::Point::new(row as u32, 0));
+
+                            let anchor = Anchor {
+                                buffer_id: anchor.buffer_id,
+                                excerpt_id,
+                                text_anchor: anchor,
+                                diff_base_anchor: None,
+                            };
+
+                            editor.change_selections(
+                                Some(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| {
+                                    let id = selections.new_selection_id();
+                                    selections.select_anchors(vec![Selection {
+                                        id,
+                                        start: anchor,
+                                        end: anchor,
+                                        reversed: false,
+                                        goal: language::SelectionGoal::None,
+                                    }]);
+                                },
+                            );
+                            Some(())
+                        });
+                    }
+                })
+                .ok()
+            }
+        })
     }
 
     pub(crate) fn toggle_thread_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {

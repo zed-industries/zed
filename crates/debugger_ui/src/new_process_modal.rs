@@ -9,12 +9,11 @@ use std::{
     usize,
 };
 use tasks_ui::{TaskOverrides, TasksModal};
-use text::{Point, Selection};
 
 use dap::{
     DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
 };
-use editor::{Anchor, Editor, EditorElement, EditorStyle, scroll::Autoscroll};
+use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -22,8 +21,8 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
-use settings::{Settings, initial_local_debug_tasks_content};
+use project::{TaskContexts, TaskSourceKind, task_store::TaskStore};
+use settings::Settings;
 use task::{DebugScenario, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
@@ -409,98 +408,19 @@ impl NewProcessModal {
         self.debug_picker.read(cx).delegate.task_contexts.clone()
     }
 
-    fn open_in_debug_json(
-        &self,
-        cx: &mut Context<Self>,
-        window: &mut Window,
-        path: ProjectPath,
-        label: SharedString,
-    ) {
-        let this_entity = cx.weak_entity().clone();
-        window
-            .spawn(cx, {
-                async move |cx| {
-                    let editor = this_entity
-                        .update_in(cx, |this, window, cx| {
-                            this.workspace.update(cx, |workspace, cx| {
-                                workspace.open_path(path.clone(), None, true, window, cx)
-                            })
-                        })
-                        .ok()?
-                        .ok()?
-                        .await
-                        .ok()?;
-
-                    cx.update(|window, cx| {
-                        if let Some(editor) = editor.act_as::<Editor>(cx) {
-                            // unfortunately debug tasks don't have an easy way to globally
-                            // identify them. to jump to the one that you just created or an
-                            // old one that you're choosing to edit we use a heuristic of searching for a line with `label:  <your label>` from the end rather than the start so we bias towards more renctly
-                            editor.update(cx, |editor, cx| {
-                                let row = editor.text(cx).lines().rev().enumerate().find_map(
-                                    |(row, text)| {
-                                        if text.contains(label.as_ref())
-                                            && text.contains("\"label\": ")
-                                        {
-                                            Some(row)
-                                        } else {
-                                            None
-                                        }
-                                    },
-                                )?;
-
-                                let buffer = editor.buffer().read(cx);
-                                let excerpt_id = *buffer.excerpt_ids().first()?;
-                                let snapshot = buffer.as_singleton()?.read(cx).snapshot();
-                                let anchor = snapshot.anchor_before(Point::new(row as u32, 0));
-
-                                let anchor = Anchor {
-                                    buffer_id: anchor.buffer_id,
-                                    excerpt_id,
-                                    text_anchor: anchor,
-                                    diff_base_anchor: None,
-                                };
-
-                                editor.change_selections(
-                                    Some(Autoscroll::center()),
-                                    window,
-                                    cx,
-                                    |selections| {
-                                        let id = selections.new_selection_id();
-                                        selections.select_anchors(vec![Selection {
-                                            id,
-                                            start: anchor,
-                                            end: anchor,
-                                            reversed: false,
-                                            goal: language::SelectionGoal::None,
-                                        }]);
-                                    },
-                                );
-                                Some(())
-                            });
-                        }
-                    })
-                    .ok()?;
-                    this_entity.update(cx, |_, cx| cx.emit(DismissEvent)).ok()
-                }
-            })
-            .detach();
-    }
-
-    fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let task_contents = self.task_contexts(cx);
         let Some(adapter) = self.debugger.as_ref() else {
             return;
         };
         let scenario = self.debug_scenario(&adapter, cx);
-        let this_entity = cx.weak_entity().clone();
 
-        cx.spawn_in(window, async move |this, async_cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let Some((scenario, worktree_id)) = scenario
                 .await
                 .zip(task_contents.and_then(|tcx| tcx.worktree()))
             else {
-                let _ = async_cx.prompt(
+                let _ = cx.prompt(
                     PromptLevel::Critical,
                     "Cannot open debug.json",
                     Some("You must have at least one project open"),
@@ -510,7 +430,7 @@ impl NewProcessModal {
             };
             let label = scenario.label.clone();
 
-            let Ok(Ok(save_scenario)) = this.update_in(async_cx, |this, window, cx| {
+            let Ok(Ok(save_scenario)) = this.update_in(cx, |this, window, cx| {
                 this.debug_panel.update(cx, |panel, cx| {
                     panel.save_scenario(&scenario, worktree_id, window, cx)
                 })
@@ -520,9 +440,17 @@ impl NewProcessModal {
             let Ok(path) = save_scenario.await else {
                 return Err(anyhow::anyhow!("Failed to save debug scenario"));
             };
-            this_entity.update_in(cx, |this, window, cx| {
-                this.open_in_debug_json(cx, window, path, label);
-            });
+
+            this.update_in(cx, |this, window, cx| {
+                this.debug_panel.update(cx, |panel, cx| {
+                    panel.open_in_debug_json(cx, window, path, label)
+                })
+            })??
+            .await;
+            this.update_in(cx, |_, _, cx| {
+                cx.emit(DismissEvent);
+            })
+            .ok();
             Ok(())
         })
         .detach();
@@ -1360,7 +1288,10 @@ impl PickerDelegate for DebugDelegate {
                     for locator in locators {
                         if let Some(scenario) =
                             // TODO: use a more informative label than "one-off"
-                            locator.1.create_scenario(&task, "one-off", &adapter).await
+                            locator
+                                .1
+                                .create_scenario(&task, &task.label, &adapter)
+                                .await
                         {
                             return Some(scenario);
                         }
@@ -1631,9 +1562,5 @@ impl NewProcessModal {
                 _ => ToggleState::Unselected,
             }
         })
-    }
-
-    pub(crate) fn save_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_debug_scenario(window, cx);
     }
 }
