@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use crate::{Agent, AgentThread, AgentThreadEntry, AgentThreadSummary, ResponseEvent, ThreadId};
-use agentic_coding_protocol as acp;
+use crate::{
+    Agent, AgentThread, AgentThreadEntryContent, AgentThreadSummary, ResponseEvent, ThreadId,
+};
+use agentic_coding_protocol::{self as acp};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -45,6 +47,10 @@ impl acp::Client for AcpClientDelegate {
     async fn glob_search(&self, request: acp::GlobSearchParams) -> Result<acp::GlobSearchResponse> {
         todo!()
     }
+
+    async fn end_turn(&self, request: acp::EndTurnParams) -> Result<acp::EndTurnResponse> {
+        todo!()
+    }
 }
 
 impl AcpAgent {
@@ -78,33 +84,38 @@ impl Agent for AcpAgent {
     type Thread = AcpAgentThread;
 
     async fn threads(&self) -> Result<Vec<AgentThreadSummary>> {
-        let threads = self.connection.request(acp::ListThreadsParams).await?;
-        threads
+        let response = self.connection.request(acp::GetThreadsParams).await?;
+        response
             .threads
             .into_iter()
             .map(|thread| {
                 Ok(AgentThreadSummary {
-                    id: ThreadId(thread.id.0),
+                    id: thread.id.into(),
                     title: thread.title,
-                    created_at: thread.created_at,
+                    created_at: thread.modified_at,
                 })
             })
             .collect()
     }
 
     async fn create_thread(&self) -> Result<Self::Thread> {
-        todo!()
+        let response = self.connection.request(acp::CreateThreadParams).await?;
+        Ok(AcpAgentThread {
+            id: response.thread_id,
+        })
     }
 
-    async fn open_thread(&self, id: crate::ThreadId) -> Result<Self::Thread> {
+    async fn open_thread(&self, id: ThreadId) -> Result<Self::Thread> {
         todo!()
     }
 }
 
-pub struct AcpAgentThread {}
+pub struct AcpAgentThread {
+    id: acp::ThreadId,
+}
 
 impl AgentThread for AcpAgentThread {
-    async fn entries(&self) -> Result<Vec<AgentThreadEntry>> {
+    async fn entries(&self) -> Result<Vec<AgentThreadEntryContent>> {
         todo!()
     }
 
@@ -113,5 +124,17 @@ impl AgentThread for AcpAgentThread {
         message: crate::Message,
     ) -> Result<UnboundedReceiver<Result<ResponseEvent>>> {
         todo!()
+    }
+}
+
+impl From<acp::ThreadId> for ThreadId {
+    fn from(thread_id: acp::ThreadId) -> Self {
+        Self(thread_id.0)
+    }
+}
+
+impl From<ThreadId> for acp::ThreadId {
+    fn from(thread_id: ThreadId) -> Self {
+        acp::ThreadId(thread_id.0)
     }
 }
