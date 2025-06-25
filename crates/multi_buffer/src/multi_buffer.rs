@@ -7734,7 +7734,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     })
                 } else {
                     self.range.start = chunk_end;
-                    dbg!(self.buffer_chunk.take())
+                    self.buffer_chunk.take()
                 }
             }
             DiffTransform::DeletedHunk {
