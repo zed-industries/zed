@@ -32,7 +32,7 @@ increase_indent_pattern = "^[^#].*:\\s*$"
 decrease_indent_patterns = [
   { pattern = "^\\s*elif\\b.*:",    valid_after = ["if", "elif"] },
   { pattern = "^\\s*else\\b.*:",    valid_after = ["if", "elif", "for", "while", "except"] },
-  { pattern = "^\\s*except\\b.*:",  valid_after = ["try"] },
+  { pattern = "^\\s*except\\b.*:",  valid_after = ["try", "except"] },
   { pattern = "^\\s*finally\\b.*:", valid_after = ["try", "except", "else"] },
-  { pattern = "^\\s*case\\b.*:",    valid_after = ["case"] }
+  { pattern = "^\\s*case\\b.*:",    valid_after = ["match", "case"] }
 ]
