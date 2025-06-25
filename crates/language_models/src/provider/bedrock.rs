@@ -631,6 +631,11 @@ pub fn into_bedrock(
                             }
                         }
                         MessageContent::Thinking { text, signature } => {
+                            if model.contains(Model::DeepSeekR1.request_id()) {
+                                // DeepSeekR1 doesn't support thinking blocks
+                                // And the AWS API demands that you strip them
+                                return None;
+                            }
                             let thinking = BedrockThinkingTextBlock::builder()
                                 .text(text)
                                 .set_signature(signature)
@@ -643,6 +648,11 @@ pub fn into_bedrock(
                             ))
                         }
                         MessageContent::RedactedThinking(blob) => {
+                            if model.contains(Model::DeepSeekR1.request_id()) {
+                                // DeepSeekR1 doesn't support thinking blocks
+                                // And the AWS API demands that you strip them
+                                return None;
+                            }
                             let redacted =
                                 BedrockThinkingBlock::RedactedContent(BedrockBlob::new(blob));
 
