@@ -54,6 +54,10 @@ pub mod lsp {
     };
 }
 
+pub mod language_model {
+    pub use crate::wit::zed::extension::language_model::{};
+}
+
 /// A result returned from a Zed extension.
 pub type Result<T, E = String> = core::result::Result<T, E>;
 

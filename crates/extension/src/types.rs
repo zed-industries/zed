@@ -9,6 +9,7 @@ use util::redact::should_redact;
 
 pub use context_server::*;
 pub use dap::*;
+pub use language_model::*;
 pub use lsp::*;
 pub use slash_command::*;
 

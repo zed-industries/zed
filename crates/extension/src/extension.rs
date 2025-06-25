@@ -16,7 +16,7 @@ use language::LanguageName;
 use semantic_version::SemanticVersion;
 use task::{SpawnInTerminal, ZedDebugConfig};
 
-pub use crate::extension_events::*;
+pub use crate::extension_events::{Event, *};
 pub use crate::extension_host_proxy::*;
 pub use crate::extension_manifest::*;
 pub use crate::types::*;

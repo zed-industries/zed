@@ -5224,6 +5224,7 @@ dependencies = [
  "heck 0.5.0",
  "http_client",
  "language",
+ "language_model",
  "log",
  "lsp",
  "parking_lot",
@@ -8936,6 +8937,24 @@ dependencies = [
  "util",
  "workspace-hack",
  "zed_llm_client",
+]
+
+[[package]]
+name = "language_model_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "extension",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "language_model",
+ "serde",
+ "serde_json",
+ "util",
+ "workspace-hack",
 ]
 
 [[package]]

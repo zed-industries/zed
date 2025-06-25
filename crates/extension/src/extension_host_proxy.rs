@@ -5,6 +5,7 @@ use anyhow::Result;
 use fs::Fs;
 use gpui::{App, Global, ReadGlobal, SharedString, Task};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
+use language_model::LanguageModelProviderId;
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -25,6 +26,7 @@ pub struct ExtensionHostProxy {
     grammar_proxy: RwLock<Option<Arc<dyn ExtensionGrammarProxy>>>,
     language_proxy: RwLock<Option<Arc<dyn ExtensionLanguageProxy>>>,
     language_server_proxy: RwLock<Option<Arc<dyn ExtensionLanguageServerProxy>>>,
+    language_model_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProxy>>>,
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
     slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
@@ -51,6 +53,7 @@ impl ExtensionHostProxy {
             grammar_proxy: RwLock::default(),
             language_proxy: RwLock::default(),
             language_server_proxy: RwLock::default(),
+            language_model_proxy: RwLock::default(),
             snippet_proxy: RwLock::default(),
             slash_command_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
@@ -73,6 +76,10 @@ impl ExtensionHostProxy {
 
     pub fn register_language_server_proxy(&self, proxy: impl ExtensionLanguageServerProxy) {
         self.language_server_proxy.write().replace(Arc::new(proxy));
+    }
+
+    pub fn register_language_model_proxy(&self, proxy: impl ExtensionLanguageModelProxy) {
+        self.language_model_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_snippet_proxy(&self, proxy: impl ExtensionSnippetProxy) {
@@ -331,6 +338,39 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
         };
 
         proxy.update_language_server_status(language_server_id, status)
+    }
+}
+
+pub trait ExtensionLanguageModelProxy: Send + Sync + 'static {
+    fn register_language_model_provider(
+        &self,
+        extension: Arc<dyn Extension>,
+        provider_id: LanguageModelProviderId,
+        cx: &mut App,
+    );
+    fn remove_language_model_provider(&self, provider_id: LanguageModelProviderId, cx: &mut App);
+}
+
+impl ExtensionLanguageModelProxy for ExtensionHostProxy {
+    fn register_language_model_provider(
+        &self,
+        extension: Arc<dyn Extension>,
+        provider_id: LanguageModelProviderId,
+        cx: &mut App,
+    ) {
+        let Some(proxy) = self.language_model_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.register_language_model_provider(extension, provider_id, cx)
+    }
+
+    fn remove_language_model_provider(&self, provider_id: LanguageModelProviderId, cx: &mut App) {
+        let Some(proxy) = self.language_model_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.remove_language_model_provider(provider_id, cx)
     }
 }
 

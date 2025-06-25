@@ -83,6 +83,7 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
+    "crates/language_model_extension",
     "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",

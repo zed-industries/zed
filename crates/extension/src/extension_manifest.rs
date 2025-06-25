@@ -91,6 +91,8 @@ pub struct ExtensionManifest {
     pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
+    #[serde(default)]
+    pub language_model_providers: BTreeMap<Arc<str>, LanguageModelProviderManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -218,6 +220,12 @@ pub struct DebugAdapterManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugLocatorManifestEntry {}
 
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct LanguageModelProviderManifestEntry {
+    name: String,
+    icon: PathBuf,
+}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
@@ -288,6 +296,7 @@ fn manifest_from_old_manifest(
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
         debug_locators: Default::default(),
+        language_model_providers: Default::default(),
     }
 }
 
@@ -317,6 +326,7 @@ mod tests {
             capabilities: vec![],
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
+            language_model_providers: Default::default(),
         }
     }
 
