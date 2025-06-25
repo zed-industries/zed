@@ -713,7 +713,10 @@ pub struct LanguageConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
-    /// TODO: comment here
+    /// A list of rules for decreasing indentation. Each rule pairs a regex with a set of valid
+    /// "block-starting" tokens. When a line matches a pattern, its indentation is aligned with
+    /// the most recent line that began with a corresponding token. This enables context-aware
+    /// outdenting, like aligning an `else` with its `if`.
     #[serde(default)]
     pub decrease_indent_patterns: Vec<DecreaseIndentConfig>,
     /// A list of characters that trigger the automatic insertion of a closing
