@@ -14,7 +14,7 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     let mut cx = cx.clone();
     let buffer = cx.update(|cx| {
         let mut rng = StdRng::seed_from_u64(1);
-        let text_len = rng.gen_range(10000..100000);
+        let text_len = rng.gen_range(0..100);
         if rng.r#gen() {
             let text = RandomCharIter::new(&mut rng)
                 .take(text_len)
@@ -34,20 +34,10 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
 
     bencher.iter(|| {
         cx.update(|window, cx| {
-            let (_, mut layout_state) = editor.request_layout(None, None, window, cx);
-            let mut prepaint =
-                editor.prepaint(None, None, window.bounds(), &mut layout_state, window, cx);
-            editor.paint(
-                None,
-                None,
-                window.bounds(),
-                &mut layout_state,
-                &mut prepaint,
-                window,
-                cx,
-            );
-
-            window.refresh();
+            let mut view = editor.clone().into_any_element();
+            let _ = view.request_layout(window, cx);
+            let prepaint = view.prepaint(window, cx);
+            view.paint(window, cx);
         });
     })
 }
@@ -70,8 +60,6 @@ pub fn benches() {
 
     let mut criterion: criterion::Criterion<_> =
         (criterion::Criterion::default()).configure_from_args();
-
-    cx.dispatch_keystroke(window, keystroke);
 
     // setup app context
     criterion.bench_with_input(
