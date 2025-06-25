@@ -364,16 +364,16 @@ impl<T: AgentThread> Thread<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentic_coding_protocol::Client;
-    use gpui::{BackgroundExecutor, TestAppContext};
+    use crate::acp::AcpAgent;
+    use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::process::Child;
-    use std::env;
+    use std::{env, process::Stdio};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
+        env_logger::init();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -394,74 +394,24 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-        let agent = GeminiAgent::start(&cx.executor()).await.unwrap();
+        let agent = gemini_agent(project.clone(), cx.to_async()).unwrap();
         let thread_store = ThreadStore::load(Arc::new(agent), project, &mut cx.to_async())
             .await
             .unwrap();
     }
 
-    struct TestClient;
+    pub fn gemini_agent(project: Entity<Project>, cx: AsyncApp) -> Result<AcpAgent> {
+        let child = util::command::new_smol_command("node")
+            .arg("../../../gemini-cli/packages/cli")
+            .arg("--acp")
+            .env("GEMINI_API_KEY", env::var("GEMINI_API_KEY").unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
 
-    #[async_trait]
-    impl Client for TestClient {
-        async fn read_file(&self, _request: ReadFileParams) -> Result<ReadFileResponse> {
-            Ok(ReadFileResponse {
-                version: FileVersion(0),
-                content: "the content".into(),
-            })
-        }
-    }
-
-    struct GeminiAgent {
-        child: Child,
-        _task: Task<()>,
-    }
-
-    impl GeminiAgent {
-        pub fn start(executor: &BackgroundExecutor) -> Task<Result<Self>> {
-            executor.spawn(async move {
-                // todo!
-                let child = util::command::new_smol_command("node")
-                    .arg("../gemini-cli/packages/cli")
-                    .arg("--acp")
-                    .env("GEMINI_API_KEY", env::var("GEMINI_API_KEY").unwrap())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .unwrap();
-
-                Ok(GeminiAgent { child })
-            })
-        }
-    }
-
-    impl Agent for GeminiAgent {
-        type Thread = GeminiAgentThread;
-
-        async fn threads(&self) -> Result<Vec<AgentThreadSummary>> {
-            todo!()
-        }
-
-        async fn create_thread(&self) -> Result<Self::Thread> {
-            todo!()
-        }
-
-        async fn open_thread(&self, id: ThreadId) -> Result<Self::Thread> {
-            todo!()
-        }
-    }
-
-    struct GeminiAgentThread {}
-
-    impl AgentThread for GeminiAgentThread {
-        async fn entries(&self) -> Result<Vec<AgentThreadEntry>> {
-            todo!()
-        }
-
-        async fn send(
-            &self,
-            _message: Message,
-        ) -> Result<mpsc::UnboundedReceiver<Result<ResponseEvent>>> {
-            todo!()
-        }
+        Ok(AcpAgent::stdio(child, project, cx))
     }
 }

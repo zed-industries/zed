@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{Agent, AgentThread, AgentThreadEntry, AgentThreadSummary, ResponseEvent, ThreadId};
 use agentic_coding_protocol as acp;
 use anyhow::{Context as _, Result};
@@ -9,7 +11,7 @@ use smol::process::Child;
 use util::ResultExt;
 
 pub struct AcpAgent {
-    connection: acp::Connection,
+    connection: acp::AgentConnection,
     _handler_task: Task<()>,
     _io_task: Task<()>,
 }
@@ -20,7 +22,7 @@ struct AcpClientDelegate {
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl acp::Client for AcpClientDelegate {
     async fn read_file(&self, request: acp::ReadFileParams) -> Result<acp::ReadFileResponse> {
         let cx = &mut self.cx.clone();
@@ -28,30 +30,40 @@ impl acp::Client for AcpClientDelegate {
             .project
             .update(cx, |project, cx| {
                 let path = project
-                    .project_path_for_absolute_path(request.path, cx)
+                    .project_path_for_absolute_path(Path::new(&request.path), cx)
                     .context("Failed to get project path")?;
-                project.open_buffer(path, cx)
-            })?
+                anyhow::Ok(project.open_buffer(path, cx))
+            })??
             .await?;
 
-        anyhow::Ok(buffer.update(cx, |buffer, cx| acp::ReadFileResponse {
+        buffer.update(cx, |buffer, _| acp::ReadFileResponse {
             content: buffer.text(),
-            // todo!
-            version: 0,
-        }))
+            version: acp::FileVersion(0),
+        })
+    }
+
+    async fn glob_search(&self, request: acp::GlobSearchParams) -> Result<acp::GlobSearchResponse> {
+        todo!()
     }
 }
 
 impl AcpAgent {
-    pub fn stdio(process: Child, project: Entity<Project>, cx: AsyncApp) -> Self {
-        let stdin = process.stdin.expect("process didn't have stdin");
-        let stdout = process.stdout.expect("process didn't have stdout");
+    pub fn stdio(mut process: Child, project: Entity<Project>, cx: AsyncApp) -> Self {
+        let stdin = process.stdin.take().expect("process didn't have stdin");
+        let stdout = process.stdout.take().expect("process didn't have stdout");
 
-        let (connection, handler_fut, io_fut) =
-            acp::Connection::client_to_agent(AcpClientDelegate { project, cx }, stdin, stdout);
+        let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+            AcpClientDelegate {
+                project,
+                cx: cx.clone(),
+            },
+            stdin,
+            stdout,
+        );
 
         let io_task = cx.background_spawn(async move {
             io_fut.await.log_err();
+            process.status().await.log_err();
         });
 
         Self {
@@ -89,7 +101,7 @@ impl Agent for AcpAgent {
     }
 }
 
-struct AcpAgentThread {}
+pub struct AcpAgentThread {}
 
 impl AgentThread for AcpAgentThread {
     async fn entries(&self) -> Result<Vec<AgentThreadEntry>> {
