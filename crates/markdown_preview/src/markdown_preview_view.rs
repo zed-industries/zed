@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
@@ -13,12 +15,13 @@ use gpui::{
 use language::LanguageRegistry;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Disclosure, IconName, prelude::*};
+
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::OpenPreviewToTheSide;
-use crate::markdown_elements::ParsedMarkdownElement;
+use crate::markdown_elements::{HeadingLevel, ParsedMarkdownElement};
 use crate::{
     OpenPreview,
     markdown_elements::ParsedMarkdown,
@@ -39,6 +42,8 @@ pub struct MarkdownPreviewView {
     tab_content_text: Option<SharedString>,
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
+    collapsed_headers: HashMap<usize, bool>,
+    section_ends: RefCell<HashMap<usize, usize>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -188,8 +193,41 @@ impl MarkdownPreviewView {
                                         }
                                     });
 
+                            if this.should_hide_block(ix, &contents.children) {
+                                return div().into_any();
+                            }
                             let block = contents.children.get(ix).unwrap();
-                            let rendered_block = render_markdown_block(block, &mut render_cx);
+
+                            let rendered_block = if let ParsedMarkdownElement::Heading(_) = block {
+                                let is_collapsed =
+                                    this.collapsed_headers.get(&ix).copied().unwrap_or(false);
+                                let rendered_block = render_markdown_block(block, &mut render_cx);
+
+                                div()
+                                    .relative()
+                                    .group("header")
+                                    .child(rendered_block)
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .right_3()
+                                            .top_2()
+                                            .visible_on_hover("header")
+                                            .child(
+                                                Disclosure::new(("heading", ix), !is_collapsed)
+                                                    .opened_icon(IconName::ChevronDown)
+                                                    .closed_icon(IconName::ChevronRight)
+                                                    .on_click(cx.listener(
+                                                        move |this, _event, _window, cx| {
+                                                            this.toggle_header(ix, cx);
+                                                        },
+                                                    )),
+                                            ),
+                                    )
+                                    .into_any()
+                            } else {
+                                render_markdown_block(block, &mut render_cx)
+                            };
 
                             let should_apply_padding = Self::should_apply_padding_between(
                                 block,
@@ -266,6 +304,8 @@ impl MarkdownPreviewView {
                 language_registry,
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
+                collapsed_headers: HashMap::default(),
+                section_ends: RefCell::new(HashMap::default()),
             };
 
             this.set_editor(active_editor, window, cx);
@@ -284,6 +324,59 @@ impl MarkdownPreviewView {
 
             this
         })
+    }
+
+    pub fn toggle_header(&mut self, block_index: usize, cx: &mut Context<Self>) {
+        let collapsed = self.collapsed_headers.entry(block_index).or_insert(false);
+        *collapsed = !*collapsed;
+        self.section_ends.borrow_mut().clear();
+        cx.notify();
+    }
+
+    fn should_hide_block(&self, curr_index: usize, blocks: &[ParsedMarkdownElement]) -> bool {
+        for block_index in (0..curr_index).rev() {
+            if let ParsedMarkdownElement::Heading(heading) = &blocks[block_index] {
+                if self
+                    .collapsed_headers
+                    .get(&block_index)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    if let Some(&section_end) = self.section_ends.borrow().get(&block_index) {
+                        return curr_index < section_end;
+                    }
+                    let header_level = Self::heading_num(&heading.level);
+                    let section_end = self.find_section_end(blocks, block_index, header_level);
+                    self.section_ends
+                        .borrow_mut()
+                        .insert(block_index, section_end);
+                    return curr_index < section_end;
+                }
+            }
+        }
+        false
+    }
+
+    fn find_section_end(&self, blocks: &[ParsedMarkdownElement], start: usize, level: u8) -> usize {
+        for block_index in (start + 1)..blocks.len() {
+            if let ParsedMarkdownElement::Heading(header) = &blocks[block_index] {
+                if Self::heading_num(&header.level) <= level {
+                    return block_index;
+                }
+            }
+        }
+        blocks.len()
+    }
+
+    fn heading_num(level: &HeadingLevel) -> u8 {
+        match level {
+            HeadingLevel::H1 => 1,
+            HeadingLevel::H2 => 2,
+            HeadingLevel::H3 => 3,
+            HeadingLevel::H4 => 4,
+            HeadingLevel::H5 => 5,
+            HeadingLevel::H6 => 6,
+        }
     }
 
     fn workspace_updated(
@@ -400,6 +493,7 @@ impl MarkdownPreviewView {
             view.update(cx, move |view, cx| {
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
+                view.section_ends.borrow_mut().clear();
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
