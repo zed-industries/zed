@@ -1,29 +1,24 @@
-use std::fmt::{self, Display, Formatter, Write as _};
-use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::{ops::Range, path::Path, sync::Arc};
-
-use assistant_context_editor::AssistantContext;
+use crate::thread::Thread;
+use assistant_context::AssistantContext;
 use assistant_tool::outline;
-use collections::{HashMap, HashSet};
-use editor::display_map::CreaseId;
-use editor::{Addon, Editor};
+use collections::HashSet;
 use futures::future;
 use futures::{FutureExt, future::Shared};
-use gpui::{App, AppContext as _, Entity, SharedString, Subscription, Task};
+use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
+use icons::IconName;
 use language::{Buffer, ParseStatus};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use ref_cast::RefCast;
 use rope::Point;
+use std::fmt::{self, Display, Formatter, Write as _};
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::{ops::Range, path::Path, sync::Arc};
 use text::{Anchor, OffsetRangeExt as _};
-use ui::{Context, ElementId, IconName};
 use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
-
-use crate::context_store::{ContextStore, ContextStoreEvent};
-use crate::thread::Thread;
 
 pub const RULES_ICON: IconName = IconName::Context;
 
@@ -1114,69 +1109,6 @@ impl Hash for AgentContextKey {
             AgentContextHandle::Rules(context) => context.hash_for_key(state),
             AgentContextHandle::Image(context) => context.hash_for_key(state),
         }
-    }
-}
-
-#[derive(Default)]
-pub struct ContextCreasesAddon {
-    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
-    _subscription: Option<Subscription>,
-}
-
-impl Addon for ContextCreasesAddon {
-    fn to_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
-        Some(self)
-    }
-}
-
-impl ContextCreasesAddon {
-    pub fn new() -> Self {
-        Self {
-            creases: HashMap::default(),
-            _subscription: None,
-        }
-    }
-
-    pub fn add_creases(
-        &mut self,
-        context_store: &Entity<ContextStore>,
-        key: AgentContextKey,
-        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
-        cx: &mut Context<Editor>,
-    ) {
-        self.creases.entry(key).or_default().extend(creases);
-        self._subscription = Some(cx.subscribe(
-            &context_store,
-            |editor, _, event, cx| match event {
-                ContextStoreEvent::ContextRemoved(key) => {
-                    let Some(this) = editor.addon_mut::<Self>() else {
-                        return;
-                    };
-                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
-                        .creases
-                        .remove(key)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .unzip();
-                    let ranges = editor
-                        .remove_creases(crease_ids, cx)
-                        .into_iter()
-                        .map(|(_, range)| range)
-                        .collect::<Vec<_>>();
-                    editor.unfold_ranges(&ranges, false, false, cx);
-                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
-                    cx.notify();
-                }
-            },
-        ))
-    }
-
-    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
-        self.creases
     }
 }
 

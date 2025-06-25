@@ -4214,6 +4214,19 @@ impl MultiBufferSnapshot {
         self.diffs.values().any(|diff| !diff.is_empty())
     }
 
+    pub fn is_inside_word<T: ToOffset>(&self, position: T, for_completion: bool) -> bool {
+        let position = position.to_offset(self);
+        let classifier = self
+            .char_classifier_at(position)
+            .for_completion(for_completion);
+        let next_char_kind = self.chars_at(position).next().map(|c| classifier.kind(c));
+        let prev_char_kind = self
+            .reversed_chars_at(position)
+            .next()
+            .map(|c| classifier.kind(c));
+        prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
+    }
+
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,

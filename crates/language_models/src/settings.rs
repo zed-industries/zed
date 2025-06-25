@@ -20,6 +20,7 @@ use crate::provider::{
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
     open_router::OpenRouterSettings,
+    vercel::VercelSettings,
 };
 
 /// Initializes the language model settings.
@@ -64,6 +65,7 @@ pub struct AllLanguageModelSettings {
     pub open_router: OpenRouterSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
+    pub vercel: VercelSettings,
 
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
@@ -82,6 +84,7 @@ pub struct AllLanguageModelSettingsContent {
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
+    pub vercel: Option<VercelSettingsContent>,
 
     pub mistral: Option<MistralSettingsContent>,
 }
@@ -260,6 +263,12 @@ pub struct OpenAiSettingsContentV1 {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct VercelSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::vercel::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::google::AvailableModel>>,
@@ -385,6 +394,18 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.openai.available_models,
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
+
+            // Vercel
+            let vercel = value.vercel.clone();
+            merge(
+                &mut settings.vercel.api_url,
+                vercel.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.vercel.available_models,
+                vercel.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
             merge(
                 &mut settings.zed_dot_dev.available_models,
                 value

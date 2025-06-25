@@ -1,5 +1,5 @@
 use editor::{Editor, EditorSettings};
-use gpui::{Context, Window, actions, impl_actions, impl_internal_actions};
+use gpui::{Action, Context, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
@@ -16,7 +16,8 @@ use crate::{
     state::{Mode, SearchState},
 };
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveToNext {
     #[serde(default = "default_true")]
@@ -27,7 +28,8 @@ pub(crate) struct MoveToNext {
     regex: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveToPrevious {
     #[serde(default = "default_true")]
@@ -38,7 +40,8 @@ pub(crate) struct MoveToPrevious {
     regex: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Search {
     #[serde(default)]
@@ -47,14 +50,16 @@ pub(crate) struct Search {
     regex: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct FindCommand {
     pub query: String,
     pub backwards: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct ReplaceCommand {
     pub(crate) range: CommandRange,
     pub(crate) replacement: Replacement,
@@ -69,8 +74,6 @@ pub(crate) struct Replacement {
 }
 
 actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPreviousMatch]);
-impl_actions!(vim, [FindCommand, Search, MoveToPrevious, MoveToNext]);
-impl_internal_actions!(vim, [ReplaceCommand]);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);

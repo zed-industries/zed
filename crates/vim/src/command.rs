@@ -7,7 +7,7 @@ use editor::{
     display_map::ToDisplayPoint,
     scroll::Autoscroll,
 };
-use gpui::{Action, App, AppContext as _, Context, Global, Window, actions, impl_internal_actions};
+use gpui::{Action, App, AppContext as _, Context, Global, Window, actions};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -45,24 +45,28 @@ use crate::{
     visual::VisualDeleteLine,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct GoToLine {
     range: CommandRange,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct YankCommand {
     range: CommandRange,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct WithRange {
     restore_selection: bool,
     range: CommandRange,
     action: WrappedAction,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct WithCount {
     count: u32,
     action: WrappedAction,
@@ -152,21 +156,21 @@ impl VimOption {
     }
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct VimSet {
     options: Vec<VimOption>,
 }
 
-#[derive(Debug)]
-struct WrappedAction(Box<dyn Action>);
-
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 struct VimSave {
     pub save_intent: Option<SaveIntent>,
     pub filename: String,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 enum DeleteMarks {
     Marks(String),
     AllLocal,
@@ -176,26 +180,14 @@ actions!(
     vim,
     [VisualCommand, CountCommand, ShellCommand, ArgumentRequired]
 );
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 struct VimEdit {
     pub filename: String,
 }
 
-impl_internal_actions!(
-    vim,
-    [
-        GoToLine,
-        YankCommand,
-        WithRange,
-        WithCount,
-        OnMatchingLines,
-        ShellExec,
-        VimSet,
-        VimSave,
-        DeleteMarks,
-        VimEdit,
-    ]
-);
+#[derive(Debug)]
+struct WrappedAction(Box<dyn Action>);
 
 impl PartialEq for WrappedAction {
     fn eq(&self, other: &Self) -> bool {
@@ -1289,7 +1281,8 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     positions
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub(crate) struct OnMatchingLines {
     range: CommandRange,
     search: String,
@@ -1481,7 +1474,8 @@ impl OnMatchingLines {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct ShellExec {
     command: String,
     range: Option<CommandRange>,
