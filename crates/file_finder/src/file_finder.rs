@@ -940,32 +940,46 @@ impl FileFinderDelegate {
                 extend_old_matches,
             );
 
-            let filename = query.raw_query.to_string();
-            let mut path = Path::new(&filename);
+            let filename = &query.raw_query;
+            let mut query_path = Path::new(filename);
             // add option of creating new file only if path is relative
-            let worktree = if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
-                let worktree_id = project.worktree_id;
-                self.project.read(cx).worktree_for_id(worktree_id, cx)
-            } else {
-                self.project.read(cx).visible_worktrees(cx).next()
-            };
-            let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-            if let Some(worktree) = worktree {
-                let worktree = worktree.read(cx);
-                let root = worktree
+            let available_worktree = self
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .filter(|worktree| !worktree.read(cx).is_single_file())
+                .collect::<Vec<_>>();
+            let worktree_count = available_worktree.len();
+            let mut expect_worktree = available_worktree.first().cloned();
+            for worktree in available_worktree {
+                let worktree_root = worktree
+                    .read(cx)
                     .abs_path()
                     .file_name()
                     .map_or(String::new(), |f| f.to_string_lossy().to_string());
-                if worktree_count > 1 && path.starts_with(&root) {
-                    path = path.strip_prefix(root).unwrap();
+                if worktree_count > 1 && query_path.starts_with(&worktree_root) {
+                    query_path = query_path
+                        .strip_prefix(&worktree_root)
+                        .unwrap_or(query_path);
+                    expect_worktree = Some(worktree);
+                    break;
                 }
-                if path.is_relative()
-                    && worktree.entry_for_path(&path).is_none()
+            }
+
+            if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
+                let worktree_id = project.worktree_id;
+                expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+            }
+
+            if let Some(worktree) = expect_worktree {
+                let worktree = worktree.read(cx);
+                if query_path.is_relative()
+                    && worktree.entry_for_path(&query_path).is_none()
                     && !filename.ends_with("/")
                 {
                     self.matches.matches.push(Match::CreateNew(ProjectPath {
                         worktree_id: worktree.id(),
-                        path: Arc::from(path),
+                        path: Arc::from(query_path),
                     }));
                 }
             }
