@@ -2915,9 +2915,9 @@ impl BufferSnapshot {
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
         #[derive(Debug, Clone)]
-        struct IndentBlock {
-            start_point: Point,
-            block_type: SharedString,
+        struct StartPosition {
+            start: Point,
+            suffix: SharedString,
         }
 
         // Find the suggested indentation ranges based on the syntax tree.
@@ -2930,7 +2930,7 @@ impl BufferSnapshot {
         let grammars = matches.grammars().iter().cloned().collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
-        let mut typed_indent_blocks = Vec::<IndentBlock>::new();
+        let mut start_positions = Vec::<StartPosition>::new();
         let mut outdent_positions = Vec::<Point>::new();
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
@@ -2948,15 +2948,11 @@ impl BufferSnapshot {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
                     outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
-                }
-                let capture_name = &config.query.capture_names()[capture.index as usize];
-                if let Some(block_type) = capture_name.strip_prefix("indent.") {
-                    if !block_type.is_empty() {
-                        typed_indent_blocks.push(IndentBlock {
-                            start_point: Point::from_ts_point(capture.node.start_position()),
-                            block_type: block_type.to_string().into(),
-                        });
-                    }
+                } else if let Some(suffix) = config.suffixed_start_captures.get(&capture.index) {
+                    start_positions.push(StartPosition {
+                        start: Point::from_ts_point(capture.node.start_position()),
+                        suffix: suffix.clone(),
+                    });
                 }
             }
 
@@ -2975,8 +2971,6 @@ impl BufferSnapshot {
                 }
             }
         }
-
-        typed_indent_blocks.sort_by_key(|b| b.start_point);
 
         let mut error_ranges = Vec::<Range<Point>>::new();
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
@@ -3045,7 +3039,7 @@ impl BufferSnapshot {
             row_range.start.saturating_sub(1)
         };
 
-        dbg!(&typed_indent_blocks);
+        start_positions.sort_by_key(|b| b.start);
 
         let mut prev_row_start = Point::new(prev_row, self.indent_size_for_line(prev_row).len);
         Some(row_range.map(move |row| {
@@ -3058,17 +3052,13 @@ impl BufferSnapshot {
                 let line = self.text_for_range(line_range).collect::<String>();
                 for rule in &config.decrease_indent_patterns {
                     if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
-                        dbg!(&rule.pattern, &line);
                         let current_line_indent = self.indent_size_for_line(row).len;
-                        if let Some(parent_block) = typed_indent_blocks.iter().rfind(|block| {
-                            block.start_point.row < row
-                                && block.start_point.column <= current_line_indent
-                                && rule
-                                    .valid_after
-                                    .iter()
-                                    .any(|p| p == block.block_type.as_ref())
+                        if let Some(parent_block) = start_positions.iter().rfind(|block| {
+                            block.start.row < row
+                                && block.start.column <= current_line_indent
+                                && rule.valid_after.iter().any(|p| p == block.suffix.as_ref())
                         }) {
-                            basis_row = Some(parent_block.start_point.row);
+                            basis_row = Some(parent_block.start.row);
                             from_new_logic = true;
                         }
                         break;
@@ -3124,7 +3114,6 @@ impl BufferSnapshot {
             let from_regex = from_regex || from_new_logic;
 
             let suggestion = if let Some(basis_row) = new_logic_basis_row {
-                dbg!(&row, &basis_row);
                 Some(IndentSuggestion {
                     basis_row,
                     delta: Ordering::Equal,

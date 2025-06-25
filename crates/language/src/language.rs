@@ -1100,6 +1100,7 @@ struct IndentConfig {
     start_capture_ix: Option<u32>,
     end_capture_ix: Option<u32>,
     outdent_capture_ix: Option<u32>,
+    suffixed_start_captures: HashMap<u32, SharedString>,
 }
 
 pub struct OutlineConfig {
@@ -1530,6 +1531,14 @@ impl Language {
                 ("outdent", &mut outdent_capture_ix),
             ],
         );
+
+        let mut suffixed_start_captures = HashMap::default();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(suffix) = name.strip_prefix("start.") {
+                suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+            }
+        }
+
         if let Some(indent_capture_ix) = indent_capture_ix {
             grammar.indents_config = Some(IndentConfig {
                 query,
@@ -1537,6 +1546,7 @@ impl Language {
                 start_capture_ix,
                 end_capture_ix,
                 outdent_capture_ix,
+                suffixed_start_captures,
             });
         }
         Ok(self)

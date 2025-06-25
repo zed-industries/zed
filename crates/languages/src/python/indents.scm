@@ -2,17 +2,16 @@
 (_ "{" "}" @end) @indent
 (_ "(" ")" @end) @indent
 
-(function_definition) @indent @indent.def
-(class_definition) @indent @indent.class
-(if_statement) @indent @indent.if
-(for_statement) @indent @indent.for
-(while_statement) @indent @indent.while
-(with_statement) @indent @indent.with
-(match_statement) @indent @indent.match
-(try_statement) @indent @indent.try
-
-(elif_clause) @indent @indent.elif
-(else_clause) @indent @indent.else
-(except_clause) @indent @indent.except
-(finally_clause) @indent @indent.finally
-(case_pattern) @indent @indent.case
+(function_definition) @start.def
+(class_definition) @start.class
+(if_statement) @start.if
+(for_statement) @start.for
+(while_statement) @start.while
+(with_statement) @start.with
+(match_statement) @start.match
+(try_statement) @start.try
+(elif_clause) @start.elif
+(else_clause) @start.else
+(except_clause) @start.except
+(finally_clause) @start.finally
+(case_pattern) @start.case
