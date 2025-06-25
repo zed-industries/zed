@@ -571,7 +571,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|err| anyhow!(err))?.await;
+            let response = request.await.map_err(|err| anyhow!(err))?;
             let events = map_to_language_model_completion_events(response);
 
             if deny_tool_calls {
@@ -974,8 +974,14 @@ pub fn map_to_language_model_completion_events(
                             Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
                                 input_tokens: metadata.input_tokens as u64,
                                 output_tokens: metadata.output_tokens as u64,
-                                cache_creation_input_tokens: default(),
-                                cache_read_input_tokens: default(),
+                                cache_creation_input_tokens: metadata
+                                    .cache_write_input_tokens
+                                    .unwrap_or_default()
+                                    as u64,
+                                cache_read_input_tokens: metadata
+                                    .cache_read_input_tokens
+                                    .unwrap_or_default()
+                                    as u64,
                             }))
                         }),
                         ConverseStreamOutput::MessageStop(message_stop) => {
