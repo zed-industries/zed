@@ -11,13 +11,22 @@ use ui::prelude::*;
 use workspace::item::Item;
 use workspace::{Pane, Workspace};
 
-use crate::{OpenPreview, OpenPreviewToTheSide};
+use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
 pub struct SvgPreviewView {
     focus_handle: FocusHandle,
     svg_path: Option<PathBuf>,
     image_cache: Entity<RetainAllImageCache>,
     _editor_subscription: Subscription,
+    _workspace_subscription: Option<Subscription>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SvgPreviewMode {
+    /// The preview will always show the contents of the provided editor.
+    Default,
+    /// The preview will "follow" the last active editor of an SVG file.
+    Follow,
 }
 
 impl SvgPreviewView {
@@ -25,7 +34,13 @@ impl SvgPreviewView {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
                 if Self::is_svg_file(&editor, cx) {
-                    let view = Self::create_svg_view(workspace, editor, window, cx);
+                    let view = Self::create_svg_view(
+                        SvgPreviewMode::Default,
+                        workspace,
+                        editor,
+                        window,
+                        cx,
+                    );
                     workspace.active_pane().update(cx, |pane, cx| {
                         if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane)
                         {
@@ -42,7 +57,13 @@ impl SvgPreviewView {
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
                 if Self::is_svg_file(&editor, cx) {
-                    let view = Self::create_svg_view(workspace, editor.clone(), window, cx);
+                    let view = Self::create_svg_view(
+                        SvgPreviewMode::Default,
+                        workspace,
+                        editor.clone(),
+                        window,
+                        cx,
+                    );
                     let pane = workspace
                         .find_pane_in_direction(workspace::SplitDirection::Right, cx)
                         .unwrap_or_else(|| {
@@ -62,6 +83,24 @@ impl SvgPreviewView {
                         }
                     });
                     editor.focus_handle(cx).focus(window);
+                    cx.notify();
+                }
+            }
+        });
+
+        workspace.register_action(move |workspace, _: &OpenFollowingPreview, window, cx| {
+            if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
+                if Self::is_svg_file(&editor, cx) {
+                    let view = Self::create_svg_view(
+                        SvgPreviewMode::Follow,
+                        workspace,
+                        editor,
+                        window,
+                        cx,
+                    );
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(view), true, true, None, window, cx)
+                    });
                     cx.notify();
                 }
             }
@@ -88,18 +127,20 @@ impl SvgPreviewView {
     }
 
     fn create_svg_view(
+        mode: SvgPreviewMode,
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<SvgPreviewView> {
         let workspace_handle = workspace.weak_handle();
-        SvgPreviewView::new(editor, workspace_handle, window, cx)
+        SvgPreviewView::new(mode, editor, workspace_handle, window, cx)
     }
 
     pub fn new(
+        mode: SvgPreviewMode,
         active_editor: Entity<Editor>,
-        _workspace: WeakEntity<Workspace>,
+        workspace_handle: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -127,19 +168,62 @@ impl SvgPreviewView {
                 },
             );
 
+            // Subscribe to workspace active item changes to follow SVG files
+            let workspace_subscription = if mode == SvgPreviewMode::Follow {
+                workspace_handle.upgrade().map(|workspace_handle| {
+                    cx.subscribe_in(
+                        &workspace_handle,
+                        window,
+                        |this: &mut SvgPreviewView,
+                         workspace,
+                         event: &workspace::Event,
+                         _window,
+                         cx| {
+                            match event {
+                                workspace::Event::ActiveItemChanged => {
+                                    let workspace_read = workspace.read(cx);
+                                    if let Some(active_item) = workspace_read.active_item(cx) {
+                                        if let Some(editor_entity) =
+                                            active_item.downcast::<Editor>()
+                                        {
+                                            if Self::is_svg_file(&editor_entity, cx) {
+                                                let new_path =
+                                                    Self::get_svg_path(&editor_entity, cx);
+                                                if this.svg_path != new_path {
+                                                    this.svg_path = new_path;
+                                                    cx.notify();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        },
+                    )
+                })
+            } else {
+                None
+            };
+
             Self {
                 focus_handle: cx.focus_handle(),
                 svg_path,
                 image_cache,
                 _editor_subscription: subscription,
+                _workspace_subscription: workspace_subscription,
             }
         })
     }
 
-    pub fn is_svg_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {
-        let buffer = editor.read(cx).buffer().read(cx);
+    pub fn is_svg_file<C>(editor: &Entity<Editor>, cx: &C) -> bool
+    where
+        C: std::borrow::Borrow<App>,
+    {
+        let app = cx.borrow();
+        let buffer = editor.read(app).buffer().read(app);
         if let Some(buffer) = buffer.as_singleton() {
-            if let Some(file) = buffer.read(cx).file() {
+            if let Some(file) = buffer.read(app).file() {
                 return file
                     .path()
                     .extension()
@@ -151,12 +235,15 @@ impl SvgPreviewView {
         false
     }
 
-    fn get_svg_path<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> Option<PathBuf> {
-        let buffer = editor.read(cx).buffer().read(cx);
-        let buffer = buffer.as_singleton()?;
-        let file = buffer.read(cx).file()?;
+    fn get_svg_path<C>(editor: &Entity<Editor>, cx: &C) -> Option<PathBuf>
+    where
+        C: std::borrow::Borrow<App>,
+    {
+        let app = cx.borrow();
+        let buffer = editor.read(app).buffer().read(app).as_singleton()?;
+        let file = buffer.read(app).file()?;
         let local_file = file.as_local()?;
-        Some(local_file.abs_path(cx))
+        Some(local_file.abs_path(app))
     }
 }
 
