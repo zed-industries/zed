@@ -3009,7 +3009,13 @@ impl BufferSnapshot {
             }
         }
 
+        start_positions.sort_by_key(|b| b.start);
+
         // Find the suggested indentation increases and decreased based on regexes.
+        let mut regex_outdent_map = HashMap::default();
+        let mut last_seen_suffix = HashMap::default();
+        let mut start_positions_iter = start_positions.iter().peekable();
+
         let mut indent_change_rows = Vec::<(u32, Ordering)>::new();
         self.for_each_line(
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
@@ -3029,6 +3035,29 @@ impl BufferSnapshot {
                 {
                     indent_change_rows.push((row + 1, Ordering::Greater));
                 }
+                while let Some(pos) = start_positions_iter.peek() {
+                    if pos.start.row < row {
+                        let pos = start_positions_iter.next().unwrap();
+                        last_seen_suffix.insert(pos.suffix.to_string(), pos.start);
+                    } else {
+                        break;
+                    }
+                }
+                for rule in &config.decrease_indent_patterns {
+                    if rule.pattern.as_ref().map_or(false, |r| r.is_match(line)) {
+                        let row_start_column = self.indent_size_for_line(row).len;
+                        let basis_row = rule
+                            .valid_after
+                            .iter()
+                            .filter_map(|valid_suffix| last_seen_suffix.get(valid_suffix))
+                            .filter(|start_point| start_point.column <= row_start_column)
+                            .max_by_key(|start_point| start_point.row);
+                        if let Some(outdent_to_row) = basis_row {
+                            regex_outdent_map.insert(row, outdent_to_row.row);
+                        }
+                        break;
+                    }
+                }
             },
         );
 
@@ -3038,8 +3067,6 @@ impl BufferSnapshot {
         } else {
             row_range.start.saturating_sub(1)
         };
-
-        start_positions.sort_by_key(|b| b.start);
 
         let mut prev_row_start = Point::new(prev_row, self.indent_size_for_line(prev_row).len);
         Some(row_range.map(move |row| {
@@ -3083,21 +3110,10 @@ impl BufferSnapshot {
                 }
             }
 
-            let line_range = Point::new(row, 0)..Point::new(row, self.line_len(row));
-            let line = self.text_for_range(line_range).collect::<String>();
-            for rule in &config.decrease_indent_patterns {
-                if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
-                    if let Some(basis_row) = start_positions.iter().rfind(|pos| {
-                        pos.start.row < row
-                            && pos.start.column <= row_start.column
-                            && rule.valid_after.iter().any(|p| p == pos.suffix.as_ref())
-                    }) {
-                        indent_from_prev_row = false;
-                        outdent_to_row = basis_row.start.row;
-                        from_regex = true;
-                    }
-                    break;
-                }
+            if let Some(basis_row) = regex_outdent_map.get(&row) {
+                indent_from_prev_row = false;
+                outdent_to_row = *basis_row;
+                from_regex = true;
             }
 
             let within_error = error_ranges
