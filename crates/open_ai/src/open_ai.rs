@@ -445,15 +445,11 @@ pub async fn stream_completion(
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
             Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "Failed to connect to OpenAI API: {}",
+                "Failed to connect to API: {}",
                 response.error.message,
             )),
 
-            _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
-                response.status(),
-                body,
-            ),
+            _ => anyhow::bail!("Failed to connect to API: {} {}", response.status(), body,),
         }
     }
 }
