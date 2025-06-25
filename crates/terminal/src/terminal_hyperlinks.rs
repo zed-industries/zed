@@ -8,7 +8,7 @@ use alacritty_terminal::{
 use regex::Regex;
 use std::{ops::Index, sync::LazyLock};
 
-const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
+const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 const WORD_REGEX: &str =
@@ -224,8 +224,12 @@ mod tests {
     fn test_url_regex() {
         re_test(
             URL_REGEX,
-            "test http://example.com test mailto:bob@example.com train",
-            vec!["http://example.com", "mailto:bob@example.com"],
+            "test http://example.com test 'https://website1.com' test mailto:bob@example.com train",
+            vec![
+                "http://example.com",
+                "https://website1.com",
+                "mailto:bob@example.com",
+            ],
         );
     }
 

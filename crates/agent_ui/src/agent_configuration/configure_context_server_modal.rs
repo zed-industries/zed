@@ -295,10 +295,7 @@ impl ConfigureContextServerModal {
                 ContextServerDescriptorRegistry::default_global(cx)
                     .read(cx)
                     .context_server_descriptor(&server_id.0)
-                    .map(|_| ContextServerSettings::Extension {
-                        enabled: true,
-                        settings: serde_json::json!({}),
-                    })
+                    .map(|_| ContextServerSettings::default_extension())
             })
         else {
             return Task::ready(Err(anyhow::anyhow!("Context server not found")));

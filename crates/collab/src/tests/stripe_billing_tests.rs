@@ -6,11 +6,13 @@ use pretty_assertions::assert_eq;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_billing::StripeBilling;
 use crate::stripe_client::{
-    FakeStripeClient, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
-    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionSubscriptionData,
-    StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripePriceRecurring,
-    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
-    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
+    FakeStripeClient, StripeBillingAddressCollection, StripeCheckoutSessionMode,
+    StripeCheckoutSessionPaymentMethodCollection, StripeCreateCheckoutSessionLineItems,
+    StripeCreateCheckoutSessionSubscriptionData, StripeCustomerId, StripeCustomerUpdate,
+    StripeCustomerUpdateAddress, StripeCustomerUpdateName, StripeMeter, StripeMeterId, StripePrice,
+    StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
+    StripeSubscriptionItem, StripeSubscriptionItemId, StripeSubscriptionTrialSettings,
+    StripeSubscriptionTrialSettingsEndBehavior,
     StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
 };
 
@@ -426,6 +428,18 @@ async fn test_checkout_with_zed_pro() {
         assert_eq!(call.payment_method_collection, None);
         assert_eq!(call.subscription_data, None);
         assert_eq!(call.success_url.as_deref(), Some(success_url));
+        assert_eq!(
+            call.billing_address_collection,
+            Some(StripeBillingAddressCollection::Required)
+        );
+        assert_eq!(
+            call.customer_update,
+            Some(StripeCustomerUpdate {
+                address: Some(StripeCustomerUpdateAddress::Auto),
+                name: Some(StripeCustomerUpdateName::Auto),
+                shipping: None,
+            })
+        );
     }
 }
 
@@ -507,6 +521,18 @@ async fn test_checkout_with_zed_pro_trial() {
             })
         );
         assert_eq!(call.success_url.as_deref(), Some(success_url));
+        assert_eq!(
+            call.billing_address_collection,
+            Some(StripeBillingAddressCollection::Required)
+        );
+        assert_eq!(
+            call.customer_update,
+            Some(StripeCustomerUpdate {
+                address: Some(StripeCustomerUpdateAddress::Auto),
+                name: Some(StripeCustomerUpdateName::Auto),
+                shipping: None,
+            })
+        );
     }
 
     // Successful checkout with extended trial.
@@ -561,5 +587,17 @@ async fn test_checkout_with_zed_pro_trial() {
             })
         );
         assert_eq!(call.success_url.as_deref(), Some(success_url));
+        assert_eq!(
+            call.billing_address_collection,
+            Some(StripeBillingAddressCollection::Required)
+        );
+        assert_eq!(
+            call.customer_update,
+            Some(StripeCustomerUpdate {
+                address: Some(StripeCustomerUpdateAddress::Auto),
+                name: Some(StripeCustomerUpdateName::Auto),
+                shipping: None,
+            })
+        );
     }
 }

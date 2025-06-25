@@ -14,6 +14,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "proto",
  "release_channel",
  "smallvec",
  "ui",
@@ -133,18 +134,11 @@ dependencies = [
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "collections",
- "deepseek",
  "fs",
  "gpui",
  "language_model",
- "lmstudio",
- "log",
- "mistral",
- "ollama",
- "open_ai",
  "paths",
  "schemars 0.8.22",
  "serde",
@@ -4387,6 +4381,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "tree-sitter",
+ "tree-sitter-go",
  "tree-sitter-json",
  "ui",
  "unindent",
@@ -9024,6 +9019,7 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
+ "vercel",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -9062,6 +9058,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "lsp",
+ "picker",
  "project",
  "release_channel",
  "serde_json",
@@ -13205,6 +13202,7 @@ dependencies = [
  "thiserror 2.0.12",
  "urlencoding",
  "util",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -17490,6 +17488,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vercel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars 0.8.22",
+ "serde",
+ "strum 0.27.1",
+ "workspace-hack",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19971,7 +19980,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.193.0"
+version = "0.194.0"
 dependencies = [
  "activity_indicator",
  "agent",

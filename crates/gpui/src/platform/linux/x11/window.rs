@@ -320,6 +320,13 @@ impl rwh::HasDisplayHandle for X11Window {
     }
 }
 
+pub(crate) fn xcb_flush(xcb: &XCBConnection) {
+    xcb.flush()
+        .map_err(handle_connection_error)
+        .context("X11 flush failed")
+        .log_err();
+}
+
 pub(crate) fn check_reply<E, F, C>(
     failure_context: F,
     result: Result<VoidCookie<'_, C>, ConnectionError>,
@@ -597,7 +604,7 @@ impl X11WindowState {
                 ),
             )?;
 
-            xcb.flush()?;
+            xcb_flush(&xcb);
 
             let renderer = {
                 let raw_window = RawWindow {
@@ -657,7 +664,7 @@ impl X11WindowState {
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
             )?;
-            xcb.flush()?;
+            xcb_flush(&xcb);
         }
 
         setup_result
@@ -685,7 +692,7 @@ impl Drop for X11WindowHandle {
                 || "X11 DestroyWindow failed while dropping X11WindowHandle.",
                 self.xcb.destroy_window(self.id),
             )?;
-            self.xcb.flush()?;
+            xcb_flush(&self.xcb);
             anyhow::Ok(())
         })
         .log_err();
@@ -704,7 +711,7 @@ impl Drop for X11Window {
                 || "X11 DestroyWindow failure.",
                 self.0.xcb.destroy_window(self.0.x_window),
             )?;
-            self.0.xcb.flush()?;
+            xcb_flush(&self.0.xcb);
 
             anyhow::Ok(())
         })
@@ -799,7 +806,9 @@ impl X11Window {
                 xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             ),
-        )
+        )?;
+        xcb_flush(&self.0.xcb);
+        Ok(())
     }
 
     fn get_root_position(
@@ -852,15 +861,8 @@ impl X11Window {
             ),
         )?;
 
-        self.flush()
-    }
-
-    fn flush(&self) -> anyhow::Result<()> {
-        self.0
-            .xcb
-            .flush()
-            .map_err(handle_connection_error)
-            .context("X11 flush failed")
+        xcb_flush(&self.0.xcb);
+        Ok(())
     }
 }
 
@@ -1198,7 +1200,7 @@ impl PlatformWindow for X11Window {
             ),
         )
         .log_err();
-        self.flush().log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1289,7 +1291,7 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
-        self.flush().log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn is_active(&self) -> bool {
@@ -1324,7 +1326,7 @@ impl PlatformWindow for X11Window {
             ),
         )
         .log_err();
-        self.flush().log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn set_app_id(&mut self, app_id: &str) {

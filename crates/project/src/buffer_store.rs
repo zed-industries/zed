@@ -783,7 +783,7 @@ impl BufferStore {
         project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        if let Some(buffer) = self.get_by_path(&project_path, cx) {
+        if let Some(buffer) = self.get_by_path(&project_path) {
             cx.emit(BufferStoreEvent::BufferOpened {
                 buffer: buffer.clone(),
                 project_path,
@@ -946,7 +946,7 @@ impl BufferStore {
         self.path_to_buffer_id.get(project_path)
     }
 
-    pub fn get_by_path(&self, path: &ProjectPath, _cx: &App) -> Option<Entity<Buffer>> {
+    pub fn get_by_path(&self, path: &ProjectPath) -> Option<Entity<Buffer>> {
         self.path_to_buffer_id.get(path).and_then(|buffer_id| {
             let buffer = self.get(*buffer_id);
             buffer

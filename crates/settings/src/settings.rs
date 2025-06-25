@@ -15,7 +15,8 @@ pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use key_equivalents::*;
 pub use keymap_file::{
-    KeyBindingValidator, KeyBindingValidatorRegistration, KeymapFile, KeymapFileLoadResult,
+    KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeymapFile,
+    KeymapFileLoadResult,
 };
 pub use settings_file::*;
 pub use settings_store::{

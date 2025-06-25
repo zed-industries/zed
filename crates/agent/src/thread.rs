@@ -145,6 +145,10 @@ impl Message {
         }
     }
 
+    pub fn push_redacted_thinking(&mut self, data: String) {
+        self.segments.push(MessageSegment::RedactedThinking(data));
+    }
+
     pub fn push_text(&mut self, text: &str) {
         if let Some(MessageSegment::Text(segment)) = self.segments.last_mut() {
             segment.push_str(text);
@@ -183,7 +187,7 @@ pub enum MessageSegment {
         text: String,
         signature: Option<String>,
     },
-    RedactedThinking(Vec<u8>),
+    RedactedThinking(String),
 }
 
 impl MessageSegment {
@@ -192,6 +196,13 @@ impl MessageSegment {
             Self::Text(text) => text.is_empty(),
             Self::Thinking { text, .. } => text.is_empty(),
             Self::RedactedThinking(_) => false,
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            MessageSegment::Text(text) => Some(text),
+            _ => None,
         }
     }
 }
@@ -1643,6 +1654,25 @@ impl Thread {
                                     };
                                 }
                             }
+                            LanguageModelCompletionEvent::RedactedThinking {
+                                data
+                            } => {
+                                thread.received_chunk();
+
+                                if let Some(last_message) = thread.messages.last_mut() {
+                                    if last_message.role == Role::Assistant
+                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                    {
+                                        last_message.push_redacted_thinking(data);
+                                    } else {
+                                        request_assistant_message_id =
+                                            Some(thread.insert_assistant_message(
+                                                vec![MessageSegment::RedactedThinking(data)],
+                                                cx,
+                                            ));
+                                    };
+                                }
+                            }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
                                 let last_assistant_message_id = request_assistant_message_id
                                     .unwrap_or_else(|| {
@@ -1747,7 +1777,7 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(window, cx, model.clone());
+                                let tool_uses = thread.use_pending_tools(window, model.clone(), cx);
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn | StopReason::MaxTokens  => {
@@ -2097,8 +2127,8 @@ impl Thread {
     pub fn use_pending_tools(
         &mut self,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
         model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
         let request =
@@ -2112,41 +2142,51 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                if tool.needs_confirmation(&tool_use.input, cx)
-                    && !AgentSettings::get_global(cx).always_allow_tool_actions
-                {
-                    self.tool_use.confirm_tool_use(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        request.clone(),
-                        tool,
-                    );
-                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
-                } else {
-                    self.run_tool(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        request.clone(),
-                        tool,
-                        model.clone(),
-                        window,
-                        cx,
-                    );
-                }
-            } else {
-                self.handle_hallucinated_tool_use(
-                    tool_use.id.clone(),
-                    tool_use.name.clone(),
-                    window,
-                    cx,
-                );
-            }
+            self.use_pending_tool(tool_use.clone(), request.clone(), model.clone(), window, cx);
         }
 
         pending_tool_uses
+    }
+
+    fn use_pending_tool(
+        &mut self,
+        tool_use: PendingToolUse,
+        request: Arc<LanguageModelRequest>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) else {
+            return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
+        }
+
+        if tool.needs_confirmation(&tool_use.input, cx)
+            && !AgentSettings::get_global(cx).always_allow_tool_actions
+        {
+            self.tool_use.confirm_tool_use(
+                tool_use.id,
+                tool_use.ui_text,
+                tool_use.input,
+                request,
+                tool,
+            );
+            cx.emit(ThreadEvent::ToolConfirmationNeeded);
+        } else {
+            self.run_tool(
+                tool_use.id,
+                tool_use.ui_text,
+                tool_use.input,
+                request,
+                tool,
+                model,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn handle_hallucinated_tool_use(

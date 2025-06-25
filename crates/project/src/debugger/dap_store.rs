@@ -588,7 +588,14 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
-        let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
+        let local_variables =
+            session
+                .read(cx)
+                .variables_by_stack_frame_id(stack_frame_id, false, true);
+        let global_variables =
+            session
+                .read(cx)
+                .variables_by_stack_frame_id(stack_frame_id, true, false);
 
         fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
@@ -617,10 +624,20 @@ impl DapStore {
 
                 match inline_value_location.lookup {
                     VariableLookupKind::Variable => {
-                        let Some(variable) = all_variables
-                            .iter()
-                            .find(|variable| variable.name == inline_value_location.variable_name)
-                        else {
+                        let variable_search =
+                            if inline_value_location.scope
+                                == dap::inline_value::VariableScope::Local
+                            {
+                                local_variables.iter().chain(global_variables.iter()).find(
+                                    |variable| variable.name == inline_value_location.variable_name,
+                                )
+                            } else {
+                                global_variables.iter().find(|variable| {
+                                    variable.name == inline_value_location.variable_name
+                                })
+                            };
+
+                        let Some(variable) = variable_search else {
                             continue;
                         };
 
