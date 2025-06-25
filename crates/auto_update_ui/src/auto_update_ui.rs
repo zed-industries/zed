@@ -132,6 +132,11 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     let Some(updater) = AutoUpdater::get(cx) else {
         return;
     };
+
+    if let ReleaseChannel::Nightly = ReleaseChannel::global(cx) {
+        return;
+    }
+
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
     cx.spawn(async move |cx| {
         let should_show_notification = should_show_notification.await?;
