@@ -1205,7 +1205,7 @@ impl CodeActionContents {
         tasks_len + code_actions_len + self.debug_scenarios.len()
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 

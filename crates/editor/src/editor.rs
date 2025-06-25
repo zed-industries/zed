@@ -5976,15 +5976,23 @@ impl Editor {
 
             editor.update_in(cx, |editor, window, cx| {
                 crate::hover_popover::hide_hover(editor, cx);
+                let actions = CodeActionContents::new(
+                    resolved_tasks,
+                    code_actions,
+                    debug_scenarios,
+                    task_context.unwrap_or_default(),
+                );
+
+                // Don't show the menu if there are no actions available
+                if actions.is_empty() {
+                    cx.notify();
+                    return Task::ready(Ok(()));
+                }
+
                 *editor.context_menu.borrow_mut() =
                     Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
-                        actions: CodeActionContents::new(
-                            resolved_tasks,
-                            code_actions,
-                            debug_scenarios,
-                            task_context.unwrap_or_default(),
-                        ),
+                        actions,
                         selected_item: Default::default(),
                         scroll_handle: UniformListScrollHandle::default(),
                         deployed_from,
