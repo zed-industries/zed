@@ -6667,6 +6667,15 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("abc\n«  ˇ»abc\nabc");
+
+    // Test with a single word and clip_at_line_ends=true (#29823)
+    cx.set_state("aˇbc");
+    cx.update_editor(|e, window, cx| {
+        e.set_clip_at_line_ends(true, cx);
+        e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
+        e.set_clip_at_line_ends(false, cx);
+    });
+    cx.assert_editor_state("«abcˇ»");
 }
 
 #[gpui::test]
