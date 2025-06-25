@@ -2793,7 +2793,7 @@ impl Pane {
                 tab_count
             );
             self.pinned_tab_count = tab_count;
-        };
+        }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
         TabBar::new("tab_bar")
