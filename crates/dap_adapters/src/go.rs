@@ -399,6 +399,7 @@ impl DebugAdapter for GoDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
@@ -470,7 +471,10 @@ impl DebugAdapter for GoDebugAdapter {
                 crate::configure_tcp_connection(TcpArgumentsTemplate::default()).await?;
             command = Some(minidelve_path.to_string_lossy().into_owned());
             connection = None;
-            arguments = if cfg!(windows) {
+            arguments = if let Some(mut args) = user_args {
+                args.insert(0, delve_path);
+                args
+            } else if cfg!(windows) {
                 vec![
                     delve_path,
                     "dap".into(),
