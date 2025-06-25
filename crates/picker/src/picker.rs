@@ -9,10 +9,10 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, impl_actions,
-    list, prelude::*, uniform_list,
+    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, list,
+    prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -38,13 +38,12 @@ actions!(picker, [ConfirmCompletion]);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = picker)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmInput {
     pub secondary: bool,
 }
-
-impl_actions!(picker, [ConfirmInput]);
 
 struct PendingUpdateMatches {
     delegate_update_matches: Option<Task<()>>,

@@ -3976,7 +3976,7 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
 }
 
 #[gpui::test]
-async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
+async fn test_manipulate_immutable_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -4021,8 +4021,8 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
 
     // Skip testing shuffle_line()
 
-    // From here on out, test more complex cases of manipulate_lines() with a single driver method: sort_lines_case_sensitive()
-    // Since all methods calling manipulate_lines() are doing the exact same general thing (reordering lines)
+    // From here on out, test more complex cases of manipulate_immutable_lines() with a single driver method: sort_lines_case_sensitive()
+    // Since all methods calling manipulate_immutable_lines() are doing the exact same general thing (reordering lines)
 
     // Don't manipulate when cursor is on single line, but expand the selection
     cx.set_state(indoc! {"
@@ -4089,7 +4089,7 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
         bbˇ»b
     "});
     cx.update_editor(|e, window, cx| {
-        e.manipulate_lines(window, cx, |lines| lines.push("added_line"))
+        e.manipulate_immutable_lines(window, cx, |lines| lines.push("added_line"))
     });
     cx.assert_editor_state(indoc! {"
         «aaa
@@ -4103,7 +4103,7 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
         bbbˇ»
     "});
     cx.update_editor(|e, window, cx| {
-        e.manipulate_lines(window, cx, |lines| {
+        e.manipulate_immutable_lines(window, cx, |lines| {
             lines.pop();
         })
     });
@@ -4117,7 +4117,7 @@ async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
         bbbˇ»
     "});
     cx.update_editor(|e, window, cx| {
-        e.manipulate_lines(window, cx, |lines| {
+        e.manipulate_immutable_lines(window, cx, |lines| {
             lines.drain(..);
         })
     });
@@ -4217,7 +4217,7 @@ async fn test_unique_lines_single_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
+async fn test_manipulate_immutable_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -4277,7 +4277,7 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         aaaˇ»aa
     "});
     cx.update_editor(|e, window, cx| {
-        e.manipulate_lines(window, cx, |lines| lines.push("added line"))
+        e.manipulate_immutable_lines(window, cx, |lines| lines.push("added line"))
     });
     cx.assert_editor_state(indoc! {"
         «2
@@ -4298,7 +4298,7 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         aaaˇ»aa
     "});
     cx.update_editor(|e, window, cx| {
-        e.manipulate_lines(window, cx, |lines| {
+        e.manipulate_immutable_lines(window, cx, |lines| {
             lines.pop();
         })
     });
@@ -4306,6 +4306,222 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
         «2ˇ»
 
         «bbbbˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // MULTI SELECTION
+    // Ln.1 "«" tests empty lines
+    // Ln.9 tests just leading whitespace
+    cx.set_state(indoc! {"
+        «
+        abc                 // No indentationˇ»
+        «\tabc              // 1 tabˇ»
+        \t\tabc «      ˇ»   // 2 tabs
+        \t ab«c             // Tab followed by space
+         \tabc              // Space followed by tab (3 spaces should be the result)
+        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+           abˇ»ˇc   ˇ    ˇ  // Already space indented«
+        \t
+        \tabc\tdef          // Only the leading tab is manipulatedˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        «
+        abc                 // No indentation
+           abc              // 1 tab
+              abc          // 2 tabs
+            abc             // Tab followed by space
+           abc              // Space followed by tab (3 spaces should be the result)
+                       abc   // Mixed indentation (tab conversion depends on the column)
+           abc         // Already space indented
+           
+           abc\tdef          // Only the leading tab is manipulatedˇ»
+    "});
+
+    // Test on just a few lines, the others should remain unchanged
+    // Only lines (3, 5, 10, 11) should change
+    cx.set_state(indoc! {"
+        
+        abc                 // No indentation
+        \tabcˇ               // 1 tab
+        \t\tabc             // 2 tabs
+        \t abcˇ              // Tab followed by space
+         \tabc              // Space followed by tab (3 spaces should be the result)
+        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+           abc              // Already space indented
+        «\t
+        \tabc\tdef          // Only the leading tab is manipulatedˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        
+        abc                 // No indentation
+        «   abc               // 1 tabˇ»
+        \t\tabc             // 2 tabs
+        «    abc              // Tab followed by spaceˇ»
+         \tabc              // Space followed by tab (3 spaces should be the result)
+        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+           abc              // Already space indented
+        «   
+           abc\tdef          // Only the leading tab is manipulatedˇ»
+    "});
+
+    // SINGLE SELECTION
+    // Ln.1 "«" tests empty lines
+    // Ln.9 tests just leading whitespace
+    cx.set_state(indoc! {"
+        «
+        abc                 // No indentation
+        \tabc               // 1 tab
+        \t\tabc             // 2 tabs
+        \t abc              // Tab followed by space
+         \tabc              // Space followed by tab (3 spaces should be the result)
+        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+           abc              // Already space indented
+        \t
+        \tabc\tdef          // Only the leading tab is manipulatedˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        «
+        abc                 // No indentation
+           abc               // 1 tab
+              abc             // 2 tabs
+            abc              // Tab followed by space
+           abc              // Space followed by tab (3 spaces should be the result)
+                       abc   // Mixed indentation (tab conversion depends on the column)
+           abc              // Already space indented
+           
+           abc\tdef          // Only the leading tab is manipulatedˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // MULTI SELECTION
+    // Ln.1 "«" tests empty lines
+    // Ln.11 tests just leading whitespace
+    cx.set_state(indoc! {"
+        «
+        abˇ»ˇc                 // No indentation
+         abc    ˇ        ˇ    // 1 space (< 3 so dont convert)
+          abc  «             // 2 spaces (< 3 so dont convert)
+           abc              // 3 spaces (convert)
+             abc ˇ»           // 5 spaces (1 tab + 2 spaces)
+        «\tˇ»\t«\tˇ»abc           // Already tab indented
+        «\t abc              // Tab followed by space
+         \tabc              // Space followed by tab (should be consumed due to tab)
+        \t \t  \t   \tabc   // Mixed indentation (first 3 spaces are consumed, the others are converted)
+           \tˇ»  «\t
+           abcˇ»   \t ˇˇˇ        // Only the leading spaces should be converted
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        «
+        abc                 // No indentation
+         abc                // 1 space (< 3 so dont convert)
+          abc               // 2 spaces (< 3 so dont convert)
+        \tabc              // 3 spaces (convert)
+        \t  abc            // 5 spaces (1 tab + 2 spaces)
+        \t\t\tabc           // Already tab indented
+        \t abc              // Tab followed by space
+        \tabc              // Space followed by tab (should be consumed due to tab)
+        \t\t\t\t\tabc   // Mixed indentation (first 3 spaces are consumed, the others are converted)
+        \t\t\t
+        \tabc   \t         // Only the leading spaces should be convertedˇ»
+    "});
+
+    // Test on just a few lines, the other should remain unchanged
+    // Only lines (4, 8, 11, 12) should change
+    cx.set_state(indoc! {"
+        
+        abc                 // No indentation
+         abc                // 1 space (< 3 so dont convert)
+          abc               // 2 spaces (< 3 so dont convert)
+        «   abc              // 3 spaces (convert)ˇ»
+             abc            // 5 spaces (1 tab + 2 spaces)
+        \t\t\tabc           // Already tab indented
+        \t abc              // Tab followed by space
+         \tabc      ˇ        // Space followed by tab (should be consumed due to tab)
+           \t\t  \tabc      // Mixed indentation
+        \t \t  \t   \tabc   // Mixed indentation
+           \t  \tˇ
+        «   abc   \t         // Only the leading spaces should be convertedˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        
+        abc                 // No indentation
+         abc                // 1 space (< 3 so dont convert)
+          abc               // 2 spaces (< 3 so dont convert)
+        «\tabc              // 3 spaces (convert)ˇ»
+             abc            // 5 spaces (1 tab + 2 spaces)
+        \t\t\tabc           // Already tab indented
+        \t abc              // Tab followed by space
+        «\tabc              // Space followed by tab (should be consumed due to tab)ˇ»
+           \t\t  \tabc      // Mixed indentation
+        \t \t  \t   \tabc   // Mixed indentation
+        «\t\t\t
+        \tabc   \t         // Only the leading spaces should be convertedˇ»
+    "});
+
+    // SINGLE SELECTION
+    // Ln.1 "«" tests empty lines
+    // Ln.11 tests just leading whitespace
+    cx.set_state(indoc! {"
+        «
+        abc                 // No indentation
+         abc                // 1 space (< 3 so dont convert)
+          abc               // 2 spaces (< 3 so dont convert)
+           abc              // 3 spaces (convert)
+             abc            // 5 spaces (1 tab + 2 spaces)
+        \t\t\tabc           // Already tab indented
+        \t abc              // Tab followed by space
+         \tabc              // Space followed by tab (should be consumed due to tab)
+        \t \t  \t   \tabc   // Mixed indentation (first 3 spaces are consumed, the others are converted)
+           \t  \t
+           abc   \t         // Only the leading spaces should be convertedˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        «
+        abc                 // No indentation
+         abc                // 1 space (< 3 so dont convert)
+          abc               // 2 spaces (< 3 so dont convert)
+        \tabc              // 3 spaces (convert)
+        \t  abc            // 5 spaces (1 tab + 2 spaces)
+        \t\t\tabc           // Already tab indented
+        \t abc              // Tab followed by space
+        \tabc              // Space followed by tab (should be consumed due to tab)
+        \t\t\t\t\tabc   // Mixed indentation (first 3 spaces are consumed, the others are converted)
+        \t\t\t
+        \tabc   \t         // Only the leading spaces should be convertedˇ»
     "});
 }
 
@@ -6667,6 +6883,15 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("abc\n«  ˇ»abc\nabc");
+
+    // Test with a single word and clip_at_line_ends=true (#29823)
+    cx.set_state("aˇbc");
+    cx.update_editor(|e, window, cx| {
+        e.set_clip_at_line_ends(true, cx);
+        e.select_all_matches(&SelectAllMatches, window, cx).unwrap();
+        e.set_clip_at_line_ends(false, cx);
+    });
+    cx.assert_editor_state("«abcˇ»");
 }
 
 #[gpui::test]
@@ -14551,6 +14776,58 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 20, seeds(31))]
+async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.update_buffer(|buffer, _| {
+        // This causes autoindent to be async.
+        buffer.set_sync_parse_timeout(Duration::ZERO)
+    });
+
+    cx.set_state("fn c() {\n    d()ˇ\n}\n");
+    cx.simulate_keystroke("\n");
+    cx.run_until_parked();
+
+    let buffer_cloned =
+        cx.multibuffer(|multi_buffer, _| multi_buffer.as_singleton().unwrap().clone());
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, _, mut cx| {
+            let buffer_cloned = buffer_cloned.clone();
+            async move {
+                buffer_cloned.update(&mut cx, |buffer, _| {
+                    assert_eq!(
+                        buffer.text(),
+                        "fn c() {\n    d()\n        .\n}\n",
+                        "OnTypeFormatting should triggered after autoindent applied"
+                    )
+                })?;
+
+                Ok(Some(vec![]))
+            }
+        });
+
+    cx.simulate_keystroke(".");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("fn c() {\n    d()\n        .ˇ\n}\n");
+    assert!(request.next().await.is_some());
+    request.close();
+    assert!(request.next().await.is_none());
+}
+
 #[gpui::test]
 async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -15388,7 +15665,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     // Completions that have already been resolved are skipped.
     assert_eq!(
         *resolved_items.lock(),
-        items[items.len() - 16..items.len() - 4]
+        items[items.len() - 17..items.len() - 4]
             .iter()
             .cloned()
             .map(|mut item| {

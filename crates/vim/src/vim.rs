@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
+    Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -52,65 +52,79 @@ use crate::state::ReplayableAction;
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 struct Number(usize);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 struct SelectRegister(String);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushFindForward {
     before: bool,
+    multiline: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushFindBackward {
     after: bool,
+    multiline: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushSneak {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushSneakBackward {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
-struct PushAddSurrounds {}
+struct PushAddSurrounds;
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushChangeSurrounds {
     target: Option<Object>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushJump {
     line: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushDigraph {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushLiteral {
     prefix: Option<String>,
@@ -168,24 +182,6 @@ actions!(
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
 actions!(workspace, [ToggleVimMode,]);
-
-impl_actions!(
-    vim,
-    [
-        Number,
-        SelectRegister,
-        PushObject,
-        PushFindForward,
-        PushFindBackward,
-        PushSneak,
-        PushSneakBackward,
-        PushAddSurrounds,
-        PushChangeSurrounds,
-        PushJump,
-        PushDigraph,
-        PushLiteral
-    ]
-);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
@@ -506,6 +502,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindForward {
                         before: action.before,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -516,6 +513,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindBackward {
                         after: action.after,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -1519,11 +1517,11 @@ impl Vim {
         }
 
         match self.active_operator() {
-            Some(Operator::FindForward { before }) => {
+            Some(Operator::FindForward { before, multiline }) => {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1533,11 +1531,11 @@ impl Vim {
                 Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, window, cx)
             }
-            Some(Operator::FindBackward { after }) => {
+            Some(Operator::FindBackward { after, multiline }) => {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1735,7 +1733,6 @@ struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
-    pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
@@ -1747,7 +1744,6 @@ struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
@@ -1799,9 +1795,6 @@ impl Settings for VimSettings {
                 .ok_or_else(Self::missing_default)?,
             use_system_clipboard: settings
                 .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_multiline_find: settings
-                .use_multiline_find
                 .ok_or_else(Self::missing_default)?,
             use_smartcase_find: settings
                 .use_smartcase_find

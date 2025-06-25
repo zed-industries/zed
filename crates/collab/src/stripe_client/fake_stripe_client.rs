@@ -8,8 +8,8 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    CreateCustomerParams, StripeBillingAddressCollection, StripeCheckoutSession,
+    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripeMeterId,
@@ -35,6 +35,7 @@ pub struct StripeCreateCheckoutSessionCall {
     pub payment_method_collection: Option<StripeCheckoutSessionPaymentMethodCollection>,
     pub subscription_data: Option<StripeCreateCheckoutSessionSubscriptionData>,
     pub success_url: Option<String>,
+    pub billing_address_collection: Option<StripeBillingAddressCollection>,
 }
 
 pub struct FakeStripeClient {
@@ -231,6 +232,7 @@ impl StripeClient for FakeStripeClient {
                 payment_method_collection: params.payment_method_collection,
                 subscription_data: params.subscription_data,
                 success_url: params.success_url.map(|url| url.to_string()),
+                billing_address_collection: params.billing_address_collection,
             });
 
         Ok(StripeCheckoutSession {

@@ -1,5 +1,5 @@
 use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint, scroll::Autoscroll};
-use gpui::{Context, Window, impl_actions};
+use gpui::{Action, Context, Window};
 use language::{Bias, Point};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -9,21 +9,21 @@ use crate::{Vim, state::Mode};
 
 const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Increment {
     #[serde(default)]
     step: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Decrement {
     #[serde(default)]
     step: bool,
 }
-
-impl_actions!(vim, [Increment, Decrement]);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, window, cx| {

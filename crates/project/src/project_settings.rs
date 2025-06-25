@@ -82,6 +82,8 @@ pub struct ProjectSettings {
 #[serde(rename_all = "snake_case")]
 pub struct DapSettings {
     pub binary: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -109,6 +111,13 @@ pub enum ContextServerSettings {
 }
 
 impl ContextServerSettings {
+    pub fn default_extension() -> Self {
+        Self::Extension {
+            enabled: true,
+            settings: serde_json::json!({}),
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         match self {
             ContextServerSettings::Custom { enabled, .. } => *enabled,
