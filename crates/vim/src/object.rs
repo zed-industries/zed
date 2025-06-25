@@ -1402,7 +1402,7 @@ fn expand_to_include_whitespace(
 ///   previous paragraph, if it exists.
 fn paragraph(
     map: &DisplaySnapshot,
-    mut relative_to: DisplayPoint,
+    relative_to: DisplayPoint,
     around: bool,
     times: usize,
 ) -> Option<Range<DisplayPoint>> {
@@ -1436,13 +1436,11 @@ fn paragraph(
                 paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
         }
-
-        relative_to = paragraph_end.clone();
     }
 
     let range = paragraph_start..paragraph_end;
-
     Some(range)
+
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
