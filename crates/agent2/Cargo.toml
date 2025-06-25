@@ -19,20 +19,21 @@ test-support = [
 ]
 
 [dependencies]
+agentic-coding-protocol = { path = "../../../agentic-coding-protocol" }
 anyhow.workspace = true
 async-trait.workspace = true
-collections.workspace = true
+base64.workspace = true
 chrono.workspace = true
+collections.workspace = true
 futures.workspace = true
-language.workspace = true
 gpui.workspace = true
+language.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 smol.workspace = true
+util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
-util.workspace = true
-agentic-coding-protocol = { path = "../../../agentic-coding-protocol" }
 
 [dev-dependencies]
 env_logger.workspace = true

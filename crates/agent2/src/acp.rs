@@ -1,18 +1,19 @@
 use std::{
+    io::{Cursor, Write as _},
     path::Path,
     sync::{Arc, Weak},
 };
 
 use crate::{
     Agent, AgentThread, AgentThreadEntryContent, AgentThreadSummary, Message, MessageChunk,
-    ResponseEvent, Role, ThreadId,
+    ResponseEvent, Role, Thread, ThreadEntry, ThreadId,
 };
-use agentic_coding_protocol::{self as acp};
+use agentic_coding_protocol::{self as acp, TurnId};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{AppContext, AsyncApp, Entity, Task};
+use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
 use smol::process::Child;
@@ -20,19 +21,41 @@ use util::ResultExt;
 
 pub struct AcpAgent {
     connection: Arc<acp::AgentConnection>,
-    threads: Mutex<HashMap<acp::ThreadId, Weak<AcpAgentThread>>>,
+    threads: Arc<Mutex<HashMap<acp::ThreadId, WeakEntity<Thread>>>>,
     _handler_task: Task<()>,
     _io_task: Task<()>,
 }
 
 struct AcpClientDelegate {
     project: Entity<Project>,
+    threads: Arc<Mutex<HashMap<acp::ThreadId, WeakEntity<Thread>>>>,
     cx: AsyncApp,
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
 }
 
 #[async_trait(?Send)]
 impl acp::Client for AcpClientDelegate {
+    async fn stat(&self, params: acp::StatParams) -> Result<acp::StatResponse> {
+        let cx = &mut self.cx.clone();
+        self.project.update(cx, |project, cx| {
+            let path = project
+                .project_path_for_absolute_path(Path::new(&params.path), cx)
+                .context("Failed to get project path")?;
+
+            match project.entry_for_path(&path, cx) {
+                // todo! refresh entry?
+                None => Ok(acp::StatResponse {
+                    exists: false,
+                    is_directory: false,
+                }),
+                Some(entry) => Ok(acp::StatResponse {
+                    exists: entry.is_created(),
+                    is_directory: entry.is_dir(),
+                }),
+            }
+        })?
+    }
+
     async fn stream_message_chunk(
         &self,
         request: acp::StreamMessageChunkParams,
@@ -40,7 +63,10 @@ impl acp::Client for AcpClientDelegate {
         Ok(acp::StreamMessageChunkResponse)
     }
 
-    async fn read_file(&self, request: acp::ReadFileParams) -> Result<acp::ReadFileResponse> {
+    async fn read_text_file(
+        &self,
+        request: acp::ReadTextFileParams,
+    ) -> Result<acp::ReadTextFileResponse> {
         let cx = &mut self.cx.clone();
         let buffer = self
             .project
@@ -52,8 +78,77 @@ impl acp::Client for AcpClientDelegate {
             })??
             .await?;
 
-        buffer.update(cx, |buffer, _| acp::ReadFileResponse {
-            content: buffer.text(),
+        buffer.update(cx, |buffer, _| {
+            let start = language::Point::new(request.line_offset.unwrap_or(0), 0);
+            let end = match request.line_limit {
+                None => buffer.max_point(),
+                Some(limit) => start + language::Point::new(limit + 1, 0),
+            };
+
+            let content = buffer.text_for_range(start..end).collect();
+
+            if let Some(thread) = self.threads.lock().get(&request.thread_id) {
+                thread.update(cx, |thread, cx| {
+                    thread.push_entry(ThreadEntry {
+                        content: AgentThreadEntryContent::ReadFile {
+                            path: request.path.clone(),
+                            content: content.clone(),
+                        },
+                    });
+                })
+            }
+
+            acp::ReadTextFileResponse {
+                content,
+                version: acp::FileVersion(0),
+            }
+        })
+    }
+
+    async fn read_binary_file(
+        &self,
+        request: acp::ReadBinaryFileParams,
+    ) -> Result<acp::ReadBinaryFileResponse> {
+        let cx = &mut self.cx.clone();
+        let file = self
+            .project
+            .update(cx, |project, cx| {
+                let (worktree, path) = project
+                    .find_worktree(Path::new(&request.path), cx)
+                    .context("Failed to get project path")?;
+
+                let task = worktree.update(cx, |worktree, cx| worktree.load_binary_file(&path, cx));
+                anyhow::Ok(task)
+            })??
+            .await?;
+
+        // todo! test
+        let content = cx
+            .background_spawn(async move {
+                let start = request.byte_offset.unwrap_or(0) as usize;
+                let end = request
+                    .byte_limit
+                    .map(|limit| (start + limit as usize).min(file.content.len()))
+                    .unwrap_or(file.content.len());
+
+                let range_content = &file.content[start..end];
+
+                let mut base64_content = Vec::new();
+                let mut base64_encoder = base64::write::EncoderWriter::new(
+                    Cursor::new(&mut base64_content),
+                    &base64::engine::general_purpose::STANDARD,
+                );
+                base64_encoder.write_all(range_content)?;
+                drop(base64_encoder);
+
+                // SAFETY: The base64 encoder should not produce non-UTF8.
+                unsafe { anyhow::Ok(String::from_utf8_unchecked(base64_content)) }
+            })
+            .await?;
+
+        Ok(acp::ReadBinaryFileResponse {
+            content,
+            // todo!
             version: acp::FileVersion(0),
         })
     }
@@ -95,9 +190,8 @@ impl AcpAgent {
     }
 }
 
+#[async_trait]
 impl Agent for AcpAgent {
-    type Thread = AcpAgentThread;
-
     async fn threads(&self) -> Result<Vec<AgentThreadSummary>> {
         let response = self.connection.request(acp::GetThreadsParams).await?;
         response
@@ -118,7 +212,10 @@ impl Agent for AcpAgent {
         let thread = Arc::new(AcpAgentThread {
             id: response.thread_id.clone(),
             connection: self.connection.clone(),
-            state: Mutex::new(AcpAgentThreadState { turn: None }),
+            state: Mutex::new(AcpAgentThreadState {
+                turn: None,
+                next_turn_id: TurnId::default(),
+            }),
         });
         self.threads
             .lock()
@@ -126,25 +223,11 @@ impl Agent for AcpAgent {
         Ok(thread)
     }
 
-    async fn open_thread(&self, id: ThreadId) -> Result<Arc<Self::Thread>> {
+    async fn open_thread(&self, id: ThreadId) -> Result<Thread> {
         todo!()
     }
-}
 
-pub struct AcpAgentThread {
-    id: acp::ThreadId,
-    connection: Arc<acp::AgentConnection>,
-    state: Mutex<AcpAgentThreadState>,
-}
-
-struct AcpAgentThreadState {
-    turn: Option<AcpAgentThreadTurn>,
-}
-
-struct AcpAgentThreadTurn {}
-
-impl AgentThread for AcpAgentThread {
-    async fn entries(&self) -> Result<Vec<AgentThreadEntryContent>> {
+    async fn thread_entries(&self, thread_id: ThreadId) -> Result<Vec<AgentThreadEntryContent>> {
         let response = self
             .connection
             .request(acp::GetThreadEntriesParams {
@@ -178,14 +261,22 @@ impl AgentThread for AcpAgentThread {
             .collect())
     }
 
-    async fn send(
+    async fn send_thread_message(
         &self,
+        thread_id: ThreadId,
         message: crate::Message,
     ) -> Result<UnboundedReceiver<Result<ResponseEvent>>> {
+        let turn_id = {
+            let mut state = self.state.lock();
+            let turn_id = state.next_turn_id.post_inc();
+            state.turn = Some(AcpAgentThreadTurn { id: turn_id });
+            turn_id
+        };
         let response = self
             .connection
             .request(acp::SendMessageParams {
                 thread_id: self.id.clone(),
+                turn_id,
                 message: acp::Message {
                     role: match message.role {
                         Role::User => acp::Role::User,
@@ -196,17 +287,11 @@ impl AgentThread for AcpAgentThread {
                         .into_iter()
                         .map(|chunk| match chunk {
                             MessageChunk::Text { chunk } => acp::MessageChunk::Text { chunk },
-                            MessageChunk::File { content } => todo!(),
-                            MessageChunk::Directory { path, contents } => todo!(),
-                            MessageChunk::Symbol {
-                                path,
-                                range,
-                                version,
-                                name,
-                                content,
-                            } => todo!(),
-                            MessageChunk::Thread { title, content } => todo!(),
-                            MessageChunk::Fetch { url, content } => todo!(),
+                            MessageChunk::File { .. } => todo!(),
+                            MessageChunk::Directory { .. } => todo!(),
+                            MessageChunk::Symbol { .. } => todo!(),
+                            MessageChunk::Thread { .. } => todo!(),
+                            MessageChunk::Fetch { .. } => todo!(),
                         })
                         .collect(),
                 },
@@ -214,6 +299,21 @@ impl AgentThread for AcpAgentThread {
             .await?;
         todo!()
     }
+}
+
+pub struct AcpAgentThread {
+    id: acp::ThreadId,
+    connection: Arc<acp::AgentConnection>,
+    state: Mutex<AcpAgentThreadState>,
+}
+
+struct AcpAgentThreadState {
+    next_turn_id: acp::TurnId,
+    turn: Option<AcpAgentThreadTurn>,
+}
+
+struct AcpAgentThreadTurn {
+    id: acp::TurnId,
 }
 
 impl From<acp::ThreadId> for ThreadId {

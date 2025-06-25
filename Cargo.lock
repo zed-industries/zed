@@ -112,6 +112,7 @@ dependencies = [
  "agentic-coding-protocol",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "collections",
  "env_logger 0.11.8",

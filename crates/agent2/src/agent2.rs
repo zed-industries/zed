@@ -1,6 +1,7 @@
 mod acp;
 
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::{
     FutureExt, StreamExt,
@@ -8,24 +9,21 @@ use futures::{
     select_biased,
     stream::{BoxStream, FuturesUnordered},
 };
-use gpui::{AppContext, AsyncApp, Context, Entity, Task};
+use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use project::Project;
 use std::{future, ops::Range, path::PathBuf, pin::pin, sync::Arc};
 
+#[async_trait]
 pub trait Agent: 'static {
-    type Thread: AgentThread;
-
-    fn threads(&self) -> impl Future<Output = Result<Vec<AgentThreadSummary>>>;
-    fn create_thread(&self) -> impl Future<Output = Result<Arc<Self::Thread>>>;
-    fn open_thread(&self, id: ThreadId) -> impl Future<Output = Result<Arc<Self::Thread>>>;
-}
-
-pub trait AgentThread: 'static {
-    fn entries(&self) -> impl Future<Output = Result<Vec<AgentThreadEntryContent>>>;
-    fn send(
+    async fn threads(&self) -> Result<Vec<AgentThreadSummary>>;
+    async fn create_thread(&self) -> Result<Entity<Thread>>;
+    async fn open_thread(&self, id: ThreadId) -> Result<Entity<Thread>>;
+    async fn thread_entries(&self, id: ThreadId) -> Result<Vec<AgentThreadEntryContent>>;
+    async fn send_thread_message(
         &self,
+        thread_id: ThreadId,
         message: Message,
-    ) -> impl Future<Output = Result<mpsc::UnboundedReceiver<Result<ResponseEvent>>>>;
+    ) -> Result<mpsc::UnboundedReceiver<Result<ResponseEvent>>>;
 }
 
 pub enum ResponseEvent {
@@ -56,7 +54,7 @@ impl ReadFileRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct ThreadId(String);
+pub struct ThreadId(SharedString);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FileVersion(u64);
@@ -177,7 +175,7 @@ impl<T: Agent> ThreadStore<T> {
         &self,
         id: ThreadId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Thread<T::Thread>>>> {
+    ) -> Task<Result<Entity<Thread>>> {
         let agent = self.agent.clone();
         let project = self.project.clone();
         cx.spawn(async move |_, cx| {
@@ -187,7 +185,7 @@ impl<T: Agent> ThreadStore<T> {
     }
 
     /// Creates a new thread.
-    pub fn create_thread(&self, cx: &mut Context<Self>) -> Task<Result<Entity<Thread<T::Thread>>>> {
+    pub fn create_thread(&self, cx: &mut Context<Self>) -> Task<Result<Entity<Thread>>> {
         let agent = self.agent.clone();
         let project = self.project.clone();
         cx.spawn(async move |_, cx| {
@@ -197,25 +195,28 @@ impl<T: Agent> ThreadStore<T> {
     }
 }
 
-pub struct Thread<T: AgentThread> {
+pub struct Thread {
+    id: ThreadId,
     next_entry_id: ThreadEntryId,
     entries: Vec<ThreadEntry>,
-    agent_thread: Arc<T>,
+    agent: Arc<dyn Agent>,
     project: Entity<Project>,
 }
 
-impl<T: AgentThread> Thread<T> {
+impl Thread {
     pub async fn load(
-        agent_thread: Arc<T>,
+        agent: Arc<dyn Agent>,
+        thread_id: ThreadId,
         project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
-        let entries = agent_thread.entries().await?;
-        cx.new(|cx| Self::new(agent_thread, entries, project, cx))
+        let entries = agent.thread_entries(thread_id.clone()).await?;
+        cx.new(|cx| Self::new(agent, thread_id, entries, project, cx))
     }
 
     pub fn new(
-        agent_thread: Arc<T>,
+        agent: Arc<dyn Agent>,
+        thread_id: ThreadId,
         entries: Vec<AgentThreadEntryContent>,
         project: Entity<Project>,
         cx: &mut Context<Self>,
@@ -229,8 +230,9 @@ impl<T: AgentThread> Thread<T> {
                     content: entry,
                 })
                 .collect(),
+            agent,
+            id: thread_id,
             next_entry_id,
-            agent_thread,
             project,
         }
     }
@@ -240,9 +242,10 @@ impl<T: AgentThread> Thread<T> {
     }
 
     pub fn send(&mut self, message: Message, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let agent_thread = self.agent_thread.clone();
+        let agent = self.agent.clone();
+        let id = self.id;
         cx.spawn(async move |this, cx| {
-            let mut events = agent_thread.send(message).await?;
+            let mut events = agent.send_thread_message(id, message).await?;
             let mut pending_event_handlers = FuturesUnordered::new();
 
             loop {
@@ -400,7 +403,7 @@ mod tests {
             })
             .await
             .unwrap();
-        thread.read_with(cx, |thread, cx| {
+        thread.read_with(cx, |thread, _| {
             assert!(
                 thread.entries().iter().any(|entry| {
                     entry.content
@@ -419,7 +422,7 @@ mod tests {
         let child = util::command::new_smol_command("node")
             .arg("../../../gemini-cli/packages/cli")
             .arg("--acp")
-            // .args(["--model", "gemini-2.5-flash"])
+            .args(["--model", "gemini-2.5-flash"])
             .env("GEMINI_API_KEY", env::var("GEMINI_API_KEY").unwrap())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
