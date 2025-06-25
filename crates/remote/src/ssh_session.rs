@@ -361,6 +361,7 @@ impl SshSocket {
         log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
+            .args(self.connection_options.additional_args())
             .arg(to_run);
         command
     }
@@ -385,13 +386,15 @@ impl SshSocket {
     }
 
     fn ssh_args(&self) -> Vec<String> {
-        vec![
+        let mut args = self.connection_options.additional_args();
+        args.extend([
             "-o".to_string(),
             "ControlMaster=no".to_string(),
             "-o".to_string(),
             format!("ControlPath={}", self.socket_path.display()),
-            self.connection_options.ssh_url(),
-        ]
+        ]);
+        args.push(self.connection_options.ssh_url());
+        args
     }
 }
 
