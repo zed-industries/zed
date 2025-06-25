@@ -1531,6 +1531,10 @@ impl Thread {
                     }
 
                     thread.update(cx, |thread, cx| {
+                        // Simulate Overloaded error for testing retry logic
+                        eprintln!("Ignoring event {event:?} and returning Overloaded");
+                        return Err(anyhow::Error::new(LanguageModelKnownError::Overloaded));
+
                         let event = match event {
                             Ok(event) => event,
                             Err(error) => {
