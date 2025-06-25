@@ -1011,7 +1011,7 @@
     }
   },
   {
-    "context": "FileFinder",
+    "context": "FileFinder || (FileFinder > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-a": "file_finder::ToggleSplitMenu",

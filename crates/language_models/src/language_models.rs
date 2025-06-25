@@ -20,6 +20,7 @@ use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
+use crate::provider::vercel::VercelLanguageModelProvider;
 pub use crate::settings::*;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut App) {
@@ -75,6 +76,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         OpenRouterLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        VercelLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
