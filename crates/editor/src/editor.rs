@@ -3388,9 +3388,12 @@ impl Editor {
                 auto_scroll = true;
             }
             2 => {
-                let range = movement::surrounding_word(&display_map, position);
-                start = buffer.anchor_before(range.start.to_point(&display_map));
-                end = buffer.anchor_before(range.end.to_point(&display_map));
+                let position = display_map
+                    .clip_point(position, Bias::Left)
+                    .to_offset(&display_map, Bias::Left);
+                let (range, _) = buffer.surrounding_word(position, false);
+                start = buffer.anchor_before(range.start);
+                end = buffer.anchor_before(range.end);
                 mode = SelectMode::Word(start..end);
                 auto_scroll = true;
             }
@@ -3523,37 +3526,39 @@ impl Editor {
         if self.columnar_selection_state.is_some() {
             self.select_columns(position, goal_column, &display_map, window, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor() {
-            let buffer = self.buffer.read(cx).snapshot(cx);
+            let buffer = &display_map.buffer_snapshot;
             let head;
             let tail;
             let mode = self.selections.pending_mode().unwrap();
             match &mode {
                 SelectMode::Character => {
                     head = position.to_point(&display_map);
-                    tail = pending.tail().to_point(&buffer);
+                    tail = pending.tail().to_point(buffer);
                 }
                 SelectMode::Word(original_range) => {
-                    let original_display_range = original_range.start.to_display_point(&display_map)
-                        ..original_range.end.to_display_point(&display_map);
-                    let original_buffer_range = original_display_range.start.to_point(&display_map)
-                        ..original_display_range.end.to_point(&display_map);
-                    if movement::is_inside_word(&display_map, position)
-                        || original_display_range.contains(&position)
+                    let offset = display_map
+                        .clip_point(position, Bias::Left)
+                        .to_offset(&display_map, Bias::Left);
+                    let original_range = original_range.to_offset(buffer);
+
+                    let head_offset = if buffer.is_inside_word(offset, false)
+                        || original_range.contains(&offset)
                     {
-                        let word_range = movement::surrounding_word(&display_map, position);
-                        if word_range.start < original_display_range.start {
-                            head = word_range.start.to_point(&display_map);
+                        let (word_range, _) = buffer.surrounding_word(offset, false);
+                        if word_range.start < original_range.start {
+                            word_range.start
                         } else {
-                            head = word_range.end.to_point(&display_map);
+                            word_range.end
                         }
                     } else {
-                        head = position.to_point(&display_map);
-                    }
+                        offset
+                    };
 
-                    if head <= original_buffer_range.start {
-                        tail = original_buffer_range.end;
+                    head = head_offset.to_point(buffer);
+                    if head_offset <= original_range.start {
+                        tail = original_range.end.to_point(buffer);
                     } else {
-                        tail = original_buffer_range.start;
+                        tail = original_range.start.to_point(buffer);
                     }
                 }
                 SelectMode::Line(original_range) => {
@@ -10794,7 +10799,6 @@ impl Editor {
     where
         Fn: FnMut(&str) -> String,
     {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut new_selections = Vec::new();
@@ -10805,13 +10809,8 @@ impl Editor {
             let selection_is_empty = selection.is_empty();
 
             let (start, end) = if selection_is_empty {
-                let word_range = movement::surrounding_word(
-                    &display_map,
-                    selection.start.to_display_point(&display_map),
-                );
-                let start = word_range.start.to_offset(&display_map, Bias::Left);
-                let end = word_range.end.to_offset(&display_map, Bias::Left);
-                (start, end)
+                let (word_range, _) = buffer.surrounding_word(selection.start, false);
+                (word_range.start, word_range.end)
             } else {
                 (selection.start, selection.end)
             };
@@ -13255,12 +13254,10 @@ impl Editor {
                     let query_match = query_match.unwrap(); // can only fail due to I/O
                     let offset_range =
                         start_offset + query_match.start()..start_offset + query_match.end();
-                    let display_range = offset_range.start.to_display_point(display_map)
-                        ..offset_range.end.to_display_point(display_map);
 
                     if !select_next_state.wordwise
-                        || (!movement::is_inside_word(display_map, display_range.start)
-                            && !movement::is_inside_word(display_map, display_range.end))
+                        || (!buffer.is_inside_word(offset_range.start, false)
+                            && !buffer.is_inside_word(offset_range.end, false))
                     {
                         // TODO: This is n^2, because we might check all the selections
                         if !selections
@@ -13324,12 +13321,9 @@ impl Editor {
 
             if only_carets {
                 for selection in &mut selections {
-                    let word_range = movement::surrounding_word(
-                        display_map,
-                        selection.start.to_display_point(display_map),
-                    );
-                    selection.start = word_range.start.to_offset(display_map, Bias::Left);
-                    selection.end = word_range.end.to_offset(display_map, Bias::Left);
+                    let (word_range, _) = buffer.surrounding_word(selection.start, false);
+                    selection.start = word_range.start;
+                    selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;
                     selection.reversed = false;
                     self.select_match_ranges(
@@ -13410,18 +13404,22 @@ impl Editor {
             } else {
                 query_match.start()..query_match.end()
             };
-            let display_range = offset_range.start.to_display_point(&display_map)
-                ..offset_range.end.to_display_point(&display_map);
 
             if !select_next_state.wordwise
-                || (!movement::is_inside_word(&display_map, display_range.start)
-                    && !movement::is_inside_word(&display_map, display_range.end))
+                || (!buffer.is_inside_word(offset_range.start, false)
+                    && !buffer.is_inside_word(offset_range.end, false))
             {
                 new_selections.push(offset_range.start..offset_range.end);
             }
         }
 
         select_next_state.done = true;
+
+        if new_selections.is_empty() {
+            log::error!("bug: new_selections is empty in select_all_matches");
+            return Ok(());
+        }
+
         self.unfold_ranges(&new_selections.clone(), false, false, cx);
         self.change_selections(None, window, cx, |selections| {
             selections.select_ranges(new_selections)
@@ -13481,12 +13479,10 @@ impl Editor {
                     let query_match = query_match.unwrap(); // can only fail due to I/O
                     let offset_range =
                         end_offset - query_match.end()..end_offset - query_match.start();
-                    let display_range = offset_range.start.to_display_point(&display_map)
-                        ..offset_range.end.to_display_point(&display_map);
 
                     if !select_prev_state.wordwise
-                        || (!movement::is_inside_word(&display_map, display_range.start)
-                            && !movement::is_inside_word(&display_map, display_range.end))
+                        || (!buffer.is_inside_word(offset_range.start, false)
+                            && !buffer.is_inside_word(offset_range.end, false))
                     {
                         next_selected_range = Some(offset_range);
                         break;
@@ -13544,12 +13540,9 @@ impl Editor {
 
             if only_carets {
                 for selection in &mut selections {
-                    let word_range = movement::surrounding_word(
-                        &display_map,
-                        selection.start.to_display_point(&display_map),
-                    );
-                    selection.start = word_range.start.to_offset(&display_map, Bias::Left);
-                    selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                    let (word_range, _) = buffer.surrounding_word(selection.start, false);
+                    selection.start = word_range.start;
+                    selection.end = word_range.end;
                     selection.goal = SelectionGoal::None;
                     selection.reversed = false;
                     self.select_match_ranges(
@@ -14024,26 +14017,11 @@ impl Editor {
                 if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
                     // manually select word at selection
                     if ["string_content", "inline"].contains(&node.kind()) {
-                        let word_range = {
-                            let display_point = buffer
-                                .offset_to_point(old_range.start)
-                                .to_display_point(&display_map);
-                            let Range { start, end } =
-                                movement::surrounding_word(&display_map, display_point);
-                            start.to_point(&display_map).to_offset(&buffer)
-                                ..end.to_point(&display_map).to_offset(&buffer)
-                        };
+                        let (word_range, _) = buffer.surrounding_word(old_range.start, false);
                         // ignore if word is already selected
                         if !word_range.is_empty() && old_range != word_range {
-                            let last_word_range = {
-                                let display_point = buffer
-                                    .offset_to_point(old_range.end)
-                                    .to_display_point(&display_map);
-                                let Range { start, end } =
-                                    movement::surrounding_word(&display_map, display_point);
-                                start.to_point(&display_map).to_offset(&buffer)
-                                    ..end.to_point(&display_map).to_offset(&buffer)
-                            };
+                            let (last_word_range, _) =
+                                buffer.surrounding_word(old_range.end, false);
                             // only select word if start and end point belongs to same word
                             if word_range == last_word_range {
                                 selected_larger_node = true;
