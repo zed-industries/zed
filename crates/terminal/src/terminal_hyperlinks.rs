@@ -224,8 +224,12 @@ mod tests {
     fn test_url_regex() {
         re_test(
             URL_REGEX,
-            "test http://example.com test mailto:bob@example.com train",
-            vec!["http://example.com", "mailto:bob@example.com"],
+            "test http://example.com test 'https://website1.com' test mailto:bob@example.com train",
+            vec![
+                "http://example.com",
+                "https://website1.com",
+                "mailto:bob@example.com",
+            ],
         );
     }
 
