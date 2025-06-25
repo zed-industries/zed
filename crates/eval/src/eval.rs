@@ -417,7 +417,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
     language_extension::init(extension_host_proxy.clone(), languages.clone());
     language_model::init(client.clone(), cx);
-    language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+    language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);

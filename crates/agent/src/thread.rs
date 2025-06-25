@@ -198,6 +198,13 @@ impl MessageSegment {
             Self::RedactedThinking(_) => false,
         }
     }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            MessageSegment::Text(text) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1770,7 +1777,7 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(window, cx, model.clone());
+                                let tool_uses = thread.use_pending_tools(window, model.clone(), cx);
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn | StopReason::MaxTokens  => {
@@ -2120,8 +2127,8 @@ impl Thread {
     pub fn use_pending_tools(
         &mut self,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
         model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
         let request =
@@ -2135,41 +2142,51 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                if tool.needs_confirmation(&tool_use.input, cx)
-                    && !AgentSettings::get_global(cx).always_allow_tool_actions
-                {
-                    self.tool_use.confirm_tool_use(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        request.clone(),
-                        tool,
-                    );
-                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
-                } else {
-                    self.run_tool(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        request.clone(),
-                        tool,
-                        model.clone(),
-                        window,
-                        cx,
-                    );
-                }
-            } else {
-                self.handle_hallucinated_tool_use(
-                    tool_use.id.clone(),
-                    tool_use.name.clone(),
-                    window,
-                    cx,
-                );
-            }
+            self.use_pending_tool(tool_use.clone(), request.clone(), model.clone(), window, cx);
         }
 
         pending_tool_uses
+    }
+
+    fn use_pending_tool(
+        &mut self,
+        tool_use: PendingToolUse,
+        request: Arc<LanguageModelRequest>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) else {
+            return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
+        }
+
+        if tool.needs_confirmation(&tool_use.input, cx)
+            && !AgentSettings::get_global(cx).always_allow_tool_actions
+        {
+            self.tool_use.confirm_tool_use(
+                tool_use.id,
+                tool_use.ui_text,
+                tool_use.input,
+                request,
+                tool,
+            );
+            cx.emit(ThreadEvent::ToolConfirmationNeeded);
+        } else {
+            self.run_tool(
+                tool_use.id,
+                tool_use.ui_text,
+                tool_use.input,
+                request,
+                tool,
+                model,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn handle_hallucinated_tool_use(

@@ -2008,6 +2008,7 @@ async fn join_project(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
+                server_name: Some(language_server.name.clone()),
                 language_server_id: language_server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(

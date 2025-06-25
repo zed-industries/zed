@@ -8,7 +8,13 @@ pub mod markdown_renderer;
 
 actions!(
     markdown,
-    [MovePageUp, MovePageDown, OpenPreview, OpenPreviewToTheSide]
+    [
+        MovePageUp,
+        MovePageDown,
+        OpenPreview,
+        OpenPreviewToTheSide,
+        OpenFollowingPreview
+    ]
 );
 
 pub fn init(cx: &mut App) {
