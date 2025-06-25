@@ -224,6 +224,9 @@ impl ExampleContext {
                 ThreadEvent::RetryScheduled { .. } => {
                     // Ignore retry events
                 }
+                ThreadEvent::RetriesFailed { .. } => {
+                    // Ignore retries failed events
+                }
                 ThreadEvent::Stopped(reason) => match reason {
                     Ok(StopReason::EndTurn) => {
                         tx.close_channel();
