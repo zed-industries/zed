@@ -67,6 +67,5 @@ fn notification_window_options(
         window_min_size: None,
         window_decorations: Some(WindowDecorations::Client),
         allows_automatic_window_tabbing: None,
-        use_toolbar: None,
     }
 }

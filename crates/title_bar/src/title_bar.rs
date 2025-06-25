@@ -3,6 +3,7 @@ mod collab;
 mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
+mod system_window_tabs;
 mod title_bar_settings;
 
 #[cfg(feature = "stories")]
@@ -284,7 +285,7 @@ impl TitleBar {
             )
         });
 
-        let platform_titlebar = cx.new(|_| PlatformTitleBar::new(id));
+        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, window, cx));
 
         Self {
             platform_titlebar,

@@ -39,9 +39,9 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Rgba, ScaledPixels,
-    Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel,
-    Window, WindowControlArea, hash, point, px, size,
+    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
+    WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -272,9 +272,6 @@ pub(crate) trait Platform: 'static {
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
-
-    #[cfg(any(target_os = "macos"))]
-    fn new_window_for_tab(&self, callback: Box<dyn FnMut()>);
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -503,19 +500,21 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     // macOS specific methods
+    fn get_title(&self) -> String {
+        String::new()
+    }
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
-    fn set_fullscreen_titlebar_background_color(&self, _color: Rgba) {}
-    fn set_appearance(&self, _appearance: WindowAppearance) {}
-    fn has_system_window_tabs(&self) -> bool {
-        false
-    }
-    fn refresh_has_system_window_tabs(&self) {}
-    fn show_next_window_tab(&self) {}
-    fn show_previous_window_tab(&self) {}
+    fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
     fn merge_all_windows(&self) {}
-    fn move_window_tab_to_new_window(&self) {}
+    fn move_tab_to_new_window(&self) {}
+    fn toggle_window_tab_overview(&self) {}
+    fn tab_group(&self) -> Option<usize> {
+        None
+    }
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -1121,9 +1120,6 @@ pub struct WindowOptions {
 
     /// Whether to allow automatic window tabbing. macOS only.
     pub allows_automatic_window_tabbing: Option<bool>,
-
-    /// Whether to use a toolbar as titlebar, which increases the height. macOS only.
-    pub use_toolbar: Option<bool>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1164,7 +1160,6 @@ pub(crate) struct WindowParams {
 
     pub window_min_size: Option<Size<Pixels>>,
     pub allows_automatic_window_tabbing: Option<bool>,
-    pub use_toolbar: Option<bool>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1216,7 +1211,6 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             allows_automatic_window_tabbing: None,
-            use_toolbar: None,
         }
     }
 }

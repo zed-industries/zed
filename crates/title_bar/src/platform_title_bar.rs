@@ -1,34 +1,41 @@
 use gpui::{
-    AnyElement, Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton,
+    AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
 use ui::prelude::*;
 
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
+use crate::{
+    platforms::{platform_linux, platform_mac, platform_windows},
+    system_window_tabs::SystemWindowTabs,
+};
 
 pub struct PlatformTitleBar {
     id: ElementId,
     platform_style: PlatformStyle,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
+    system_window_tabs: Entity<SystemWindowTabs>,
 }
 
 impl PlatformTitleBar {
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(id: impl Into<ElementId>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let platform_style = PlatformStyle::platform();
+        let system_window_tabs = cx.new(|cx| SystemWindowTabs::new(window, cx));
+
         Self {
             id: id.into(),
             platform_style,
             children: SmallVec::new(),
             should_move: false,
+            system_window_tabs,
         }
     }
 
     #[cfg(not(target_os = "windows"))]
     pub fn height(window: &mut Window) -> Pixels {
-        (1.75 * window.rem_size()).max(px(38.))
+        (1.75 * window.rem_size()).max(px(34.))
     }
 
     #[cfg(target_os = "windows")]
@@ -62,21 +69,14 @@ impl Render for PlatformTitleBar {
         let supported_controls = window.window_controls();
         let decorations = window.window_decorations();
         let height = Self::height(window);
-        let tab_height = px(28.);
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
 
-        h_flex()
+        let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
             .w_full()
-            .map(|this| {
-                if window.has_system_window_tabs() && !window.is_fullscreen() {
-                    this.h(height + tab_height).pb(tab_height)
-                } else {
-                    this.h(height)
-                }
-            })
+            .h(height)
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
@@ -169,7 +169,12 @@ impl Render for PlatformTitleBar {
                         title_bar.child(platform_windows::WindowsWindowControls::new(height))
                     }
                 }
-            })
+            });
+
+        v_flex()
+            .w_full()
+            .child(title_bar)
+            .child(self.system_window_tabs.clone().into_any_element())
     }
 }
 

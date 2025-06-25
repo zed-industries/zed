@@ -11,12 +11,12 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    Rgba, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString,
-    Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine,
-    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTabController, TabHandles,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -945,7 +945,6 @@ impl Window {
             window_min_size,
             window_decorations,
             allows_automatic_window_tabbing,
-            use_toolbar,
         } = options;
 
         let bounds = window_bounds
@@ -963,7 +962,6 @@ impl Window {
                 display_id,
                 window_min_size,
                 allows_automatic_window_tabbing,
-                use_toolbar,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
@@ -995,19 +993,13 @@ impl Window {
         }
 
         platform_window.on_close(Box::new({
-            let windows = cx.windows();
+            let window_id = handle.window_id();
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
-
-                windows
-                    .into_iter()
-                    .filter(|w| w.window_id() != handle.window_id())
-                    .for_each(|window| {
-                        let _ = window.update(&mut cx, |_, window, _| {
-                            window.refresh_has_system_window_tabs();
-                        });
-                    });
+                let _ = cx.update(|cx| {
+                    SystemWindowTabController::remove_window(cx, window_id);
+                });
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -1096,6 +1088,18 @@ impl Window {
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
+
+                        let tab_group = window.tab_group();
+                        if let Some(tab_group) = tab_group {
+                            SystemWindowTabController::add_window(
+                                cx,
+                                tab_group,
+                                handle,
+                                SharedString::from(window.window_title()),
+                            );
+                        }
+
+                        window.bounds_changed(cx);
                         window.refresh();
                     })
                     .log_err();
@@ -1137,12 +1141,61 @@ impl Window {
                     .unwrap_or(None)
             })
         });
+        platform_window.on_select_next_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let window_id = handle.window_id();
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
+                        }
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_previous_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let window_id = handle.window_id();
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::select_previous_tab(
+                                cx, tab_group, window_id,
+                            );
+                        }
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_merge_all_windows({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::merge_all_windows(cx, tab_group);
+                        }
+                    })
+                    .log_err();
+            })
+        });
 
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
         }
 
         platform_window.map_window().unwrap();
+        let tab_group = platform_window.tab_group();
+        if let Some(tab_group) = tab_group {
+            SystemWindowTabController::add_window(
+                cx,
+                tab_group,
+                handle,
+                SharedString::from(platform_window.get_title()),
+            );
+        }
 
         Ok(Window {
             handle,
@@ -4294,41 +4347,16 @@ impl Window {
         self.platform_window.titlebar_double_click();
     }
 
-    /// Sets the window appearance.
+    /// Gets the window's title at the platform level.
     /// This is macOS specific.
-    pub fn set_appearance(&self, appearance: WindowAppearance) {
-        self.platform_window.set_appearance(appearance);
+    pub fn window_title(&self) -> String {
+        self.platform_window.get_title()
     }
 
-    /// Set the background color of the titlebar.
+    /// Returns the tab group pointer of the window.
     /// This is macOS specific.
-    pub fn set_fullscreen_titlebar_background_color(&self, color: Rgba) {
-        self.platform_window
-            .set_fullscreen_titlebar_background_color(color);
-    }
-
-    /// Returns whether the window has more then 1 tab (therefore showing the tab bar).
-    /// This is macOS specific.
-    pub fn has_system_window_tabs(&self) -> bool {
-        self.platform_window.has_system_window_tabs()
-    }
-
-    /// Syncs the window's tab state.
-    /// This is macOS specific.
-    pub fn refresh_has_system_window_tabs(&self) {
-        self.platform_window.refresh_has_system_window_tabs();
-    }
-
-    /// Selects the next tab in the tab group in the trailing direction.
-    /// This is macOS specific.
-    pub fn show_next_window_tab(&self) {
-        self.platform_window.show_next_window_tab()
-    }
-
-    /// Selects the previous tab in the tab group in the leading direction.
-    /// This is macOS specific.
-    pub fn show_previous_window_tab(&self) {
-        self.platform_window.show_previous_window_tab()
+    pub fn tab_group(&self) -> Option<usize> {
+        self.platform_window.tab_group()
     }
 
     /// Merges all open windows into a single tabbed window.
@@ -4339,8 +4367,14 @@ impl Window {
 
     /// Moves the tab to a new containing window.
     /// This is macOS specific.
-    pub fn move_window_tab_to_new_window(&self) {
-        self.platform_window.move_window_tab_to_new_window()
+    pub fn move_tab_to_new_window(&self) {
+        self.platform_window.move_tab_to_new_window()
+    }
+
+    /// Shows or hides the window tab overview.
+    /// This is macOS specific.
+    pub fn toggle_window_tab_overview(&self) {
+        self.platform_window.toggle_window_tab_overview()
     }
 
     /// Toggles the inspector mode on this window.

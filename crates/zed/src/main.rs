@@ -8,7 +8,6 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
-use command_palette_hooks::CommandPaletteFilter;
 use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
@@ -17,10 +16,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _,
-    WindowAppearance,
-};
+use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -38,7 +34,6 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
-    any::TypeId,
     env,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
@@ -46,14 +41,13 @@ use std::{
     sync::Arc,
 };
 use theme::{
-    ActiveTheme, Appearance, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError,
-    ThemeRegistry, ThemeSettings,
+    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
+    ThemeSettings,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, MergeAllWindows, MoveWindowTabToNewWindow, SerializedWorkspaceLocation,
-    ShowNextWindowTab, ShowPreviousWindowTab, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
+    AppState, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
     notifications::NotificationId,
 };
 use zed::{
@@ -386,22 +380,6 @@ pub fn main() {
             .detach();
         }
     });
-    app.new_window_for_tab(move |cx| {
-        for workspace in workspace::local_workspace_windows(cx) {
-            workspace
-                .update(cx, |_view, window, cx| {
-                    if window.is_window_active() {
-                        window.dispatch_action(
-                            Box::new(zed_actions::OpenRecent {
-                                create_new_window: true,
-                            }),
-                            cx,
-                        );
-                    }
-                })
-                .log_err();
-        }
-    });
 
     app.run(move |cx| {
         menu::init();
@@ -667,19 +645,10 @@ pub fn main() {
             let client = app_state.client.clone();
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
-                    let title_bar_background = cx.theme().colors().title_bar_background.to_rgb();
                     let background_appearance = cx.theme().window_background_appearance();
-                    let appearance = cx.theme().appearance();
-
                     window
                         .update(cx, |_, window, _| {
-                            window.set_fullscreen_titlebar_background_color(title_bar_background);
-                            window.set_background_appearance(background_appearance);
-
-                            match appearance {
-                                Appearance::Light => window.set_appearance(WindowAppearance::Light),
-                                Appearance::Dark => window.set_appearance(WindowAppearance::Dark),
-                            }
+                            window.set_background_appearance(background_appearance)
                         })
                         .ok();
                 }
@@ -693,25 +662,6 @@ pub fn main() {
                     if client.status().borrow().is_connected() {
                         client.reconnect(&cx.to_async());
                     }
-                }
-
-                let use_system_window_tabs =
-                    WorkspaceSettings::get_global(cx).use_system_window_tabs;
-                let system_window_tab_actions = [
-                    TypeId::of::<ShowNextWindowTab>(),
-                    TypeId::of::<ShowPreviousWindowTab>(),
-                    TypeId::of::<MergeAllWindows>(),
-                    TypeId::of::<MoveWindowTabToNewWindow>(),
-                ];
-
-                if use_system_window_tabs {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.show_action_types(system_window_tab_actions.iter());
-                    });
-                } else {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.hide_action_types(&system_window_tab_actions);
-                    });
                 }
             }
         })

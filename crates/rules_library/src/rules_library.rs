@@ -4,7 +4,7 @@ use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
-    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, size,
+    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
     transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
@@ -130,7 +130,7 @@ pub fn open_rules_library(
                     titlebar: Some(TitlebarOptions {
                         title: Some("Rules Library".into()),
                         appears_transparent: true,
-                        traffic_light_position: Default::default(),
+                        traffic_light_position: Some(point(px(9.0), px(9.0))),
                     }),
                     app_id: Some(app_id.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -414,7 +414,7 @@ impl RulesLibrary {
         });
         Self {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", window, cx)))
             } else {
                 None
             },

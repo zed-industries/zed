@@ -3,17 +3,19 @@ use crate::{
     AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Rgba,
+    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
-        NSFilenamesPboardType, NSPasteboard, NSScreen, NSToolbar, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
+        NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
+        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
+        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
+        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -30,7 +32,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES, class_getName},
+    runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
 use parking_lot::Mutex;
@@ -38,7 +40,7 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    ffi::{CStr, c_char, c_void},
+    ffi::{CStr, c_void},
     mem,
     ops::Range,
     path::PathBuf,
@@ -355,14 +357,18 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         );
 
         decl.add_method(
-            sel!(removeTitlebarAccessoryViewController:),
-            remove_titlebar_accessory_view_controller as extern "C" fn(&Object, Sel, id),
+            sel!(selectNextTab:),
+            select_next_tab as extern "C" fn(&Object, Sel, id),
         );
 
         decl.add_method(
-            sel!(window:willUseFullScreenPresentationOptions:),
-            window_will_use_fullscreen_presentation_options
-                as extern "C" fn(&Object, Sel, id, NSUInteger) -> NSUInteger,
+            sel!(selectPreviousTab:),
+            select_previous_tab as extern "C" fn(&Object, Sel, id),
+        );
+
+        decl.add_method(
+            sel!(mergeAllWindows:),
+            merge_all_windows as extern "C" fn(&Object, Sel, id),
         );
 
         decl.register()
@@ -397,8 +403,9 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
-    has_system_window_tabs: bool,
-    fullscreen_titlebar_color: Option<Rgba>,
+    select_next_tab_callback: Option<Box<dyn FnMut()>>,
+    select_previous_tab_callback: Option<Box<dyn FnMut()>>,
+    merge_all_windows_callback: Option<Box<dyn FnMut()>>,
 }
 
 impl MacWindowState {
@@ -559,7 +566,6 @@ impl MacWindow {
             display_id,
             window_min_size,
             allows_automatic_window_tabbing,
-            use_toolbar,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -691,8 +697,9 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
-                has_system_window_tabs: false,
-                fullscreen_titlebar_color: None,
+                select_next_tab_callback: None,
+                select_previous_tab_callback: None,
+                merge_all_windows_callback: None,
             })));
 
             (*native_window).set_ivar(
@@ -722,9 +729,8 @@ impl MacWindow {
             }
 
             if titlebar.map_or(true, |titlebar| titlebar.appears_transparent) {
-                hide_titlebar_effect_view(native_window);
+                native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
-                let _: () = msg_send![native_window, setTitlebarSeparatorStyle: 1]; // NSTitlebarSeparatorStyleLine
             }
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
@@ -782,16 +788,6 @@ impl MacWindow {
                 }
             }
 
-            let use_toolbar = use_toolbar.unwrap_or(false);
-            if use_toolbar {
-                let identifier = NSString::alloc(nil).init_str("Toolbar");
-                let toolbar = NSToolbar::alloc(nil).initWithIdentifier_(identifier);
-
-                native_window.setToolbar_(toolbar);
-                native_window
-                    .setToolbarStyle_(NSWindowToolbarStyle::NSWindowToolbarStyleUnifiedCompact);
-            }
-
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
 
@@ -806,7 +802,13 @@ impl MacWindow {
                         && main_window_is_fullscreen;
 
                 if allows_automatic_window_tabbing && should_add_as_tab {
-                    let _: () = msg_send![main_window, addTabbedWindow: native_window ordered: 1];
+                    let main_window_can_tab: BOOL =
+                        msg_send![main_window, respondsToSelector: sel!(addTabbedWindow:ordered:)];
+                    let main_window_visible: BOOL = msg_send![main_window, isVisible];
+
+                    if main_window_can_tab == YES && main_window_visible == YES {
+                        let _: () = msg_send![main_window, addTabbedWindow: native_window ordered: NSWindowOrderingMode::NSWindowAbove];
+                    }
                 }
             }
 
@@ -946,46 +948,6 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn set_fullscreen_titlebar_background_color(&self, color: Rgba) {
-        self.0.lock().fullscreen_titlebar_color = Some(color);
-
-        if self.is_fullscreen() {
-            unsafe {
-                let mut color = NSColor::colorWithSRGBRed_green_blue_alpha_(
-                    nil,
-                    color.r as f64,
-                    color.g as f64,
-                    color.b as f64,
-                    color.a as f64,
-                );
-                set_fullscreen_titlebar_color(color);
-            }
-        }
-    }
-
-    fn set_appearance(&self, appearance: WindowAppearance) {
-        let native_window = self.0.lock().native_window;
-        unsafe {
-            let appearance: id =
-                msg_send![class!(NSAppearance), appearanceNamed: appearance.into_native()];
-            NSWindow::setAppearance(native_window, appearance);
-        }
-    }
-
-    fn show_next_window_tab(&self) {
-        let native_window = self.0.lock().native_window;
-        unsafe {
-            let _: () = msg_send![native_window, selectNextTab:nil];
-        }
-    }
-
-    fn show_previous_window_tab(&self) {
-        let native_window = self.0.lock().native_window;
-        unsafe {
-            let _: () = msg_send![native_window, selectPreviousTab:nil];
-        }
-    }
-
     fn merge_all_windows(&self) {
         let native_window = self.0.lock().native_window;
         unsafe {
@@ -993,10 +955,17 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn move_window_tab_to_new_window(&self) {
+    fn move_tab_to_new_window(&self) {
         let native_window = self.0.lock().native_window;
         unsafe {
             let _: () = msg_send![native_window, moveTabToNewWindow:nil];
+        }
+    }
+
+    fn toggle_window_tab_overview(&self) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![native_window, toggleTabOverview:nil];
         }
     }
 
@@ -1200,32 +1169,72 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn get_title(&self) -> String {
+        unsafe {
+            let title: id = msg_send![self.0.lock().native_window, title];
+            if title.is_null() {
+                "".to_string()
+            } else {
+                title.to_str().to_string()
+            }
+        }
+    }
+
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
-        this.renderer
-            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
 
-        let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
-            80
-        } else {
-            0
-        };
-        let opaque = (background_appearance == WindowBackgroundAppearance::Opaque).to_objc();
+        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
+        this.renderer.update_transparency(!opaque);
 
         unsafe {
-            this.native_window.setOpaque_(opaque);
-            // Shadows for transparent windows cause artifacts and performance issues
-            this.native_window.setHasShadow_(opaque);
-            let clear_color = if opaque == YES {
+            this.native_window.setOpaque_(opaque as BOOL);
+            let background_color = if opaque {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {
-                NSColor::clearColor(nil)
+                // Not using `+[NSColor clearColor]` to avoid broken shadow.
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)
             };
-            this.native_window.setBackgroundColor_(clear_color);
-            let window_number = this.native_window.windowNumber();
-            CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
+            this.native_window.setBackgroundColor_(background_color);
+
+            if NSAppKitVersionNumber < NSAppKitVersionNumber12_0 {
+                // Whether `-[NSVisualEffectView respondsToSelector:@selector(_updateProxyLayer)]`.
+                // On macOS Catalina/Big Sur `NSVisualEffectView` doesn’t own concrete sublayers
+                // but uses a `CAProxyLayer`. Use the legacy WindowServer API.
+                let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
+                    80
+                } else {
+                    0
+                };
+
+                let window_number = this.native_window.windowNumber();
+                CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
+            } else {
+                // On newer macOS `NSVisualEffectView` manages the effect layer directly. Using it
+                // could have a better performance (it downsamples the backdrop) and more control
+                // over the effect layer.
+                if background_appearance != WindowBackgroundAppearance::Blurred {
+                    if let Some(blur_view) = this.blurred_view {
+                        NSView::removeFromSuperview(blur_view);
+                        this.blurred_view = None;
+                    }
+                } else if this.blurred_view == None {
+                    let content_view = this.native_window.contentView();
+                    let frame = NSView::bounds(content_view);
+                    let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
+                    blur_view = NSView::initWithFrame_(blur_view, frame);
+                    blur_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
+
+                    let _: () = msg_send![
+                        content_view,
+                        addSubview: blur_view
+                        positioned: NSWindowOrderingMode::NSWindowBelow
+                        relativeTo: nil
+                    ];
+                    this.blurred_view = Some(blur_view.autorelease());
+                }
+            }
         }
     }
 
@@ -1332,32 +1341,26 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn has_system_window_tabs(&self) -> bool {
-        self.0.lock().has_system_window_tabs
+    fn tab_group(&self) -> Option<usize> {
+        let mut this = self.0.lock();
+
+        unsafe {
+            let tabgroup: id = msg_send![this.native_window, tabGroup];
+            let tabgroup_id = tabgroup as *const Object as usize;
+            Some(tabgroup_id)
+        }
     }
 
-    fn refresh_has_system_window_tabs(&self) {
-        let mut this = self.0.lock();
-        let executor = this.executor.clone();
-        let native_window = this.native_window;
-        let has_system_window_tabs = &mut this.has_system_window_tabs as *mut bool;
-        executor
-            .spawn(async move {
-                unsafe {
-                    let tabbed_windows: id = msg_send![native_window, tabbedWindows];
-                    let tabbed_windows_count: NSUInteger = if !tabbed_windows.is_null() {
-                        msg_send![tabbed_windows, count]
-                    } else {
-                        0
-                    };
+    fn on_select_next_tab(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().select_next_tab_callback = Some(callback);
+    }
 
-                    let should_have_tabs = tabbed_windows_count >= 2;
-                    if *has_system_window_tabs != should_have_tabs {
-                        *has_system_window_tabs = should_have_tabs;
-                    }
-                }
-            })
-            .detach();
+    fn on_select_previous_tab(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().select_previous_tab_callback = Some(callback);
+    }
+
+    fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().merge_all_windows_callback = Some(_callback);
     }
 
     fn draw(&self, scene: &crate::Scene) {
@@ -1820,28 +1823,10 @@ extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
 
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
-    if is_macos_version_at_least(min_version) && lock.transparent_titlebar {
-        // Execute the fullscreen titlebar color change asynchronously,
-        // to ensure the new titlebar is active.
-        let executor = lock.executor.clone();
-        drop(lock);
-        executor
-            .spawn(async move {
-                let mut lock = window_state.as_ref().lock();
-                if let Some(fullscreen_titlebar_color) = lock.fullscreen_titlebar_color {
-                    unsafe {
-                        let mut color = NSColor::colorWithSRGBRed_green_blue_alpha_(
-                            nil,
-                            fullscreen_titlebar_color.r as f64,
-                            fullscreen_titlebar_color.g as f64,
-                            fullscreen_titlebar_color.b as f64,
-                            fullscreen_titlebar_color.a as f64,
-                        );
-                        set_fullscreen_titlebar_color(color);
-                    }
-                }
-            })
-            .detach();
+    if is_macos_version_at_least(min_version) {
+        unsafe {
+            lock.native_window.setTitlebarAppearsTransparent_(NO);
+        }
     }
 }
 
@@ -1852,23 +1837,10 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
     let min_version = NSOperatingSystemVersion::new(15, 3, 0);
 
     if is_macos_version_at_least(min_version) && lock.transparent_titlebar {
-        // Execute the fullscreen titlebar color change immediately,
-        // before the window exits fullscreen (and the titlebar is hidden).
         unsafe {
-            let color = NSColor::clearColor(nil);
-            set_fullscreen_titlebar_color(color);
+            lock.native_window.setTitlebarAppearsTransparent_(YES);
         }
     }
-}
-
-extern "C" fn window_will_use_fullscreen_presentation_options(
-    _this: &Object,
-    _sel: Sel,
-    _window: id,
-    _proposed_options: NSUInteger,
-) -> NSUInteger {
-    // NSApplicationPresentationAutoHideToolbar | NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationFullScreen
-    (1 << 11) | (1 << 2) | (1 << 10)
 }
 
 pub(crate) fn is_macos_version_at_least(version: NSOperatingSystemVersion) -> bool {
@@ -1893,7 +1865,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
+    let lock = window_state.lock();
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
@@ -1917,19 +1889,8 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
-
-            unsafe {
-                let tabbed_windows: id = msg_send![lock.native_window, tabbedWindows];
-                let tabbed_windows_count: NSUInteger = if !tabbed_windows.is_null() {
-                    msg_send![tabbed_windows, count]
-                } else {
-                    0
-                };
-
-                let should_have_tabs = tabbed_windows_count >= 2;
-                if lock.has_system_window_tabs != should_have_tabs {
-                    lock.has_system_window_tabs = should_have_tabs;
-                }
+            if is_active {
+                lock.move_traffic_light();
             }
 
             if let Some(mut callback) = lock.activate_callback.take() {
@@ -2335,23 +2296,17 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
 extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view_controller: id) {
     unsafe {
         let _: () = msg_send![super(this, class!(NSWindow)), addTitlebarAccessoryViewController: view_controller];
+        let accessory_view: id = msg_send![view_controller, view];
+
+        // Hide the native tab bar and set its height to 0, since we render our own.
+        let _: () = msg_send![accessory_view, setHidden: YES];
+        let mut frame: NSRect = msg_send![accessory_view, frame];
+        frame.size.height = 0.0;
+        let _: () = msg_send![accessory_view, setFrame: frame];
+
+        let window_state = get_window_state(this);
+        window_state.as_ref().lock().move_traffic_light();
     }
-
-    let window_state = unsafe { get_window_state(this) };
-    window_state.lock().has_system_window_tabs = true;
-}
-
-extern "C" fn remove_titlebar_accessory_view_controller(
-    this: &Object,
-    _: Sel,
-    view_controller: id,
-) {
-    unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), removeTitlebarAccessoryViewController: view_controller];
-    }
-
-    let window_state = unsafe { get_window_state(this) };
-    window_state.lock().has_system_window_tabs = false;
 }
 
 async fn synthetic_drag(
@@ -2490,89 +2445,36 @@ unsafe fn remove_layer_background(layer: id) {
     }
 }
 
-unsafe fn update_tab_bar_state(lock: &mut MacWindowState) {
-    let tabbed_windows: id = msg_send![lock.native_window, tabbedWindows];
-    let tabbed_windows_count: NSUInteger = if !tabbed_windows.is_null() {
-        msg_send![tabbed_windows, count]
-    } else {
-        0
-    };
-
-    let should_have_tabs = tabbed_windows_count >= 2;
-    if lock.has_system_window_tabs != should_have_tabs {
-        lock.has_system_window_tabs = should_have_tabs;
+extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    if let Some(mut callback) = lock.select_next_tab_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().select_next_tab_callback = Some(callback);
     }
 }
 
-// By hiding the visual effect view, we allow the window's (or titlebar's in this case)
-// background color to show through. If we were to set `titlebarAppearsTransparent` to true
-// the selected tab would look fine, but the unselected ones and new tab button backgrounds
-// would be an opaque color. When the titlebar isn't transparent, however, the system applies
-// a compositing effect to the unselected tab backgrounds, which makes them blend with the
-// titlebar's/window's background.
-fn hide_titlebar_effect_view(native_window: id) {
-    unsafe {
-        let content_view: id = msg_send![native_window, contentView];
-        let frame_view: id = msg_send![content_view, superview];
-
-        if let Some(titlebar_view) = find_view_by_class_name(frame_view, "NSTitlebarView") {
-            if let Some(effect_view) = find_view_by_class_name(titlebar_view, "NSVisualEffectView")
-            {
-                let _: () = msg_send![effect_view, setHidden: YES];
-            }
-        }
+extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    if let Some(mut callback) = lock.select_previous_tab_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().select_previous_tab_callback = Some(callback);
     }
 }
 
-// When the window is fullscreen, the titlebar is only shown when moving the mouse to the top of the screen.
-// The titlebar will then show as overlay on top of the window's content, so we need to make sure it's not transparent.
-fn set_fullscreen_titlebar_color(color: *mut Object) {
+extern "C" fn merge_all_windows(this: &Object, _sel: Sel, _id: id) {
     unsafe {
-        let nsapp: id = msg_send![class!(NSApplication), sharedApplication];
-        let windows: id = msg_send![nsapp, windows];
-        let count: NSUInteger = msg_send![windows, count];
-
-        for i in 0..count {
-            let window: id = msg_send![windows, objectAtIndex: i];
-            let class_name: id = msg_send![window, className];
-            let class_name_str = class_name.to_str();
-
-            if class_name_str != "NSToolbarFullScreenWindow" {
-                continue;
-            }
-
-            let content_view: id = msg_send![window, contentView];
-            if let Some(titlebar_container) =
-                find_view_by_class_name(content_view, "NSTitlebarContainerView")
-            {
-                let _: () = msg_send![titlebar_container, setWantsLayer: YES];
-                let layer: id = msg_send![titlebar_container, layer];
-                let cg_color: *mut std::ffi::c_void = msg_send![color, CGColor];
-                let _: () = msg_send![layer, setBackgroundColor: cg_color];
-            }
-        }
-    }
-}
-
-fn find_view_by_class_name(view: id, target_class: &str) -> Option<id> {
-    unsafe {
-        let view_class: *const Class = msg_send![view, class];
-        let class_name_ptr: *const c_char = class_getName(view_class);
-        let class_name = CStr::from_ptr(class_name_ptr).to_str().unwrap_or("");
-        if class_name == target_class {
-            return Some(view);
-        }
-
-        let subviews: id = msg_send![view, subviews];
-        let count: usize = msg_send![subviews, count];
-
-        for i in 0..count {
-            let subview: id = msg_send![subviews, objectAtIndex: i];
-            if let Some(found) = find_view_by_class_name(subview, target_class) {
-                return Some(found);
-            }
-        }
+        let _: () = msg_send![super(this, class!(NSWindow)), mergeAllWindows:nil];
     }
 
-    None
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    if let Some(mut callback) = lock.merge_all_windows_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().merge_all_windows_callback = Some(callback);
+    }
 }

@@ -27,8 +27,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
     ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, px,
-    retain_all,
+    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
+    px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -288,7 +288,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
-            traffic_light_position: Default::default(),
+            traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
         window_bounds: None,
         focus: false,
@@ -304,7 +304,6 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             height: px(240.0),
         }),
         allows_automatic_window_tabbing: Some(use_system_window_tabs),
-        use_toolbar: Some(true),
     }
 }
 
