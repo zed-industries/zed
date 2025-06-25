@@ -34,6 +34,7 @@ mod tab;
 mod tab_bar;
 mod toggle;
 mod tooltip;
+mod uniform_table;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -74,6 +75,7 @@ pub use tab::*;
 pub use tab_bar::*;
 pub use toggle::*;
 pub use tooltip::*;
+pub use uniform_table::*;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
