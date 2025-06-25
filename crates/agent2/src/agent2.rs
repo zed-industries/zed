@@ -231,7 +231,7 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{env, process::Stdio};
+    use std::{env, path::Path, process::Stdio};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -252,11 +252,11 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            path!("/tmp"),
+            path!("/private/tmp"),
             json!({"foo": "Lorem ipsum dolor", "bar": "bar", "baz": "baz"}),
         )
         .await;
-        let project = Project::test(fs, [path!("/tmp").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
         let agent = gemini_agent(project.clone(), cx.to_async()).unwrap();
         let thread_store = ThreadStore::load(Arc::new(agent), project, &mut cx.to_async())
             .await
@@ -274,7 +274,8 @@ mod tests {
                     Message {
                         role: Role::User,
                         chunks: vec![
-                            "Read the '/tmp/foo' file and output all of its contents.".into(),
+                            "Read the '/private/tmp/foo' file and output all of its contents."
+                                .into(),
                         ],
                     },
                     cx,
@@ -287,7 +288,7 @@ mod tests {
                 thread.entries().iter().any(|entry| {
                     entry.content
                         == AgentThreadEntryContent::ReadFile {
-                            path: "/tmp/foo".into(),
+                            path: "/private/tmp/foo".into(),
                             content: "Lorem ipsum dolor".into(),
                         }
                 }),
@@ -298,11 +299,13 @@ mod tests {
     }
 
     pub fn gemini_agent(project: Entity<Project>, cx: AsyncApp) -> Result<AcpAgent> {
+        let cli_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
         let child = util::command::new_smol_command("node")
-            .arg("../../../gemini-cli/packages/cli")
+            .arg(cli_path)
             .arg("--acp")
             .args(["--model", "gemini-2.5-flash"])
-            .env("GEMINI_API_KEY", env::var("GEMINI_API_KEY").unwrap())
+            .current_dir("/private/tmp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
