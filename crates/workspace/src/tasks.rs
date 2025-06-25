@@ -54,7 +54,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let spawn_in_terminal = resolved_task.resolved.clone();
+        let mut spawn_in_terminal = resolved_task.resolved.clone();
+
+        // Using alternative shells to launch tasks presents problems because on unix/macos
+        // the task providers (langauge servers, dap configurations, etc) expect the command
+        // to be run by a posix compliant shell. New-age shells such as nushell and fish can
+        // fail to execute the command due to different handling of env vars and args.
+        #[cfg(not(windows))]
+        {
+            spawn_in_terminal.shell = task::Shell::Program("sh".to_owned());
+        }
+        // TODO: on windows we might want to use cmd.exe for the same reason
+
         if !omit_history {
             if let Some(debugger_provider) = self.debugger_provider.as_ref() {
                 debugger_provider.task_scheduled(cx);
