@@ -12377,14 +12377,18 @@ impl Editor {
                     } else {
                         FindRange::SingleLine
                     };
-                    let cursor = movement::find_preceding_boundary_display_point(map, selection.head(), range, |c, _| !c.is_whitespace());
+                    let cursor = movement::find_preceding_boundary_display_point(
+                        map,
+                        selection.head(),
+                        range,
+                        |c, _| !c.is_whitespace(),
+                    );
                     selection.set_head(cursor, SelectionGoal::None);
                 });
             });
             this.insert("", window, cx);
         });
     }
-
 
     pub fn move_to_next_word_end(
         &mut self,
