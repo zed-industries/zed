@@ -532,7 +532,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
         let (workspace, mut cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -640,7 +640,7 @@ mod tests {
             assert_eq!(diff_view.tab_content_text, "old_file.txt ↔ new_file.txt");
             assert_eq!(
                 diff_view.tab_tooltip_text,
-                "test/old_file.txt ↔ test/new_file.txt"
+                path!("test/old_file.txt ↔ test/new_file.txt")
             );
         })
     }
