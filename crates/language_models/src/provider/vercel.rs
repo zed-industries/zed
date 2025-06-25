@@ -1,8 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::{BTreeMap, HashMap};
+use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
-
-use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
 use http_client::HttpClient;
@@ -10,16 +8,13 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, RateLimiter, Role,
 };
 use menu;
-use open_ai::{ImageUrl, ResponseStreamEvent, stream_completion};
+use open_ai::ResponseStreamEvent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use vercel::Model;
@@ -200,14 +195,12 @@ impl LanguageModelProvider for VercelLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        // Add base models from vercel::Model::iter()
         for model in vercel::Model::iter() {
             if !matches!(model, vercel::Model::Custom { .. }) {
                 models.insert(model.id().to_string(), model);
             }
         }
 
-        // Override with available models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
             .vercel
             .available_models
@@ -278,7 +271,8 @@ impl VercelLanguageModel {
 
         let future = self.request_limiter.stream(async move {
             let api_key = api_key.context("Missing Vercel API Key")?;
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request =
+                open_ai::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
         });
@@ -309,14 +303,14 @@ impl LanguageModel for VercelLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        true
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
         }
     }
 
@@ -354,262 +348,19 @@ impl LanguageModel for VercelLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_vercel(request, &self.model, self.max_output_tokens());
+        let request = crate::provider::open_ai::into_open_ai(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.max_output_tokens(),
+        );
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = VercelEventMapper::new();
+            let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
     }
-}
-
-pub fn into_vercel(
-    request: LanguageModelRequest,
-    model: &vercel::Model,
-    max_output_tokens: Option<u64>,
-) -> open_ai::Request {
-    let stream = !model.id().starts_with("o1-");
-
-    let mut messages = Vec::new();
-    for message in request.messages {
-        for content in message.content {
-            match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    add_message_content_part(
-                        open_ai::MessagePart::Text { text: text },
-                        message.role,
-                        &mut messages,
-                    )
-                }
-                MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(image) => {
-                    add_message_content_part(
-                        open_ai::MessagePart::Image {
-                            image_url: ImageUrl {
-                                url: image.to_base64_url(),
-                                detail: None,
-                            },
-                        },
-                        message.role,
-                        &mut messages,
-                    );
-                }
-                MessageContent::ToolUse(tool_use) => {
-                    let tool_call = open_ai::ToolCall {
-                        id: tool_use.id.to_string(),
-                        content: open_ai::ToolCallContent::Function {
-                            function: open_ai::FunctionContent {
-                                name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
-                            },
-                        },
-                    };
-
-                    if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
-                    {
-                        tool_calls.push(tool_call);
-                    } else {
-                        messages.push(open_ai::RequestMessage::Assistant {
-                            content: None,
-                            tool_calls: vec![tool_call],
-                        });
-                    }
-                }
-                MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![open_ai::MessagePart::Text {
-                                text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![open_ai::MessagePart::Image {
-                                image_url: ImageUrl {
-                                    url: image.to_base64_url(),
-                                    detail: None,
-                                },
-                            }]
-                        }
-                    };
-
-                    messages.push(open_ai::RequestMessage::Tool {
-                        content: content.into(),
-                        tool_call_id: tool_result.tool_use_id.to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    open_ai::Request {
-        model: model.id().into(),
-        messages,
-        stream,
-        stop: request.stop,
-        temperature: request.temperature.unwrap_or(1.0),
-        max_completion_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
-            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
-            Some(false)
-        } else {
-            None
-        },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| open_ai::ToolDefinition::Function {
-                function: open_ai::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
-            })
-            .collect(),
-        tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
-            LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
-            LanguageModelToolChoice::None => open_ai::ToolChoice::None,
-        }),
-    }
-}
-
-fn add_message_content_part(
-    new_part: open_ai::MessagePart,
-    role: Role,
-    messages: &mut Vec<open_ai::RequestMessage>,
-) {
-    match (role, messages.last_mut()) {
-        (Role::User, Some(open_ai::RequestMessage::User { content }))
-        | (
-            Role::Assistant,
-            Some(open_ai::RequestMessage::Assistant {
-                content: Some(content),
-                ..
-            }),
-        )
-        | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
-            content.push_part(new_part);
-        }
-        _ => {
-            messages.push(match role {
-                Role::User => open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::from(vec![new_part]),
-                },
-                Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: Some(open_ai::MessageContent::from(vec![new_part])),
-                    tool_calls: Vec::new(),
-                },
-                Role::System => open_ai::RequestMessage::System {
-                    content: open_ai::MessageContent::from(vec![new_part]),
-                },
-            });
-        }
-    }
-}
-
-pub struct VercelEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-}
-
-impl VercelEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.first() else {
-            return Vec::new();
-        };
-
-        let mut events = Vec::new();
-        if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-        }
-
-        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                if let Some(tool_id) = tool_call.id.clone() {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
-                        entry.name = name;
-                    }
-
-                    if let Some(arguments) = function.arguments.clone() {
-                        entry.arguments.push_str(&arguments);
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input,
-                                raw_input: tool_call.arguments.clone(),
-                            },
-                        )),
-                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected Vercel stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
 }
 
 pub fn count_vercel_tokens(
@@ -647,7 +398,7 @@ pub fn count_vercel_tokens(
             }
             // Map Vercel models to appropriate OpenAI models for token counting
             // since Vercel uses OpenAI-compatible API
-            Model::VZero => {
+            Model::VZeroOnePointFiveMedium => {
                 // Vercel v0 is similar to GPT-4o, so use gpt-4o for token counting
                 tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
             }
@@ -822,46 +573,6 @@ impl Render for ConfigurationView {
             div().child(Label::new("Loading credentials…")).into_any()
         } else {
             v_flex().size_full().child(api_key_section).into_any()
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use gpui::TestAppContext;
-    use language_model::LanguageModelRequestMessage;
-
-    use super::*;
-
-    #[gpui::test]
-    fn tiktoken_rs_support(cx: &TestAppContext) {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            mode: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("message".into())],
-                cache: false,
-            }],
-            tools: vec![],
-            tool_choice: None,
-            stop: vec![],
-            temperature: None,
-        };
-
-        // Validate that all models are supported by tiktoken-rs
-        for model in Model::iter() {
-            let count = cx
-                .executor()
-                .block(count_vercel_tokens(
-                    request.clone(),
-                    model,
-                    &cx.app.borrow(),
-                ))
-                .unwrap();
-            assert!(count > 0);
         }
     }
 }

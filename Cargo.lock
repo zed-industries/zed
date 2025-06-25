@@ -4347,6 +4347,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "tree-sitter",
+ "tree-sitter-go",
  "tree-sitter-json",
  "ui",
  "unindent",
@@ -17429,11 +17430,8 @@ name = "vercel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures 0.3.31",
- "http_client",
  "schemars",
  "serde",
- "serde_json",
  "strum 0.27.1",
  "workspace-hack",
 ]

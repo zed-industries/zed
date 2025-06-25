@@ -696,30 +696,6 @@ impl DebugPanel {
                                             }),
                                     )
                                     .child(
-                                        IconButton::new("debug-step-out", IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .shape(ui::IconButtonShape::Square)
-                                            .on_click(window.listener_for(
-                                                &running_state,
-                                                |this, _, _window, cx| {
-                                                    this.step_out(cx);
-                                                },
-                                            ))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Step out",
-                                                        &StepOut,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                }
-                                            }),
-                                    )
-                                    .child(
                                         IconButton::new(
                                             "debug-step-into",
                                             IconName::ArrowDownRight,
@@ -745,6 +721,30 @@ impl DebugPanel {
                                                 )
                                             }
                                         }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-out", IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
+                                            .shape(ui::IconButtonShape::Square)
+                                            .on_click(window.listener_for(
+                                                &running_state,
+                                                |this, _, _window, cx| {
+                                                    this.step_out(cx);
+                                                },
+                                            ))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Step out",
+                                                        &StepOut,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
                                     )
                                     .child(Divider::vertical())
                                     .child(

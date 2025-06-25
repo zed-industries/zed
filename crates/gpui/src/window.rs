@@ -210,6 +210,23 @@ thread_local! {
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
+/// Returned when the element arena has been used and so must be cleared before the next draw.
+#[must_use]
+pub struct ArenaClearNeeded;
+
+impl ArenaClearNeeded {
+    /// Clear the element arena.
+    pub fn clear(self) {
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
+            if percentage >= 80. {
+                log::warn!("elevated element arena occupation: {}.", percentage);
+            }
+            element_arena.clear();
+        })
+    }
+}
+
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
 
 impl FocusId {
@@ -968,8 +985,10 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
-                                window.draw(cx);
+                                let arena_clear_needed = window.draw(cx);
                                 window.present();
+                                // drop the arena elements after present to reduce latency
+                                arena_clear_needed.clear();
                             })
                             .log_err();
                     })
@@ -1730,7 +1749,7 @@ impl Window {
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
-    pub fn draw(&mut self, cx: &mut App) {
+    pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -1754,13 +1773,6 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
-            }
-            element_arena.clear();
-        });
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -1802,6 +1814,8 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+
+        ArenaClearNeeded
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -3467,7 +3481,7 @@ impl Window {
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
-            self.draw(cx);
+            self.draw(cx).clear();
         }
 
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);

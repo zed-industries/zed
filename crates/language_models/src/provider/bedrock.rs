@@ -11,8 +11,8 @@ use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ConverseStreamOutput, ReasoningContentBlockDelta,
-    StopReason,
+    CachePointBlock, CachePointType, ContentBlockDelta, ContentBlockStart, ConverseStreamOutput,
+    ReasoningContentBlockDelta, StopReason,
 };
 use bedrock::{
     BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent,
@@ -47,7 +47,7 @@ use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, default};
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 
@@ -328,6 +328,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
+                    cache_configuration: model.cache_configuration.as_ref().map(|config| {
+                        bedrock::BedrockModelCacheConfiguration {
+                            max_cache_anchors: config.max_cache_anchors,
+                            min_total_token: config.min_total_token,
+                        }
+                    }),
                 },
             );
         }
@@ -502,7 +508,8 @@ impl LanguageModel for BedrockModel {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
                 self.model.supports_tool_use()
             }
-            LanguageModelToolChoice::None => false,
+            // Add support for None - we'll filter tool calls at response
+            LanguageModelToolChoice::None => self.model.supports_tool_use(),
         }
     }
 
@@ -548,12 +555,15 @@ impl LanguageModel for BedrockModel {
             }
         };
 
+        let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
+
         let request = match into_bedrock(
             request,
             model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
             self.model.mode(),
+            self.model.supports_caching(),
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -561,15 +571,45 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|e| anyhow!(e))?;
-            Ok(map_to_language_model_completion_events(response))
+            let response = request.map_err(|err| anyhow!(err))?.await;
+            let events = map_to_language_model_completion_events(response);
+
+            if deny_tool_calls {
+                Ok(deny_tool_use_events(events).boxed())
+            } else {
+                Ok(events.boxed())
+            }
         });
+
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        None
+        self.model
+            .cache_configuration()
+            .map(|config| LanguageModelCacheConfiguration {
+                max_cache_anchors: config.max_cache_anchors,
+                should_speculate: false,
+                min_total_token: config.min_total_token,
+            })
     }
+}
+
+fn deny_tool_use_events(
+    events: impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+    events.map(|event| {
+        match event {
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
+                // Convert tool use to an error message if model decided to call it
+                Ok(LanguageModelCompletionEvent::Text(format!(
+                    "\n\n[Error: Tool calls are disabled in this context. Attempted to call '{}']",
+                    tool_use.name
+                )))
+            }
+            other => other,
+        }
+    })
 }
 
 pub fn into_bedrock(
@@ -578,6 +618,7 @@ pub fn into_bedrock(
     default_temperature: f32,
     max_output_tokens: u64,
     mode: BedrockModelMode,
+    supports_caching: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -589,7 +630,7 @@ pub fn into_bedrock(
 
         match message.role {
             Role::User | Role::Assistant => {
-                let bedrock_message_content: Vec<BedrockInnerContent> = message
+                let mut bedrock_message_content: Vec<BedrockInnerContent> = message
                     .content
                     .into_iter()
                     .filter_map(|content| match content {
@@ -601,6 +642,11 @@ pub fn into_bedrock(
                             }
                         }
                         MessageContent::Thinking { text, signature } => {
+                            if model.contains(Model::DeepSeekR1.request_id()) {
+                                // DeepSeekR1 doesn't support thinking blocks
+                                // And the AWS API demands that you strip them
+                                return None;
+                            }
                             let thinking = BedrockThinkingTextBlock::builder()
                                 .text(text)
                                 .set_signature(signature)
@@ -613,19 +659,32 @@ pub fn into_bedrock(
                             ))
                         }
                         MessageContent::RedactedThinking(blob) => {
+                            if model.contains(Model::DeepSeekR1.request_id()) {
+                                // DeepSeekR1 doesn't support thinking blocks
+                                // And the AWS API demands that you strip them
+                                return None;
+                            }
                             let redacted =
                                 BedrockThinkingBlock::RedactedContent(BedrockBlob::new(blob));
 
                             Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
-                        MessageContent::ToolUse(tool_use) => BedrockToolUseBlock::builder()
-                            .name(tool_use.name.to_string())
-                            .tool_use_id(tool_use.id.to_string())
-                            .input(value_to_aws_document(&tool_use.input))
-                            .build()
-                            .context("failed to build Bedrock tool use block")
-                            .log_err()
-                            .map(BedrockInnerContent::ToolUse),
+                        MessageContent::ToolUse(tool_use) => {
+                            let input = if tool_use.input.is_null() {
+                                // Bedrock API requires valid JsonValue, not null, for tool use input
+                                value_to_aws_document(&serde_json::json!({}))
+                            } else {
+                                value_to_aws_document(&tool_use.input)
+                            };
+                            BedrockToolUseBlock::builder()
+                                .name(tool_use.name.to_string())
+                                .tool_use_id(tool_use.id.to_string())
+                                .input(input)
+                                .build()
+                                .context("failed to build Bedrock tool use block")
+                                .log_err()
+                                .map(BedrockInnerContent::ToolUse)
+                        },
                         MessageContent::ToolResult(tool_result) => {
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
@@ -655,6 +714,14 @@ pub fn into_bedrock(
                         _ => None,
                     })
                     .collect();
+                if message.cache && supports_caching {
+                    bedrock_message_content.push(BedrockInnerContent::CachePoint(
+                        CachePointBlock::builder()
+                            .r#type(CachePointType::Default)
+                            .build()
+                            .context("failed to build cache point block")?,
+                    ));
+                }
                 let bedrock_role = match message.role {
                     Role::User => bedrock::BedrockRole::User,
                     Role::Assistant => bedrock::BedrockRole::Assistant,
@@ -683,7 +750,7 @@ pub fn into_bedrock(
         }
     }
 
-    let tool_spec: Vec<BedrockTool> = request
+    let mut tool_spec: Vec<BedrockTool> = request
         .tools
         .iter()
         .filter_map(|tool| {
@@ -700,6 +767,15 @@ pub fn into_bedrock(
         })
         .collect();
 
+    if !tool_spec.is_empty() && supports_caching {
+        tool_spec.push(BedrockTool::CachePoint(
+            CachePointBlock::builder()
+                .r#type(CachePointType::Default)
+                .build()
+                .context("failed to build cache point block")?,
+        ));
+    }
+
     let tool_choice = match request.tool_choice {
         Some(LanguageModelToolChoice::Auto) | None => {
             BedrockToolChoice::Auto(BedrockAutoToolChoice::builder().build())
@@ -708,7 +784,8 @@ pub fn into_bedrock(
             BedrockToolChoice::Any(BedrockAnyToolChoice::builder().build())
         }
         Some(LanguageModelToolChoice::None) => {
-            anyhow::bail!("LanguageModelToolChoice::None is not supported");
+            // For None, we still use Auto but will filter out tool calls in the response
+            BedrockToolChoice::Auto(BedrockAutoToolChoice::builder().build())
         }
     };
     let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
