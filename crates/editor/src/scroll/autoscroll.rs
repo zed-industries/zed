@@ -276,10 +276,12 @@ impl Editor {
         scroll_width: Pixels,
         em_advance: Pixels,
         layouts: &[LineWithInvisibles],
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
+        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
 
         let mut target_left;
         let mut target_right;
@@ -323,10 +325,12 @@ impl Editor {
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = target_left / em_advance;
+            scroll_position.x = target_left / em_advance;
+            self.set_scroll_position_internal(scroll_position, true, true, window, cx);
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / em_advance;
+            scroll_position.x = (target_right - viewport_width) / em_advance;
+            self.set_scroll_position_internal(scroll_position, true, true, window, cx);
             true
         } else {
             false

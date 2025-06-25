@@ -8439,6 +8439,7 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
+                                window,
                                 cx,
                             )
                         } else {
@@ -8593,6 +8594,7 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
+                                window,
                                 cx,
                             )
                         } else {
