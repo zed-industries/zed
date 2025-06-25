@@ -48,7 +48,7 @@ use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, default};
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 
