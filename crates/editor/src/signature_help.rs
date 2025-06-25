@@ -9,7 +9,11 @@ use language::BufferSnapshot;
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::rc::Rc;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
@@ -216,89 +220,113 @@ impl Editor {
                             ..Default::default()
                         };
                         let scroll_handle = ScrollHandle::new();
-                        
-                        // Defer the entire popover creation to prevent blinking
-                        let editor_handle = cx.entity();
-                        let languages_clone = languages.clone();
-                        let text_style_clone = text_style.clone();
-                        let scroll_handle_clone = scroll_handle.clone();
-                        
-                        cx.defer(move |cx| {
-                            editor_handle.update(cx, |editor, cx| {
-                                let signatures = signature_help
-                                    .signatures
-                                    .into_iter()
-                                    .map(|s| {
-                                        let parameter_doc = s
-                                            .active_parameter
-                                            .and_then(|idx| s.parameters.get(idx))
-                                            .and_then(|param| param.documentation.clone())
-                                            .map(|documentation| {
-                                                cx.new(|cx| {
-                                                    Markdown::new(
-                                                        documentation.into(),
-                                                        Some(languages_clone.clone()),
-                                                        None,
-                                                        cx,
-                                                    )
-                                                })
-                                            });
+                        let cache = editor.signature_help_state.markdown_cache.clone();
 
-                                        SignatureHelp {
-                                            label: s.label.into(),
-                                            documentation: s.documentation.map(|documentation| {
-                                                cx.new(|cx| {
-                                                    Markdown::new(
-                                                        documentation.into(),
-                                                        Some(languages_clone.clone()),
-                                                        None,
-                                                        cx,
-                                                    )
-                                                })
-                                            }),
-                                            highlights: s.highlights,
-                                            active_parameter: s.active_parameter,
-                                            parameter_documentation: parameter_doc,
-                                        }
-                                    })
-                                    .collect::<Vec<_>>();
-
-                                if signatures.is_empty() {
-                                    editor
-                                        .signature_help_state
-                                        .hide(SignatureHelpHiddenBy::AutoClose);
-                                    return;
+                        // Create signatures with cached or new markdown entities
+                        let signatures: Vec<SignatureHelp> = signature_help
+                            .signatures
+                            .into_iter()
+                            .map(|s| {
+                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                s.label.hash(&mut hasher);
+                                if let Some(ref doc) = s.documentation {
+                                    doc.hash(&mut hasher);
                                 }
+                                if let Some(param_idx) = s.active_parameter {
+                                    if let Some(param) = s.parameters.get(param_idx) {
+                                        if let Some(ref doc) = param.documentation {
+                                            doc.hash(&mut hasher);
+                                        }
+                                    }
+                                }
+                                let hash_key = hasher.finish();
 
-                                let current_signature = signature_help
-                                    .active_signature
-                                    .min(signatures.len().saturating_sub(1));
+                                let mut cache_borrow = cache.borrow_mut();
+                                let (sig_markdown, param_markdown) = if let Some(cached) = cache_borrow.get(&hash_key) {
+                                    cached.clone()
+                                } else {
+                                    // Create markdown entities (parsing happens asynchronously)
+                                    let sig_markdown = s.documentation.map(|doc| {
+                                        let markdown = cx.new(|cx| {
+                                            Markdown::new(
+                                                doc.into(),
+                                                Some(languages.clone()),
+                                                None,
+                                                cx,
+                                            )
+                                        });
+                                        // Observe to trigger redraw when parsing completes
+                                        cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+                                        markdown
+                                    });
 
-                                let signature_help_popover = SignatureHelpPopover {
-                                    style: text_style_clone,
-                                    signature: signatures,
-                                    current_signature,
-                                    scroll_handle: scroll_handle_clone.clone(),
-                                    scrollbar_state: ScrollbarState::new(scroll_handle_clone),
+                                    let param_markdown = s.active_parameter
+                                        .and_then(|idx| s.parameters.get(idx))
+                                        .and_then(|p| p.documentation.clone())
+                                        .map(|doc| {
+                                            let markdown = cx.new(|cx| {
+                                                Markdown::new(
+                                                    doc.into(),
+                                                    Some(languages.clone()),
+                                                    None,
+                                                    cx,
+                                                )
+                                            });
+                                            cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+                                            markdown
+                                        });
+
+                                    // Store in cache
+                                    cache_borrow.insert(hash_key, (sig_markdown.clone(), param_markdown.clone()));
+                                    (sig_markdown, param_markdown)
                                 };
-                                
-                                editor
-                                    .signature_help_state
-                                    .set_popover(signature_help_popover);
-                                cx.notify();
-                            });
-                        });
+
+                                SignatureHelp {
+                                    label: s.label.into(),
+                                    documentation: sig_markdown,
+                                    highlights: s.highlights,
+                                    active_parameter: s.active_parameter,
+                                    parameter_documentation: param_markdown,
+                                }
+                            })
+                            .collect();
+
+                        if signatures.is_empty() {
+                            editor
+                                .signature_help_state
+                                .hide(SignatureHelpHiddenBy::AutoClose);
+                            return;
+                        }
+
+                        let current_signature = signature_help
+                            .active_signature
+                            .min(signatures.len().saturating_sub(1));
+
+                        let signature_help_popover = SignatureHelpPopover {
+                            style: text_style.clone(),
+                            signature: signatures,
+                            current_signature,
+                            scroll_handle: scroll_handle.clone(),
+                            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                        };
+
+                        editor
+                            .signature_help_state
+                            .set_popover(signature_help_popover);
+                        cx.notify();
                     })
                     .ok();
             }));
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct SignatureHelpState {
     task: Option<Task<()>>,
     popover: Option<SignatureHelpPopover>,
     hidden_by: Option<SignatureHelpHiddenBy>,
+    // Cache for markdown entities
+    markdown_cache: Rc<RefCell<HashMap<u64, (Option<Entity<Markdown>>, Option<Entity<Markdown>>)>>>,
 }
 
 impl SignatureHelpState {
@@ -329,6 +357,7 @@ impl SignatureHelpState {
         if self.hidden_by.is_none() {
             self.popover = None;
             self.hidden_by = Some(hidden_by);
+            self.markdown_cache.borrow_mut().clear();
         }
     }
 
