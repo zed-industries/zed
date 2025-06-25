@@ -58,8 +58,8 @@ pub struct SshProjectId(pub u64);
 
 #[derive(Clone)]
 pub struct SshSocket {
-    connection_options: SshConnectionOptions,
-    socket_path: PathBuf,
+    pub connection_options: SshConnectionOptions,
+    pub socket_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
@@ -275,7 +275,7 @@ impl SshConnectionOptions {
         args
     }
 
-    fn scp_url(&self) -> String {
+    pub fn scp_url(&self) -> String {
         if let Some(username) = &self.username {
             format!("{}@{}", username, self.host)
         } else {
