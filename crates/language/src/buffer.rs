@@ -2927,7 +2927,11 @@ impl BufferSnapshot {
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             Some(&grammar.indents_config.as_ref()?.query)
         });
-        let grammars = matches.grammars().iter().cloned().collect::<Vec<_>>();
+        let indent_configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.indents_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
         let mut start_positions = Vec::<StartPosition>::new();
@@ -2936,8 +2940,7 @@ impl BufferSnapshot {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
 
-            let grammar = &grammars[mat.grammar_index];
-            let config = grammar.indents_config.as_ref().unwrap();
+            let config = indent_configs[mat.grammar_index];
             for capture in mat.captures {
                 if capture.index == config.indent_capture_ix {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
