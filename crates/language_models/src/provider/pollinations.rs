@@ -678,7 +678,6 @@ pub fn count_pollinations_tokens(
 
 struct ConfigurationView {
     api_key_editor: Entity<SingleLineInput>,
-    api_url_editor: Entity<SingleLineInput>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -687,23 +686,6 @@ impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "Your API Token").label("API key"));
-
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .pollinations
-            .api_url
-            .clone();
-
-        let api_url_editor = cx.new(|cx| {
-            let input = SingleLineInput::new(window, cx, pollinations::POLLINATIONS_API_URL)
-                .label("API URL");
-
-            if !api_url.is_empty() {
-                input.editor.update(cx, |editor, cx| {
-                    editor.set_text(&*api_url, window, cx);
-                });
-            }
-            input
-        });
 
         cx.observe(&state, |_, _, cx| {
             cx.notify();
@@ -730,7 +712,6 @@ impl ConfigurationView {
 
         Self {
             api_key_editor,
-            api_url_editor,
             state,
             load_credentials_task,
         }
@@ -775,89 +756,6 @@ impl ConfigurationView {
         })
         .detach_and_log_err(cx);
 
-        cx.notify();
-    }
-
-    fn save_api_url(&mut self, cx: &mut Context<Self>) {
-        let api_url = self
-            .api_url_editor
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-
-        let current_url = AllLanguageModelSettings::get_global(cx)
-            .pollinations
-            .api_url
-            .clone();
-
-        let effective_current_url = if current_url.is_empty() {
-            pollinations::POLLINATIONS_API_URL
-        } else {
-            &current_url
-        };
-
-        if !api_url.is_empty() && api_url != effective_current_url {
-            let fs = <dyn Fs>::global(cx);
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
-                use crate::settings::{
-                    PollinationsSettingsContent, VersionedPollinationsSettingsContent,
-                };
-
-                if settings.pollinations.is_none() {
-                    settings.pollinations = Some(PollinationsSettingsContent::Versioned(
-                        VersionedPollinationsSettingsContent::V1(
-                            crate::settings::PollinationsSettingsContentV1 {
-                                api_url: Some(api_url.clone()),
-                                available_models: None,
-                            },
-                        ),
-                    ));
-                } else {
-                    if let Some(pollinations) = settings.pollinations.as_mut() {
-                        match pollinations {
-                            PollinationsSettingsContent::Versioned(versioned) => match versioned {
-                                VersionedPollinationsSettingsContent::V1(v1) => {
-                                    v1.api_url = Some(api_url.clone());
-                                }
-                            },
-                            PollinationsSettingsContent::Legacy(legacy) => {
-                                legacy.api_url = Some(api_url.clone());
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    }
-
-    fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_url_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
-        let fs = <dyn Fs>::global(cx);
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-            use crate::settings::{
-                PollinationsSettingsContent, VersionedPollinationsSettingsContent,
-            };
-
-            if let Some(pollinations) = settings.pollinations.as_mut() {
-                match pollinations {
-                    PollinationsSettingsContent::Versioned(versioned) => match versioned {
-                        VersionedPollinationsSettingsContent::V1(v1) => {
-                            v1.api_url = None;
-                        }
-                    },
-                    PollinationsSettingsContent::Legacy(legacy) => {
-                        legacy.api_url = None;
-                    }
-                }
-            }
-        });
         cx.notify();
     }
 
@@ -928,70 +826,10 @@ impl Render for ConfigurationView {
                 .into_any()
         };
 
-        let custom_api_url_set = AllLanguageModelSettings::get_global(cx)
-            .pollinations
-            .api_url
-            != pollinations::POLLINATIONS_API_URL;
-
-        let api_url_section = if custom_api_url_set {
-            h_flex()
-                .mt_1()
-                .p_1()
-                .justify_between()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().background)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("Custom API URL configured.")),
-                )
-                .child(
-                    Button::new("reset-api-url", "Reset API URL")
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .layer(ElevationIndex::ModalSurface)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
-                        ),
-                )
-                .into_any()
-        } else {
-            v_flex()
-                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
-                    this.save_api_url(cx);
-                    cx.notify();
-                }))
-                .mt_2()
-                .pt_2()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .gap_1()
-                .child(
-                    List::new()
-                        .child(InstructionListItem::text_only(
-                            "Optionally, you can change the base URL for the Pollinations API request.",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste the new API endpoint below and hit enter",
-                        )),
-                )
-                .child(self.api_url_editor.clone())
-                .into_any()
-        };
-
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials…")).into_any()
         } else {
-            v_flex()
-                .size_full()
-                .child(api_key_section)
-                .child(api_url_section)
-                .into_any()
+            v_flex().size_full().child(api_key_section).into_any()
         }
     }
 }
