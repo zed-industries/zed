@@ -303,14 +303,14 @@ impl LanguageModel for VercelLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        true
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
         }
     }
 
@@ -398,7 +398,7 @@ pub fn count_vercel_tokens(
             }
             // Map Vercel models to appropriate OpenAI models for token counting
             // since Vercel uses OpenAI-compatible API
-            Model::VZero => {
+            Model::VZeroOnePointFiveMedium => {
                 // Vercel v0 is similar to GPT-4o, so use gpt-4o for token counting
                 tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
             }

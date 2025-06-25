@@ -734,6 +734,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "deepseek".into(),
                 "openrouter".into(),
                 "mistral".into(),
+                "vercel".into(),
             ]),
             ..Default::default()
         }

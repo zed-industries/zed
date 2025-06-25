@@ -7,10 +7,9 @@ pub const VERCEL_API_URL: &str = "https://api.v0.dev/v1";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "v-0")]
     #[default]
-    VZero,
-
+    #[serde(rename = "v0-1.5-md")]
+    VZeroOnePointFiveMedium,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -24,26 +23,26 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Self::VZero
+        Self::VZeroOnePointFiveMedium
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "v-0" => Ok(Self::VZero),
+            "v0-1.5-md" => Ok(Self::VZeroOnePointFiveMedium),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::VZero => "v-0",
+            Self::VZeroOnePointFiveMedium => "v0-1.5-md",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::VZero => "Vercel v0",
+            Self::VZeroOnePointFiveMedium => "v0-1.5-md",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -52,26 +51,23 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::VZero => 128_000,
+            Self::VZeroOnePointFiveMedium => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
+            Self::VZeroOnePointFiveMedium => Some(32_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
-            Self::VZero => Some(32_768),
         }
     }
 
-    /// Returns whether the given model supports the `parallel_tool_calls` parameter.
-    ///
-    /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::VZero => true,
+            Self::VZeroOnePointFiveMedium => true,
             Model::Custom { .. } => false,
         }
     }
