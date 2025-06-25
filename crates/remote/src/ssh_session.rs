@@ -5,7 +5,7 @@ use crate::{
     },
     proxy::ProxyLaunchError,
 };
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -2056,7 +2056,7 @@ impl SshRemoteConnection {
                 .await;
 
             if which.is_err() {
-                bail!(
+                anyhow::bail!(
                     "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
                 )
             }
