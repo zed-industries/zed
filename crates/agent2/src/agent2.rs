@@ -42,6 +42,7 @@ pub struct MessageResponse {
     chunks: BoxStream<'static, Result<MessageChunk>>,
 }
 
+#[derive(Debug)]
 pub struct ReadFileRequest {
     path: PathBuf,
     range: Range<usize>,
@@ -54,32 +55,39 @@ impl ReadFileRequest {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ThreadId(String);
 
+#[derive(Debug, Clone, Copy)]
 pub struct FileVersion(u64);
 
+#[derive(Debug, Clone)]
 pub struct AgentThreadSummary {
     pub id: ThreadId,
     pub title: String,
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
 pub struct FileContent {
     pub path: PathBuf,
     pub version: FileVersion,
     pub content: String,
 }
 
+#[derive(Debug, Clone)]
 pub enum Role {
     User,
     Assistant,
 }
 
+#[derive(Debug, Clone)]
 pub struct Message {
     pub role: Role,
     pub chunks: Vec<MessageChunk>,
 }
 
+#[derive(Debug, Clone)]
 pub enum MessageChunk {
     Text {
         chunk: String,
@@ -108,6 +116,7 @@ pub enum MessageChunk {
     },
 }
 
+#[derive(Debug, Clone)]
 pub enum AgentThreadEntry {
     Message(Message),
 }
@@ -123,6 +132,7 @@ impl ThreadEntryId {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ThreadEntry {
     pub id: ThreadEntryId,
     pub entry: AgentThreadEntry,
