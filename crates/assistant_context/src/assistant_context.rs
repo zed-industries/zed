@@ -2524,12 +2524,12 @@ impl AssistantContext {
 
             let message = start_message;
             let at_end = range.end >= message.offset_range.end.saturating_sub(1);
-            let role = if range.start == range.end || at_end {
+            let role_after = if range.start == range.end || at_end {
                 Role::User
             } else {
                 message.role
             };
-            let role_before = message.role;
+            let role = message.role;
             let mut edited_buffer = false;
 
             let mut suffix_start = None;
@@ -2563,7 +2563,7 @@ impl AssistantContext {
             };
 
             let suffix_metadata = MessageMetadata {
-                role,
+                role: role_after,
                 status: MessageStatus::Done,
                 timestamp: suffix.id.0,
                 cache: None,
@@ -2613,7 +2613,7 @@ impl AssistantContext {
                     };
 
                     let selection_metadata = MessageMetadata {
-                        role: role_before,
+                        role,
                         status: MessageStatus::Done,
                         timestamp: selection.id.0,
                         cache: None,
