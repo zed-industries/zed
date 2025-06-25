@@ -28,17 +28,6 @@ impl WindowAppearance {
             }
         }
     }
-
-    pub(crate) unsafe fn into_native(self) -> id {
-        unsafe {
-            match self {
-                Self::VibrantLight => NSAppearanceNameVibrantLight,
-                Self::VibrantDark => NSAppearanceNameVibrantDark,
-                Self::Light => NSAppearanceNameAqua,
-                Self::Dark => NSAppearanceNameDarkAqua,
-            }
-        }
-    }
 }
 
 #[link(name = "AppKit", kind = "framework")]
