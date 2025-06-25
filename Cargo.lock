@@ -13168,6 +13168,7 @@ dependencies = [
  "thiserror 2.0.12",
  "urlencoding",
  "util",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
