@@ -3045,34 +3045,26 @@ impl BufferSnapshot {
         Some(row_range.map(move |row| {
             let row_start = Point::new(row, self.indent_size_for_line(row).len);
 
-            let mut from_new_logic = false;
-            let new_logic_basis_row = if !config.decrease_indent_patterns.is_empty() {
-                let mut basis_row = None;
-                let line_range = Point::new(row, 0)..Point::new(row, self.line_len(row));
-                let line = self.text_for_range(line_range).collect::<String>();
-                for rule in &config.decrease_indent_patterns {
-                    if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
-                        let current_line_indent = self.indent_size_for_line(row).len;
-                        if let Some(parent_block) = start_positions.iter().rfind(|block| {
-                            block.start.row < row
-                                && block.start.column <= current_line_indent
-                                && rule.valid_after.iter().any(|p| p == block.suffix.as_ref())
-                        }) {
-                            basis_row = Some(parent_block.start.row);
-                            from_new_logic = true;
-                        }
-                        break;
-                    }
-                }
-                basis_row
-            } else {
-                None
-            };
-
             let mut indent_from_prev_row = false;
             let mut outdent_from_prev_row = false;
             let mut outdent_to_row = u32::MAX;
             let mut from_regex = false;
+
+            let line_range = Point::new(row, 0)..Point::new(row, self.line_len(row));
+            let line = self.text_for_range(line_range).collect::<String>();
+            for rule in &config.decrease_indent_patterns {
+                if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
+                    if let Some(basis_row) = start_positions.iter().rfind(|pos| {
+                        pos.start.row < row
+                            && pos.start.column <= row_start.column
+                            && rule.valid_after.iter().any(|p| p == pos.suffix.as_ref())
+                    }) {
+                        outdent_to_row = basis_row.start.row;
+                        from_regex = true;
+                    }
+                    break;
+                }
+            }
 
             while let Some((indent_row, delta)) = indent_changes.peek() {
                 match indent_row.cmp(&row) {
@@ -3111,15 +3103,8 @@ impl BufferSnapshot {
                 .iter()
                 .any(|e| e.start.row < row && e.end > row_start);
 
-            let from_regex = from_regex || from_new_logic;
-
-            let suggestion = if let Some(basis_row) = new_logic_basis_row {
-                Some(IndentSuggestion {
-                    basis_row,
-                    delta: Ordering::Equal,
-                    within_error: within_error && !from_regex,
-                })
-            } else if outdent_to_row == prev_row || (outdent_from_prev_row && indent_from_prev_row)
+            let suggestion = if outdent_to_row == prev_row
+                || (outdent_from_prev_row && indent_from_prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
