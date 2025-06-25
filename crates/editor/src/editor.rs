@@ -16164,7 +16164,7 @@ impl Editor {
         })
     }
 
-    fn restart_language_server(
+    pub fn restart_language_server(
         &mut self,
         _: &RestartLanguageServer,
         _: &mut Window,
@@ -16175,6 +16175,7 @@ impl Editor {
                 project.update(cx, |project, cx| {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
+                        HashSet::default(),
                         cx,
                     );
                 });
@@ -16182,7 +16183,7 @@ impl Editor {
         }
     }
 
-    fn stop_language_server(
+    pub fn stop_language_server(
         &mut self,
         _: &StopLanguageServer,
         _: &mut Window,
@@ -16193,6 +16194,7 @@ impl Editor {
                 project.update(cx, |project, cx| {
                     project.stop_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
+                        HashSet::default(),
                         cx,
                     );
                     cx.emit(project::Event::RefreshInlayHints);
