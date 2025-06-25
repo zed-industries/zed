@@ -344,7 +344,12 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.max_output_tokens(),
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
@@ -356,10 +361,11 @@ impl LanguageModel for OpenAiLanguageModel {
 
 pub fn into_open_ai(
     request: LanguageModelRequest,
-    model: &Model,
+    model_id: &str,
+    supports_parallel_tool_calls: bool,
     max_output_tokens: Option<u64>,
 ) -> open_ai::Request {
-    let stream = !model.id().starts_with("o1-");
+    let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
     for message in request.messages {
@@ -435,13 +441,13 @@ pub fn into_open_ai(
     }
 
     open_ai::Request {
-        model: model.id().into(),
+        model: model_id.into(),
         messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_completion_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+        parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
         } else {
