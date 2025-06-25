@@ -502,7 +502,6 @@ impl MarkdownPreviewView {
             item_ix: current_scroll.item_ix,
             offset_in_item: current_scroll.offset_in_item + viewport_height,
         };
-
         self.list_state.scroll_to(new_scroll);
         cx.notify();
     }
