@@ -110,18 +110,11 @@ dependencies = [
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "collections",
- "deepseek",
  "fs",
  "gpui",
  "language_model",
- "lmstudio",
- "log",
- "mistral",
- "ollama",
- "open_ai",
  "paths",
  "schemars",
  "serde",

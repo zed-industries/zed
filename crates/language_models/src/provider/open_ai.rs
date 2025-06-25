@@ -28,6 +28,7 @@ use ui::{ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
 
+use crate::OpenAiSettingsContent;
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "openai";
@@ -37,7 +38,6 @@ const PROVIDER_NAME: &str = "OpenAI";
 pub struct OpenAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -803,30 +803,13 @@ impl ConfigurationView {
         if !api_url.is_empty() && api_url != effective_current_url {
             let fs = <dyn Fs>::global(cx);
             update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
-                use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
-
-                if settings.openai.is_none() {
-                    settings.openai = Some(OpenAiSettingsContent::Versioned(
-                        VersionedOpenAiSettingsContent::V1(
-                            crate::settings::OpenAiSettingsContentV1 {
-                                api_url: Some(api_url.clone()),
-                                available_models: None,
-                            },
-                        ),
-                    ));
+                if let Some(settings) = settings.openai.as_mut() {
+                    settings.api_url = Some(api_url.clone());
                 } else {
-                    if let Some(openai) = settings.openai.as_mut() {
-                        match openai {
-                            OpenAiSettingsContent::Versioned(versioned) => match versioned {
-                                VersionedOpenAiSettingsContent::V1(v1) => {
-                                    v1.api_url = Some(api_url.clone());
-                                }
-                            },
-                            OpenAiSettingsContent::Legacy(legacy) => {
-                                legacy.api_url = Some(api_url.clone());
-                            }
-                        }
-                    }
+                    settings.openai = Some(OpenAiSettingsContent {
+                        api_url: Some(api_url.clone()),
+                        available_models: None,
+                    });
                 }
             });
         }
@@ -840,19 +823,8 @@ impl ConfigurationView {
         });
         let fs = <dyn Fs>::global(cx);
         update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-            use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
-
-            if let Some(openai) = settings.openai.as_mut() {
-                match openai {
-                    OpenAiSettingsContent::Versioned(versioned) => match versioned {
-                        VersionedOpenAiSettingsContent::V1(v1) => {
-                            v1.api_url = None;
-                        }
-                    },
-                    OpenAiSettingsContent::Legacy(legacy) => {
-                        legacy.api_url = None;
-                    }
-                }
+            if let Some(settings) = settings.openai.as_mut() {
+                settings.api_url = None;
             }
         });
         cx.notify();
