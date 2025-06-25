@@ -151,6 +151,9 @@ pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: f32,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
+    /// The second element indicates whether the autoscroll request is local
+    /// (true) or remote (false). Local requests are initiated by user actions,
+    /// while remote requests come from external sources.
     autoscroll_request: Option<(Autoscroll, bool)>,
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
