@@ -1871,7 +1871,7 @@ impl EditorElement {
 
         let mut minimap = div()
             .size_full()
-            .shadow_sm()
+            .shadow_xs()
             .px(PADDING_OFFSET)
             .child(minimap_editor)
             .into_any_element();
