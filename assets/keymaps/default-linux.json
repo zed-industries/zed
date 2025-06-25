@@ -1050,5 +1050,12 @@
       "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivatePreviousItem"
     }
+  },
+  {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "pageup": "markdown::MovePageUp",
+      "pagedown": "markdown::MovePageDown"
+    }
   }
 ]
