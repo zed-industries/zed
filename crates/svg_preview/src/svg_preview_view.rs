@@ -153,12 +153,10 @@ impl SvgPreviewView {
 
     fn get_svg_path<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> Option<PathBuf> {
         let buffer = editor.read(cx).buffer().read(cx);
-        if let Some(buffer) = buffer.as_singleton() {
-            if let Some(file) = buffer.read(cx).file() {
-                return Some(file.path().to_path_buf());
-            }
-        }
-        None
+        let buffer = buffer.as_singleton()?;
+        let file = buffer.read(cx).file()?;
+        let local_file = file.as_local()?;
+        Some(local_file.abs_path(cx))
     }
 }
 
