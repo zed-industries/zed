@@ -3050,22 +3050,6 @@ impl BufferSnapshot {
             let mut outdent_to_row = u32::MAX;
             let mut from_regex = false;
 
-            let line_range = Point::new(row, 0)..Point::new(row, self.line_len(row));
-            let line = self.text_for_range(line_range).collect::<String>();
-            for rule in &config.decrease_indent_patterns {
-                if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
-                    if let Some(basis_row) = start_positions.iter().rfind(|pos| {
-                        pos.start.row < row
-                            && pos.start.column <= row_start.column
-                            && rule.valid_after.iter().any(|p| p == pos.suffix.as_ref())
-                    }) {
-                        outdent_to_row = basis_row.start.row;
-                        from_regex = true;
-                    }
-                    break;
-                }
-            }
-
             while let Some((indent_row, delta)) = indent_changes.peek() {
                 match indent_row.cmp(&row) {
                     Ordering::Equal => match delta {
@@ -3096,6 +3080,23 @@ impl BufferSnapshot {
                 }
                 if range.end > prev_row_start && range.end <= row_start {
                     outdent_to_row = outdent_to_row.min(range.start.row);
+                }
+            }
+
+            let line_range = Point::new(row, 0)..Point::new(row, self.line_len(row));
+            let line = self.text_for_range(line_range).collect::<String>();
+            for rule in &config.decrease_indent_patterns {
+                if rule.pattern.as_ref().map_or(false, |r| r.is_match(&line)) {
+                    if let Some(basis_row) = start_positions.iter().rfind(|pos| {
+                        pos.start.row < row
+                            && pos.start.column <= row_start.column
+                            && rule.valid_after.iter().any(|p| p == pos.suffix.as_ref())
+                    }) {
+                        indent_from_prev_row = false;
+                        outdent_to_row = basis_row.start.row;
+                        from_regex = true;
+                    }
+                    break;
                 }
             }
 
