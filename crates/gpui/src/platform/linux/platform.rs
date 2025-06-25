@@ -30,6 +30,9 @@ use crate::{
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
+use super::LinuxKeyboardMapper;
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
 // Values match the defaults on GTK.
@@ -706,6 +709,7 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 impl crate::Keystroke {
     pub(super) fn from_xkb(
         state: &State,
+        keyboard_mapper: &LinuxKeyboardMapper,
         mut modifiers: crate::Modifiers,
         keycode: Keycode,
     ) -> Self {
@@ -714,75 +718,66 @@ impl crate::Keystroke {
         let key_sym = state.key_get_one_sym(keycode);
 
         let key = match key_sym {
+            Keysym::space => "space".to_owned(),
+            Keysym::BackSpace => "backspace".to_owned(),
             Keysym::Return => "enter".to_owned(),
-            Keysym::Prior => "pageup".to_owned(),
-            Keysym::Next => "pagedown".to_owned(),
+            // Keysym::Tab => "tab".to_owned(),
             Keysym::ISO_Left_Tab => "tab".to_owned(),
-            Keysym::KP_Prior => "pageup".to_owned(),
-            Keysym::KP_Next => "pagedown".to_owned(),
+            Keysym::uparrow => "up".to_owned(),
+            Keysym::downarrow => "down".to_owned(),
+            Keysym::leftarrow => "left".to_owned(),
+            Keysym::rightarrow => "right".to_owned(),
+            Keysym::Home | Keysym::KP_Home => "home".to_owned(),
+            Keysym::End | Keysym::KP_End => "end".to_owned(),
+            Keysym::Prior | Keysym::KP_Prior => "pageup".to_owned(),
+            Keysym::Next | Keysym::KP_Next => "pagedown".to_owned(),
             Keysym::XF86_Back => "back".to_owned(),
             Keysym::XF86_Forward => "forward".to_owned(),
+            Keysym::Escape => "escape".to_owned(),
+            Keysym::Insert | Keysym::KP_Insert => "insert".to_owned(),
+            Keysym::Delete | Keysym::KP_Delete => "delete".to_owned(),
+            Keysym::Menu => "menu".to_owned(),
             Keysym::XF86_Cut => "cut".to_owned(),
             Keysym::XF86_Copy => "copy".to_owned(),
             Keysym::XF86_Paste => "paste".to_owned(),
             Keysym::XF86_New => "new".to_owned(),
             Keysym::XF86_Open => "open".to_owned(),
             Keysym::XF86_Save => "save".to_owned(),
-
-            Keysym::comma => ",".to_owned(),
-            Keysym::period => ".".to_owned(),
-            Keysym::less => "<".to_owned(),
-            Keysym::greater => ">".to_owned(),
-            Keysym::slash => "/".to_owned(),
-            Keysym::question => "?".to_owned(),
-
-            Keysym::semicolon => ";".to_owned(),
-            Keysym::colon => ":".to_owned(),
-            Keysym::apostrophe => "'".to_owned(),
-            Keysym::quotedbl => "\"".to_owned(),
-
-            Keysym::bracketleft => "[".to_owned(),
-            Keysym::braceleft => "{".to_owned(),
-            Keysym::bracketright => "]".to_owned(),
-            Keysym::braceright => "}".to_owned(),
-            Keysym::backslash => "\\".to_owned(),
-            Keysym::bar => "|".to_owned(),
-
-            Keysym::grave => "`".to_owned(),
-            Keysym::asciitilde => "~".to_owned(),
-            Keysym::exclam => "!".to_owned(),
-            Keysym::at => "@".to_owned(),
-            Keysym::numbersign => "#".to_owned(),
-            Keysym::dollar => "$".to_owned(),
-            Keysym::percent => "%".to_owned(),
-            Keysym::asciicircum => "^".to_owned(),
-            Keysym::ampersand => "&".to_owned(),
-            Keysym::asterisk => "*".to_owned(),
-            Keysym::parenleft => "(".to_owned(),
-            Keysym::parenright => ")".to_owned(),
-            Keysym::minus => "-".to_owned(),
-            Keysym::underscore => "_".to_owned(),
-            Keysym::equal => "=".to_owned(),
-            Keysym::plus => "+".to_owned(),
-
-            _ => {
-                let name = xkb::keysym_get_name(key_sym).to_lowercase();
-                if key_sym.is_keypad_key() {
-                    name.replace("kp_", "")
-                } else {
-                    name
-                }
-            }
+            Keysym::F1 => "f1".to_owned(),
+            Keysym::F2 => "f2".to_owned(),
+            Keysym::F3 => "f3".to_owned(),
+            Keysym::F4 => "f4".to_owned(),
+            Keysym::F5 => "f5".to_owned(),
+            Keysym::F6 => "f6".to_owned(),
+            Keysym::F7 => "f7".to_owned(),
+            Keysym::F8 => "f8".to_owned(),
+            Keysym::F9 => "f9".to_owned(),
+            Keysym::F10 => "f10".to_owned(),
+            Keysym::F11 => "f11".to_owned(),
+            Keysym::F12 => "f12".to_owned(),
+            Keysym::F13 => "f13".to_owned(),
+            Keysym::F14 => "f14".to_owned(),
+            Keysym::F15 => "f15".to_owned(),
+            Keysym::F16 => "f16".to_owned(),
+            Keysym::F17 => "f17".to_owned(),
+            Keysym::F18 => "f18".to_owned(),
+            Keysym::F19 => "f19".to_owned(),
+            Keysym::F20 => "f20".to_owned(),
+            Keysym::F21 => "f21".to_owned(),
+            Keysym::F22 => "f22".to_owned(),
+            Keysym::F23 => "f23".to_owned(),
+            Keysym::F24 => "f24".to_owned(),
+            _ => keyboard_mapper
+                .get_key(keycode, &mut modifiers)
+                .unwrap_or_else(|| {
+                    let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                    if key_sym.is_keypad_key() {
+                        name.replace("kp_", "")
+                    } else {
+                        name
+                    }
+                }),
         };
-
-        if modifiers.shift {
-            // we only include the shift for upper-case letters by convention,
-            // so don't include for numbers and symbols, but do include for
-            // tab/enter, etc.
-            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
-                modifiers.shift = false;
-            }
-        }
 
         // Ignore control characters (and DEL) for the purposes of key_char
         let key_char =
@@ -792,65 +787,6 @@ impl crate::Keystroke {
             modifiers,
             key,
             key_char,
-        }
-    }
-
-    /**
-     * Returns which symbol the dead key represents
-     * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
-     */
-    pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
-        match keysym {
-            Keysym::dead_grave => Some("`".to_owned()),
-            Keysym::dead_acute => Some("´".to_owned()),
-            Keysym::dead_circumflex => Some("^".to_owned()),
-            Keysym::dead_tilde => Some("~".to_owned()),
-            Keysym::dead_macron => Some("¯".to_owned()),
-            Keysym::dead_breve => Some("˘".to_owned()),
-            Keysym::dead_abovedot => Some("˙".to_owned()),
-            Keysym::dead_diaeresis => Some("¨".to_owned()),
-            Keysym::dead_abovering => Some("˚".to_owned()),
-            Keysym::dead_doubleacute => Some("˝".to_owned()),
-            Keysym::dead_caron => Some("ˇ".to_owned()),
-            Keysym::dead_cedilla => Some("¸".to_owned()),
-            Keysym::dead_ogonek => Some("˛".to_owned()),
-            Keysym::dead_iota => Some("ͅ".to_owned()),
-            Keysym::dead_voiced_sound => Some("゙".to_owned()),
-            Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
-            Keysym::dead_belowdot => Some("̣̣".to_owned()),
-            Keysym::dead_hook => Some("̡".to_owned()),
-            Keysym::dead_horn => Some("̛".to_owned()),
-            Keysym::dead_stroke => Some("̶̶".to_owned()),
-            Keysym::dead_abovecomma => Some("̓̓".to_owned()),
-            Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
-            Keysym::dead_doublegrave => Some("̏".to_owned()),
-            Keysym::dead_belowring => Some("˳".to_owned()),
-            Keysym::dead_belowmacron => Some("̱".to_owned()),
-            Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
-            Keysym::dead_belowtilde => Some("̰".to_owned()),
-            Keysym::dead_belowbreve => Some("̮".to_owned()),
-            Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
-            Keysym::dead_invertedbreve => Some("̯".to_owned()),
-            Keysym::dead_belowcomma => Some("̦".to_owned()),
-            Keysym::dead_currency => None,
-            Keysym::dead_lowline => None,
-            Keysym::dead_aboveverticalline => None,
-            Keysym::dead_belowverticalline => None,
-            Keysym::dead_longsolidusoverlay => None,
-            Keysym::dead_a => None,
-            Keysym::dead_A => None,
-            Keysym::dead_e => None,
-            Keysym::dead_E => None,
-            Keysym::dead_i => None,
-            Keysym::dead_I => None,
-            Keysym::dead_o => None,
-            Keysym::dead_O => None,
-            Keysym::dead_u => None,
-            Keysym::dead_U => None,
-            Keysym::dead_small_schwa => Some("ə".to_owned()),
-            Keysym::dead_capital_schwa => Some("Ə".to_owned()),
-            Keysym::dead_greek => None,
-            _ => None,
         }
     }
 }

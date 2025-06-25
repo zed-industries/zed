@@ -63,22 +63,23 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
-use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
-use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
+use xkbcommon::xkb::{
+    self, KEYMAP_COMPILE_NO_FLAGS, Keycode, State, ffi::XKB_KEYMAP_FORMAT_TEXT_V1,
+};
 
 use super::{
     display::WaylandDisplay,
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
-    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
-    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    LinuxKeyboardLayout, LinuxKeyboardMapper, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels,
+    ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px,
+    size,
 };
 use crate::{
     SharedString,
@@ -93,6 +94,10 @@ use crate::{
         },
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+};
+use crate::{
+    platform::{PlatformWindow, blade::BladeContext},
+    underlying_dead_key,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -210,9 +215,11 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
-    keyboard_layout: LinuxKeyboardLayout,
-    keymap_state: Option<xkb::State>,
+    keymap_state: Option<State>,
     compose_state: Option<xkb::compose::State>,
+    keyboard_layout: LinuxKeyboardLayout,
+    keyboard_mapper: Option<Rc<LinuxKeyboardMapper>>,
+    keyboard_mapper_cache: HashMap<String, Rc<LinuxKeyboardMapper>>,
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
@@ -352,6 +359,12 @@ impl WaylandClientStatePtr {
             let changed = layout_name != state.keyboard_layout.name();
             if changed {
                 state.keyboard_layout = LinuxKeyboardLayout::new(layout_name.to_string().into());
+                let mapper = state
+                    .keyboard_mapper_cache
+                    .entry(layout_name.to_string())
+                    .or_insert(Rc::new(LinuxKeyboardMapper::new(&keymap, 0, 0, 0)))
+                    .clone();
+                state.keyboard_mapper = Some(mapper);
             }
             changed
         } else {
@@ -449,6 +462,7 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
+        let keyboard_layout = LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME);
         let (globals, mut event_queue) =
             registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
@@ -569,9 +583,11 @@ impl WaylandClient {
             in_progress_outputs,
             windows: HashMap::default(),
             common,
-            keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
+            keyboard_layout,
+            keyboard_mapper: None,
+            keyboard_mapper_cache: HashMap::default(),
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -1285,20 +1301,25 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let focused_window = focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
+                let keyboard_mapper = state.keyboard_mapper.as_ref().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
-                        let mut keystroke =
-                            Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                        let mut keystroke = Keystroke::from_xkb(
+                            keymap_state,
+                            keyboard_mapper,
+                            state.modifiers,
+                            keycode,
+                        );
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
                                     keystroke.key_char = None;
                                     state.pre_edit_text =
-                                        compose.utf8().or(Keystroke::underlying_dead_key(keysym));
+                                        compose.utf8().or(underlying_dead_key(keysym));
                                     let pre_edit =
                                         state.pre_edit_text.clone().unwrap_or(String::default());
                                     drop(state);
@@ -1315,7 +1336,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 }
                                 xkb::Status::Cancelled => {
                                     let pre_edit = state.pre_edit_text.take();
-                                    let new_pre_edit = Keystroke::underlying_dead_key(keysym);
+                                    let new_pre_edit = underlying_dead_key(keysym);
                                     state.pre_edit_text = new_pre_edit.clone();
                                     drop(state);
                                     if let Some(pre_edit) = pre_edit {
@@ -1376,7 +1397,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
                         let input = PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: Keystroke::from_xkb(
+                                keymap_state,
+                                keyboard_mapper,
+                                state.modifiers,
+                                keycode,
+                            ),
                         });
 
                         if state.repeat.current_keycode == Some(keycode) {
