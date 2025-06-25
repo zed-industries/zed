@@ -71,7 +71,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 8] = [
+const RULES_FILE_NAMES: [&'static str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -80,6 +80,7 @@ const RULES_FILE_NAMES: [&'static str; 8] = [
     "CLAUDE.md",
     "AGENT.md",
     "AGENTS.md",
+    "GEMINI.md",
 ];
 
 pub fn init(cx: &mut App) {

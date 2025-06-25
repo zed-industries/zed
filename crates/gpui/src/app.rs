@@ -909,7 +909,7 @@ impl App {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, window, cx| window.draw(cx))
+                    self.update_window(window, |_, window, cx| window.draw(cx).clear())
                         .unwrap();
                 }
 

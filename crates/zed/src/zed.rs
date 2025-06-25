@@ -30,6 +30,7 @@ use gpui::{
     px, retain_all,
 };
 use image_viewer::ImageInfo;
+use language_tools::lsp_tool::LspTool;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
@@ -295,7 +296,7 @@ pub fn initialize_workspace(
 
         let popover_menu_handle = PopoverMenuHandle::default();
 
-        let inline_completion_button = cx.new(|cx| {
+        let edit_prediction_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
@@ -315,7 +316,7 @@ pub fn initialize_workspace(
             cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
-            app_state.languages.clone(),
+            workspace.project().read(cx).languages().clone(),
             window,
             cx,
         );
@@ -325,13 +326,16 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
+        let lsp_tool = cx.new(|cx| LspTool::new(workspace, window, cx));
+
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
+            status_bar.add_left_item(lsp_tool, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(inline_completion_button, window, cx);
+            status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
@@ -4300,6 +4304,7 @@ mod tests {
                 "jj",
                 "journal",
                 "language_selector",
+                "lsp_tool",
                 "markdown",
                 "menu",
                 "notebook",
@@ -4436,12 +4441,7 @@ mod tests {
             );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
-            language_models::init(
-                app_state.user_store.clone(),
-                app_state.client.clone(),
-                app_state.fs.clone(),
-                cx,
-            );
+            language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);

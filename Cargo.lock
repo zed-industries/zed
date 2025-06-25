@@ -14,6 +14,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "proto",
  "release_channel",
  "smallvec",
  "ui",
@@ -110,18 +111,11 @@ dependencies = [
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "collections",
- "deepseek",
  "fs",
  "gpui",
  "language_model",
- "lmstudio",
- "log",
- "mistral",
- "ollama",
- "open_ai",
  "paths",
  "schemars",
  "serde",
@@ -9026,6 +9020,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "lsp",
+ "picker",
  "project",
  "release_channel",
  "serde_json",
@@ -13169,6 +13164,7 @@ dependencies = [
  "thiserror 2.0.12",
  "urlencoding",
  "util",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -17432,11 +17428,8 @@ name = "vercel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures 0.3.31",
- "http_client",
  "schemars",
  "serde",
- "serde_json",
  "strum 0.27.1",
  "workspace-hack",
 ]
@@ -19923,7 +19916,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.193.0"
+version = "0.194.0"
 dependencies = [
  "activity_indicator",
  "agent",

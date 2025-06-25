@@ -2181,14 +2181,9 @@ impl ActiveThread {
                     let colors = cx.theme().colors();
                     div().id(("message-container", ix)).py_1().px_2().child(
                         v_flex()
-                            .w_full()
                             .bg(colors.editor_background)
                             .rounded_sm()
-                            .child(
-                                h_flex()
-                                    .p_4()
-                                    .child(v_flex().flex_1().children(message_content)),
-                            ),
+                            .child(div().p_4().children(message_content)),
                     )
                 }
             }

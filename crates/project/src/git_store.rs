@@ -3322,7 +3322,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3389,7 +3389,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3749,7 +3749,7 @@ impl Repository {
                         let buffer_id = git_store
                             .buffer_store
                             .read(cx)
-                            .get_by_path(&project_path?, cx)?
+                            .get_by_path(&project_path?)?
                             .read(cx)
                             .remote_id();
                         let diff_state = git_store.diffs.get(&buffer_id)?;

@@ -1805,7 +1805,16 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .run_command(
+                    "sh",
+                    &[
+                        "-c",
+                        &shell_script!(
+                            "mkdir -p {parent}",
+                            parent = parent.to_string_lossy().as_ref()
+                        ),
+                    ],
+                )
                 .await?;
         }
 
@@ -1877,7 +1886,16 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .run_command(
+                    "sh",
+                    &[
+                        "-c",
+                        &shell_script!(
+                            "mkdir -p {parent}",
+                            parent = parent.to_string_lossy().as_ref()
+                        ),
+                    ],
+                )
                 .await?;
         }
 
@@ -2012,27 +2030,7 @@ impl SshRemoteConnection {
         };
         smol::fs::create_dir_all("target/remote_server").await?;
 
-        if build_remote_server.contains("zigbuild") {
-            delegate.set_status(
-                Some(&format!(
-                    "Building remote binary from source for {triple} with Zig"
-                )),
-                cx,
-            );
-            log::info!("building remote binary from source for {triple} with Zig");
-            run_cmd(Command::new("cargo").args([
-                "zigbuild",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-                "--target",
-                &triple,
-            ]))
-            .await?;
-        } else {
+        if build_remote_server.contains("cross") {
             delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
             log::info!("installing cross");
             run_cmd(Command::new("cargo").args([
@@ -2070,12 +2068,50 @@ impl SshRemoteConnection {
                     ),
             )
             .await?;
-        }
+        } else {
+            let which = cx
+                .background_spawn(async move { which::which("zig") })
+                .await;
 
-        delegate.set_status(Some("Compressing binary"), cx);
+            if which.is_err() {
+                anyhow::bail!(
+                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                )
+            }
+
+            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+            log::info!("adding rustup target");
+            run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+
+            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+            log::info!("installing cargo-zigbuild");
+            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(Command::new("cargo").args([
+                "zigbuild",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+                "--target",
+                &triple,
+            ]))
+            .await?;
+        };
 
         let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
         if !build_remote_server.contains("nocompress") {
+            delegate.set_status(Some("Compressing binary"), cx);
+
             run_cmd(Command::new("gzip").args([
                 "-9",
                 "-f",
