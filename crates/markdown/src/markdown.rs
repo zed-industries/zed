@@ -235,14 +235,19 @@ impl Markdown {
 
             for name in &language_names {
                 if !name.is_empty() {
-                    if let Some(language) = registry.get_cached_language_by_name_or_extension(name) {
-                        this.parsed_markdown.languages_by_name.insert(name.clone(), language);
+                    if let Some(language) = registry.get_cached_language_by_name_or_extension(name)
+                    {
+                        this.parsed_markdown
+                            .languages_by_name
+                            .insert(name.clone(), language);
                     } else {
                         need_async_names.push(name.clone());
                     }
                 } else if let Some(fallback) = &fallback_for_async {
                     if let Some(language) = registry.get_cached_language(fallback.as_ref()) {
-                        this.parsed_markdown.languages_by_name.insert(name.clone(), language);
+                        this.parsed_markdown
+                            .languages_by_name
+                            .insert(name.clone(), language);
                     } else {
                         need_async_names.push(name.clone());
                     }
@@ -251,7 +256,9 @@ impl Markdown {
 
             for path in &paths {
                 if let Some(language) = registry.get_cached_language_for_path(path) {
-                    this.parsed_markdown.languages_by_path.insert(path.clone(), language);
+                    this.parsed_markdown
+                        .languages_by_path
+                        .insert(path.clone(), language);
                 } else {
                     need_async_paths.push(path.clone());
                 }
@@ -293,10 +300,15 @@ impl Markdown {
                 let (languages_by_name, languages_by_path) = async_loading.await;
 
                 this.update(cx, |this, cx| {
-                    this.parsed_markdown.languages_by_name.extend(languages_by_name);
-                    this.parsed_markdown.languages_by_path.extend(languages_by_path);
-                    if !this.parsed_markdown.languages_by_name.is_empty() ||
-                       !this.parsed_markdown.languages_by_path.is_empty() {
+                    this.parsed_markdown
+                        .languages_by_name
+                        .extend(languages_by_name);
+                    this.parsed_markdown
+                        .languages_by_path
+                        .extend(languages_by_path);
+                    if !this.parsed_markdown.languages_by_name.is_empty()
+                        || !this.parsed_markdown.languages_by_path.is_empty()
+                    {
                         cx.notify();
                     }
                 })
