@@ -1,6 +1,6 @@
-use std::{fmt::Display, ops::Range, sync::LazyLock};
+use std::{ops::Range, sync::LazyLock};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use schemars::schema::{
     ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
 };
@@ -143,185 +143,6 @@ pub fn update_value_in_json_text<'a>(
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
-}
-
-const TS_DOCUMENT_KIND: &'static str = "document";
-const TS_ARRAY_KIND: &'static str = "array";
-const TS_COMMENT_KIND: &'static str = "comment";
-
-pub fn replace_top_level_array_value_in_json_text(
-    text: &str,
-    key_path: &[&str],
-    new_value: Option<&Value>,
-    array_index: usize,
-    tab_size: usize,
-) -> Result<(Range<usize>, String)> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .unwrap();
-    let syntax_tree = parser.parse(text, None).unwrap();
-
-    let mut cursor = syntax_tree.walk();
-
-    if cursor.node().kind() == TS_DOCUMENT_KIND {
-        anyhow::ensure!(
-            cursor.goto_first_child(),
-            "Document empty - No top level array"
-        );
-    }
-
-    while cursor.node().kind() != TS_ARRAY_KIND {
-        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
-    }
-
-    // false if no children
-    if !cursor.goto_first_child() {
-        todo!("appends (if index is 0)")
-    }
-
-    let mut index = 0;
-
-    while index <= array_index {
-        dbg!(cursor.node().kind());
-        if !matches!(cursor.node().kind(), "[" | "]" | TS_COMMENT_KIND | ",") {
-            if index == array_index {
-                break;
-            }
-            index += 1;
-        }
-        if !cursor.goto_next_sibling() {
-            todo!("appends (if index is out of bounds)")
-        }
-    }
-
-    let range = cursor.node().byte_range();
-    let offset = range.start;
-    let value_str = std::str::from_utf8(&text.as_bytes()[range])?;
-
-    let (mut replace_range, value) =
-        replace_value_in_json_text(value_str, key_path, tab_size, new_value);
-
-    replace_range.start += offset;
-    replace_range.end += offset;
-    return Ok((replace_range, value));
-}
-
-pub fn append_top_level_array_value_in_json_text(
-    text: &str,
-    new_value: &Value,
-    tab_size: usize,
-) -> Result<(Range<usize>, String)> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .unwrap();
-    let syntax_tree = parser.parse(text, None).unwrap();
-
-    let mut cursor = syntax_tree.walk();
-
-    if cursor.node().kind() == TS_DOCUMENT_KIND {
-        anyhow::ensure!(
-            cursor.goto_first_child(),
-            "Document empty - No top level array"
-        );
-    }
-
-    while cursor.node().kind() != TS_ARRAY_KIND {
-        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
-    }
-
-    let array_range = cursor.node().range();
-
-    // false if no children
-    if !cursor.goto_last_child() {
-        todo!("appends (if index is 0)")
-    }
-    debug_assert_eq!(cursor.node().kind(), "]");
-    let close_bracket_start = cursor.node().start_byte();
-    cursor.goto_previous_sibling();
-    while (cursor.node().is_extra() || cursor.node().is_missing()) && cursor.goto_previous_sibling()
-    {
-    }
-
-    let mut comma_range = None;
-    let mut prev_item_range = None;
-    let mut bracket_range = None;
-
-    if cursor.node().kind() == "," {
-        comma_range = Some(cursor.node().byte_range());
-        while cursor.goto_previous_sibling() && cursor.node().is_extra() {}
-
-        debug_assert_ne!(cursor.node().kind(), "[");
-        prev_item_range = Some(cursor.node().range());
-        dbg!(cursor.node().kind());
-    } else {
-        while (cursor.node().is_extra() || cursor.node().is_missing())
-            && cursor.goto_previous_sibling()
-        {}
-        if cursor.node().kind() != "[" {
-            prev_item_range = Some(cursor.node().range());
-            dbg!(cursor.node().kind());
-        } else {
-            bracket_range = Some(cursor.node().byte_range());
-            dbg!(cursor.node().kind());
-        }
-    }
-
-    let (mut replace_range, mut replace_value) =
-        replace_value_in_json_text("", &[], tab_size, Some(new_value));
-
-    let offset = if let Some(comma_range) = &comma_range {
-        comma_range.end
-    } else if let Some(prev_item_range) = &prev_item_range {
-        prev_item_range.end_byte
-    } else {
-        bracket_range.unwrap().end
-    };
-
-    replace_range.start += offset;
-    replace_range.end = close_bracket_start;
-
-    let space = ' ';
-    if let Some(prev_item_range) = prev_item_range {
-        let preceding_text = text.get(0..replace_range.start).unwrap_or("");
-
-        let needs_newline = prev_item_range.start_point.row > 0;
-        let indent_width = prev_item_range.start_point.column;
-
-        if needs_newline {
-            let increased_indent = format!("\n{space:width$}", width = indent_width);
-            replace_value = replace_value.replace('\n', &increased_indent);
-            replace_value.push('\n');
-        }
-
-        if let Some(comma_pos) = preceding_text.rfind(',') {
-            // Check if there are only whitespace characters between the comma and our key
-            let between_comma_and_key = text.get(comma_pos + 1..replace_range.start).unwrap_or("");
-            let needs_comma = !between_comma_and_key.trim().is_empty();
-            if needs_comma {
-                if needs_newline {
-                    replace_value
-                        .insert_str(0, &format!(",\n{space:width$}", width = indent_width));
-                } else {
-                    replace_value.insert_str(0, ", ");
-                }
-            } else if between_comma_and_key.len() == 0 {
-                if needs_newline {
-                    replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
-                } else {
-                    replace_value.insert_str(0, " ");
-                }
-            }
-        }
-    } else {
-        let indent = format!("\n{space:width$}", width = tab_size);
-        replace_value = replace_value.replace('\n', &indent);
-        replace_value.insert_str(0, &indent);
-        replace_value.push('\n');
-    }
-
-    return Ok((replace_range, replace_value));
 }
 
 fn replace_value_in_json_text(
@@ -496,6 +317,179 @@ fn replace_value_in_json_text(
     }
 }
 
+const TS_DOCUMENT_KIND: &'static str = "document";
+const TS_ARRAY_KIND: &'static str = "array";
+const TS_COMMENT_KIND: &'static str = "comment";
+
+pub fn replace_top_level_array_value_in_json_text(
+    text: &str,
+    key_path: &[&str],
+    new_value: Option<&Value>,
+    array_index: usize,
+    tab_size: usize,
+) -> Result<(Range<usize>, String)> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
+    let syntax_tree = parser.parse(text, None).unwrap();
+
+    let mut cursor = syntax_tree.walk();
+
+    if cursor.node().kind() == TS_DOCUMENT_KIND {
+        anyhow::ensure!(
+            cursor.goto_first_child(),
+            "Document empty - No top level array"
+        );
+    }
+
+    while cursor.node().kind() != TS_ARRAY_KIND {
+        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+    }
+
+    // false if no children
+    if !cursor.goto_first_child() {
+        todo!("appends (if index is 0)")
+    }
+
+    let mut index = 0;
+
+    while index <= array_index {
+        if !matches!(cursor.node().kind(), "[" | "]" | TS_COMMENT_KIND | ",") {
+            if index == array_index {
+                break;
+            }
+            index += 1;
+        }
+        if !cursor.goto_next_sibling() {
+            todo!("appends (if index is out of bounds)")
+        }
+    }
+
+    let range = cursor.node().byte_range();
+    let offset = range.start;
+    let value_str = std::str::from_utf8(&text.as_bytes()[range])?;
+
+    let (mut replace_range, value) =
+        replace_value_in_json_text(value_str, key_path, tab_size, new_value);
+
+    replace_range.start += offset;
+    replace_range.end += offset;
+    return Ok((replace_range, value));
+}
+
+pub fn append_top_level_array_value_in_json_text(
+    text: &str,
+    new_value: &Value,
+    tab_size: usize,
+) -> Result<(Range<usize>, String)> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
+    let syntax_tree = parser.parse(text, None).unwrap();
+
+    let mut cursor = syntax_tree.walk();
+
+    if cursor.node().kind() == TS_DOCUMENT_KIND {
+        anyhow::ensure!(
+            cursor.goto_first_child(),
+            "Document empty - No top level array"
+        );
+    }
+
+    while cursor.node().kind() != TS_ARRAY_KIND {
+        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+    }
+
+    // false if no children
+    if !cursor.goto_last_child() {
+        todo!("appends (if index is 0)")
+    }
+    debug_assert_eq!(cursor.node().kind(), "]");
+    let close_bracket_start = cursor.node().start_byte();
+    cursor.goto_previous_sibling();
+    while (cursor.node().is_extra() || cursor.node().is_missing()) && cursor.goto_previous_sibling()
+    {
+    }
+
+    let mut comma_range = None;
+    let mut prev_item_range = None;
+    let mut bracket_range = None;
+
+    if cursor.node().kind() == "," {
+        comma_range = Some(cursor.node().byte_range());
+        while cursor.goto_previous_sibling() && cursor.node().is_extra() {}
+
+        debug_assert_ne!(cursor.node().kind(), "[");
+        prev_item_range = Some(cursor.node().range());
+    } else {
+        while (cursor.node().is_extra() || cursor.node().is_missing())
+            && cursor.goto_previous_sibling()
+        {}
+        if cursor.node().kind() != "[" {
+            prev_item_range = Some(cursor.node().range());
+        } else {
+            bracket_range = Some(cursor.node().byte_range());
+        }
+    }
+
+    let (mut replace_range, mut replace_value) =
+        replace_value_in_json_text("", &[], tab_size, Some(new_value));
+
+    let offset = if let Some(comma_range) = &comma_range {
+        comma_range.end
+    } else if let Some(prev_item_range) = &prev_item_range {
+        prev_item_range.end_byte
+    } else {
+        bracket_range.unwrap().end
+    };
+
+    replace_range.start += offset;
+    replace_range.end = close_bracket_start;
+
+    let space = ' ';
+    if let Some(prev_item_range) = prev_item_range {
+        let preceding_text = text.get(0..replace_range.start).unwrap_or("");
+
+        let needs_newline = prev_item_range.start_point.row > 0;
+        let indent_width = prev_item_range.start_point.column;
+
+        if needs_newline {
+            let increased_indent = format!("\n{space:width$}", width = indent_width);
+            replace_value = replace_value.replace('\n', &increased_indent);
+            replace_value.push('\n');
+        }
+
+        if let Some(comma_pos) = preceding_text.rfind(',') {
+            // Check if there are only whitespace characters between the comma and our key
+            let between_comma_and_key = text.get(comma_pos + 1..replace_range.start).unwrap_or("");
+            let needs_comma = !between_comma_and_key.trim().is_empty();
+            if needs_comma {
+                if needs_newline {
+                    replace_value
+                        .insert_str(0, &format!(",\n{space:width$}", width = indent_width));
+                } else {
+                    replace_value.insert_str(0, ", ");
+                }
+            } else if between_comma_and_key.len() == 0 {
+                if needs_newline {
+                    replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
+                } else {
+                    replace_value.insert_str(0, " ");
+                }
+            }
+        }
+    } else {
+        let indent = format!("\n{space:width$}", width = tab_size);
+        replace_value = replace_value.replace('\n', &indent);
+        replace_value.insert_str(0, &indent);
+        replace_value.push('\n');
+    }
+
+    return Ok((replace_range, replace_value));
+}
+
 pub fn to_pretty_json(
     value: &impl Serialize,
     indent_size: usize,
@@ -529,23 +523,6 @@ pub fn to_pretty_json(
 
 pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
     Ok(serde_json_lenient::from_str(content)?)
-}
-
-pub enum KeyPathItem<'a> {
-    Idx(usize),
-    Key(&'a str),
-}
-
-impl<'a> From<&'a str> for KeyPathItem<'a> {
-    fn from(key: &'a str) -> Self {
-        KeyPathItem::Key(key)
-    }
-}
-
-impl<'a> From<usize> for KeyPathItem<'a> {
-    fn from(idx: usize) -> Self {
-        KeyPathItem::Idx(idx)
-    }
 }
 
 #[cfg(test)]
