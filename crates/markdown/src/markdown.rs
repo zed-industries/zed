@@ -172,6 +172,142 @@ impl Markdown {
         this
     }
 
+    /// Creates a simple Markdown instance optimized for UI elements like tooltips and popovers.
+    ///
+    /// This method parses the markdown content synchronously and renders it immediately,
+    /// then asynchronously loads language definitions for syntax highlighting. This approach
+    /// prevents flickering that would otherwise occur when using `new()`, which triggers
+    /// a window refresh when parsing completes.
+    ///
+    /// The key insight is that syntax highlighting doesn't affect the overall layout
+    /// calculation - it only changes colors within already-allocated space. By deferring
+    /// only the language loading (not the parsing), we can display the full markdown
+    /// structure immediately while syntax highlighting appears seamlessly once loaded.
+    ///
+    /// This method is particularly suitable for UI elements like tooltips and popovers where
+    /// flickering during initial display would be disruptive to the user experience.
+    ///
+    /// ## Limitations compared to `new()`:
+    /// - Does not decode base64-encoded images from data URLs (not typically needed for popovers)
+    pub fn new_simple(
+        source: SharedString,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        fallback_code_block_language: Option<LanguageName>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        let (events, language_names, paths) = parse_markdown(&source);
+
+        let parsed_markdown = ParsedMarkdown {
+            source: source.clone(),
+            events: Arc::from(events),
+            languages_by_name: TreeMap::default(),
+            languages_by_path: TreeMap::default(),
+        };
+
+        let fallback_for_async = fallback_code_block_language.clone();
+
+        let mut this = Self {
+            source,
+            selection: Selection::default(),
+            pressed_link: None,
+            autoscroll_request: None,
+            should_reparse: false,
+            images_by_source_offset: Default::default(),
+            parsed_markdown,
+            pending_parse: None,
+            focus_handle,
+            language_registry: language_registry.clone(),
+            fallback_code_block_language,
+            options: Options {
+                parse_links_only: false,
+            },
+            copied_code_blocks: HashSet::new(),
+        };
+
+        // Load languages - try synchronously first, then asynchronously for missing ones
+        if let Some(registry) = language_registry.clone() {
+            let fallback = fallback_for_async.clone();
+
+            let mut need_async_names = Vec::new();
+            let mut need_async_paths = Vec::new();
+
+            for name in &language_names {
+                if !name.is_empty() {
+                    if let Some(language) = registry.get_cached_language_by_name_or_extension(name) {
+                        this.parsed_markdown.languages_by_name.insert(name.clone(), language);
+                    } else {
+                        need_async_names.push(name.clone());
+                    }
+                } else if let Some(fallback) = &fallback_for_async {
+                    if let Some(language) = registry.get_cached_language(fallback.as_ref()) {
+                        this.parsed_markdown.languages_by_name.insert(name.clone(), language);
+                    } else {
+                        need_async_names.push(name.clone());
+                    }
+                }
+            }
+
+            for path in &paths {
+                if let Some(language) = registry.get_cached_language_for_path(path) {
+                    this.parsed_markdown.languages_by_path.insert(path.clone(), language);
+                } else {
+                    need_async_paths.push(path.clone());
+                }
+            }
+
+            // If all languages were found in cache, we're done
+            if need_async_names.is_empty() && need_async_paths.is_empty() {
+                return this;
+            }
+
+            // Otherwise, load missing languages asynchronously
+            let async_loading = cx.background_spawn(async move {
+                let mut languages_by_name = Vec::new();
+                let mut languages_by_path = Vec::new();
+
+                for name in need_async_names {
+                    let language = if !name.is_empty() {
+                        registry.language_for_name_or_extension(&name).left_future()
+                    } else if let Some(fallback) = &fallback {
+                        registry.language_for_name(fallback.as_ref()).right_future()
+                    } else {
+                        continue;
+                    };
+                    if let Ok(language) = language.await {
+                        languages_by_name.push((name, language));
+                    }
+                }
+
+                for path in need_async_paths {
+                    if let Ok(language) = registry.language_for_file_path(&path).await {
+                        languages_by_path.push((path, language));
+                    }
+                }
+
+                (languages_by_name, languages_by_path)
+            });
+
+            cx.spawn(async move |this, cx| {
+                let (languages_by_name, languages_by_path) = async_loading.await;
+
+                this.update(cx, |this, cx| {
+                    this.parsed_markdown.languages_by_name.extend(languages_by_name);
+                    this.parsed_markdown.languages_by_path.extend(languages_by_path);
+                    if !this.parsed_markdown.languages_by_name.is_empty() ||
+                       !this.parsed_markdown.languages_by_path.is_empty() {
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+
+        this
+    }
+
     pub fn new_text(source: SharedString, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {

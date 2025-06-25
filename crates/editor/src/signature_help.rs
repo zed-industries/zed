@@ -226,7 +226,7 @@ impl Editor {
                                     .and_then(|param| param.documentation.clone())
                                     .map(|documentation| {
                                         cx.new(|cx| {
-                                            Markdown::new(
+                                            Markdown::new_simple(
                                                 documentation.into(),
                                                 Some(languages.clone()),
                                                 None,
@@ -239,7 +239,7 @@ impl Editor {
                                     label: s.label.into(),
                                     documentation: s.documentation.map(|documentation| {
                                         cx.new(|cx| {
-                                            Markdown::new(
+                                            Markdown::new_simple(
                                                 documentation.into(),
                                                 Some(languages.clone()),
                                                 None,
