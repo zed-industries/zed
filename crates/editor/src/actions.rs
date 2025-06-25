@@ -386,7 +386,6 @@ actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
-        RevertFile,
         ReloadFile,
         Rewrap,
         RunFlycheck,
