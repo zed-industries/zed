@@ -411,13 +411,10 @@ impl Model {
 
     pub fn supports_caching(&self) -> bool {
         match self {
-            // Only Claude and Nova models on Bedrock support caching
+            // Only Claude models on Bedrock support caching
+            // Nova models support only text caching
             // https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models
-            Self::Claude3_5SonnetV2
-            | Self::AmazonNovaMicro
-            | Self::AmazonNovaLite
-            | Self::AmazonNovaPro
-            | Self::Claude3_5Haiku
+            Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::ClaudeSonnet4
@@ -438,8 +435,7 @@ impl Model {
 
     pub fn cache_configuration(&self) -> Option<BedrockModelCacheConfiguration> {
         match self {
-            Self::Claude3_5SonnetV2
-            | Self::Claude3_7Sonnet
+            Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
