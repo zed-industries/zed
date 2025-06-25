@@ -8969,6 +8969,7 @@ dependencies = [
  "open_ai",
  "open_router",
  "partial-json-fixer",
+ "pollinations",
  "project",
  "proto",
  "release_channel",
@@ -11988,6 +11989,20 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "pollinations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum 0.27.1",
+ "workspace-hack",
 ]
 
 [[package]]
