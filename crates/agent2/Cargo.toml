@@ -26,6 +26,7 @@ chrono.workspace = true
 futures.workspace = true
 language.workspace = true
 gpui.workspace = true
+parking_lot.workspace = true
 project.workspace = true
 smol.workspace = true
 uuid.workspace = true

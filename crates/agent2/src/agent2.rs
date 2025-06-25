@@ -16,8 +16,8 @@ pub trait Agent: 'static {
     type Thread: AgentThread;
 
     fn threads(&self) -> impl Future<Output = Result<Vec<AgentThreadSummary>>>;
-    fn create_thread(&self) -> impl Future<Output = Result<Self::Thread>>;
-    fn open_thread(&self, id: ThreadId) -> impl Future<Output = Result<Self::Thread>>;
+    fn create_thread(&self) -> impl Future<Output = Result<Arc<Self::Thread>>>;
+    fn open_thread(&self, id: ThreadId) -> impl Future<Output = Result<Arc<Self::Thread>>>;
 }
 
 pub trait AgentThread: 'static {
@@ -182,7 +182,7 @@ impl<T: Agent> ThreadStore<T> {
         let project = self.project.clone();
         cx.spawn(async move |_, cx| {
             let agent_thread = agent.open_thread(id).await?;
-            Thread::load(Arc::new(agent_thread), project, cx).await
+            Thread::load(agent_thread, project, cx).await
         })
     }
 
@@ -192,7 +192,7 @@ impl<T: Agent> ThreadStore<T> {
         let project = self.project.clone();
         cx.spawn(async move |_, cx| {
             let agent_thread = agent.create_thread().await?;
-            Thread::load(Arc::new(agent_thread), project, cx).await
+            Thread::load(agent_thread, project, cx).await
         })
     }
 }

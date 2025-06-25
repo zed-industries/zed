@@ -118,6 +118,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
+ "parking_lot",
  "project",
  "serde_json",
  "settings",
