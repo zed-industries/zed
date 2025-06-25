@@ -2792,6 +2792,7 @@ impl Pane {
                 self.pinned_tab_count,
                 tab_count
             );
+            self.pinned_tab_count = tab_count;
             tab_count
         } else {
             self.pinned_tab_count
