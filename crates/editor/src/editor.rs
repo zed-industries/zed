@@ -13414,6 +13414,12 @@ impl Editor {
         }
 
         select_next_state.done = true;
+
+        if new_selections.is_empty() {
+            log::error!("bug: new_selections is empty in select_all_matches");
+            return Ok(());
+        }
+
         self.unfold_ranges(&new_selections.clone(), false, false, cx);
         self.change_selections(None, window, cx, |selections| {
             selections.select_ranges(new_selections)
