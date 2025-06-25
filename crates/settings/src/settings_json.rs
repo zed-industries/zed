@@ -450,8 +450,6 @@ pub fn append_top_level_array_value_in_json_text(
 
     let space = ' ';
     if let Some(prev_item_range) = prev_item_range {
-        let preceding_text = text.get(0..replace_range.start).unwrap_or("");
-
         let needs_newline = prev_item_range.start_point.row > 0;
         let indent_width = prev_item_range.start_point.column;
 
@@ -461,23 +459,17 @@ pub fn append_top_level_array_value_in_json_text(
             replace_value.push('\n');
         }
 
-        if let Some(comma_pos) = preceding_text.rfind(',') {
-            // Check if there are only whitespace characters between the comma and our key
-            let between_comma_and_key = text.get(comma_pos + 1..replace_range.start).unwrap_or("");
-            let needs_comma = !between_comma_and_key.trim().is_empty();
-            if needs_comma {
-                if needs_newline {
-                    replace_value
-                        .insert_str(0, &format!(",\n{space:width$}", width = indent_width));
-                } else {
-                    replace_value.insert_str(0, ", ");
-                }
-            } else if between_comma_and_key.len() == 0 {
-                if needs_newline {
-                    replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
-                } else {
-                    replace_value.insert_str(0, " ");
-                }
+        if comma_range.is_none() {
+            if needs_newline {
+                replace_value.insert_str(0, &format!(",\n{space:width$}", width = indent_width));
+            } else {
+                replace_value.insert_str(0, ", ");
+            }
+        } else {
+            if needs_newline {
+                replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
+            } else {
+                replace_value.insert_str(0, " ");
             }
         }
     } else {
