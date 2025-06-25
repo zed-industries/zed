@@ -179,6 +179,8 @@ impl EditorLspTestContext {
         });
 
         let lsp = fake_servers.next().await.unwrap();
+        lsp.set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+
         Self {
             cx: EditorTestContext {
                 cx,

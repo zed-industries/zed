@@ -2139,7 +2139,11 @@ impl Default for FakeLspAdapter {
         Self {
             name: "the-fake-language-server",
             capabilities: lsp::LanguageServer::full_capabilities(),
-            initializer: None,
+            initializer: Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(
+                    |_, _| async move { Ok(()) },
+                );
+            })),
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),

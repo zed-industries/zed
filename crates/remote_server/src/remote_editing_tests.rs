@@ -431,7 +431,11 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         headless.read(cx).languages.register_fake_language_server(
             LanguageServerName("rust-analyzer".into()),
             Default::default(),
-            None,
+            Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(
+                    |_, _| async move { Ok(()) },
+                );
+            })),
         )
     });
 
@@ -612,7 +616,11 @@ async fn test_remote_cancel_language_server_work(
         headless.read(cx).languages.register_fake_language_server(
             LanguageServerName("rust-analyzer".into()),
             Default::default(),
-            None,
+            Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(
+                    |_, _| async move { Ok(()) },
+                );
+            })),
         )
     });
 

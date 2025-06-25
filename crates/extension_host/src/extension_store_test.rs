@@ -691,7 +691,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             completion_provider: Some(Default::default()),
             ..Default::default()
         },
-        None,
+        Some(Box::new(|fake_server| {
+            fake_server
+                .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        })),
     );
 
     let (buffer, _handle) = project
