@@ -29,6 +29,7 @@ jobs:
     outputs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
       run_license: ${{ steps.filter.outputs.run_license }}
+      run_docs: ${{ steps.filter.outputs.run_docs }}
     runs-on:
       - ubuntu-latest
     steps:
@@ -57,6 +58,11 @@ jobs:
             echo "run_tests=true" >> $GITHUB_OUTPUT
           else
             echo "run_tests=false" >> $GITHUB_OUTPUT
+          fi
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^docs/') ]]; then
+            echo "run_docs=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_docs=false" >> $GITHUB_OUTPUT
           fi
           if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^Cargo.lock') ]]; then
             echo "run_license=true" >> $GITHUB_OUTPUT
@@ -198,7 +204,9 @@ jobs:
     timeout-minutes: 60
     name: Check docs
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      (needs.job_spec.outputs.run_tests == 'true' || needs.job_spec.outputs.run_docs == 'true')
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
