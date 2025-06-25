@@ -1,19 +1,15 @@
-use std::{
-    io::{Cursor, Write as _},
-    path::Path,
-    sync::{Arc, Weak},
-};
+use std::{io::Write as _, path::Path, sync::Arc};
 
 use crate::{
-    Agent, AgentThread, AgentThreadEntryContent, AgentThreadSummary, Message, MessageChunk,
-    ResponseEvent, Role, Thread, ThreadEntry, ThreadId,
+    Agent, AgentThreadEntryContent, AgentThreadSummary, Message, MessageChunk, ResponseEvent, Role,
+    Thread, ThreadEntryId, ThreadId,
 };
-use agentic_coding_protocol::{self as acp, TurnId};
-use anyhow::{Context as _, Result};
+use agentic_coding_protocol as acp;
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
 use smol::process::Child;
@@ -21,16 +17,41 @@ use util::ResultExt;
 
 pub struct AcpAgent {
     connection: Arc<acp::AgentConnection>,
-    threads: Arc<Mutex<HashMap<acp::ThreadId, WeakEntity<Thread>>>>,
+    threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<Thread>>>>,
+    project: Entity<Project>,
     _handler_task: Task<()>,
     _io_task: Task<()>,
 }
 
 struct AcpClientDelegate {
     project: Entity<Project>,
-    threads: Arc<Mutex<HashMap<acp::ThreadId, WeakEntity<Thread>>>>,
+    threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<Thread>>>>,
     cx: AsyncApp,
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
+}
+
+impl AcpClientDelegate {
+    fn new(project: Entity<Project>, cx: AsyncApp) -> Self {
+        Self {
+            project,
+            threads: Default::default(),
+            cx: cx,
+        }
+    }
+
+    fn update_thread<R>(
+        &self,
+        thread_id: &ThreadId,
+        cx: &mut App,
+        callback: impl FnMut(&mut Thread, &mut Context<Thread>) -> R,
+    ) -> Option<R> {
+        let thread = self.threads.lock().get(&thread_id)?.clone();
+        let Some(thread) = thread.upgrade() else {
+            self.threads.lock().remove(&thread_id);
+            return None;
+        };
+        Some(thread.update(cx, callback))
+    }
 }
 
 #[async_trait(?Send)]
@@ -58,7 +79,7 @@ impl acp::Client for AcpClientDelegate {
 
     async fn stream_message_chunk(
         &self,
-        request: acp::StreamMessageChunkParams,
+        chunk: acp::StreamMessageChunkParams,
     ) -> Result<acp::StreamMessageChunkResponse> {
         Ok(acp::StreamMessageChunkResponse)
     }
@@ -78,25 +99,23 @@ impl acp::Client for AcpClientDelegate {
             })??
             .await?;
 
-        buffer.update(cx, |buffer, _| {
+        buffer.update(cx, |buffer, cx| {
             let start = language::Point::new(request.line_offset.unwrap_or(0), 0);
             let end = match request.line_limit {
                 None => buffer.max_point(),
                 Some(limit) => start + language::Point::new(limit + 1, 0),
             };
 
-            let content = buffer.text_for_range(start..end).collect();
-
-            if let Some(thread) = self.threads.lock().get(&request.thread_id) {
-                thread.update(cx, |thread, cx| {
-                    thread.push_entry(ThreadEntry {
-                        content: AgentThreadEntryContent::ReadFile {
-                            path: request.path.clone(),
-                            content: content.clone(),
-                        },
-                    });
-                })
-            }
+            let content: String = buffer.text_for_range(start..end).collect();
+            self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
+                thread.push_entry(
+                    AgentThreadEntryContent::ReadFile {
+                        path: request.path.clone(),
+                        content: content.clone(),
+                    },
+                    cx,
+                );
+            });
 
             acp::ReadTextFileResponse {
                 content,
@@ -135,7 +154,7 @@ impl acp::Client for AcpClientDelegate {
 
                 let mut base64_content = Vec::new();
                 let mut base64_encoder = base64::write::EncoderWriter::new(
-                    Cursor::new(&mut base64_content),
+                    std::io::Cursor::new(&mut base64_content),
                     &base64::engine::general_purpose::STANDARD,
                 );
                 base64_encoder.write_all(range_content)?;
@@ -168,10 +187,7 @@ impl AcpAgent {
         let stdout = process.stdout.take().expect("process didn't have stdout");
 
         let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate {
-                project,
-                cx: cx.clone(),
-            },
+            AcpClientDelegate::new(project.clone(), cx.clone()),
             stdin,
             stdout,
         );
@@ -182,17 +198,18 @@ impl AcpAgent {
         });
 
         Self {
+            project,
             connection: Arc::new(connection),
-            threads: Mutex::default(),
+            threads: Default::default(),
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         }
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Agent for AcpAgent {
-    async fn threads(&self) -> Result<Vec<AgentThreadSummary>> {
+    async fn threads(&self, cx: &mut AsyncApp) -> Result<Vec<AgentThreadSummary>> {
         let response = self.connection.request(acp::GetThreadsParams).await?;
         response
             .threads
@@ -207,31 +224,34 @@ impl Agent for AcpAgent {
             .collect()
     }
 
-    async fn create_thread(&self) -> Result<Arc<Self::Thread>> {
+    async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<Thread>> {
         let response = self.connection.request(acp::CreateThreadParams).await?;
-        let thread = Arc::new(AcpAgentThread {
-            id: response.thread_id.clone(),
-            connection: self.connection.clone(),
-            state: Mutex::new(AcpAgentThreadState {
-                turn: None,
-                next_turn_id: TurnId::default(),
-            }),
-        });
-        self.threads
-            .lock()
-            .insert(response.thread_id, Arc::downgrade(&thread));
+        let thread_id: ThreadId = response.thread_id.into();
+        let agent = self.clone();
+        let thread = cx.new(|_| Thread {
+            id: thread_id.clone(),
+            next_entry_id: ThreadEntryId(0),
+            entries: Vec::default(),
+            project: self.project.clone(),
+            agent,
+        })?;
+        self.threads.lock().insert(thread_id, thread.downgrade());
         Ok(thread)
     }
 
-    async fn open_thread(&self, id: ThreadId) -> Result<Thread> {
+    async fn open_thread(&self, id: ThreadId, cx: &mut AsyncApp) -> Result<Entity<Thread>> {
         todo!()
     }
 
-    async fn thread_entries(&self, thread_id: ThreadId) -> Result<Vec<AgentThreadEntryContent>> {
+    async fn thread_entries(
+        &self,
+        thread_id: ThreadId,
+        cx: &mut AsyncApp,
+    ) -> Result<Vec<AgentThreadEntryContent>> {
         let response = self
             .connection
             .request(acp::GetThreadEntriesParams {
-                thread_id: self.id.clone(),
+                thread_id: thread_id.clone().into(),
             })
             .await?;
 
@@ -265,18 +285,18 @@ impl Agent for AcpAgent {
         &self,
         thread_id: ThreadId,
         message: crate::Message,
+        cx: &mut AsyncApp,
     ) -> Result<UnboundedReceiver<Result<ResponseEvent>>> {
-        let turn_id = {
-            let mut state = self.state.lock();
-            let turn_id = state.next_turn_id.post_inc();
-            state.turn = Some(AcpAgentThreadTurn { id: turn_id });
-            turn_id
-        };
+        let thread = self
+            .threads
+            .lock()
+            .get(&thread_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("no such thread"))?;
         let response = self
             .connection
             .request(acp::SendMessageParams {
-                thread_id: self.id.clone(),
-                turn_id,
+                thread_id: thread_id.clone().into(),
                 message: acp::Message {
                     role: match message.role {
                         Role::User => acp::Role::User,
@@ -301,29 +321,14 @@ impl Agent for AcpAgent {
     }
 }
 
-pub struct AcpAgentThread {
-    id: acp::ThreadId,
-    connection: Arc<acp::AgentConnection>,
-    state: Mutex<AcpAgentThreadState>,
-}
-
-struct AcpAgentThreadState {
-    next_turn_id: acp::TurnId,
-    turn: Option<AcpAgentThreadTurn>,
-}
-
-struct AcpAgentThreadTurn {
-    id: acp::TurnId,
-}
-
 impl From<acp::ThreadId> for ThreadId {
     fn from(thread_id: acp::ThreadId) -> Self {
-        Self(thread_id.0)
+        Self(thread_id.0.into())
     }
 }
 
 impl From<ThreadId> for acp::ThreadId {
     fn from(thread_id: ThreadId) -> Self {
-        acp::ThreadId(thread_id.0)
+        acp::ThreadId(thread_id.0.to_string())
     }
 }

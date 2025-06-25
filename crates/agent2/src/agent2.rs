@@ -13,16 +13,21 @@ use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use project::Project;
 use std::{future, ops::Range, path::PathBuf, pin::pin, sync::Arc};
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait Agent: 'static {
-    async fn threads(&self) -> Result<Vec<AgentThreadSummary>>;
-    async fn create_thread(&self) -> Result<Entity<Thread>>;
-    async fn open_thread(&self, id: ThreadId) -> Result<Entity<Thread>>;
-    async fn thread_entries(&self, id: ThreadId) -> Result<Vec<AgentThreadEntryContent>>;
+    async fn threads(&self, cx: &mut AsyncApp) -> Result<Vec<AgentThreadSummary>>;
+    async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<Thread>>;
+    async fn open_thread(&self, id: ThreadId, cx: &mut AsyncApp) -> Result<Entity<Thread>>;
+    async fn thread_entries(
+        &self,
+        id: ThreadId,
+        cx: &mut AsyncApp,
+    ) -> Result<Vec<AgentThreadEntryContent>>;
     async fn send_thread_message(
         &self,
         thread_id: ThreadId,
         message: Message,
+        cx: &mut AsyncApp,
     ) -> Result<mpsc::UnboundedReceiver<Result<ResponseEvent>>>;
 }
 
@@ -53,7 +58,7 @@ impl ReadFileRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThreadId(SharedString);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -145,20 +150,20 @@ pub struct ThreadEntry {
     pub content: AgentThreadEntryContent,
 }
 
-pub struct ThreadStore<T: Agent> {
+pub struct ThreadStore {
     threads: Vec<AgentThreadSummary>,
-    agent: Arc<T>,
+    agent: Arc<dyn Agent>,
     project: Entity<Project>,
 }
 
-impl<T: Agent> ThreadStore<T> {
+impl ThreadStore {
     pub async fn load(
-        agent: Arc<T>,
+        agent: Arc<dyn Agent>,
         project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
-        let threads = agent.threads().await?;
-        cx.new(|cx| Self {
+        let threads = agent.threads(cx).await?;
+        cx.new(|_cx| Self {
             threads,
             agent,
             project,
@@ -177,21 +182,13 @@ impl<T: Agent> ThreadStore<T> {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
         let agent = self.agent.clone();
-        let project = self.project.clone();
-        cx.spawn(async move |_, cx| {
-            let agent_thread = agent.open_thread(id).await?;
-            Thread::load(agent_thread, project, cx).await
-        })
+        cx.spawn(async move |_, cx| agent.open_thread(id, cx).await)
     }
 
     /// Creates a new thread.
     pub fn create_thread(&self, cx: &mut Context<Self>) -> Task<Result<Entity<Thread>>> {
         let agent = self.agent.clone();
-        let project = self.project.clone();
-        cx.spawn(async move |_, cx| {
-            let agent_thread = agent.create_thread().await?;
-            Thread::load(agent_thread, project, cx).await
-        })
+        cx.spawn(async move |_, cx| agent.create_thread(cx).await)
     }
 }
 
@@ -210,7 +207,7 @@ impl Thread {
         project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
-        let entries = agent.thread_entries(thread_id.clone()).await?;
+        let entries = agent.thread_entries(thread_id.clone(), cx).await?;
         cx.new(|cx| Self::new(agent, thread_id, entries, project, cx))
     }
 
@@ -241,11 +238,19 @@ impl Thread {
         &self.entries
     }
 
+    pub fn push_entry(&mut self, entry: AgentThreadEntryContent, cx: &mut Context<Self>) {
+        self.entries.push(ThreadEntry {
+            id: self.next_entry_id.post_inc(),
+            content: entry,
+        });
+        cx.notify();
+    }
+
     pub fn send(&mut self, message: Message, cx: &mut Context<Self>) -> Task<Result<()>> {
         let agent = self.agent.clone();
-        let id = self.id;
+        let id = self.id.clone();
         cx.spawn(async move |this, cx| {
-            let mut events = agent.send_thread_message(id, message).await?;
+            let mut events = agent.send_thread_message(id, message, cx).await?;
             let mut pending_event_handlers = FuturesUnordered::new();
 
             loop {
