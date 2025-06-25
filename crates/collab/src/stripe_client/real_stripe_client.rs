@@ -22,10 +22,11 @@ use crate::stripe_client::{
     StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
-    StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripePrice,
-    StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
-    StripeSubscriptionItem, StripeSubscriptionItemId, StripeSubscriptionTrialSettings,
-    StripeSubscriptionTrialSettingsEndBehavior,
+    StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeCustomerUpdate,
+    StripeCustomerUpdateAddress, StripeCustomerUpdateName, StripeCustomerUpdateShipping,
+    StripeMeter, StripePrice, StripePriceId, StripePriceRecurring, StripeSubscription,
+    StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
+    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
     StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateCustomerParams,
     UpdateSubscriptionParams,
 };
@@ -446,6 +447,7 @@ impl<'a> TryFrom<StripeCreateCheckoutSessionParams<'a>> for CreateCheckoutSessio
             subscription_data: value.subscription_data.map(Into::into),
             success_url: value.success_url,
             billing_address_collection: value.billing_address_collection.map(Into::into),
+            customer_update: value.customer_update.map(Into::into),
             ..Default::default()
         })
     }
@@ -538,6 +540,53 @@ impl From<StripeBillingAddressCollection> for stripe::CheckoutSessionBillingAddr
             StripeBillingAddressCollection::Required => {
                 stripe::CheckoutSessionBillingAddressCollection::Required
             }
+        }
+    }
+}
+
+impl From<StripeCustomerUpdateAddress> for stripe::CreateCheckoutSessionCustomerUpdateAddress {
+    fn from(value: StripeCustomerUpdateAddress) -> Self {
+        match value {
+            StripeCustomerUpdateAddress::Auto => {
+                stripe::CreateCheckoutSessionCustomerUpdateAddress::Auto
+            }
+            StripeCustomerUpdateAddress::Never => {
+                stripe::CreateCheckoutSessionCustomerUpdateAddress::Never
+            }
+        }
+    }
+}
+
+impl From<StripeCustomerUpdateName> for stripe::CreateCheckoutSessionCustomerUpdateName {
+    fn from(value: StripeCustomerUpdateName) -> Self {
+        match value {
+            StripeCustomerUpdateName::Auto => stripe::CreateCheckoutSessionCustomerUpdateName::Auto,
+            StripeCustomerUpdateName::Never => {
+                stripe::CreateCheckoutSessionCustomerUpdateName::Never
+            }
+        }
+    }
+}
+
+impl From<StripeCustomerUpdateShipping> for stripe::CreateCheckoutSessionCustomerUpdateShipping {
+    fn from(value: StripeCustomerUpdateShipping) -> Self {
+        match value {
+            StripeCustomerUpdateShipping::Auto => {
+                stripe::CreateCheckoutSessionCustomerUpdateShipping::Auto
+            }
+            StripeCustomerUpdateShipping::Never => {
+                stripe::CreateCheckoutSessionCustomerUpdateShipping::Never
+            }
+        }
+    }
+}
+
+impl From<StripeCustomerUpdate> for stripe::CreateCheckoutSessionCustomerUpdate {
+    fn from(value: StripeCustomerUpdate) -> Self {
+        stripe::CreateCheckoutSessionCustomerUpdate {
+            address: value.address.map(Into::into),
+            name: value.name.map(Into::into),
+            shipping: value.shipping.map(Into::into),
         }
     }
 }
