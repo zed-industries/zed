@@ -835,6 +835,24 @@
     }
   },
   {
+    "context": "menu",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst"
+    }
+  },
+  {
+    "context": "Editor && showing_code_actions",
+    "bindings": {
+      "j": "editor::ContextMenuNext",
+      "k": "editor::ContextMenuPrevious",
+      "shift-g": "editor::ContextMenuLast",
+      "g g": "editor::ContextMenuFirst"
+    }
+  },
+  {
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {
