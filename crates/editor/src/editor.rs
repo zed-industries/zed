@@ -5976,15 +5976,23 @@ impl Editor {
 
             editor.update_in(cx, |editor, window, cx| {
                 crate::hover_popover::hide_hover(editor, cx);
+                let actions = CodeActionContents::new(
+                    resolved_tasks,
+                    code_actions,
+                    debug_scenarios,
+                    task_context.unwrap_or_default(),
+                );
+
+                // Don't show the menu if there are no actions available
+                if actions.is_empty() {
+                    cx.notify();
+                    return Task::ready(Ok(()));
+                }
+
                 *editor.context_menu.borrow_mut() =
                     Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
-                        actions: CodeActionContents::new(
-                            resolved_tasks,
-                            code_actions,
-                            debug_scenarios,
-                            task_context.unwrap_or_default(),
-                        ),
+                        actions,
                         selected_item: Default::default(),
                         scroll_handle: UniformListScrollHandle::default(),
                         deployed_from,
@@ -16156,7 +16164,7 @@ impl Editor {
         })
     }
 
-    fn restart_language_server(
+    pub fn restart_language_server(
         &mut self,
         _: &RestartLanguageServer,
         _: &mut Window,
@@ -16167,6 +16175,7 @@ impl Editor {
                 project.update(cx, |project, cx| {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
+                        HashSet::default(),
                         cx,
                     );
                 });
@@ -16174,7 +16183,7 @@ impl Editor {
         }
     }
 
-    fn stop_language_server(
+    pub fn stop_language_server(
         &mut self,
         _: &StopLanguageServer,
         _: &mut Window,
@@ -16185,6 +16194,7 @@ impl Editor {
                 project.update(cx, |project, cx| {
                     project.stop_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
+                        HashSet::default(),
                         cx,
                     );
                     cx.emit(project::Event::RefreshInlayHints);
