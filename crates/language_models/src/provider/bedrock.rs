@@ -1003,10 +1003,11 @@ pub fn map_to_language_model_completion_events(
                                                 LanguageModelCompletionEvent::UsageUpdate(
                                                     TokenUsage {
                                                         input_tokens: metadata.input_tokens as u64,
-                                                        output_tokens: metadata.output_tokens
-                                                            as u64,
-                                                        cache_creation_input_tokens: default(),
-                                                        cache_read_input_tokens: default(),
+                                                        output_tokens: metadata.output_tokens as u64,
+                                                        cache_creation_input_tokens:
+                                                            metadata.cache_write_input_tokens.unwrap_or_default() as u64,
+                                                        cache_read_input_tokens:
+                                                            metadata.cache_read_input_tokens.unwrap_or_default() as u64,
                                                     },
                                                 );
                                             return Some((Some(Ok(completion_event)), state));
