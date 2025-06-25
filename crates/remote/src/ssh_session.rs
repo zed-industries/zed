@@ -303,20 +303,6 @@ pub struct SshPlatform {
     pub arch: &'static str,
 }
 
-impl SshPlatform {
-    pub fn triple(&self) -> Option<String> {
-        Some(format!(
-            "{}-{}",
-            self.arch,
-            match self.os {
-                "linux" => "unknown-linux-gnu",
-                "macos" => "apple-darwin",
-                _ => return None,
-            }
-        ))
-    }
-}
-
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
     fn get_download_params(
@@ -1999,6 +1985,16 @@ impl SshRemoteConnection {
             Ok(())
         }
 
+        let triple = format!(
+            "{}-{}",
+            platform.arch,
+            match platform.os {
+                "linux" => "unknown-linux-gnu",
+                "macos" => "apple-darwin",
+                _ => anyhow::bail!("can't cross compile for: {:?}", platform),
+            }
+        );
+
         let bin_path = if platform.arch == std::env::consts::ARCH
             && platform.os == std::env::consts::OS
         {
@@ -2017,9 +2013,6 @@ impl SshRemoteConnection {
 
             "target/remote_server/debug/remote_server".into()
         } else {
-            let Some(triple) = platform.triple() else {
-                anyhow::bail!("can't cross compile for: {:?}", platform);
-            };
             smol::fs::create_dir_all("target/remote_server").await?;
 
             if build_remote_server.contains("cross") {
