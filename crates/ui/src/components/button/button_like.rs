@@ -381,7 +381,7 @@ impl ButtonLike {
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
-            cursor_style: CursorStyle::PointingHand,
+            cursor_style: CursorStyle::default(),
             on_click: None,
             on_right_click: None,
             layer: None,

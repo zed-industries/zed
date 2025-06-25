@@ -176,7 +176,7 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
         /// Sets the cursor style when hovering an element to `pointer`.
         /// [Docs](https://tailwindcss.com/docs/cursor)
         #visibility fn cursor_pointer(mut self) -> Self {
-            self.style().mouse_cursor = Some(gpui::CursorStyle::PointingHand);
+            //self.style().mouse_cursor = Some(gpui::CursorStyle::PointingHand);
             self
         }
 
