@@ -20,6 +20,7 @@ test-support = [
 
 [dependencies]
 agent.workspace = true
+agent2.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true

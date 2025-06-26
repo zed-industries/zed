@@ -229,6 +229,7 @@ impl Agent for AcpAgent {
         let thread_id: ThreadId = response.thread_id.into();
         let agent = self.clone();
         let thread = cx.new(|_| Thread {
+            title: "The agent2 thread".into(),
             id: thread_id.clone(),
             next_entry_id: ThreadEntryId(0),
             entries: Vec::default(),

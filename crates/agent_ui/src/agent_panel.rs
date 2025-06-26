@@ -4,9 +4,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent2::{AcpAgent, Agent as _};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use crate::NewGeminiThread;
 use crate::language_model_selector::ToggleModelSelector;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
@@ -109,6 +111,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
+                .register_action(|workspace, _: &NewGeminiThread, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.new_gemini_thread(window, cx));
+                    }
+                })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
@@ -183,6 +191,9 @@ enum ActiveView {
         buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
     },
+    Agent2Thread {
+        thread: Entity<agent2::Thread>,
+    },
     History,
     Configuration,
 }
@@ -196,7 +207,9 @@ enum WhichFontSize {
 impl ActiveView {
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
-            ActiveView::Thread { .. } | ActiveView::History => WhichFontSize::AgentFont,
+            ActiveView::Thread { .. } | ActiveView::Agent2Thread { .. } | ActiveView::History => {
+                WhichFontSize::AgentFont
+            }
             ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
         }
@@ -867,6 +880,42 @@ impl AgentPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
+    fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root_dir) = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path())
+        else {
+            return;
+        };
+
+        let cli_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
+        let child = util::command::new_smol_command("node")
+            .arg(cli_path)
+            .arg("--acp")
+            .args(["--model", "gemini-2.5-flash"])
+            .current_dir(root_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+
+        let project = self.project.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let agent = AcpAgent::stdio(child, project, cx);
+            let thread = agent.create_thread(cx).await?;
+            this.update_in(cx, |this, window, cx| {
+                this.set_active_view(ActiveView::Agent2Thread { thread }, window, cx);
+            })
+        })
+        .detach();
+    }
+
     fn deploy_rules_library(
         &mut self,
         action: &OpenRulesLibrary,
@@ -1465,6 +1514,7 @@ impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
+            ActiveView::Agent2Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
@@ -1618,6 +1668,9 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
+            ActiveView::Agent2Thread { thread } => Label::new(thread.read(cx).title())
+                .truncate()
+                .into_any_element(),
             ActiveView::TextThread {
                 title_editor,
                 context_editor,
@@ -1785,6 +1838,7 @@ impl AgentPanel {
                     menu = menu
                         .action("New Thread", NewThread::default().boxed_clone())
                         .action("New Text Thread", NewTextThread.boxed_clone())
+                        .action("New Gemini Thread", NewGeminiThread.boxed_clone())
                         .when(!is_empty, |menu| {
                             menu.action(
                                 "New From Summary",
@@ -3023,6 +3077,9 @@ impl AgentPanel {
                     .detach();
                 });
             }
+            ActiveView::Agent2Thread { .. } => {
+                unimplemented!()
+            }
             ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {
                     TextThreadEditor::insert_dragged_files(
@@ -3112,6 +3169,12 @@ impl Render for AgentPanel {
                     .relative()
                     .child(self.render_active_thread_or_empty_state(window, cx))
                     .children(self.render_tool_use_limit_reached(window, cx))
+                    .child(h_flex().child(self.message_editor.clone()))
+                    .children(self.render_last_error(cx))
+                    .child(self.render_drag_target(cx)),
+                ActiveView::Agent2Thread { .. } => parent
+                    .relative()
+                    .child(self.render_active_thread_or_empty_state(window, cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx))
                     .child(self.render_drag_target(cx)),

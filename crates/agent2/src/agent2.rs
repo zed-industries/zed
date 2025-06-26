@@ -1,11 +1,13 @@
 mod acp;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use gpui::{AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use project::Project;
 use std::{ops::Range, path::PathBuf, sync::Arc};
+
+pub use acp::AcpAgent;
 
 #[async_trait(?Send)]
 pub trait Agent: 'static {
@@ -164,6 +166,7 @@ pub struct Thread {
     next_entry_id: ThreadEntryId,
     entries: Vec<ThreadEntry>,
     agent: Arc<dyn Agent>,
+    title: SharedString,
     project: Entity<Project>,
 }
 
@@ -187,6 +190,7 @@ impl Thread {
     ) -> Self {
         let mut next_entry_id = ThreadEntryId(0);
         Self {
+            title: "A new agent2 thread".into(),
             entries: entries
                 .into_iter()
                 .map(|entry| ThreadEntry {
@@ -199,6 +203,10 @@ impl Thread {
             next_entry_id,
             project,
         }
+    }
+
+    pub fn title(&self) -> SharedString {
+        self.title.clone()
     }
 
     pub fn entries(&self) -> &[ThreadEntry] {
@@ -258,7 +266,7 @@ mod tests {
         .await;
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
         let agent = gemini_agent(project.clone(), cx.to_async()).unwrap();
-        let thread_store = ThreadStore::load(Arc::new(agent), project, &mut cx.to_async())
+        let thread_store = ThreadStore::load(agent, project, &mut cx.to_async())
             .await
             .unwrap();
         let thread = thread_store

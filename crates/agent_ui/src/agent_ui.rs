@@ -55,6 +55,7 @@ actions!(
     agent,
     [
         NewTextThread,
+        NewGeminiThread,
         ToggleContextPicker,
         ToggleNavigationMenu,
         ToggleOptionsMenu,
