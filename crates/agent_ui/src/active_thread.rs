@@ -9,8 +9,8 @@ use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
     Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary,
     context::{self, AgentContextHandle, RULES_ICON},
+    thread::{PendingToolUseStatus, ToolUse},
     thread_store::RulesLoadingError,
-    tool_use::{PendingToolUseStatus, ToolUse},
 };
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;

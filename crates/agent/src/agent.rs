@@ -5,7 +5,6 @@ pub mod context_store;
 pub mod history_store;
 pub mod thread;
 pub mod thread_store;
-pub mod tool_use;
 
 pub use context::{AgentContext, ContextId, ContextLoadResult};
 pub use context_store::ContextStore;

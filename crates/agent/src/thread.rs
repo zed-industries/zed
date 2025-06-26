@@ -6,11 +6,13 @@ use crate::{
         SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
         ThreadStore,
     },
-    tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{
+    ActionLog, AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    ToolWorkingSet,
+};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::{HashMap, HashSet};
@@ -21,11 +23,12 @@ use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
     WeakEntity, Window,
 };
+use icons::IconName;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
     TokenUsage,
 };
@@ -46,7 +49,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, post_inc};
+use util::{ResultExt as _, post_inc, truncate_lines_to_byte_limit};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
@@ -92,6 +95,69 @@ impl std::fmt::Display for PromptId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+#[derive(Debug)]
+pub struct ToolUse {
+    pub id: LanguageModelToolUseId,
+    pub name: SharedString,
+    pub ui_text: SharedString,
+    pub status: ToolUseStatus,
+    pub input: serde_json::Value,
+    pub icon: icons::IconName,
+    pub needs_confirmation: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingToolUse {
+    pub id: LanguageModelToolUseId,
+    /// The ID of the Assistant message in which the tool use was requested.
+    #[allow(unused)]
+    pub assistant_message_id: MessageId,
+    pub name: Arc<str>,
+    pub ui_text: Arc<str>,
+    pub input: serde_json::Value,
+    pub status: PendingToolUseStatus,
+    pub may_perform_edits: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Confirmation {
+    pub tool_use_id: LanguageModelToolUseId,
+    pub input: serde_json::Value,
+    pub ui_text: Arc<str>,
+    pub request: Arc<LanguageModelRequest>,
+    pub tool: Arc<dyn Tool>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PendingToolUseStatus {
+    InputStillStreaming,
+    Idle,
+    NeedsConfirmation(Arc<Confirmation>),
+    Running { _task: Shared<Task<()>> },
+    Error(#[allow(unused)] Arc<str>),
+}
+
+impl PendingToolUseStatus {
+    pub fn is_idle(&self) -> bool {
+        matches!(self, PendingToolUseStatus::Idle)
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self, PendingToolUseStatus::Error(_))
+    }
+
+    pub fn needs_confirmation(&self) -> bool {
+        matches!(self, PendingToolUseStatus::NeedsConfirmation { .. })
+    }
+}
+
+#[derive(Clone)]
+pub struct ToolUseMetadata {
+    pub model: Arc<dyn LanguageModel>,
+    pub thread_id: ThreadId,
+    pub prompt_id: PromptId,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -363,7 +429,13 @@ pub struct Thread {
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Entity<ToolWorkingSet>,
-    tool_use: ToolUseState,
+
+    pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
+    tool_use_metadata_by_id: HashMap<LanguageModelToolUseId, ToolUseMetadata>,
+    tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
+    tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
+    tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
+
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
@@ -460,7 +532,11 @@ impl Thread {
             tools: tools.clone(),
             last_restore_checkpoint: None,
             pending_checkpoint: None,
-            tool_use: ToolUseState::new(tools.clone()),
+            tool_uses_by_assistant_message: HashMap::default(),
+            tool_results: HashMap::default(),
+            pending_tool_uses_by_id: HashMap::default(),
+            tool_result_cards: HashMap::default(),
+            tool_use_metadata_by_id: HashMap::default(),
             action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
@@ -501,13 +577,6 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_serialized_messages(
-            tools.clone(),
-            &serialized.messages,
-            project.clone(),
-            window,
-            cx,
-        );
         let (detailed_summary_tx, detailed_summary_rx) =
             postage::watch::channel_with(serialized.detailed_summary_state);
 
@@ -531,7 +600,7 @@ impl Thread {
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
-        Self {
+        let mut this = Self {
             id,
             updated_at: serialized.updated_at,
             summary: ThreadSummary::Ready(serialized.summary),
@@ -541,44 +610,7 @@ impl Thread {
             detailed_summary_rx,
             completion_mode,
             retry_state: None,
-            messages: serialized
-                .messages
-                .into_iter()
-                .map(|message| Message {
-                    id: message.id,
-                    role: message.role,
-                    segments: message
-                        .segments
-                        .into_iter()
-                        .map(|segment| match segment {
-                            SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
-                            SerializedMessageSegment::Thinking { text, signature } => {
-                                MessageSegment::Thinking { text, signature }
-                            }
-                            SerializedMessageSegment::RedactedThinking { data } => {
-                                MessageSegment::RedactedThinking(data)
-                            }
-                        })
-                        .collect(),
-                    loaded_context: LoadedContext {
-                        contexts: Vec::new(),
-                        text: message.context,
-                        images: Vec::new(),
-                    },
-                    creases: message
-                        .creases
-                        .into_iter()
-                        .map(|crease| MessageCrease {
-                            range: crease.start..crease.end,
-                            icon_path: crease.icon_path,
-                            label: crease.label,
-                            context: None,
-                        })
-                        .collect(),
-                    is_hidden: message.is_hidden,
-                    ui_only: false, // UI-only messages are not persisted
-                })
-                .collect(),
+            messages: Vec::new(),
             next_message_id,
             last_prompt_id: PromptId::new(),
             project_context,
@@ -590,8 +622,7 @@ impl Thread {
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
-            tool_use,
-            action_log: cx.new(|_| ActionLog::new(project)),
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
@@ -605,6 +636,129 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model,
             profile: AgentProfile::new(profile_id, tools),
+
+            pending_tool_uses_by_id: Default::default(),
+            tool_use_metadata_by_id: Default::default(),
+            tool_uses_by_assistant_message: Default::default(),
+            tool_result_cards: Default::default(),
+            tool_results: Default::default(),
+        };
+
+        this.deserialize_tool_use(&serialized.messages, project, window, cx);
+        this.messages = serialized
+            .messages
+            .into_iter()
+            .map(|message| Message {
+                id: message.id,
+                role: message.role,
+                segments: message
+                    .segments
+                    .into_iter()
+                    .map(|segment| match segment {
+                        SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
+                        SerializedMessageSegment::Thinking { text, signature } => {
+                            MessageSegment::Thinking { text, signature }
+                        }
+                        SerializedMessageSegment::RedactedThinking { data } => {
+                            MessageSegment::RedactedThinking(data)
+                        }
+                    })
+                    .collect(),
+                loaded_context: LoadedContext {
+                    contexts: Vec::new(),
+                    text: message.context,
+                    images: Vec::new(),
+                },
+                creases: message
+                    .creases
+                    .into_iter()
+                    .map(|crease| MessageCrease {
+                        range: crease.start..crease.end,
+                        icon_path: crease.icon_path,
+                        label: crease.label,
+                        context: None,
+                    })
+                    .collect(),
+                is_hidden: message.is_hidden,
+                ui_only: false, // UI-only messages are not persisted
+            })
+            .collect();
+
+        this
+    }
+
+    fn deserialize_tool_use(
+        &mut self,
+        messages: &[SerializedMessage],
+        project: Entity<Project>,
+        window: Option<&mut Window>, // None in headless mode
+        cx: &mut App,
+    ) {
+        let mut window = window;
+        let mut tool_names_by_id = HashMap::default();
+
+        for message in messages {
+            match message.role {
+                Role::Assistant => {
+                    if !message.tool_uses.is_empty() {
+                        let tool_uses = message
+                            .tool_uses
+                            .iter()
+                            .map(|tool_use| LanguageModelToolUse {
+                                id: tool_use.id.clone(),
+                                name: tool_use.name.clone().into(),
+                                raw_input: tool_use.input.to_string(),
+                                input: tool_use.input.clone(),
+                                is_input_complete: true,
+                            })
+                            .collect::<Vec<_>>();
+
+                        tool_names_by_id.extend(
+                            tool_uses
+                                .iter()
+                                .map(|tool_use| (tool_use.id.clone(), tool_use.name.clone())),
+                        );
+
+                        self.tool_uses_by_assistant_message
+                            .insert(message.id, tool_uses);
+
+                        for tool_result in &message.tool_results {
+                            let tool_use_id = tool_result.tool_use_id.clone();
+                            let Some(tool_use) = tool_names_by_id.get(&tool_use_id) else {
+                                log::warn!("no tool name found for tool use: {tool_use_id:?}");
+                                continue;
+                            };
+
+                            self.tool_results.insert(
+                                tool_use_id.clone(),
+                                LanguageModelToolResult {
+                                    tool_use_id: tool_use_id.clone(),
+                                    tool_name: tool_use.clone(),
+                                    is_error: tool_result.is_error,
+                                    content: tool_result.content.clone(),
+                                    output: tool_result.output.clone(),
+                                },
+                            );
+
+                            if let Some(window) = &mut window {
+                                if let Some(tool) = self.tools.read(cx).tool(tool_use, cx) {
+                                    if let Some(output) = tool_result.output.clone() {
+                                        if let Some(card) = tool.deserialize_card(
+                                            output,
+                                            project.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            self.tool_result_cards.insert(tool_use_id, card);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Role::System | Role::User => {}
+            }
         }
     }
 
@@ -739,21 +893,19 @@ impl Thread {
     }
 
     pub fn pending_tool(&self, id: &LanguageModelToolUseId) -> Option<&PendingToolUse> {
-        self.tool_use
-            .pending_tool_uses()
-            .into_iter()
+        self.pending_tool_uses_by_id
+            .values()
             .find(|tool_use| &tool_use.id == id)
     }
 
     pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = &PendingToolUse> {
-        self.tool_use
-            .pending_tool_uses()
-            .into_iter()
+        self.pending_tool_uses_by_id
+            .values()
             .filter(|tool_use| tool_use.status.needs_confirmation())
     }
 
     pub fn has_pending_tool_uses(&self) -> bool {
-        !self.tool_use.pending_tool_uses().is_empty()
+        !self.pending_tool_uses_by_id.is_empty()
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
@@ -910,38 +1062,117 @@ impl Thread {
     pub fn all_tools_finished(&self) -> bool {
         // If the only pending tool uses left are the ones with errors, then
         // that means that we've finished running all of the pending tools.
-        self.tool_use
-            .pending_tool_uses()
-            .iter()
+        self.pending_tool_uses_by_id
+            .values()
             .all(|pending_tool_use| pending_tool_use.status.is_error())
     }
 
     /// Returns whether any pending tool uses may perform edits
     pub fn has_pending_edit_tool_uses(&self) -> bool {
-        self.tool_use
-            .pending_tool_uses()
-            .iter()
+        self.pending_tool_uses_by_id
+            .values()
             .filter(|pending_tool_use| !pending_tool_use.status.is_error())
             .any(|pending_tool_use| pending_tool_use.may_perform_edits)
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id, cx)
+        let Some(tool_uses_for_message) = &self.tool_uses_by_assistant_message.get(&id) else {
+            return Vec::new();
+        };
+
+        let mut tool_uses = Vec::new();
+
+        for tool_use in tool_uses_for_message.iter() {
+            let tool_result = self.tool_results.get(&tool_use.id);
+
+            let status = (|| {
+                if let Some(tool_result) = tool_result {
+                    let content = tool_result
+                        .content
+                        .to_str()
+                        .map(|str| str.to_owned().into())
+                        .unwrap_or_default();
+
+                    return if tool_result.is_error {
+                        ToolUseStatus::Error(content)
+                    } else {
+                        ToolUseStatus::Finished(content)
+                    };
+                }
+
+                if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
+                    match pending_tool_use.status {
+                        PendingToolUseStatus::Idle => ToolUseStatus::Pending,
+                        PendingToolUseStatus::NeedsConfirmation { .. } => {
+                            ToolUseStatus::NeedsConfirmation
+                        }
+                        PendingToolUseStatus::Running { .. } => ToolUseStatus::Running,
+                        PendingToolUseStatus::Error(ref err) => {
+                            ToolUseStatus::Error(err.clone().into())
+                        }
+                        PendingToolUseStatus::InputStillStreaming => {
+                            ToolUseStatus::InputStillStreaming
+                        }
+                    }
+                } else {
+                    ToolUseStatus::Pending
+                }
+            })();
+
+            let (icon, needs_confirmation) =
+                if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
+                    (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
+                } else {
+                    (IconName::Cog, false)
+                };
+
+            let tool_ui_label = if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
+                if tool_use.is_input_complete {
+                    tool.ui_text(&tool_use.input).into()
+                } else {
+                    tool.still_streaming_ui_text(&tool_use.input).into()
+                }
+            } else {
+                format!("Unknown tool {:?}", tool_use.name).into()
+            };
+
+            tool_uses.push(ToolUse {
+                id: tool_use.id.clone(),
+                name: tool_use.name.clone().into(),
+                ui_text: tool_ui_label,
+                input: tool_use.input.clone(),
+                status,
+                icon,
+                needs_confirmation,
+            })
+        }
+
+        tool_uses
     }
 
     pub fn tool_results_for_message(
         &self,
         assistant_message_id: MessageId,
     ) -> Vec<&LanguageModelToolResult> {
-        self.tool_use.tool_results_for_message(assistant_message_id)
+        let Some(tool_uses) = self
+            .tool_uses_by_assistant_message
+            .get(&assistant_message_id)
+        else {
+            return Vec::new();
+        };
+
+        tool_uses
+            .iter()
+            .filter_map(|tool_use| self.tool_results.get(&tool_use.id))
+            .collect()
     }
 
     pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
-        self.tool_use.tool_result(id)
+        self.tool_results.get(id)
     }
 
     pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
-        match &self.tool_use.tool_result(id)?.content {
+        match &self.tool_result(id)?.content {
             LanguageModelToolResultContent::Text(text) => Some(text),
             LanguageModelToolResultContent::Image(_) => {
                 // TODO: We should display image
@@ -951,7 +1182,7 @@ impl Thread {
     }
 
     pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
-        self.tool_use.tool_result_card(id).cloned()
+        self.tool_result_cards.get(id).cloned()
     }
 
     /// Return tools that are both enabled and supported by the model
@@ -1255,7 +1486,11 @@ impl Thread {
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
         for message in self.messages.iter().rev() {
-            if self.tool_use.message_has_tool_results(message.id) {
+            let message_has_tool_results = self
+                .tool_uses_by_assistant_message
+                .get(&message.id)
+                .map_or(false, |results| !results.is_empty());
+            if message_has_tool_results {
                 return true;
             } else if message.role == Role::User {
                 return false;
@@ -1371,7 +1606,7 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
-            for (tool_use, tool_result) in self.tool_use.tool_results(message.id) {
+            for (tool_use, tool_result) in self.tool_results(message.id) {
                 if let Some(tool_result) = tool_result {
                     request_message
                         .content
@@ -1629,7 +1864,7 @@ impl Thread {
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
-                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                        && !thread.tool_uses_by_assistant_message.contains_key(&last_message.id)
                                     {
                                         last_message.push_text(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
@@ -1658,7 +1893,7 @@ impl Thread {
 
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
-                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                        && !thread.tool_uses_by_assistant_message.contains_key(&last_message.id)
                                     {
                                         last_message.push_thinking(&chunk, signature);
                                         cx.emit(ThreadEvent::StreamedAssistantThinking(
@@ -1689,7 +1924,9 @@ impl Thread {
 
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
-                                        && !thread.tool_use.has_tool_results(last_message.id)
+
+                                    && !thread.tool_uses_by_assistant_message
+                                            .contains_key(&last_message.id)
                                     {
                                         last_message.push_redacted_thinking(data);
                                     } else {
@@ -1718,7 +1955,7 @@ impl Thread {
                                     Some((&tool_use.input).clone())
                                 };
 
-                                let ui_text = thread.tool_use.request_tool_use(
+                                let ui_text = thread.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
                                     tool_use_metadata.clone(),
@@ -2353,9 +2590,8 @@ impl Thread {
         let request =
             Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
         let pending_tool_uses = self
-            .tool_use
-            .pending_tool_uses()
-            .into_iter()
+            .pending_tool_uses_by_id
+            .values()
             .filter(|tool_use| tool_use.status.is_idle())
             .cloned()
             .collect::<Vec<_>>();
@@ -2386,13 +2622,7 @@ impl Thread {
         if tool.needs_confirmation(&tool_use.input, cx)
             && !AgentSettings::get_global(cx).always_allow_tool_actions
         {
-            self.tool_use.confirm_tool_use(
-                tool_use.id,
-                tool_use.ui_text,
-                tool_use.input,
-                request,
-                tool,
-            );
+            self.confirm_tool_use(tool_use.id, tool_use.ui_text, tool_use.input, request, tool);
             cx.emit(ThreadEvent::ToolConfirmationNeeded);
         } else {
             self.run_tool(
@@ -2406,6 +2636,122 @@ impl Thread {
                 cx,
             );
         }
+    }
+
+    pub fn request_tool_use(
+        &mut self,
+        assistant_message_id: MessageId,
+        tool_use: LanguageModelToolUse,
+        metadata: ToolUseMetadata,
+        cx: &App,
+    ) -> Arc<str> {
+        let tool_uses = self
+            .tool_uses_by_assistant_message
+            .entry(assistant_message_id)
+            .or_default();
+
+        let mut existing_tool_use_found = false;
+
+        for existing_tool_use in tool_uses.iter_mut() {
+            if existing_tool_use.id == tool_use.id {
+                *existing_tool_use = tool_use.clone();
+                existing_tool_use_found = true;
+            }
+        }
+
+        if !existing_tool_use_found {
+            tool_uses.push(tool_use.clone());
+        }
+
+        let status = if tool_use.is_input_complete {
+            self.tool_use_metadata_by_id
+                .insert(tool_use.id.clone(), metadata);
+
+            PendingToolUseStatus::Idle
+        } else {
+            PendingToolUseStatus::InputStillStreaming
+        };
+
+        let ui_text: Arc<str> = self
+            .tool_ui_label(
+                &tool_use.name,
+                &tool_use.input,
+                tool_use.is_input_complete,
+                cx,
+            )
+            .into();
+
+        let may_perform_edits = self
+            .tools
+            .read(cx)
+            .tool(&tool_use.name, cx)
+            .is_some_and(|tool| tool.may_perform_edits());
+
+        self.pending_tool_uses_by_id.insert(
+            tool_use.id.clone(),
+            PendingToolUse {
+                assistant_message_id,
+                id: tool_use.id,
+                name: tool_use.name.clone(),
+                ui_text: ui_text.clone(),
+                input: tool_use.input,
+                may_perform_edits,
+                status,
+            },
+        );
+
+        ui_text
+    }
+
+    pub fn tool_ui_label(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        is_input_complete: bool,
+        cx: &App,
+    ) -> SharedString {
+        if let Some(tool) = self.tools.read(cx).tool(tool_name, cx) {
+            if is_input_complete {
+                tool.ui_text(input).into()
+            } else {
+                tool.still_streaming_ui_text(input).into()
+            }
+        } else {
+            format!("Unknown tool {tool_name:?}").into()
+        }
+    }
+
+    fn confirm_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: impl Into<Arc<str>>,
+        input: serde_json::Value,
+        request: Arc<LanguageModelRequest>,
+        tool: Arc<dyn Tool>,
+    ) {
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
+            let ui_text = ui_text.into();
+            tool_use.ui_text = ui_text.clone();
+            let confirmation = Confirmation {
+                tool_use_id,
+                input,
+                request,
+                tool,
+                ui_text,
+            };
+            tool_use.status = PendingToolUseStatus::NeedsConfirmation(Arc::new(confirmation));
+        }
+    }
+
+    pub fn tool_results(
+        &self,
+        assistant_message_id: MessageId,
+    ) -> impl Iterator<Item = (&LanguageModelToolUse, Option<&LanguageModelToolResult>)> {
+        self.tool_uses_by_assistant_message
+            .get(&assistant_message_id)
+            .into_iter()
+            .flatten()
+            .map(|tool_use| (tool_use, self.tool_results.get(&tool_use.id)))
     }
 
     pub fn handle_hallucinated_tool_use(
@@ -2428,11 +2774,10 @@ impl Thread {
             hallucinated_tool_name, tool_list
         );
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
+        let pending_tool_use = self.insert_tool_output(
             tool_use_id.clone(),
             hallucinated_tool_name,
             Err(anyhow!("Missing tool call: {error_message}")),
-            self.configured_model.as_ref(),
         );
 
         cx.emit(ThreadEvent::MissingToolUse {
@@ -2454,11 +2799,10 @@ impl Thread {
     ) {
         log::error!("The model returned invalid input JSON: {invalid_json}");
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
+        let pending_tool_use = self.insert_tool_output(
             tool_use_id.clone(),
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
-            self.configured_model.as_ref(),
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -2481,7 +2825,7 @@ impl Thread {
     pub fn run_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        ui_text: impl Into<SharedString>,
+        ui_text: impl Into<Arc<str>>,
         input: serde_json::Value,
         request: Arc<LanguageModelRequest>,
         tool: Arc<dyn Tool>,
@@ -2491,8 +2835,12 @@ impl Thread {
     ) {
         let task =
             self.spawn_tool_use(tool_use_id.clone(), request, input, tool, model, window, cx);
-        self.tool_use
-            .run_pending_tool(tool_use_id, ui_text.into(), task);
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
+            tool_use.ui_text = ui_text.into();
+            tool_use.status = PendingToolUseStatus::Running {
+                _task: task.shared(),
+            };
+        }
     }
 
     fn spawn_tool_use(
@@ -2519,8 +2867,7 @@ impl Thread {
 
         // Store the card separately if it exists
         if let Some(card) = tool_result.card.clone() {
-            self.tool_use
-                .insert_tool_result_card(tool_use_id.clone(), card);
+            self.tool_result_cards.insert(tool_use_id.clone(), card);
         }
 
         cx.spawn({
@@ -2529,12 +2876,8 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
-                        let pending_tool_use = thread.tool_use.insert_tool_output(
-                            tool_use_id.clone(),
-                            tool_name,
-                            output,
-                            thread.configured_model.as_ref(),
-                        );
+                        let pending_tool_use =
+                            thread.insert_tool_output(tool_use_id.clone(), tool_name, output);
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
                     .ok();
@@ -2577,7 +2920,7 @@ impl Thread {
 
         self.retry_state = None;
 
-        for pending_tool_use in self.tool_use.cancel_pending() {
+        for pending_tool_use in self.cancel_pending() {
             canceled = true;
             self.tool_finished(
                 pending_tool_use.id.clone(),
@@ -2602,6 +2945,31 @@ impl Thread {
         }
 
         canceled
+    }
+
+    fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
+        let mut cancelled_tool_uses = Vec::new();
+        self.pending_tool_uses_by_id
+            .retain(|tool_use_id, tool_use| {
+                if matches!(tool_use.status, PendingToolUseStatus::Error { .. }) {
+                    return true;
+                }
+
+                let content = "Tool canceled by user".into();
+                self.tool_results.insert(
+                    tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        tool_name: tool_use.name.clone(),
+                        content,
+                        output: None,
+                        is_error: true,
+                    },
+                );
+                cancelled_tool_uses.push(tool_use.clone());
+                false
+            });
+        cancelled_tool_uses
     }
 
     /// Signals that any in-progress editing should be canceled.
@@ -3098,13 +3466,112 @@ impl Thread {
             "Permission to run tool action denied by user"
         ));
 
-        self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
-            tool_name,
-            err,
-            self.configured_model.as_ref(),
-        );
+        self.insert_tool_output(tool_use_id.clone(), tool_name, err);
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
+    }
+
+    pub fn insert_tool_output(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        output: Result<ToolResultOutput>,
+    ) -> Option<PendingToolUse> {
+        let metadata = self.tool_use_metadata_by_id.remove(&tool_use_id);
+
+        telemetry::event!(
+            "Agent Tool Finished",
+            model = metadata
+                .as_ref()
+                .map(|metadata| metadata.model.telemetry_id()),
+            model_provider = metadata
+                .as_ref()
+                .map(|metadata| metadata.model.provider_id().to_string()),
+            thread_id = metadata.as_ref().map(|metadata| metadata.thread_id.clone()),
+            prompt_id = metadata.as_ref().map(|metadata| metadata.prompt_id.clone()),
+            tool_name,
+            success = output.is_ok()
+        );
+
+        match output {
+            Ok(output) => {
+                let tool_result = output.content;
+                const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
+
+                let old_use = self.pending_tool_uses_by_id.remove(&tool_use_id);
+
+                // Protect from overly large output
+                let tool_output_limit = self
+                    .configured_model
+                    .as_ref()
+                    .map(|model| model.model.max_token_count() as usize * BYTES_PER_TOKEN_ESTIMATE)
+                    .unwrap_or(usize::MAX);
+
+                let content = match tool_result {
+                    ToolResultContent::Text(text) => {
+                        let text = if text.len() < tool_output_limit {
+                            text
+                        } else {
+                            let truncated = truncate_lines_to_byte_limit(&text, tool_output_limit);
+                            format!(
+                                "Tool result too long. The first {} bytes:\n\n{}",
+                                truncated.len(),
+                                truncated
+                            )
+                        };
+                        LanguageModelToolResultContent::Text(text.into())
+                    }
+                    ToolResultContent::Image(language_model_image) => {
+                        if language_model_image.estimate_tokens() < tool_output_limit {
+                            LanguageModelToolResultContent::Image(language_model_image)
+                        } else {
+                            self.tool_results.insert(
+                                tool_use_id.clone(),
+                                LanguageModelToolResult {
+                                    tool_use_id: tool_use_id.clone(),
+                                    tool_name,
+                                    content: "Tool responded with an image that would exceeded the remaining tokens".into(),
+                                    is_error: true,
+                                    output: None,
+                                },
+                            );
+
+                            return old_use;
+                        }
+                    }
+                };
+
+                self.tool_results.insert(
+                    tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        tool_name,
+                        content,
+                        is_error: false,
+                        output: output.output,
+                    },
+                );
+
+                old_use
+            }
+            Err(err) => {
+                self.tool_results.insert(
+                    tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        tool_name,
+                        content: LanguageModelToolResultContent::Text(err.to_string().into()),
+                        is_error: true,
+                        output: None,
+                    },
+                );
+
+                if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
+                    tool_use.status = PendingToolUseStatus::Error(err.to_string().into());
+                }
+
+                self.pending_tool_uses_by_id.get(&tool_use_id).cloned()
+            }
+        }
     }
 }
 
