@@ -20,8 +20,8 @@ use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
-    WeakEntity, Window,
+    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString,
+    Subscription, Task, WeakEntity, Window,
 };
 use icons::IconName;
 use language_model::{
@@ -412,18 +412,15 @@ pub enum QueueState {
 /// A thread of conversation with the LLM.
 pub struct ZedAgent {
     thread: Entity<Thread>,
-    updated_at: DateTime<Utc>,
+    _thread_subscription: Subscription,
     summary: ThreadSummary,
     pending_summary: Task<Option<()>>,
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
     completion_mode: agent_settings::CompletionMode,
-    messages: Vec<Message>,
-    next_message_id: MessageId,
     last_prompt_id: PromptId,
     project_context: SharedProjectContext,
-    checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
@@ -438,7 +435,6 @@ pub struct ZedAgent {
 
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
-    pending_checkpoint: Option<ThreadCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
@@ -457,9 +453,205 @@ pub struct ZedAgent {
     profile: AgentProfile,
 }
 
-struct Thread {
+pub struct Thread {
     id: ThreadId,
+    next_message_id: MessageId,
+    messages: Vec<Message>,
+    pending_checkpoint: Option<ThreadCheckpoint>,
+    checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
+    updated_at: DateTime<Utc>,
 }
+
+impl Thread {
+    pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> + DoubleEndedIterator {
+        self.messages.iter()
+    }
+
+    pub fn insert_message(
+        &mut self,
+        role: Role,
+        segments: Vec<MessageSegment>,
+        loaded_context: LoadedContext,
+        creases: Vec<MessageCrease>,
+        is_hidden: bool,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        let id = self.next_message_id.post_inc();
+        self.messages.push(Message {
+            id,
+            role,
+            segments,
+            loaded_context,
+            creases,
+            is_hidden,
+            ui_only: false,
+        });
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageAdded(id));
+        id
+    }
+
+    pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
+        let id = self.insert_message(
+            Role::User,
+            vec![MessageSegment::Text("Continue where you left off".into())],
+            LoadedContext::default(),
+            vec![],
+            true,
+            cx,
+        );
+        self.pending_checkpoint = None;
+
+        id
+    }
+
+    pub fn insert_assistant_message(
+        &mut self,
+        segments: Vec<MessageSegment>,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        self.insert_message(
+            Role::Assistant,
+            segments,
+            LoadedContext::default(),
+            Vec::new(),
+            false,
+            cx,
+        )
+    }
+
+    pub fn insert_retry_message(&mut self, retry_message: String, cx: &mut Context<Self>) {
+        // Add a UI-only message instead of a regular message
+        let id = self.next_message_id.post_inc();
+        self.messages.push(Message {
+            id,
+            role: Role::System,
+            segments: vec![MessageSegment::Text(retry_message)],
+            loaded_context: LoadedContext::default(),
+            creases: Vec::new(),
+            is_hidden: false,
+            ui_only: true,
+        });
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageAdded(id));
+    }
+
+    pub fn edit_message(
+        &mut self,
+        id: MessageId,
+        new_role: Role,
+        new_segments: Vec<MessageSegment>,
+        creases: Vec<MessageCrease>,
+        loaded_context: Option<LoadedContext>,
+        checkpoint: Option<GitStoreCheckpoint>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+            return false;
+        };
+        message.role = new_role;
+        message.segments = new_segments;
+        message.creases = creases;
+        if let Some(context) = loaded_context {
+            message.loaded_context = context;
+        }
+        if let Some(git_checkpoint) = checkpoint {
+            self.checkpoints_by_message.insert(
+                id,
+                ThreadCheckpoint {
+                    message_id: id,
+                    git_checkpoint,
+                },
+            );
+        }
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageEdited(id));
+        true
+    }
+
+    pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self.messages.iter().position(|message| message.id == id) else {
+            return false;
+        };
+        self.messages.remove(index);
+        self.touch_updated_at();
+        cx.emit(ThreadEvent::MessageDeleted(id));
+        true
+    }
+
+    /// Returns the representation of this [`Thread`] in a textual form.
+    ///
+    /// This is the representation we use when attaching a thread as context to another thread.
+    pub fn text(&self) -> String {
+        let mut text = String::new();
+
+        for message in &self.messages {
+            text.push_str(match message.role {
+                language_model::Role::User => "User:",
+                language_model::Role::Assistant => "Agent:",
+                language_model::Role::System => "System:",
+            });
+            text.push('\n');
+
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(content) => text.push_str(content),
+                    MessageSegment::Thinking { text: content, .. } => {
+                        text.push_str(&format!("<think>{}</think>", content))
+                    }
+                    MessageSegment::RedactedThinking(_) => {}
+                }
+            }
+            text.push('\n');
+        }
+
+        text
+    }
+
+    pub fn touch_updated_at(&mut self) {
+        self.updated_at = Utc::now();
+    }
+
+    pub fn truncate(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
+        let Some(message_ix) = self
+            .messages
+            .iter()
+            .rposition(|message| message.id == message_id)
+        else {
+            return;
+        };
+        for deleted_message in self.messages.drain(message_ix..) {
+            self.checkpoints_by_message.remove(&deleted_message.id);
+        }
+        cx.notify();
+    }
+
+    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AgentContext> {
+        self.messages
+            .iter()
+            .find(|message| message.id == id)
+            .into_iter()
+            .flat_map(|message| message.loaded_context.contexts.iter())
+    }
+
+    fn insert_checkpoint(&mut self, checkpoint: ThreadCheckpoint, cx: &mut Context<Self>) {
+        self.checkpoints_by_message
+            .insert(checkpoint.message_id, checkpoint);
+        cx.emit(ThreadEvent::CheckpointChanged);
+        cx.notify();
+    }
+
+    pub fn message(&self, id: MessageId) -> Option<&Message> {
+        let index = self
+            .messages
+            .binary_search_by(|message| message.id.cmp(&id))
+            .ok()?;
+
+        self.messages.get(index)
+    }
+}
+
+impl EventEmitter<ThreadEvent> for Thread {}
 
 #[derive(Clone, Debug)]
 struct RetryState {
@@ -515,30 +707,36 @@ impl ZedAgent {
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         let thread = cx.new(|_| Thread {
+            pending_checkpoint: None,
+            next_message_id: MessageId(0),
             id: ThreadId::new(),
+            messages: Vec::new(),
+            checkpoints_by_message: HashMap::default(),
+            updated_at: Utc::now(),
+        });
+
+        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+            // todo! temporarily reemitting
+            cx.emit(event.clone())
         });
 
         Self {
             thread,
-            updated_at: Utc::now(),
+            _thread_subscription: thread_subscription,
             summary: ThreadSummary::Pending,
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
-            messages: Vec::new(),
-            next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
             project_context: system_prompt,
-            checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
             last_restore_checkpoint: None,
-            pending_checkpoint: None,
             tool_uses_by_assistant_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
@@ -565,6 +763,39 @@ impl ZedAgent {
             configured_model,
             profile: AgentProfile::new(profile_id, tools),
         }
+    }
+
+    pub fn thread(&self) -> &Entity<Thread> {
+        &self.thread
+    }
+
+    pub fn is_turn_end(&self, ix: usize, cx: &App) -> bool {
+        let thread = self.thread.read(cx);
+        if thread.messages.is_empty() {
+            return false;
+        }
+
+        if !self.is_generating() && ix == thread.messages.len() - 1 {
+            return true;
+        }
+
+        let Some(message) = thread.messages.get(ix) else {
+            return false;
+        };
+
+        if message.role != Role::Assistant {
+            return false;
+        }
+
+        thread
+            .messages
+            .get(ix + 1)
+            .and_then(|message| {
+                thread
+                    .message(message.id)
+                    .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
+            })
+            .unwrap_or(false)
     }
 
     pub fn deserialize(
@@ -607,56 +838,10 @@ impl ZedAgent {
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
-        let thread = cx.new(|_| Thread { id });
-
-        let mut this = Self {
-            thread,
-            updated_at: serialized.updated_at,
-            summary: ThreadSummary::Ready(serialized.summary),
-            pending_summary: Task::ready(None),
-            detailed_summary_task: Task::ready(None),
-            detailed_summary_tx,
-            detailed_summary_rx,
-            completion_mode,
-            retry_state: None,
-            messages: Vec::new(),
-            next_message_id,
-            last_prompt_id: PromptId::new(),
-            project_context,
-            checkpoints_by_message: HashMap::default(),
-            completion_count: 0,
-            pending_completions: Vec::new(),
-            last_restore_checkpoint: None,
-            pending_checkpoint: None,
-            project: project.clone(),
-            prompt_builder,
-            tools: tools.clone(),
-            action_log: cx.new(|_| ActionLog::new(project.clone())),
-            initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            request_token_usage: serialized.request_token_usage,
-            cumulative_token_usage: serialized.cumulative_token_usage,
-            exceeded_window_error: None,
-            tool_use_limit_reached: serialized.tool_use_limit_reached,
-            feedback: None,
-            message_feedback: HashMap::default(),
-            last_auto_capture_at: None,
-            last_received_chunk_at: None,
-            request_callback: None,
-            remaining_turns: u32::MAX,
-            configured_model,
-            profile: AgentProfile::new(profile_id, tools),
-
-            pending_tool_uses_by_id: Default::default(),
-            tool_use_metadata_by_id: Default::default(),
-            tool_uses_by_assistant_message: Default::default(),
-            tool_result_cards: Default::default(),
-            tool_results: Default::default(),
-        };
-
-        this.deserialize_tool_use(&serialized.messages, project, window, cx);
-        this.messages = serialized
+        let messages = serialized
             .messages
-            .into_iter()
+            .iter()
+            .cloned() // todo!() remove clone
             .map(|message| Message {
                 id: message.id,
                 role: message.role,
@@ -692,6 +877,61 @@ impl ZedAgent {
                 ui_only: false, // UI-only messages are not persisted
             })
             .collect();
+        let thread = cx.new(|_| Thread {
+            id,
+            next_message_id,
+            messages,
+            pending_checkpoint: None,
+            checkpoints_by_message: HashMap::default(),
+            updated_at: serialized.updated_at,
+        });
+
+        let subscription = cx.subscribe(&thread, |_, _, event, cx| {
+            // todo! temporarily reemitting
+            cx.emit(event.clone())
+        });
+
+        let mut this = Self {
+            thread,
+            _thread_subscription: subscription,
+            summary: ThreadSummary::Ready(serialized.summary),
+            pending_summary: Task::ready(None),
+            detailed_summary_task: Task::ready(None),
+            detailed_summary_tx,
+            detailed_summary_rx,
+            completion_mode,
+            retry_state: None,
+            last_prompt_id: PromptId::new(),
+            project_context,
+            completion_count: 0,
+            pending_completions: Vec::new(),
+            last_restore_checkpoint: None,
+            project: project.clone(),
+            prompt_builder,
+            tools: tools.clone(),
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
+            initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
+            request_token_usage: serialized.request_token_usage,
+            cumulative_token_usage: serialized.cumulative_token_usage,
+            exceeded_window_error: None,
+            tool_use_limit_reached: serialized.tool_use_limit_reached,
+            feedback: None,
+            message_feedback: HashMap::default(),
+            last_auto_capture_at: None,
+            last_received_chunk_at: None,
+            request_callback: None,
+            remaining_turns: u32::MAX,
+            configured_model,
+            profile: AgentProfile::new(profile_id, tools),
+
+            pending_tool_uses_by_id: Default::default(),
+            tool_use_metadata_by_id: Default::default(),
+            tool_uses_by_assistant_message: Default::default(),
+            tool_result_cards: Default::default(),
+            tool_results: Default::default(),
+        };
+
+        this.deserialize_tool_use(&serialized.messages, project, window, cx);
 
         this
     }
@@ -794,16 +1034,8 @@ impl ZedAgent {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.messages.is_empty()
-    }
-
-    pub fn updated_at(&self) -> DateTime<Utc> {
-        self.updated_at
-    }
-
-    pub fn touch_updated_at(&mut self) {
-        self.updated_at = Utc::now();
+    pub fn is_empty(&self, cx: &App) -> bool {
+        self.thread.read(cx).messages.is_empty()
     }
 
     pub fn advance_prompt_id(&mut self) {
@@ -861,17 +1093,24 @@ impl ZedAgent {
         self.completion_mode = mode;
     }
 
-    pub fn message(&self, id: MessageId) -> Option<&Message> {
-        let index = self
-            .messages
-            .binary_search_by(|message| message.id.cmp(&id))
-            .ok()?;
-
-        self.messages.get(index)
+    pub fn message<'a>(&'a self, id: MessageId, cx: &'a App) -> Option<&'a Message> {
+        self.thread.read(cx).message(id)
     }
 
-    pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> {
-        self.messages.iter()
+    pub fn context_for_message<'a>(
+        &'a self,
+        id: MessageId,
+        cx: &'a App,
+    ) -> impl Iterator<Item = &'a AgentContext> {
+        self.thread.read(cx).context_for_message(id)
+    }
+
+    // todo! remove and call via Thread handle
+    pub fn messages<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl ExactSizeIterator<Item = &'a Message> + DoubleEndedIterator {
+        self.thread.read(cx).messages()
     }
 
     pub fn is_generating(&self) -> bool {
@@ -917,8 +1156,12 @@ impl ZedAgent {
         !self.pending_tool_uses_by_id.is_empty()
     }
 
-    pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
-        self.checkpoints_by_message.get(&id).cloned()
+    pub fn checkpoint_for_message(&self, id: MessageId, cx: &App) -> Option<ThreadCheckpoint> {
+        self.thread
+            .read(cx)
+            .checkpoints_by_message
+            .get(&id)
+            .cloned()
     }
 
     pub fn restore_checkpoint(
@@ -946,10 +1189,14 @@ impl ZedAgent {
                         error: err.to_string(),
                     });
                 } else {
-                    this.truncate(checkpoint.message_id, cx);
+                    this.thread.update(cx, |thread, cx| {
+                        thread.truncate(checkpoint.message_id, cx);
+                    });
                     this.last_restore_checkpoint = None;
                 }
-                this.pending_checkpoint = None;
+                this.thread.update(cx, |thread, _cx| {
+                    thread.pending_checkpoint = None;
+                });
                 cx.emit(ThreadEvent::CheckpointChanged);
                 cx.notify();
             })?;
@@ -960,7 +1207,10 @@ impl ZedAgent {
     fn finalize_pending_checkpoint(&mut self, cx: &mut Context<Self>) {
         let pending_checkpoint = if self.is_generating() {
             return;
-        } else if let Some(checkpoint) = self.pending_checkpoint.take() {
+        } else if let Some(checkpoint) = self
+            .thread
+            .update(cx, |thread, _cx| thread.pending_checkpoint.take())
+        {
             checkpoint
         } else {
             return;
@@ -991,76 +1241,25 @@ impl ZedAgent {
 
                 if !equal {
                     this.update(cx, |this, cx| {
-                        this.insert_checkpoint(pending_checkpoint, cx)
+                        this.thread.update(cx, |thread, cx| {
+                            thread.insert_checkpoint(pending_checkpoint, cx)
+                        });
                     })?;
                 }
 
                 Ok(())
             }
             Err(_) => this.update(cx, |this, cx| {
-                this.insert_checkpoint(pending_checkpoint, cx)
+                this.thread.update(cx, |this, cx| {
+                    this.insert_checkpoint(pending_checkpoint, cx)
+                })
             }),
         })
         .detach();
     }
 
-    fn insert_checkpoint(&mut self, checkpoint: ThreadCheckpoint, cx: &mut Context<Self>) {
-        self.checkpoints_by_message
-            .insert(checkpoint.message_id, checkpoint);
-        cx.emit(ThreadEvent::CheckpointChanged);
-        cx.notify();
-    }
-
     pub fn last_restore_checkpoint(&self) -> Option<&LastRestoreCheckpoint> {
         self.last_restore_checkpoint.as_ref()
-    }
-
-    pub fn truncate(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
-        let Some(message_ix) = self
-            .messages
-            .iter()
-            .rposition(|message| message.id == message_id)
-        else {
-            return;
-        };
-        for deleted_message in self.messages.drain(message_ix..) {
-            self.checkpoints_by_message.remove(&deleted_message.id);
-        }
-        cx.notify();
-    }
-
-    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AgentContext> {
-        self.messages
-            .iter()
-            .find(|message| message.id == id)
-            .into_iter()
-            .flat_map(|message| message.loaded_context.contexts.iter())
-    }
-
-    pub fn is_turn_end(&self, ix: usize) -> bool {
-        if self.messages.is_empty() {
-            return false;
-        }
-
-        if !self.is_generating() && ix == self.messages.len() - 1 {
-            return true;
-        }
-
-        let Some(message) = self.messages.get(ix) else {
-            return false;
-        };
-
-        if message.role != Role::Assistant {
-            return false;
-        }
-
-        self.messages
-            .get(ix + 1)
-            .and_then(|message| {
-                self.message(message.id)
-                    .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
-            })
-            .unwrap_or(false)
     }
 
     pub fn tool_use_limit_reached(&self) -> bool {
@@ -1218,6 +1417,7 @@ impl ZedAgent {
         }
     }
 
+    // todo! move to thread
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
@@ -1234,19 +1434,23 @@ impl ZedAgent {
             });
         }
 
-        let message_id = self.insert_message(
-            Role::User,
-            vec![MessageSegment::Text(text.into())],
-            loaded_context.loaded_context,
-            creases,
-            false,
-            cx,
-        );
+        let message_id = self.thread.update(cx, |thread, cx| {
+            thread.insert_message(
+                Role::User,
+                vec![MessageSegment::Text(text.into())],
+                loaded_context.loaded_context,
+                creases,
+                false,
+                cx,
+            )
+        });
 
         if let Some(git_checkpoint) = git_checkpoint {
-            self.pending_checkpoint = Some(ThreadCheckpoint {
-                message_id,
-                git_checkpoint,
+            self.thread.update(cx, |thread, _cx| {
+                thread.pending_checkpoint = Some(ThreadCheckpoint {
+                    message_id,
+                    git_checkpoint,
+                })
             });
         }
 
@@ -1256,17 +1460,9 @@ impl ZedAgent {
     }
 
     pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
-        let id = self.insert_message(
-            Role::User,
-            vec![MessageSegment::Text("Continue where you left off".into())],
-            LoadedContext::default(),
-            vec![],
-            true,
-            cx,
-        );
-        self.pending_checkpoint = None;
-
-        id
+        self.thread.update(cx, |thread, cx| {
+            thread.insert_invisible_continue_message(cx)
+        })
     }
 
     pub fn insert_assistant_message(
@@ -1274,38 +1470,9 @@ impl ZedAgent {
         segments: Vec<MessageSegment>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        self.insert_message(
-            Role::Assistant,
-            segments,
-            LoadedContext::default(),
-            Vec::new(),
-            false,
-            cx,
-        )
-    }
-
-    pub fn insert_message(
-        &mut self,
-        role: Role,
-        segments: Vec<MessageSegment>,
-        loaded_context: LoadedContext,
-        creases: Vec<MessageCrease>,
-        is_hidden: bool,
-        cx: &mut Context<Self>,
-    ) -> MessageId {
-        let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
-            id,
-            role,
-            segments,
-            loaded_context,
-            creases,
-            is_hidden,
-            ui_only: false,
-        });
-        self.touch_updated_at();
-        cx.emit(ThreadEvent::MessageAdded(id));
-        id
+        self.thread.update(cx, |thread, cx| {
+            thread.insert_assistant_message(segments, cx)
+        })
     }
 
     pub fn edit_message(
@@ -1318,66 +1485,26 @@ impl ZedAgent {
         checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
-            return false;
-        };
-        message.role = new_role;
-        message.segments = new_segments;
-        message.creases = creases;
-        if let Some(context) = loaded_context {
-            message.loaded_context = context;
-        }
-        if let Some(git_checkpoint) = checkpoint {
-            self.checkpoints_by_message.insert(
+        self.thread.update(cx, |thread, cx| {
+            thread.edit_message(
                 id,
-                ThreadCheckpoint {
-                    message_id: id,
-                    git_checkpoint,
-                },
-            );
-        }
-        self.touch_updated_at();
-        cx.emit(ThreadEvent::MessageEdited(id));
-        true
+                new_role,
+                new_segments,
+                creases,
+                loaded_context,
+                checkpoint,
+                cx,
+            )
+        })
     }
 
     pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
-        let Some(index) = self.messages.iter().position(|message| message.id == id) else {
-            return false;
-        };
-        self.messages.remove(index);
-        self.touch_updated_at();
-        cx.emit(ThreadEvent::MessageDeleted(id));
-        true
+        self.thread
+            .update(cx, |thread, cx| thread.delete_message(id, cx))
     }
 
-    /// Returns the representation of this [`Thread`] in a textual form.
-    ///
-    /// This is the representation we use when attaching a thread as context to another thread.
-    pub fn text(&self) -> String {
-        let mut text = String::new();
-
-        for message in &self.messages {
-            text.push_str(match message.role {
-                language_model::Role::User => "User:",
-                language_model::Role::Assistant => "Agent:",
-                language_model::Role::System => "System:",
-            });
-            text.push('\n');
-
-            for segment in &message.segments {
-                match segment {
-                    MessageSegment::Text(content) => text.push_str(content),
-                    MessageSegment::Thinking { text: content, .. } => {
-                        text.push_str(&format!("<think>{}</think>", content))
-                    }
-                    MessageSegment::RedactedThinking(_) => {}
-                }
-            }
-            text.push('\n');
-        }
-
-        text
+    pub fn text(&self, cx: &App) -> String {
+        self.thread.read(cx).text()
     }
 
     /// Serializes this thread into a format for storage or telemetry.
@@ -1388,9 +1515,9 @@ impl ZedAgent {
             this.read_with(cx, |this, cx| SerializedThread {
                 version: SerializedThread::VERSION.to_string(),
                 summary: this.summary().or_default(),
-                updated_at: this.updated_at(),
+                updated_at: this.thread.read(cx).updated_at,
                 messages: this
-                    .messages()
+                    .messages(cx)
                     .filter(|message| !message.ui_only)
                     .map(|message| SerializedMessage {
                         id: message.id,
@@ -1493,8 +1620,8 @@ impl ZedAgent {
         self.stream_completion(request, model, intent, window, cx);
     }
 
-    pub fn used_tools_since_last_user_message(&self) -> bool {
-        for message in self.messages.iter().rev() {
+    pub fn used_tools_since_last_user_message(&self, cx: &App) -> bool {
+        for message in self.messages(cx).rev() {
             let message_has_tool_results = self
                 .tool_uses_by_assistant_message
                 .get(&message.id)
@@ -1568,7 +1695,7 @@ impl ZedAgent {
         }
 
         let mut message_ix_to_cache = None;
-        for message in &self.messages {
+        for message in self.messages(cx) {
             // ui_only messages are for the UI only, not for the model
             if message.ui_only {
                 continue;
@@ -1691,7 +1818,7 @@ impl ZedAgent {
             temperature: AgentSettings::temperature_for_model(model, cx),
         };
 
-        for message in &self.messages {
+        for message in self.messages(cx) {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -1773,7 +1900,7 @@ impl ZedAgent {
                             .push(event.as_ref().map_err(|error| error.to_string()).cloned());
                     }
 
-                    thread.update(cx, |thread, cx| {
+                    thread.update(cx, |this, cx| {
                         let event = match event {
                             Ok(event) => event,
                             Err(error) => {
@@ -1790,7 +1917,7 @@ impl ZedAgent {
                                     LanguageModelCompletionError::PromptTooLarge { tokens } => {
                                         let tokens = tokens.unwrap_or_else(|| {
                                             // We didn't get an exact token count from the API, so fall back on our estimate.
-                                            thread.total_token_usage()
+                                            this.total_token_usage(cx)
                                                 .map(|usage| usage.total)
                                                 .unwrap_or(0)
                                                 // We know the context window was exceeded in practice, so if our estimate was
@@ -1822,7 +1949,7 @@ impl ZedAgent {
                                         raw_input: invalid_input_json,
                                         json_parse_error,
                                     } => {
-                                        thread.receive_invalid_tool_json(
+                                        this.receive_invalid_tool_json(
                                             id,
                                             tool_name,
                                             invalid_input_json,
@@ -1852,7 +1979,7 @@ impl ZedAgent {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 request_assistant_message_id =
-                                    Some(thread.insert_assistant_message(
+                                    Some(this.insert_assistant_message(
                                         vec![MessageSegment::Text(String::new())],
                                         cx,
                                     ));
@@ -1861,48 +1988,51 @@ impl ZedAgent {
                                 stop_reason = reason;
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                thread.update_token_usage_at_last_message(token_usage);
-                                thread.cumulative_token_usage = thread.cumulative_token_usage
+                                this.update_token_usage_at_last_message(token_usage, cx);
+                                this.cumulative_token_usage = this.cumulative_token_usage
                                     + token_usage
                                     - current_token_usage;
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
-                                thread.received_chunk();
+                                this.received_chunk();
 
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
-                                if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant
-                                        && !thread.tool_uses_by_assistant_message.contains_key(&last_message.id)
-                                    {
-                                        last_message.push_text(&chunk);
-                                        cx.emit(ThreadEvent::StreamedAssistantText(
-                                            last_message.id,
-                                            chunk,
-                                        ));
-                                    } else {
-                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
-                                        // of a new Assistant response.
-                                        //
-                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
-                                        // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        request_assistant_message_id =
-                                            Some(thread.insert_assistant_message(
-                                                vec![MessageSegment::Text(chunk.to_string())],
-                                                cx,
+                                this.thread.update(cx, |thread, cx| {
+                                    if let Some(last_message) = thread.messages.last_mut() {
+                                        if last_message.role == Role::Assistant
+                                            && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
+                                        {
+                                            last_message.push_text(&chunk);
+                                            cx.emit(ThreadEvent::StreamedAssistantText(
+                                                last_message.id,
+                                                chunk,
                                             ));
-                                    };
-                                }
+                                        } else {
+                                            // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                            // of a new Assistant response.
+                                            //
+                                            // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                            // will result in duplicating the text of the chunk in the rendered Markdown.
+                                            request_assistant_message_id =
+                                                Some(thread.insert_assistant_message(
+                                                    vec![MessageSegment::Text(chunk.to_string())],
+                                                    cx,
+                                                ));
+                                        };
+                                    }
+                                })
                             }
                             LanguageModelCompletionEvent::Thinking {
                                 text: chunk,
                                 signature,
                             } => {
-                                thread.received_chunk();
+                                this.received_chunk();
 
+                                this.thread.update(cx, |thread, cx| {
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
-                                        && !thread.tool_uses_by_assistant_message.contains_key(&last_message.id)
+                                        && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
                                     {
                                         last_message.push_thinking(&chunk, signature);
                                         cx.emit(ThreadEvent::StreamedAssistantThinking(
@@ -1925,16 +2055,18 @@ impl ZedAgent {
                                             ));
                                     };
                                 }
+                                })
                             }
                             LanguageModelCompletionEvent::RedactedThinking {
                                 data
                             } => {
-                                thread.received_chunk();
+                                this.received_chunk();
+                                this.thread.update(cx, |thread, cx| {
 
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
 
-                                    && !thread.tool_uses_by_assistant_message
+                                    && !this.tool_uses_by_assistant_message
                                             .contains_key(&last_message.id)
                                     {
                                         last_message.push_redacted_thinking(data);
@@ -1946,12 +2078,13 @@ impl ZedAgent {
                                             ));
                                     };
                                 }
+                                })
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
                                 let last_assistant_message_id = request_assistant_message_id
                                     .unwrap_or_else(|| {
                                         let new_assistant_message_id =
-                                            thread.insert_assistant_message(vec![], cx);
+                                            this.insert_assistant_message(vec![], cx);
                                         request_assistant_message_id =
                                             Some(new_assistant_message_id);
                                         new_assistant_message_id
@@ -1964,7 +2097,7 @@ impl ZedAgent {
                                     Some((&tool_use.input).clone())
                                 };
 
-                                let ui_text = thread.request_tool_use(
+                                let ui_text = this.request_tool_use(
                                     last_assistant_message_id,
                                     tool_use,
                                     tool_use_metadata.clone(),
@@ -1980,7 +2113,7 @@ impl ZedAgent {
                                 }
                             }
                             LanguageModelCompletionEvent::StatusUpdate(status_update) => {
-                                if let Some(completion) = thread
+                                if let Some(completion) = this
                                     .pending_completions
                                     .iter_mut()
                                     .find(|completion| completion.id == pending_completion_id)
@@ -2002,10 +2135,10 @@ impl ZedAgent {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            thread.update_model_request_usage(amount as u32, limit, cx);
+                                            this.update_model_request_usage(amount as u32, limit, cx);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
-                                            thread.tool_use_limit_reached = true;
+                                            this.tool_use_limit_reached = true;
                                             cx.emit(ThreadEvent::ToolUseLimitReached);
                                         }
                                     }
@@ -2013,11 +2146,11 @@ impl ZedAgent {
                             }
                         }
 
-                        thread.touch_updated_at();
+                        this.thread.update(cx, |thread, _cx| { thread.touch_updated_at() });
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
 
-                        thread.auto_capture_telemetry(cx);
+                        this.auto_capture_telemetry(cx);
                         Ok(())
                     })??;
 
@@ -2033,8 +2166,8 @@ impl ZedAgent {
                     // If there is a response without tool use, summarize the message. Otherwise,
                     // allow two tool uses before summarizing.
                     if matches!(thread.summary, ThreadSummary::Pending)
-                        && thread.messages.len() >= 2
-                        && (!thread.has_pending_tool_uses() || thread.messages.len() >= 6)
+                        && thread.messages(cx).len() >= 2
+                        && (!thread.has_pending_tool_uses() || thread.messages(cx).len() >= 6)
                     {
                         thread.summarize(cx);
                     }
@@ -2047,22 +2180,22 @@ impl ZedAgent {
             let mut retry_scheduled = false;
 
             thread
-                .update(cx, |thread, cx| {
-                    thread.finalize_pending_checkpoint(cx);
+                .update(cx, |this, cx| {
+                    this.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
                         Ok(stop_reason) => {
                             match stop_reason {
                                 StopReason::ToolUse => {
-                                    let tool_uses = thread.use_pending_tools(window, model.clone(), cx);
+                                    let tool_uses = this.use_pending_tools(window, model.clone(), cx);
                                     cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                                 }
                                 StopReason::EndTurn | StopReason::MaxTokens  => {
-                                    thread.project.update(cx, |project, cx| {
+                                    this.project.update(cx, |project, cx| {
                                         project.set_agent_location(None, cx);
                                     });
                                 }
                                 StopReason::Refusal => {
-                                    thread.project.update(cx, |project, cx| {
+                                    this.project.update(cx, |project, cx| {
                                         project.set_agent_location(None, cx);
                                     });
 
@@ -2072,7 +2205,7 @@ impl ZedAgent {
                                     {
                                         let mut messages_to_remove = Vec::new();
 
-                                        for (ix, message) in thread.messages.iter().enumerate().rev() {
+                                        for (ix, message) in this.messages(cx).enumerate().rev() {
                                             messages_to_remove.push(message.id);
 
                                             if message.role == Role::User {
@@ -2080,7 +2213,7 @@ impl ZedAgent {
                                                     break;
                                                 }
 
-                                                if let Some(prev_message) = thread.messages.get(ix - 1) {
+                                                if let Some(prev_message) = this.thread.read(cx).messages.get(ix - 1) {
                                                     if prev_message.role == Role::Assistant {
                                                         break;
                                                     }
@@ -2089,7 +2222,7 @@ impl ZedAgent {
                                         }
 
                                         for message_id in messages_to_remove {
-                                            thread.delete_message(message_id, cx);
+                                            this.delete_message(message_id, cx);
                                         }
                                     }
 
@@ -2101,10 +2234,10 @@ impl ZedAgent {
                             }
 
                             // We successfully completed, so cancel any remaining retries.
-                            thread.retry_state = None;
+                            this.retry_state = None;
                         },
                         Err(error) => {
-                            thread.project.update(cx, |project, cx| {
+                            this.project.update(cx, |project, cx| {
                                 project.set_agent_location(None, cx);
                             });
 
@@ -2133,7 +2266,7 @@ impl ZedAgent {
                             {
                                 match known_error {
                                     LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
-                                        thread.exceeded_window_error = Some(ExceededWindowError {
+                                        this.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
                                             token_count: *tokens,
                                         });
@@ -2146,7 +2279,7 @@ impl ZedAgent {
                                             provider_name.0.as_ref()
                                         );
 
-                                        thread.handle_rate_limit_error(
+                                        this.handle_rate_limit_error(
                                             &error_message,
                                             *retry_after,
                                             model.clone(),
@@ -2163,7 +2296,7 @@ impl ZedAgent {
                                             provider_name.0.as_ref()
                                         );
 
-                                        retry_scheduled = thread.handle_retryable_error(
+                                        retry_scheduled = this.handle_retryable_error(
                                             &error_message,
                                             model.clone(),
                                             intent,
@@ -2181,7 +2314,7 @@ impl ZedAgent {
                                             provider_name.0.as_ref()
                                         );
 
-                                        retry_scheduled = thread.handle_retryable_error(
+                                        retry_scheduled = this.handle_retryable_error(
                                             &error_message,
                                             model.clone(),
                                             intent,
@@ -2204,7 +2337,7 @@ impl ZedAgent {
                             }
 
                             if !retry_scheduled {
-                                thread.cancel_last_completion(window, cx);
+                                this.cancel_last_completion(window, cx);
                             }
                         }
                     }
@@ -2213,7 +2346,7 @@ impl ZedAgent {
                         cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
                     }
 
-                    if let Some((request_callback, (request, response_events))) = thread
+                    if let Some((request_callback, (request, response_events))) = this
                         .request_callback
                         .as_mut()
                         .zip(request_callback_parameters.as_ref())
@@ -2221,14 +2354,14 @@ impl ZedAgent {
                         request_callback(request, response_events);
                     }
 
-                    thread.auto_capture_telemetry(cx);
+                    this.auto_capture_telemetry(cx);
 
                     if let Ok(initial_usage) = initial_token_usage {
-                        let usage = thread.cumulative_token_usage - initial_usage;
+                        let usage = this.cumulative_token_usage - initial_usage;
 
                         telemetry::event!(
                             "Assistant Thread Completion",
-                            thread_id = thread.id(cx).to_string(),
+                            thread_id = this.id(cx).to_string(),
                             prompt_id = prompt_id,
                             model = model.telemetry_id(),
                             model_provider = model.provider_id().to_string(),
@@ -2342,18 +2475,9 @@ impl ZedAgent {
             retry_after.as_secs()
         );
 
-        // Add a UI-only message instead of a regular message
-        let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
-            id,
-            role: Role::System,
-            segments: vec![MessageSegment::Text(retry_message)],
-            loaded_context: LoadedContext::default(),
-            creases: Vec::new(),
-            is_hidden: false,
-            ui_only: true,
+        self.thread.update(cx, |thread, cx| {
+            thread.insert_retry_message(retry_message, cx)
         });
-        cx.emit(ThreadEvent::MessageAdded(id));
         // Schedule the retry
         let thread_handle = cx.entity().downgrade();
 
@@ -2417,18 +2541,9 @@ impl ZedAgent {
                 error_message, attempt, max_attempts, delay_secs
             );
 
-            // Add a UI-only message instead of a regular message
-            let id = self.next_message_id.post_inc();
-            self.messages.push(Message {
-                id,
-                role: Role::System,
-                segments: vec![MessageSegment::Text(retry_message)],
-                loaded_context: LoadedContext::default(),
-                creases: Vec::new(),
-                is_hidden: false,
-                ui_only: true,
+            self.thread.update(cx, |thread, cx| {
+                thread.insert_retry_message(retry_message, cx);
             });
-            cx.emit(ThreadEvent::MessageAdded(id));
 
             // Schedule the retry
             let thread_handle = cx.entity().downgrade();
@@ -2472,7 +2587,13 @@ impl ZedAgent {
         thread_store: WeakEntity<ThreadStore>,
         cx: &mut Context<Self>,
     ) {
-        let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
+        let Some(last_message_id) = self
+            .thread
+            .read(cx)
+            .messages
+            .last()
+            .map(|message| message.id)
+        else {
             return;
         };
 
@@ -2568,18 +2689,18 @@ impl ZedAgent {
             match detailed_summary_rx.recv().await? {
                 DetailedSummaryState::Generating { .. } => {}
                 DetailedSummaryState::NotGenerated => {
-                    return this.read_with(cx, |this, _cx| this.text().into()).ok();
+                    return this.read_with(cx, |this, cx| this.text(cx).into()).ok();
                 }
                 DetailedSummaryState::Generated { text, .. } => return Some(text),
             }
         }
     }
 
-    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+    pub fn latest_detailed_summary_or_text(&self, cx: &App) -> SharedString {
         self.detailed_summary_rx
             .borrow()
             .text()
-            .unwrap_or_else(|| self.text().into())
+            .unwrap_or_else(|| self.text(cx).into())
     }
 
     pub fn is_generating_detailed_summary(&self) -> bool {
@@ -2946,9 +3067,11 @@ impl ZedAgent {
             // When canceled, we always want to insert the checkpoint.
             // (We skip over finalize_pending_checkpoint, because it
             // would conclude we didn't have anything to insert here.)
-            if let Some(checkpoint) = self.pending_checkpoint.take() {
-                self.insert_checkpoint(checkpoint, cx);
-            }
+            self.thread.update(cx, |thread, cx| {
+                if let Some(checkpoint) = thread.pending_checkpoint.take() {
+                    thread.insert_checkpoint(checkpoint, cx);
+                }
+            })
         } else {
             self.finalize_pending_checkpoint(cx);
         }
@@ -3024,7 +3147,7 @@ impl ZedAgent {
         cx.notify();
 
         let message_content = self
-            .message(message_id)
+            .message(message_id, cx)
             .map(|msg| msg.to_string())
             .unwrap_or_default();
 
@@ -3060,8 +3183,7 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let last_assistant_message_id = self
-            .messages
-            .iter()
+            .messages(cx)
             .rev()
             .find(|msg| msg.role == Role::Assistant)
             .map(|msg| msg.id);
@@ -3222,7 +3344,7 @@ impl ZedAgent {
         let summary = self.summary().or_default();
         writeln!(markdown, "# {summary}\n")?;
 
-        for message in self.messages() {
+        for message in self.messages(cx) {
             writeln!(
                 markdown,
                 "## {role}\n",
@@ -3382,7 +3504,7 @@ impl ZedAgent {
         self.cumulative_token_usage
     }
 
-    pub fn token_usage_up_to_message(&self, message_id: MessageId) -> TotalTokenUsage {
+    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
         let Some(model) = self.configured_model.as_ref() else {
             return TotalTokenUsage::default();
         };
@@ -3390,8 +3512,7 @@ impl ZedAgent {
         let max = model.model.max_token_count();
 
         let index = self
-            .messages
-            .iter()
+            .messages(cx)
             .position(|msg| msg.id == message_id)
             .unwrap_or(0);
 
@@ -3411,7 +3532,7 @@ impl ZedAgent {
         }
     }
 
-    pub fn total_token_usage(&self) -> Option<TotalTokenUsage> {
+    pub fn total_token_usage(&self, cx: &App) -> Option<TotalTokenUsage> {
         let model = self.configured_model.as_ref()?;
 
         let max = model.model.max_token_count();
@@ -3426,24 +3547,24 @@ impl ZedAgent {
         }
 
         let total = self
-            .token_usage_at_last_message()
+            .token_usage_at_last_message(cx)
             .unwrap_or_default()
             .total_tokens();
 
         Some(TotalTokenUsage { total, max })
     }
 
-    fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
+    fn token_usage_at_last_message(&self, cx: &App) -> Option<TokenUsage> {
         self.request_token_usage
-            .get(self.messages.len().saturating_sub(1))
+            .get(self.messages(cx).len().saturating_sub(1))
             .or_else(|| self.request_token_usage.last())
             .cloned()
     }
 
-    fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage) {
-        let placeholder = self.token_usage_at_last_message().unwrap_or_default();
-        self.request_token_usage
-            .resize(self.messages.len(), placeholder);
+    fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage, cx: &App) {
+        let placeholder = self.token_usage_at_last_message(cx).unwrap_or_default();
+        let len = self.messages(cx).len();
+        self.request_token_usage.resize(len, placeholder);
 
         if let Some(last) = self.request_token_usage.last_mut() {
             *last = token_usage;
@@ -3799,7 +3920,9 @@ mod tests {
         });
 
         // Check content and context in message object
-        let message = thread.read_with(cx, |thread, _| thread.message(message_id).unwrap().clone());
+        let message = thread.read_with(cx, |thread, cx| {
+            thread.message(message_id, cx).unwrap().clone()
+        });
 
         // Use different path format strings based on platform for the test
         #[cfg(windows)]
@@ -3864,7 +3987,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None)
+            store.new_context_for_thread(thread.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -3879,7 +4002,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None)
+            store.new_context_for_thread(thread.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -3895,7 +4018,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None)
+            store.new_context_for_thread(thread.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -3906,11 +4029,11 @@ fn main() {{
         });
 
         // Check what contexts are included in each message
-        let (message1, message2, message3) = thread.read_with(cx, |thread, _| {
+        let (message1, message2, message3) = thread.read_with(cx, |thread, cx| {
             (
-                thread.message(message1_id).unwrap().clone(),
-                thread.message(message2_id).unwrap().clone(),
-                thread.message(message3_id).unwrap().clone(),
+                thread.message(message1_id, cx).unwrap().clone(),
+                thread.message(message2_id, cx).unwrap().clone(),
+                thread.message(message3_id, cx).unwrap().clone(),
             )
         });
 
@@ -3951,7 +4074,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), Some(message2_id))
+            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 3);
         let loaded_context = cx
@@ -3967,7 +4090,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file4.rs
             store.remove_context(&loaded_context.contexts[2].handle(), cx);
-            store.new_context_for_thread(thread.read(cx), Some(message2_id))
+            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 2);
         let loaded_context = cx
@@ -3983,7 +4106,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file3.rs
             store.remove_context(&loaded_context.contexts[1].handle(), cx);
-            store.new_context_for_thread(thread.read(cx), Some(message2_id))
+            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4022,7 +4145,9 @@ fn main() {{
         });
 
         // Check content and context in message object
-        let message = thread.read_with(cx, |thread, _| thread.message(message_id).unwrap().clone());
+        let message = thread.read_with(cx, |thread, cx| {
+            thread.message(message_id, cx).unwrap().clone()
+        });
 
         // Context should be empty when no files are included
         assert_eq!(message.role, Role::User);
@@ -4055,8 +4180,9 @@ fn main() {{
             )
         });
 
-        let message2 =
-            thread.read_with(cx, |thread, _| thread.message(message2_id).unwrap().clone());
+        let message2 = thread.read_with(cx, |thread, cx| {
+            thread.message(message2_id, cx).unwrap().clone()
+        });
         assert_eq!(message2.loaded_context.text, "");
 
         // Check that both messages appear in the request
@@ -4664,8 +4790,8 @@ fn main() {{
         });
 
         // Check that a retry message was added
-        thread.read_with(cx, |thread, _| {
-            let mut messages = thread.messages();
+        thread.read_with(cx, |thread, cx| {
+            let mut messages = thread.messages(cx);
             assert!(
                 messages.any(|msg| {
                     msg.role == Role::System
@@ -4684,10 +4810,9 @@ fn main() {{
             );
         });
 
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4738,8 +4863,8 @@ fn main() {{
         });
 
         // Check that a retry message was added with provider name
-        thread.read_with(cx, |thread, _| {
-            let mut messages = thread.messages();
+        thread.read_with(cx, |thread, cx| {
+            let mut messages = thread.messages(cx);
             assert!(
                 messages.any(|msg| {
                     msg.role == Role::System
@@ -4760,10 +4885,9 @@ fn main() {{
         });
 
         // Count retry messages
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4815,10 +4939,9 @@ fn main() {{
         cx.run_until_parked();
 
         // Should have scheduled first retry - count retry messages
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4846,10 +4969,9 @@ fn main() {{
         cx.run_until_parked();
 
         // Should have scheduled second retry - count retry messages
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4882,10 +5004,9 @@ fn main() {{
 
         // Should have scheduled third retry
         // Count all retry messages now
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4923,10 +5044,9 @@ fn main() {{
         cx.run_until_parked();
 
         // No more retries should be scheduled after clock was advanced.
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5003,10 +5123,9 @@ fn main() {{
             .advance_clock(Duration::from_secs(final_delay));
         cx.run_until_parked();
 
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5031,7 +5150,7 @@ fn main() {{
         );
 
         // Retry state should be cleared
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, cx| {
             assert!(
                 thread.retry_state.is_none(),
                 "Retry state should be cleared after max retries"
@@ -5039,8 +5158,7 @@ fn main() {{
 
             // Verify we have the expected number of retry messages
             let retry_messages = thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|msg| msg.ui_only && msg.role == Role::System)
                 .count();
             assert_eq!(
@@ -5170,9 +5288,9 @@ fn main() {{
         cx.run_until_parked();
 
         // Get the retry message ID
-        let retry_message_id = thread.read_with(cx, |thread, _| {
+        let retry_message_id = thread.read_with(cx, |thread, cx| {
             thread
-                .messages()
+                .messages(cx)
                 .find(|msg| msg.role == Role::System && msg.ui_only)
                 .map(|msg| msg.id)
                 .expect("Should have a retry message")
@@ -5202,9 +5320,9 @@ fn main() {{
         );
 
         // Retry message should still exist but be marked as ui_only
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, cx| {
             let retry_msg = thread
-                .message(retry_message_id)
+                .message(retry_message_id, cx)
                 .expect("Retry message should still exist");
             assert!(retry_msg.ui_only, "Retry message should be ui_only");
             assert_eq!(
@@ -5356,15 +5474,14 @@ fn main() {{
         }
         cx.run_until_parked();
 
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, cx| {
             assert!(
                 thread.retry_state.is_none(),
                 "Retry state should be cleared after successful completion"
             );
 
             let has_assistant_message = thread
-                .messages
-                .iter()
+                .messages(cx)
                 .any(|msg| msg.role == Role::Assistant && !msg.ui_only);
             assert!(
                 has_assistant_message,
@@ -5476,10 +5593,9 @@ fn main() {{
 
         cx.run_until_parked();
 
-        let retry_count = thread.update(cx, |thread, _| {
+        let retry_count = thread.update(cx, |thread, cx| {
             thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5502,10 +5618,9 @@ fn main() {{
         });
 
         // Verify we have one retry message
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, cx| {
             let retry_messages = thread
-                .messages
-                .iter()
+                .messages(cx)
                 .filter(|msg| {
                     msg.ui_only
                         && msg.segments.iter().any(|seg| {
@@ -5524,10 +5639,9 @@ fn main() {{
         });
 
         // Check that retry message doesn't include attempt count
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, cx| {
             let retry_message = thread
-                .messages
-                .iter()
+                .messages(cx)
                 .find(|msg| msg.role == Role::System && msg.ui_only)
                 .expect("Should have a retry message");
 
@@ -5562,19 +5676,22 @@ fn main() {{
 
         // Insert a UI-only message (like our retry notifications)
         thread.update(cx, |thread, cx| {
-            let id = thread.next_message_id.post_inc();
-            thread.messages.push(Message {
-                id,
-                role: Role::System,
-                segments: vec![MessageSegment::Text(
-                    "This is a UI-only message that should not be sent to the model".to_string(),
-                )],
-                loaded_context: LoadedContext::default(),
-                creases: Vec::new(),
-                is_hidden: true,
-                ui_only: true,
+            thread.thread.update(cx, |thread, cx| {
+                let id = thread.next_message_id.post_inc();
+                thread.messages.push(Message {
+                    id,
+                    role: Role::System,
+                    segments: vec![MessageSegment::Text(
+                        "This is a UI-only message that should not be sent to the model"
+                            .to_string(),
+                    )],
+                    loaded_context: LoadedContext::default(),
+                    creases: Vec::new(),
+                    is_hidden: true,
+                    ui_only: true,
+                });
+                cx.emit(ThreadEvent::MessageAdded(id));
             });
-            cx.emit(ThreadEvent::MessageAdded(id));
         });
 
         // Insert another regular message
@@ -5623,14 +5740,14 @@ fn main() {{
         );
 
         // Verify the thread still has all 3 messages (including UI-only)
-        thread.read_with(cx, |thread, _| {
+        thread.read_with(cx, |thread, cx| {
             assert_eq!(
-                thread.messages().count(),
+                thread.messages(cx).count(),
                 3,
                 "Thread should have 3 messages"
             );
             assert_eq!(
-                thread.messages().filter(|m| m.ui_only).count(),
+                thread.messages(cx).filter(|m| m.ui_only).count(),
                 1,
                 "Thread should have 1 UI-only message"
             );
@@ -5671,8 +5788,8 @@ fn main() {{
         cx.run_until_parked();
 
         // Verify retry was scheduled by checking for retry message
-        let has_retry_message = thread.read_with(cx, |thread, _| {
-            thread.messages.iter().any(|m| {
+        let has_retry_message = thread.read_with(cx, |thread, cx| {
+            thread.messages(cx).any(|m| {
                 m.ui_only
                     && m.segments.iter().any(|s| {
                         if let MessageSegment::Text(text) = s {

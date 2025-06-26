@@ -705,7 +705,7 @@ impl SerializedThreadV0_1_0 {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SerializedMessage {
     pub id: MessageId,
     pub role: Role,
@@ -723,7 +723,7 @@ pub struct SerializedMessage {
     pub is_hidden: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
@@ -741,14 +741,14 @@ pub enum SerializedMessageSegment {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SerializedToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
     pub input: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
@@ -811,7 +811,7 @@ impl LegacySerializedMessage {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SerializedCrease {
     pub start: usize,
     pub end: usize,

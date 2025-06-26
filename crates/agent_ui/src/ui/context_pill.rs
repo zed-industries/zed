@@ -498,7 +498,7 @@ impl AddedContext {
             render_hover: {
                 let thread = handle.thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = thread.read(cx).latest_detailed_summary_or_text();
+                    let text = thread.read(cx).latest_detailed_summary_or_text(cx);
                     ContextPillHover::new_text(text.clone(), cx).into()
                 }))
             },

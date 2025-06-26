@@ -808,7 +808,8 @@ impl ActiveThread {
             _load_edited_message_context_task: None,
         };
 
-        for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
+        // todo! hold on to thread entity and get messages directly
+        for message in thread.read(cx).messages(cx).cloned().collect::<Vec<_>>() {
             let rendered_message = RenderedMessage::from_segments(
                 &message.segments,
                 this.language_registry.clone(),
@@ -978,7 +979,7 @@ impl ActiveThread {
             }
             ThreadEvent::Stopped(reason) => match reason {
                 Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
+                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message(cx);
                     self.play_notification_sound(window, cx);
                     self.show_notification(
                         if used_tools {
@@ -1018,12 +1019,14 @@ impl ActiveThread {
             }
             ThreadEvent::MessageAdded(message_id) => {
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
-                    thread.message(*message_id).map(|message| {
-                        RenderedMessage::from_segments(
-                            &message.segments,
-                            self.language_registry.clone(),
-                            cx,
-                        )
+                    thread.thread().update(cx, |thread, cx| {
+                        thread.message(*message_id).map(|message| {
+                            RenderedMessage::from_segments(
+                                &message.segments,
+                                self.language_registry.clone(),
+                                cx,
+                            )
+                        })
                     })
                 }) {
                     self.push_rendered_message(*message_id, rendered_message);
@@ -1035,15 +1038,17 @@ impl ActiveThread {
             ThreadEvent::MessageEdited(message_id) => {
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
                     if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
-                        thread.message(*message_id).map(|message| {
-                            let mut rendered_message = RenderedMessage {
-                                language_registry: self.language_registry.clone(),
-                                segments: Vec::with_capacity(message.segments.len()),
-                            };
-                            for segment in &message.segments {
-                                rendered_message.push_segment(segment, cx);
-                            }
-                            rendered_message
+                        thread.thread().update(cx, |thread, cx| {
+                            thread.message(*message_id).map(|message| {
+                                let mut rendered_message = RenderedMessage {
+                                    language_registry: self.language_registry.clone(),
+                                    segments: Vec::with_capacity(message.segments.len()),
+                                };
+                                for segment in &message.segments {
+                                    rendered_message.push_segment(segment, cx);
+                                }
+                                rendered_message
+                            })
                         })
                     }) {
                         self.list_state.splice(index..index + 1, 1);
@@ -1413,7 +1418,7 @@ impl ActiveThread {
 
             let token_count = if let Some(task) = cx
                 .update(|cx| {
-                    let Some(message) = thread.read(cx).message(message_id) else {
+                    let Some(message) = thread.read(cx).message(message_id, cx) else {
                         log::error!("Message that was being edited no longer exists");
                         return None;
                     };
@@ -1560,10 +1565,11 @@ impl ActiveThread {
 
         let creases = state.editor.update(cx, extract_message_creases);
 
-        let new_context = self
-            .context_store
-            .read(cx)
-            .new_context_for_thread(self.thread.read(cx), Some(message_id));
+        let new_context = self.context_store.read(cx).new_context_for_thread(
+            self.thread.read(cx),
+            Some(message_id),
+            cx,
+        );
 
         let project = self.thread.read(cx).project().clone();
         let prompt_store = self.thread_store.read(cx).prompt_store().clone();
@@ -1717,7 +1723,7 @@ impl ActiveThread {
             let message_content = self
                 .thread
                 .read(cx)
-                .message(message_id)
+                .message(message_id, cx)
                 .map(|msg| msg.to_string())
                 .unwrap_or_default();
 
@@ -1796,7 +1802,7 @@ impl ActiveThread {
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let Some(message) = thread.message(message_id) else {
+        let Some(message) = thread.message(message_id, cx) else {
             return Empty.into_any();
         };
 
@@ -1822,10 +1828,10 @@ impl ActiveThread {
         };
 
         // Get all the data we need from thread before we start using it in closures
-        let checkpoint = thread.checkpoint_for_message(message_id);
+        let checkpoint = thread.checkpoint_for_message(message_id, cx);
         let configured_model = thread.configured_model().map(|m| m.model);
         let added_context = thread
-            .context_for_message(message_id)
+            .context_for_message(message_id, cx)
             .map(|context| AddedContext::new_attached(context, configured_model.as_ref(), cx))
             .collect::<Vec<_>>();
 
@@ -1869,7 +1875,7 @@ impl ActiveThread {
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
 
-        let show_feedback = thread.is_turn_end(ix);
+        let show_feedback = thread.is_turn_end(ix, cx);
         let feedback_container = h_flex()
             .group("feedback_container")
             .mt_1()
@@ -2140,7 +2146,7 @@ impl ActiveThread {
                                     let message_creases = message.creases.clone();
                                     move |this, _, window, cx| {
                                         if let Some(message_text) =
-                                            this.thread.read(cx).message(message_id).and_then(|message| {
+                                            this.thread.read(cx).message(message_id, cx).and_then(|message| {
                                                 message.segments.first().and_then(|segment| {
                                                     match segment {
                                                         MessageSegment::Text(message_text) => {
@@ -2394,7 +2400,7 @@ impl ActiveThread {
         let message_role = self
             .thread
             .read(cx)
-            .message(message_id)
+            .message(message_id, cx)
             .map(|m| m.role)
             .unwrap_or(Role::User);
 
@@ -3871,7 +3877,7 @@ mod tests {
                 creases,
                 cx,
             );
-            thread.message(message_id).cloned().unwrap()
+            thread.message(message_id, cx).cloned().unwrap()
         });
 
         active_thread.update_in(cx, |active_thread, window, cx| {
@@ -3896,7 +3902,9 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let message = thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
+        let message = thread.update(cx, |thread, cx| {
+            thread.message(message.id, cx).cloned().unwrap()
+        });
         active_thread.update_in(cx, |active_thread, window, cx| {
             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
                 active_thread.start_editing_message(
@@ -3977,7 +3985,7 @@ mod tests {
                 cx.active_window(),
                 cx,
             );
-            thread.message(message_id).cloned().unwrap()
+            thread.message(message_id, cx).cloned().unwrap()
         });
 
         cx.run_until_parked();
@@ -4019,8 +4027,9 @@ mod tests {
         assert_eq!(new_request_events.lock().unwrap().len(), 2);
 
         // Verify that the edited message contains the new text
-        let edited_message =
-            thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
+        let edited_message = thread.update(cx, |thread, cx| {
+            thread.message(message.id, cx).cloned().unwrap()
+        });
         match &edited_message.segments[0] {
             MessageSegment::Text(text) => {
                 assert_eq!(text, "What is the weather like?");

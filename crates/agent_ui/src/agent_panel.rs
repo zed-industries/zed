@@ -1757,7 +1757,7 @@ impl AgentPanel {
                         .action("New Text Thread", NewTextThread.boxed_clone())
                         .when_some(active_thread, |this, active_thread| {
                             let thread = active_thread.read(cx);
-                            if !thread.is_empty() {
+                            if !thread.is_empty(cx) {
                                 this.action(
                                     "New From Summary",
                                     Box::new(NewThread {
@@ -1906,12 +1906,12 @@ impl AgentPanel {
 
         let thread = active_thread.thread().read(cx);
         let is_generating = thread.is_generating();
-        let conversation_token_usage = thread.total_token_usage()?;
+        let conversation_token_usage = thread.total_token_usage(cx)?;
 
         let (total_token_usage, is_estimating) =
             if let Some((editing_message_id, unsent_tokens)) = active_thread.editing_message_id() {
                 let combined = thread
-                    .token_usage_up_to_message(editing_message_id)
+                    .token_usage_up_to_message(editing_message_id, cx)
                     .add(unsent_tokens);
 
                 (combined, unsent_tokens > 0)

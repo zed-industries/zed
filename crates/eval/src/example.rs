@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::{ContextLoadResult, ZedAgent, ThreadEvent};
+use agent::{ContextLoadResult, ThreadEvent, ZedAgent};
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -315,7 +315,7 @@ impl ExampleContext {
         let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
             thread.set_remaining_turns(iterations);
             thread.send_to_model(model, CompletionIntent::UserPrompt, None, cx);
-            thread.messages().len()
+            thread.messages(cx).len()
         })?;
 
         loop {
@@ -335,7 +335,7 @@ impl ExampleContext {
 
         let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
             let mut messages = Vec::new();
-            for message in thread.messages().skip(message_count_before) {
+            for message in thread.messages(cx).skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
                     text: message.to_string(),

@@ -419,9 +419,9 @@ impl ExampleInstance {
                 fs::write(this.run_directory.join("diagnostics_after.txt"), diagnostics_after)?;
             }
 
-            thread.update(cx, |thread, _cx| {
+            thread.update(cx, |thread, cx| {
                 let response_count = thread
-                    .messages()
+                    .messages(cx)
                     .filter(|message| message.role == language_model::Role::Assistant)
                     .count();
                 RunOutput {
@@ -433,7 +433,7 @@ impl ExampleInstance {
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
                     tool_metrics: example_cx.tool_metrics.lock().unwrap().clone(),
-                    all_messages: messages_to_markdown(thread.messages()),
+                    all_messages: messages_to_markdown(thread.messages(cx)),
                     programmatic_assertions: example_cx.assertions,
                 }
             })
