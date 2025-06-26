@@ -1140,7 +1140,7 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
-            ThreadEvent::RetriesFailed { message, .. } => {
+            ThreadEvent::RetriesFailed { message } => {
                 self.show_notification(message, ui::IconName::Warning, window, cx);
             }
         }

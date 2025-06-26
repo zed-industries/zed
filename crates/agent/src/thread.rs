@@ -2216,7 +2216,6 @@ impl Thread {
 
             cx.emit(ThreadEvent::RetriesFailed {
                 message: notification_text,
-                max_attempts,
             });
 
             false
@@ -3168,7 +3167,6 @@ pub enum ThreadEvent {
     ProfileChanged,
     RetriesFailed {
         message: SharedString,
-        max_attempts: u8,
     },
 }
 
