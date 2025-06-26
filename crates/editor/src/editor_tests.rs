@@ -21771,9 +21771,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
     cx.set_state(indoc! {"
         def main():
         ˇ    try:
-        ˇ       fetch()
+        ˇ        fetch()
         ˇ    except ValueError:
-        ˇ       handle_error()
+        ˇ        handle_error()
         ˇ    else:
         ˇ        match value:
         ˇ            case _:
@@ -21901,74 +21901,101 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
             finally:ˇ
     "});
 
-    // TODO: test `except` auto outdents when typed inside `try` block right after for block
-    // cx.set_state(indoc! {"
-    //     def main():
-    //         try:
-    //             for i in range(n):
-    //                 pass
-    //             ˇ
-    // "});
-    // cx.update_editor(|editor, window, cx| {
-    //     editor.handle_input("except:", window, cx);
-    // });
-    // cx.assert_editor_state(indoc! {"
-    //     def main():
-    //         try:
-    //             for i in range(n):
-    //                 pass
-    //         except:ˇ
-    // "});
+    // test `else` does not outdents when typed inside `except` block right after for block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                for i in range(n):
+                    pass
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                for i in range(n):
+                    pass
+                else:ˇ
+    "});
 
-    // TODO: test `else` auto outdents when typed inside `except` block right after for block
-    // cx.set_state(indoc! {"
-    //     def main():
-    //         try:
-    //             i = 2
-    //         except:
-    //             for i in range(n):
-    //                 pass
-    //             ˇ
-    // "});
-    // cx.update_editor(|editor, window, cx| {
-    //     editor.handle_input("else:", window, cx);
-    // });
-    // cx.assert_editor_state(indoc! {"
-    //     def main():
-    //         try:
-    //             i = 2
-    //         except:
-    //             for i in range(n):
-    //                 pass
-    //         else:ˇ
-    // "});
+    // test `finally` auto outdents when typed inside `else` block right after for block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:
+                for i in range(n):
+                    pass
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("finally:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:
+                for i in range(n):
+                    pass
+            finally:ˇ
+    "});
 
-    // TODO: test `finally` auto outdents when typed inside `else` block right after for block
-    // cx.set_state(indoc! {"
-    //     def main():
-    //         try:
-    //             i = 2
-    //         except:
-    //             j = 2
-    //         else:
-    //             for i in range(n):
-    //                 pass
-    //             ˇ
-    // "});
-    // cx.update_editor(|editor, window, cx| {
-    //     editor.handle_input("finally:", window, cx);
-    // });
-    // cx.assert_editor_state(indoc! {"
-    //     def main():
-    //         try:
-    //             i = 2
-    //         except:
-    //             j = 2
-    //         else:
-    //             for i in range(n):
-    //                 pass
-    //         finally:ˇ
-    // "});
+    // test `except` outdents to inner "try" block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+                if i == 2:
+                    try:
+                        i = 3
+                        ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("except:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+                if i == 2:
+                    try:
+                        i = 3
+                    except:ˇ
+    "});
+
+    // test `except` outdents to outer "try" block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+                if i == 2:
+                    try:
+                        i = 3
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("except:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+                if i == 2:
+                    try:
+                        i = 3
+            except:ˇ
+    "});
 
     // test `else` stays at correct indent when typed after `for` block
     cx.set_state(indoc! {"
