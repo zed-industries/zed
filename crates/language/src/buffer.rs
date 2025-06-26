@@ -3016,7 +3016,7 @@ impl BufferSnapshot {
 
         // Find the suggested indentation increases and decreased based on regexes.
         let mut regex_outdent_map = HashMap::default();
-        let mut last_seen_suffix = HashMap::default();
+        let mut last_seen_suffix: HashMap<String, Vec<Point>> = HashMap::default();
         let mut start_positions_iter = start_positions.iter().peekable();
 
         let mut indent_change_rows = Vec::<(u32, Ordering)>::new();
@@ -3041,7 +3041,10 @@ impl BufferSnapshot {
                 while let Some(pos) = start_positions_iter.peek() {
                     if pos.start.row < row {
                         let pos = start_positions_iter.next().unwrap();
-                        last_seen_suffix.insert(pos.suffix.to_string(), pos.start);
+                        last_seen_suffix
+                            .entry(pos.suffix.to_string())
+                            .or_default()
+                            .push(pos.start);
                     } else {
                         break;
                     }
@@ -3053,6 +3056,7 @@ impl BufferSnapshot {
                             .valid_after
                             .iter()
                             .filter_map(|valid_suffix| last_seen_suffix.get(valid_suffix))
+                            .flatten()
                             .filter(|start_point| start_point.column <= row_start_column)
                             .max_by_key(|start_point| start_point.row);
                         if let Some(outdent_to_row) = basis_row {
