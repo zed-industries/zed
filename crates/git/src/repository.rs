@@ -2268,7 +2268,7 @@ mod tests {
 
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
-        fn gc(&self) -> BoxFuture<Result<()>> {
+        fn gc(&self) -> BoxFuture<'_, Result<()>> {
             let working_directory = self.working_directory();
             let git_binary_path = self.git_binary_path.clone();
             let executor = self.executor.clone();
