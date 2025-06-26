@@ -52,8 +52,8 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 
-const PROVIDER_ID: &str = "amazon-bedrock";
-const PROVIDER_NAME: &str = "Amazon Bedrock";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("amazon-bedrock");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Amazon Bedrock");
 
 #[derive(Default, Clone, Deserialize, Serialize, PartialEq, Debug)]
 pub struct BedrockCredentials {
@@ -285,11 +285,11 @@ impl BedrockLanguageModelProvider {
 
 impl LanguageModelProvider for BedrockLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -489,11 +489,11 @@ impl LanguageModel for BedrockModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {

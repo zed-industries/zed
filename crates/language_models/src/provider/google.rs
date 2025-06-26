@@ -37,8 +37,8 @@ use util::ResultExt;
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 
-const PROVIDER_ID: &str = "google";
-const PROVIDER_NAME: &str = "Google AI";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("google");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Google AI");
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct GoogleSettings {
@@ -207,11 +207,11 @@ impl LanguageModelProviderState for GoogleLanguageModelProvider {
 
 impl LanguageModelProvider for GoogleLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -334,11 +334,11 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {

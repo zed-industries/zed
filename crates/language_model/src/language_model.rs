@@ -34,11 +34,12 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 
-pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
+pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
 
-/// If we get a rate limit error that doesn't tell us when we can retry,
-/// default to waiting this long before retrying.
-const DEFAULT_RATE_LIMIT_RETRY_AFTER: Duration = Duration::from_secs(4);
+pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
+    LanguageModelProviderId::new("anthropic");
+pub const ANTHROPIC_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Anthropic");
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
@@ -71,6 +72,12 @@ pub enum LanguageModelCompletionEvent {
         data: String,
     },
     ToolUse(LanguageModelToolUse),
+    ToolUseJsonParseError {
+        id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    },
     StartMessage {
         message_id: String,
     },
@@ -79,61 +86,122 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
-    #[error("rate limit exceeded, retry after {retry_after:?}")]
-    RateLimitExceeded { retry_after: Duration },
-    #[error("received bad input JSON")]
-    BadInputJson {
-        id: LanguageModelToolUseId,
-        tool_name: Arc<str>,
-        raw_input: Arc<str>,
-        json_parse_error: String,
-    },
-    #[error("language model provider's API is overloaded")]
-    Overloaded,
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-    #[error("invalid request format to language model provider's API")]
-    BadRequestFormat,
-    #[error("authentication error with language model provider's API")]
-    AuthenticationError,
-    #[error("permission error with language model provider's API")]
-    PermissionError,
-    #[error("language model provider API endpoint not found")]
-    ApiEndpointNotFound,
+    // Generic completion handling errors
+    #[error("JSON parse error in tool use input")]
+    ToolUseJsonParseError,
+
+    // User errors
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
-    #[error("internal server error in language model provider's API")]
-    ApiInternalServerError,
-    #[error("I/O error reading response from language model provider's API: {0:?}")]
-    ApiReadResponseError(io::Error),
-    #[error("HTTP response error from language model provider's API: status {status} - {body:?}")]
-    HttpResponseError { status: u16, body: String },
-    #[error("error serializing request to language model provider API: {0}")]
-    SerializeRequest(serde_json::Error),
-    #[error("error building request body to language model provider API: {0}")]
-    BuildRequestBody(http::Error),
-    #[error("error sending HTTP request to language model provider API: {0}")]
-    HttpSend(anyhow::Error),
-    #[error("error deserializing language model provider API response: {0}")]
-    DeserializeResponse(serde_json::Error),
-    #[error("unexpected language model provider API response format: {0}")]
-    UnknownResponseFormat(String),
+    #[error("missing {provider} API key")]
+    NoApiKey { provider: LanguageModelProviderName },
+
+    // Provider errors
+    #[error("{provider}'s API rate limit exceeded")]
+    RateLimitExceeded {
+        provider: LanguageModelProviderName,
+        retry_after: Option<Duration>,
+    },
+    #[error("{provider}'s API servers are overloaded right now")]
+    ServerOverloaded {
+        provider: LanguageModelProviderName,
+        retry_after: Option<Duration>,
+    },
+    #[error("{provider}'s API server reported an internal server error")]
+    ApiInternalServerError { provider: LanguageModelProviderName },
+    // todo!
+    #[error("HTTP response error from {provider}'s API: status {status} - {body:?}")]
+    HttpResponseError {
+        provider: LanguageModelProviderName,
+        status: u16,
+        body: String,
+    },
+
+    // Client errors
+    //
+    // todo! which of these should be retriable?
+    #[error("invalid request format to {provider}'s API")]
+    BadRequestFormat { provider: LanguageModelProviderName },
+    #[error("authentication error with {provider}'s API")]
+    AuthenticationError { provider: LanguageModelProviderName },
+    #[error("permission error with {provider}'s API")]
+    PermissionError { provider: LanguageModelProviderName },
+    #[error("language model provider API endpoint not found")]
+    ApiEndpointNotFound { provider: LanguageModelProviderName },
+    #[error("I/O error reading response from {provider}'s API: {error:?}")]
+    ApiReadResponseError {
+        provider: LanguageModelProviderName,
+        error: io::Error,
+    },
+    #[error("error serializing request to {provider} API: {error}")]
+    SerializeRequest {
+        provider: LanguageModelProviderName,
+        error: serde_json::Error,
+    },
+    #[error("error building request body to {provider} API: {error}")]
+    BuildRequestBody {
+        provider: LanguageModelProviderName,
+        error: http::Error,
+    },
+    #[error("error sending HTTP request to {provider} API: {error}")]
+    HttpSend {
+        provider: LanguageModelProviderName,
+        error: anyhow::Error,
+    },
+    #[error("error deserializing {provider} API response: {error}")]
+    DeserializeResponse {
+        provider: LanguageModelProviderName,
+        error: serde_json::Error,
+    },
+    #[error("unexpected {provider} API response format: {error}")]
+    UnknownResponseFormat {
+        provider: LanguageModelProviderName,
+        error: String,
+    },
+
+    /// Error from cloud provider - message is used directly rather than converting it to one of the
+    /// above types.
+    #[error("{error}")]
+    ZedCloudError { error: String },
+    #[error("{error}")]
+    RetriableZedCloudError {
+        error: String,
+        retry_after: Option<Duration>,
+    },
+
+    // todo! remove - having From<anyhow::Error> discourages using proper error values
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 impl From<AnthropicError> for LanguageModelCompletionError {
     fn from(error: AnthropicError) -> Self {
+        let provider = ANTHROPIC_PROVIDER_NAME;
         match error {
-            AnthropicError::SerializeRequest(error) => Self::SerializeRequest(error),
-            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody(error),
-            AnthropicError::HttpSend(error) => Self::HttpSend(error),
-            AnthropicError::DeserializeResponse(error) => Self::DeserializeResponse(error),
-            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError(error),
-            AnthropicError::HttpResponseError { status, body } => {
-                Self::HttpResponseError { status, body }
+            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
+            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
+            AnthropicError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
             }
-            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded { retry_after },
+            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            AnthropicError::HttpResponseError { status, body } => Self::HttpResponseError {
+                provider,
+                status,
+                body,
+            },
+            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after: retry_after,
+            },
             AnthropicError::ApiError(api_error) => api_error.into(),
-            AnthropicError::UnexpectedResponseFormat(error) => Self::UnknownResponseFormat(error),
+            AnthropicError::UnexpectedResponseFormat(error) => {
+                Self::UnknownResponseFormat { provider, error }
+            }
         }
     }
 }
@@ -141,23 +209,27 @@ impl From<AnthropicError> for LanguageModelCompletionError {
 impl From<anthropic::ApiError> for LanguageModelCompletionError {
     fn from(error: anthropic::ApiError) -> Self {
         use anthropic::ApiErrorCode::*;
-
+        let provider = ANTHROPIC_PROVIDER_NAME;
         match error.code() {
             Some(code) => match code {
-                InvalidRequestError => LanguageModelCompletionError::BadRequestFormat,
-                AuthenticationError => LanguageModelCompletionError::AuthenticationError,
-                PermissionError => LanguageModelCompletionError::PermissionError,
-                NotFoundError => LanguageModelCompletionError::ApiEndpointNotFound,
-                RequestTooLarge => LanguageModelCompletionError::PromptTooLarge {
+                InvalidRequestError => Self::BadRequestFormat { provider },
+                AuthenticationError => Self::AuthenticationError { provider },
+                PermissionError => Self::PermissionError { provider },
+                NotFoundError => Self::ApiEndpointNotFound { provider },
+                RequestTooLarge => Self::PromptTooLarge {
                     tokens: parse_prompt_too_long(&error.message),
                 },
-                RateLimitError => LanguageModelCompletionError::RateLimitExceeded {
-                    retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
+                RateLimitError => Self::RateLimitExceeded {
+                    provider,
+                    retry_after: None,
                 },
-                ApiError => LanguageModelCompletionError::ApiInternalServerError,
-                OverloadedError => LanguageModelCompletionError::Overloaded,
+                ApiError => Self::ApiInternalServerError { provider },
+                OverloadedError => Self::ServerOverloaded {
+                    provider,
+                    retry_after: None,
+                },
             },
-            None => LanguageModelCompletionError::Other(error.into()),
+            None => Self::Other(error.into()),
         }
     }
 }
@@ -369,6 +441,9 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    ..
+                                }) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None
@@ -396,83 +471,6 @@ pub trait LanguageModel: Send + Sync {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum LanguageModelKnownError {
-    #[error("Context window limit exceeded ({tokens})")]
-    ContextWindowLimitExceeded { tokens: u64 },
-    #[error("{0}")]
-    Overloaded(String),
-    #[error("{0}")]
-    ApiInternalServerError(String),
-    #[error("I/O error while reading response from language model provider's API: {0:?}")]
-    ReadResponseError(io::Error),
-    #[error("Error deserializing response from language model provider's API: {0:?}")]
-    DeserializeResponse(serde_json::Error),
-    #[error("Language model provider's API returned a response in an unknown format")]
-    UnknownResponseFormat(String),
-    #[error("{0}")]
-    RateLimitExceeded(String, Duration),
-}
-
-impl LanguageModelKnownError {
-    /// Attempts to map an HTTP response status code to a known error type.
-    /// Returns None if the status code doesn't map to a specific known error.
-    ///
-    /// If provider_name is None, the body is used as the error message directly.
-    /// If provider_name is Some, the error message is formatted with the provider name.
-    pub fn from_http_response(
-        status: u16,
-        body: &str,
-        provider_name: Option<&str>,
-    ) -> Option<Self> {
-        match status {
-            429 => Some(Self::RateLimitExceeded(
-                match provider_name {
-                    Some(name) => format!("{}'s API rate limit exceeded", name),
-                    None => body.to_string(),
-                },
-                DEFAULT_RATE_LIMIT_RETRY_AFTER,
-            )),
-            503 => Some(Self::Overloaded(match provider_name {
-                Some(name) => format!("{}'s API servers are overloaded right now", name),
-                None => body.to_string(),
-            })),
-            500..=599 => Some(Self::ApiInternalServerError(match provider_name {
-                Some(name) => format!("{}'s API server reported an internal server error", name),
-                None => body.to_string(),
-            })),
-            _ => None,
-        }
-    }
-
-    /// Creates a RateLimitExceeded error with the appropriate message based on provider.
-    pub fn rate_limit_exceeded(provider_name: Option<&str>, retry_after: Duration) -> Self {
-        Self::RateLimitExceeded(
-            match provider_name {
-                Some(name) => format!("{}'s API rate limit exceeded", name),
-                None => "Rate limit exceeded".to_string(),
-            },
-            retry_after,
-        )
-    }
-
-    /// Creates an Overloaded error with the appropriate message based on provider.
-    pub fn overloaded(provider_name: Option<&str>) -> Self {
-        Self::Overloaded(match provider_name {
-            Some(name) => format!("{}'s API servers are overloaded right now", name),
-            None => "API servers are overloaded right now".to_string(),
-        })
-    }
-
-    /// Creates an ApiInternalServerError with the appropriate message based on provider.
-    pub fn api_internal_server_error(provider_name: Option<&str>) -> Self {
-        Self::ApiInternalServerError(match provider_name {
-            Some(name) => format!("{}'s API server reported an internal server error", name),
-            None => "API server reported an internal server error".to_string(),
-        })
     }
 }
 
@@ -554,16 +552,32 @@ pub struct LanguageModelName(pub SharedString);
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderId(pub SharedString);
 
-impl LanguageModelProviderId {
-    pub fn is_zed(&self) -> bool {
-        self.0 == ZED_CLOUD_PROVIDER_ID
-    }
-}
-
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
 
+impl LanguageModelProviderId {
+    pub const fn new(id: &'static str) -> Self {
+        Self(SharedString::new_static(id))
+    }
+
+    pub fn is_zed(&self) -> bool {
+        self == &ZED_CLOUD_PROVIDER_ID
+    }
+}
+
+impl LanguageModelProviderName {
+    pub const fn new(id: &'static str) -> Self {
+        Self(SharedString::new_static(id))
+    }
+}
+
 impl fmt::Display for LanguageModelProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for LanguageModelProviderName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

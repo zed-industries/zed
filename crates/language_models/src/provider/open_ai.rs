@@ -31,8 +31,8 @@ use util::ResultExt;
 use crate::OpenAiSettingsContent;
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: &str = "openai";
-const PROVIDER_NAME: &str = "OpenAI";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenAI");
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
@@ -173,11 +173,11 @@ impl LanguageModelProviderState for OpenAiLanguageModelProvider {
 
 impl LanguageModelProvider for OpenAiLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -263,11 +263,17 @@ impl OpenAiLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.context("Missing OpenAI API Key")?;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::from(
+                    LanguageModelCompletionError::NoApiKey {
+                        provider: PROVIDER_NAME,
+                    },
+                ));
+            };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
@@ -287,11 +293,11 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -525,7 +531,9 @@ impl OpenAiEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(LanguageModelCompletionError::from(
+                    LanguageModelCompletionError::Other(anyhow!(error)),
+                ))],
             })
         })
     }
@@ -588,10 +596,10 @@ impl OpenAiEventMapper {
                                 raw_input: tool_call.arguments.clone(),
                             },
                         )),
-                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                             id: tool_call.id.into(),
-                            tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.into(),
+                            tool_name: tool_call.name.into(),
+                            raw_input: tool_call.arguments.clone().into(),
                             json_parse_error: error.to_string(),
                         }),
                     }

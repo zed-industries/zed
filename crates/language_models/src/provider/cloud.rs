@@ -12,11 +12,10 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter,
-    ZED_CLOUD_PROVIDER_ID,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelName, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelProviderTosView,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    ModelRequestLimitReachedError, RateLimiter, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken, PaymentRequiredError,
@@ -48,8 +47,7 @@ use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, i
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
-pub const PROVIDER_NAME: &str = "Zed";
-pub const DEFAULT_RETRY_DELAY_SECONDS: u64 = 10;
+pub const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Zed");
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -353,11 +351,11 @@ impl LanguageModelProviderState for CloudLanguageModelProvider {
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(ZED_CLOUD_PROVIDER_ID.into())
+        ZED_CLOUD_PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -642,8 +640,11 @@ impl CloudLanguageModel {
                     );
                 }
 
+                // todo!
                 match parse_retry_after(response.headers()) {
-                    Some(retry_after) => Timer::after(retry_after).await,
+                    Some(retry_after) => {
+                        Timer::after(retry_after).await;
+                    }
                     None => {
                         Timer::after(retry_delay).await;
                         retry_delay *= 2; // If it fails again, wait longer.
@@ -734,11 +735,11 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(ZED_CLOUD_PROVIDER_ID.into())
+        ZED_CLOUD_PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -922,28 +923,19 @@ impl LanguageModel for CloudLanguageModel {
                         Ok(api_err) => {
                             if api_err.status == StatusCode::BAD_REQUEST {
                                 if let Some(tokens) = parse_prompt_too_long(&api_err.body) {
-                                    return anyhow!(
-                                        LanguageModelKnownError::ContextWindowLimitExceeded {
-                                            tokens
-                                        }
-                                    );
+                                    return LanguageModelCompletionError::PromptTooLarge {
+                                        tokens: Some(tokens),
+                                    }
+                                    .into();
                                 }
                             }
-                            // Convert 5xx errors to known errors with the server's message
                             match api_err.status.as_u16() {
-                                429 => anyhow!(LanguageModelKnownError::RateLimitExceeded(
-                                    api_err.body.clone(),
-                                    parse_retry_after(&api_err.headers).unwrap_or_else(|| {
-                                        Duration::from_secs(DEFAULT_RETRY_DELAY_SECONDS)
-                                    }),
-                                )),
-                                503 | 529 => anyhow!(LanguageModelKnownError::Overloaded(
-                                    api_err.body.clone(),
-                                )),
-                                500..=599 => {
-                                    anyhow!(LanguageModelKnownError::ApiInternalServerError(
-                                        api_err.body.clone(),
-                                    ))
+                                429 | 503 | 529 => {
+                                    LanguageModelCompletionError::RetriableZedCloudError {
+                                        error: anyhow!(api_err.body.clone()),
+                                        retry_after: parse_retry_after(&api_err.headers),
+                                    }
+                                    .into()
                                 }
                                 _ => anyhow!(api_err),
                             }
@@ -1076,7 +1068,9 @@ where
         .flat_map(move |event| {
             futures::stream::iter(match event {
                 Err(error) => {
-                    vec![Err(LanguageModelCompletionError::Other(error))]
+                    vec![Err(LanguageModelCompletionError::from(
+                        LanguageModelCompletionError::Other(error),
+                    ))]
                 }
                 Ok(CloudCompletionEvent::Status(event)) => {
                     vec![Ok(LanguageModelCompletionEvent::StatusUpdate(event))]

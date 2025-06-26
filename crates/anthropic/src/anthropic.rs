@@ -520,6 +520,10 @@ pub async fn stream_completion_with_rate_limit_info(
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
+    } else if response.status().as_u16() == 529 {
+        Err(AnthropicError::ServerOverloaded {
+            retry_after: rate_limits.retry_after,
+        })
     } else if let Some(retry_after) = rate_limits.retry_after {
         Err(AnthropicError::RateLimit { retry_after })
     } else {
@@ -805,6 +809,9 @@ pub enum AnthropicError {
 
     /// Rate limit exceeded
     RateLimit { retry_after: Duration },
+
+    /// Server overloaded
+    ServerOverloaded { retry_after: Option<Duration> },
 
     /// API returned an error response
     ApiError(ApiError),

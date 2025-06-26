@@ -28,8 +28,8 @@ use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: &str = "deepseek";
-const PROVIDER_NAME: &str = "DeepSeek";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
 const DEEPSEEK_API_KEY_VAR: &str = "DEEPSEEK_API_KEY";
 
 #[derive(Default)]
@@ -174,11 +174,11 @@ impl LanguageModelProviderState for DeepSeekLanguageModelProvider {
 
 impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -283,11 +283,11 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -466,7 +466,9 @@ impl DeepSeekEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(LanguageModelCompletionError::from(
+                    LanguageModelCompletionError::Other(anyhow!(error)),
+                ))],
             })
         })
     }
@@ -476,9 +478,9 @@ impl DeepSeekEventMapper {
         event: deepseek::StreamResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                "Response contained no choices"
-            )))];
+            return vec![Err(LanguageModelCompletionError::from(
+                LanguageModelCompletionError::Other(anyhow!("Response contained no choices")),
+            ))];
         };
 
         let mut events = Vec::new();
@@ -538,8 +540,8 @@ impl DeepSeekEventMapper {
                                 raw_input: tool_call.arguments.clone(),
                             },
                         )),
-                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
-                            id: tool_call.id.into(),
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: tool_call.id.clone().into(),
                             tool_name: tool_call.name.as_str().into(),
                             raw_input: tool_call.arguments.into(),
                             json_parse_error: error.to_string(),

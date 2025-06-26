@@ -23,11 +23,10 @@ use gpui::{
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
-    TokenUsage,
+    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
+    Role, SelectedModel, StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -1531,102 +1530,7 @@ impl Thread {
                     }
 
                     thread.update(cx, |thread, cx| {
-                        let event = match event {
-                            Ok(event) => event,
-                            Err(error) => {
-                                match error {
-                                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
-                                        let provider_name = if model.is_zed() {
-                                            None
-                                        } else {
-                                            Some(model.provider_name().0.as_ref())
-                                        };
-                                        anyhow::bail!(LanguageModelKnownError::rate_limit_exceeded(provider_name, retry_after));
-                                    }
-                                    LanguageModelCompletionError::Overloaded => {
-                                        let provider_name = if model.is_zed() {
-                                            None
-                                        } else {
-                                            Some(model.provider_name().0.as_ref())
-                                        };
-                                        anyhow::bail!(LanguageModelKnownError::overloaded(provider_name));
-                                    }
-                                    LanguageModelCompletionError::ApiInternalServerError =>{
-                                        let provider_name = if model.is_zed() {
-                                            None
-                                        } else {
-                                            Some(model.provider_name().0.as_ref())
-                                        };
-                                        anyhow::bail!(LanguageModelKnownError::api_internal_server_error(provider_name));
-                                    }
-                                    LanguageModelCompletionError::PromptTooLarge { tokens } => {
-                                        let tokens = tokens.unwrap_or_else(|| {
-                                            // We didn't get an exact token count from the API, so fall back on our estimate.
-                                            thread.total_token_usage()
-                                                .map(|usage| usage.total)
-                                                .unwrap_or(0)
-                                                // We know the context window was exceeded in practice, so if our estimate was
-                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
-                                                .max(model.max_token_count().saturating_add(1))
-                                        });
-
-                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens })
-                                    }
-                                    LanguageModelCompletionError::ApiReadResponseError(io_error) => {
-                                        anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
-                                    }
-                                    LanguageModelCompletionError::UnknownResponseFormat(error) => {
-                                        anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
-                                    }
-                                    LanguageModelCompletionError::HttpResponseError { status, ref body } => {
-                                        let provider_name = if model.is_zed() {
-                                            None
-                                        } else {
-                                            Some(model.provider_name().0.as_ref())
-                                        };
-                                        if let Some(known_error) = LanguageModelKnownError::from_http_response(status, body, provider_name) {
-                                            anyhow::bail!(known_error);
-                                        } else {
-                                            return Err(error.into());
-                                        }
-                                    }
-                                    LanguageModelCompletionError::DeserializeResponse(error) => {
-                                        anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
-                                    }
-                                    LanguageModelCompletionError::BadInputJson {
-                                        id,
-                                        tool_name,
-                                        raw_input: invalid_input_json,
-                                        json_parse_error,
-                                    } => {
-                                        thread.receive_invalid_tool_json(
-                                            id,
-                                            tool_name,
-                                            invalid_input_json,
-                                            json_parse_error,
-                                            window,
-                                            cx,
-                                        );
-                                        return Ok(());
-                                    }
-                                    // These are all errors we can't automatically attempt to recover from (e.g. by retrying)
-                                    err @ LanguageModelCompletionError::BadRequestFormat |
-                                    err @ LanguageModelCompletionError::AuthenticationError |
-                                    err @ LanguageModelCompletionError::PermissionError |
-                                    err @ LanguageModelCompletionError::ApiEndpointNotFound |
-                                    err @ LanguageModelCompletionError::SerializeRequest(_) |
-                                    err @ LanguageModelCompletionError::BuildRequestBody(_) |
-                                    err @ LanguageModelCompletionError::HttpSend(_) => {
-                                        anyhow::bail!(err);
-                                    }
-                                    LanguageModelCompletionError::Other(error) => {
-                                        return Err(error);
-                                    }
-                                }
-                            }
-                        };
-
-                        match event {
+                        match event? {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 request_assistant_message_id =
                                     Some(thread.insert_assistant_message(
@@ -1753,6 +1657,21 @@ impl Thread {
                                         input,
                                     });
                                 }
+                            }
+                            LanguageModelCompletionEvent::ToolUseJsonParseError  {
+                                id,
+                                tool_name,
+                                raw_input: invalid_input_json,
+                                json_parse_error,
+                            } => {
+                                thread.receive_invalid_tool_json(
+                                    id,
+                                    tool_name,
+                                    invalid_input_json,
+                                    json_parse_error,
+                                    window,
+                                    cx,
+                                );
                             }
                             LanguageModelCompletionEvent::StatusUpdate(status_update) => {
                                 if let Some(completion) = thread
@@ -1903,20 +1822,30 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::ModelRequestLimitReached { plan: error.plan },
                                 ));
-                            } else if let Some(known_error) =
-                                error.downcast_ref::<LanguageModelKnownError>()
+                            } else if let Some(completion_error) =
+                                error.downcast_ref::<LanguageModelCompletionError>()
                             {
-                                match known_error {
-                                    LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
+                                match &completion_error {
+                                    LanguageModelCompletionError::PromptTooLarge { tokens, .. } => {
+                                        let tokens = tokens.unwrap_or_else(|| {
+                                            // We didn't get an exact token count from the API, so fall back on our estimate.
+                                            thread.total_token_usage()
+                                                .map(|usage| usage.total)
+                                                .unwrap_or(0)
+                                                // We know the context window was exceeded in practice, so if our estimate was
+                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
+                                                .max(model.max_token_count().saturating_add(1))
+                                        });
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
-                                            token_count: *tokens,
+                                            token_count: tokens,
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelKnownError::RateLimitExceeded(message, retry_after) => {
+                                    LanguageModelCompletionError::RateLimitExceeded { retry_after: Some(retry_after), .. } | LanguageModelCompletionError::ServerOverloaded { retry_after: Some(retry_after), .. }
+                                    => {
                                         thread.handle_rate_limit_error(
-                                            message,
+                                            &completion_error,
                                             *retry_after,
                                             model.clone(),
                                             intent,
@@ -1925,9 +1854,10 @@ impl Thread {
                                         );
                                         retry_scheduled = true;
                                     }
-                                    LanguageModelKnownError::Overloaded(message) => {
+                                    LanguageModelCompletionError::RateLimitExceeded { .. } |
+                                    LanguageModelCompletionError::ServerOverloaded { .. } => {
                                         retry_scheduled = thread.handle_retryable_error(
-                                            message,
+                                            &completion_error,
                                             model.clone(),
                                             intent,
                                             window,
@@ -1937,9 +1867,9 @@ impl Thread {
                                             emit_generic_error(error, cx);
                                         }
                                     }
-                                    LanguageModelKnownError::ApiInternalServerError(message) => {
+                                    LanguageModelCompletionError::ApiInternalServerError { .. } => {
                                         retry_scheduled = thread.handle_retryable_error(
-                                            message,
+                                            &completion_error,
                                             model.clone(),
                                             intent,
                                             window,
@@ -1949,12 +1879,7 @@ impl Thread {
                                             emit_generic_error(error, cx);
                                         }
                                     }
-                                    LanguageModelKnownError::ReadResponseError(_) |
-                                    LanguageModelKnownError::DeserializeResponse(_) |
-                                    LanguageModelKnownError::UnknownResponseFormat(_) => {
-                                        // In the future we will attempt to re-roll response, but only once
-                                        emit_generic_error(error, cx);
-                                    }
+                                    _ => emit_generic_error(error, cx),
                                 }
                             } else {
                                 emit_generic_error(error, cx);
@@ -2086,7 +2011,7 @@ impl Thread {
 
     fn handle_rate_limit_error(
         &mut self,
-        error_message: &str,
+        error: &LanguageModelCompletionError,
         retry_after: Duration,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
@@ -2094,10 +2019,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         // For rate limit errors, we only retry once with the specified duration
-        let retry_message = format!(
-            "{error_message}. Retrying in {} seconds…",
-            retry_after.as_secs()
-        );
+        let retry_message = format!("{error}. Retrying in {} seconds…", retry_after.as_secs());
 
         // Add a UI-only message instead of a regular message
         let id = self.next_message_id.post_inc();
@@ -2129,18 +2051,18 @@ impl Thread {
 
     fn handle_retryable_error(
         &mut self,
-        error_message: &str,
+        error: &LanguageModelCompletionError,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.handle_retryable_error_with_delay(error_message, None, model, intent, window, cx)
+        self.handle_retryable_error_with_delay(error, None, model, intent, window, cx)
     }
 
     fn handle_retryable_error_with_delay(
         &mut self,
-        error_message: &str,
+        error: &LanguageModelCompletionError,
         custom_delay: Option<Duration>,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
@@ -2171,7 +2093,7 @@ impl Thread {
             let delay_secs = delay.as_secs();
             let retry_message = format!(
                 "{}. Retrying (attempt {} of {}) in {} seconds...",
-                error_message, attempt, max_attempts, delay_secs
+                error, attempt, max_attempts, delay_secs
             );
 
             // Add a UI-only message instead of a regular message
@@ -4141,9 +4063,14 @@ fn main() {{
             >,
         > {
             let error = match self.error_type {
-                TestError::Overloaded => LanguageModelCompletionError::Overloaded,
+                TestError::Overloaded => LanguageModelCompletionError::ServerOverloaded {
+                    provider: self.provider_name(),
+                    retry_after: None,
+                },
                 TestError::InternalServerError => {
-                    LanguageModelCompletionError::ApiInternalServerError
+                    LanguageModelCompletionError::ApiInternalServerError {
+                        provider: self.provider_name(),
+                    }
                 }
             };
             async move {
@@ -4651,9 +4578,13 @@ fn main() {{
             > {
                 if !*self.failed_once.lock() {
                     *self.failed_once.lock() = true;
+                    let provider = self.provider_name();
                     // Return error on first attempt
                     let stream = futures::stream::once(async move {
-                        Err(LanguageModelCompletionError::Overloaded)
+                        Err(LanguageModelCompletionError::ServerOverloaded {
+                            provider,
+                            retry_after: None,
+                        })
                     });
                     async move { Ok(stream.boxed()) }.boxed()
                 } else {
@@ -4816,9 +4747,13 @@ fn main() {{
             > {
                 if !*self.failed_once.lock() {
                     *self.failed_once.lock() = true;
+                    let provider = self.provider_name();
                     // Return error on first attempt
                     let stream = futures::stream::once(async move {
-                        Err(LanguageModelCompletionError::Overloaded)
+                        Err(LanguageModelCompletionError::ServerOverloaded {
+                            provider,
+                            retry_after: None,
+                        })
                     });
                     async move { Ok(stream.boxed()) }.boxed()
                 } else {
@@ -4971,10 +4906,12 @@ fn main() {{
                     LanguageModelCompletionError,
                 >,
             > {
+                let provider = self.provider_name();
                 async move {
                     let stream = futures::stream::once(async move {
                         Err(LanguageModelCompletionError::RateLimitExceeded {
-                            retry_after: Duration::from_secs(TEST_RATE_LIMIT_RETRY_SECS),
+                            provider,
+                            retry_after: Some(Duration::from_secs(TEST_RATE_LIMIT_RETRY_SECS)),
                         })
                     });
                     Ok(stream.boxed())
