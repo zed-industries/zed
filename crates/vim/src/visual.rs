@@ -391,7 +391,7 @@ impl Vim {
                             );
                         }
 
-                        if let Some(range) = object.range(map, mut_selection, around) {
+                        if let Some(range) = object.range(map, mut_selection, around, None) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
                                     || selection.is_empty()

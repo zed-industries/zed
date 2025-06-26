@@ -88,6 +88,7 @@ impl Vim {
         });
     }
 
+<<<<<<< HEAD
     pub fn delete_object(
         &mut self,
         object: Object,
@@ -95,6 +96,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+=======
+    pub fn delete_object(&mut self, object: Object, around: bool, times: Option<usize>, cx: &mut ViewContext<Self>) {
+>>>>>>> c6d87640f1 (initial paragraph bug fix :D)
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -104,7 +108,7 @@ impl Vim {
                 let mut should_move_to_start: HashSet<_> = Default::default();
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {

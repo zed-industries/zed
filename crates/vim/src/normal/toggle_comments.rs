@@ -46,8 +46,13 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
+<<<<<<< HEAD
         window: &mut Window,
         cx: &mut Context<Self>,
+=======
+        times: Option<usize>,
+        cx: &mut ViewContext<Self>,
+>>>>>>> c6d87640f1 (initial paragraph bug fix :D)
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -57,7 +62,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                     });
                 });
                 editor.toggle_comments(&Default::default(), window, cx);

@@ -62,6 +62,7 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
+<<<<<<< HEAD
     pub fn yank_object(
         &mut self,
         object: Object,
@@ -71,13 +72,24 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
+=======
+    pub fn yank_object(&mut self, object: Object, around: bool, times: Option<usize>, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+>>>>>>> c6d87640f1 (initial paragraph bug fix :D)
                 editor.set_clip_at_line_ends(false, cx);
                 let mut start_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
+<<<<<<< HEAD
                         object.expand_selection(map, selection, around);
                         let start_position = (selection.start, selection.goal);
                         start_positions.insert(selection.id, start_position);
+=======
+                        let original_position = (selection.head(), selection.goal);
+                        object.expand_selection(map, selection, around, times);
+                        original_positions.insert(selection.id, original_position);
+>>>>>>> c6d87640f1 (initial paragraph bug fix :D)
                     });
                 });
                 vim.yank_selections_content(editor, MotionKind::Exclusive, window, cx);

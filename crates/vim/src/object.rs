@@ -373,6 +373,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.take_count(cx);
+
         match self.mode {
             Mode::Normal => self.normal_object(object, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
@@ -485,6 +487,7 @@ impl Object {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
         match self {
@@ -503,7 +506,8 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
-            Object::Paragraph => paragraph(map, relative_to, around),
+            //change others later
+            Object::Paragraph => paragraph(map, relative_to, around, times.unwrap_or(1)),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
@@ -692,8 +696,9 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around) {
+        if let Some(range) = self.range(map, selection.clone(), around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -1397,36 +1402,44 @@ fn expand_to_include_whitespace(
 ///   previous paragraph, if it exists.
 fn paragraph(
     map: &DisplaySnapshot,
-    relative_to: DisplayPoint,
+    mut relative_to: DisplayPoint,
     around: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
+
     let mut paragraph_start = start_of_paragraph(map, relative_to);
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
-    let paragraph_end_row = paragraph_end.row();
-    let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
-    let point = relative_to.to_point(map);
-    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    for _ in 0..times {
 
-    if around {
-        if paragraph_ends_with_eof {
-            if current_line_is_empty {
-                return None;
-            }
+        let paragraph_end_row = paragraph_end.row();
+        let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
+        let point = relative_to.to_point(map);
+        let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-            let paragraph_start_row = paragraph_start.row();
-            if paragraph_start_row.0 != 0 {
-                let previous_paragraph_last_line_start =
-                    DisplayPoint::new(paragraph_start_row - 1, 0);
-                paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+        if around {
+            if paragraph_ends_with_eof {
+                if current_line_is_empty {
+                    return None;
+                }
+
+                let paragraph_start_row = paragraph_start.row();
+                if paragraph_start_row.0 != 0 {
+                    let previous_paragraph_last_line_start =
+                        Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                    paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                }
+            } else {
+                let next_paragraph_start = Point::new(paragraph_end_row.0 + 1, 0).to_display_point(map);
+                paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
-        } else {
-            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
-            paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
+
+        relative_to = paragraph_end.clone();
     }
 
     let range = paragraph_start..paragraph_end;
+
     Some(range)
 }
 
