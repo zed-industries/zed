@@ -169,7 +169,7 @@ impl ContextStrip {
             if self
                 .context_store
                 .read(cx)
-                .includes_thread(active_thread.id())
+                .includes_thread(active_thread.id(cx))
             {
                 return None;
             }

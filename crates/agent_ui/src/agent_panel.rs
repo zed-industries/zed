@@ -26,7 +26,7 @@ use crate::{
     ui::AgentOnboardingModal,
 };
 use agent::{
-    ZedAgent, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
+    ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio, ZedAgent,
     context_store::ContextStore,
     history_store::{HistoryEntryId, HistoryStore},
     thread_store::{TextThreadStore, ThreadStore},
@@ -552,7 +552,7 @@ impl AgentPanel {
             )
         });
 
-        let thread_id = thread.read(cx).id().clone();
+        let thread_id = thread.read(cx).id(cx).clone();
         let history_store = cx.new(|cx| {
             HistoryStore::new(
                 thread_store.clone(),
@@ -1330,7 +1330,7 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 let thread = thread.read(cx);
                 if thread.is_empty() {
-                    let id = thread.thread().read(cx).id().clone();
+                    let id = thread.thread().read(cx).id(cx).clone();
                     self.history_store.update(cx, |store, cx| {
                         store.remove_recently_opened_thread(id, cx);
                     });
@@ -1341,7 +1341,7 @@ impl AgentPanel {
 
         match &new_view {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
-                let id = thread.read(cx).thread().read(cx).id().clone();
+                let id = thread.read(cx).thread().read(cx).id(cx).clone();
                 store.push_recently_opened_entry(HistoryEntryId::Thread(id), cx);
             }),
             ActiveView::TextThread { context_editor, .. } => {
@@ -1761,7 +1761,7 @@ impl AgentPanel {
                                 this.action(
                                     "New From Summary",
                                     Box::new(NewThread {
-                                        from_thread_id: Some(thread.id().clone()),
+                                        from_thread_id: Some(thread.id(cx).clone()),
                                     }),
                                 )
                             } else {

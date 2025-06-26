@@ -411,7 +411,7 @@ pub enum QueueState {
 
 /// A thread of conversation with the LLM.
 pub struct ZedAgent {
-    id: ThreadId,
+    thread: Entity<Thread>,
     updated_at: DateTime<Utc>,
     summary: ThreadSummary,
     pending_summary: Task<Option<()>>,
@@ -455,6 +455,10 @@ pub struct ZedAgent {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+}
+
+struct Thread {
+    id: ThreadId,
 }
 
 #[derive(Clone, Debug)]
@@ -510,9 +514,12 @@ impl ZedAgent {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let thread = cx.new(|_| Thread {
+            id: ThreadId::new(),
+        });
 
         Self {
-            id: ThreadId::new(),
+            thread,
             updated_at: Utc::now(),
             summary: ThreadSummary::Pending,
             pending_summary: Task::ready(None),
@@ -600,8 +607,10 @@ impl ZedAgent {
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
+        let thread = cx.new(|_| Thread { id });
+
         let mut this = Self {
-            id,
+            thread,
             updated_at: serialized.updated_at,
             summary: ThreadSummary::Ready(serialized.summary),
             pending_summary: Task::ready(None),
@@ -770,8 +779,8 @@ impl ZedAgent {
         self.request_callback = Some(Box::new(callback));
     }
 
-    pub fn id(&self) -> &ThreadId {
-        &self.id
+    pub fn id<'a>(&'a self, cx: &'a App) -> &'a ThreadId {
+        &self.thread.read(cx).id
     }
 
     pub fn profile(&self) -> &AgentProfile {
@@ -1507,7 +1516,7 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
-            thread_id: Some(self.id.to_string()),
+            thread_id: Some(self.id(cx).to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
             intent: Some(intent),
             mode: None,
@@ -1734,7 +1743,7 @@ impl ZedAgent {
         let prompt_id = self.last_prompt_id.clone();
         let tool_use_metadata = ToolUseMetadata {
             model: model.clone(),
-            thread_id: self.id.clone(),
+            thread_id: self.id(cx).clone(),
             prompt_id: prompt_id.clone(),
         };
 
@@ -2219,7 +2228,7 @@ impl ZedAgent {
 
                         telemetry::event!(
                             "Assistant Thread Completion",
-                            thread_id = thread.id().to_string(),
+                            thread_id = thread.id(cx).to_string(),
                             prompt_id = prompt_id,
                             model = model.telemetry_id(),
                             model_provider = model.provider_id().to_string(),
@@ -3000,7 +3009,7 @@ impl ZedAgent {
 
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
-        let thread_id = self.id().clone();
+        let thread_id = self.id(cx).clone();
         let client = self.project.read(cx).client();
 
         let enabled_tool_names: Vec<String> = self
@@ -3062,7 +3071,7 @@ impl ZedAgent {
         } else {
             let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
             let serialized_thread = self.serialize(cx);
-            let thread_id = self.id().clone();
+            let thread_id = self.id(cx).clone();
             let client = self.project.read(cx).client();
             self.feedback = Some(feedback);
             cx.notify();
@@ -3339,7 +3348,7 @@ impl ZedAgent {
 
         self.last_auto_capture_at = Some(now);
 
-        let thread_id = self.id().clone();
+        let thread_id = self.id(cx).clone();
         let github_login = self
             .project
             .read(cx)
@@ -4112,7 +4121,7 @@ fn main() {{
         let deserialized = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 ZedAgent::deserialize(
-                    thread.id.clone(),
+                    thread.id(cx).clone(),
                     serialized,
                     thread.project.clone(),
                     thread.tools.clone(),

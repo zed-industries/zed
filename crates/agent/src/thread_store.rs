@@ -1,7 +1,7 @@
 use crate::{
     context_server_tool::ContextServerTool,
     thread::{
-        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, ZedAgent, ThreadId,
+        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, ThreadId, ZedAgent,
     },
 };
 use agent_settings::{AgentProfileId, CompletionMode};
@@ -466,9 +466,14 @@ impl ThreadStore {
         })
     }
 
-    pub fn save_thread(&self, thread: &Entity<ZedAgent>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let (metadata, serialized_thread) =
-            thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
+    pub fn save_thread(
+        &self,
+        thread: &Entity<ZedAgent>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let (metadata, serialized_thread) = thread.update(cx, |thread, cx| {
+            (thread.id(cx).clone(), thread.serialize(cx))
+        });
 
         let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(async move |this, cx| {

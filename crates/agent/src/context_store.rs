@@ -4,7 +4,7 @@ use crate::{
         FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
         SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
     },
-    thread::{MessageId, ZedAgent, ThreadId},
+    thread::{MessageId, ThreadId, ZedAgent},
     thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -415,7 +415,7 @@ impl ContextStore {
                         thread.start_generating_detailed_summary_if_needed(thread_store, cx);
                     });
                     self.context_thread_ids
-                        .insert(thread_context.thread.read(cx).id().clone());
+                        .insert(thread_context.thread.read(cx).id(cx).clone());
                 } else {
                     return false;
                 }
@@ -441,7 +441,7 @@ impl ContextStore {
             match context {
                 AgentContextHandle::Thread(thread_context) => {
                     self.context_thread_ids
-                        .remove(thread_context.thread.read(cx).id());
+                        .remove(thread_context.thread.read(cx).id(cx));
                 }
                 AgentContextHandle::TextThread(text_thread_context) => {
                     if let Some(path) = text_thread_context.context.read(cx).path() {

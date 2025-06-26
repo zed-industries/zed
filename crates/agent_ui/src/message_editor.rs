@@ -58,7 +58,7 @@ use crate::{
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 use agent::{
-    MessageCrease, ZedAgent, TokenUsageRatio,
+    MessageCrease, TokenUsageRatio, ZedAgent,
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };
@@ -1325,7 +1325,7 @@ impl MessageEditor {
                 Button::new("start-new-thread", "Start New Thread")
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id().clone());
+                        let from_thread_id = Some(this.thread.read(cx).id(cx).clone());
                         window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
                     })),
             );

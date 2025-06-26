@@ -1711,7 +1711,7 @@ impl ActiveThread {
 
         let comments = editor.read(cx).text(cx);
         if !comments.is_empty() {
-            let thread_id = self.thread.read(cx).id().clone();
+            let thread_id = self.thread.read(cx).id(cx).clone();
             let comments_value = String::from(comments.as_str());
 
             let message_content = self
