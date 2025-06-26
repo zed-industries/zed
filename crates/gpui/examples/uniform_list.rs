@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    rgb, size, uniform_list,
+    App, Application, Bounds, Context, ListSizingBehavior, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, uniform_list,
 };
 
 struct UniformListExample {}
@@ -30,6 +30,7 @@ impl Render for UniformListExample {
                     items
                 }),
             )
+            .with_sizing_behavior(ListSizingBehavior::Infer)
             .h_full(),
         )
     }

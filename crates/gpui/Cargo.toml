@@ -298,3 +298,7 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
+
+[[example]]
+name = "uniform_table"
+path = "examples/uniform_table.rs"

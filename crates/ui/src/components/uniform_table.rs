@@ -34,16 +34,14 @@ impl Component for Table {
                     "Basic",
                     vec![single_example(
                         "Simple Table",
-                        gpui::uniform_table("simple table", 4)
-                            .header(["Name", "Age", "City"])
-                            .rows(move |range, _, _| {
-                                data[range]
-                                    .iter()
-                                    .cloned()
-                                    .map(|arr| arr.map(IntoElement::into_any_element))
-                                    .collect()
-                            })
-                            .into_any_element(),
+                        gpui::uniform_table("simple table", 4, move |range, _, _| {
+                            data[range]
+                                .iter()
+                                .cloned()
+                                .map(|arr| arr.map(IntoElement::into_any_element))
+                                .collect()
+                        })
+                        .into_any_element(),
                     )],
                 )])
                 .into_any_element(),
