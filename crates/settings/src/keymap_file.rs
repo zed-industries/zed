@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
@@ -12,6 +12,7 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+use serde_json_lenient::json;
 use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
 use util::{
     asset_str,
@@ -674,7 +675,16 @@ impl KeymapFile {
 
                 value.insert("bindings".to_string(), {
                     let mut bindings = serde_json::Map::new();
-                    bindings.insert(keybinding.keystrokes.into(), keybinding.action_name.into());
+                    let action_name: Value = keybinding.action_name.into();
+                    let action = match keybinding.input {
+                        Some(input) => {
+                            let input = serde_json::from_str::<Value>(input)
+                                .context("Failed to parse action input as JSON")?;
+                            serde_json::json!([action_name, input])
+                        }
+                        None => action_name,
+                    };
+                    bindings.insert(keybinding.keystrokes.into(), action);
                     bindings.into()
                 });
 
@@ -856,6 +866,42 @@ mod tests {
                 {
                     "bindings": {
                         "ctrl-b": "zed::SomeOtherAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Add(KeybindUpdateTarget {
+                keystrokes: "ctrl-b",
+                action_name: "zed::SomeOtherAction",
+                context: None,
+                use_key_equivalents: false,
+                input: Some(r#"{"foo": "bar"}"#),
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                },
+                {
+                    "bindings": {
+                        "ctrl-b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
                     }
                 }
             ]"#
