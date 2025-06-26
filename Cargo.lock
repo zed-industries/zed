@@ -9015,6 +9015,7 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
