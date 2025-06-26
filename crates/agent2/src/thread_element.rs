@@ -140,11 +140,10 @@ impl Render for ThreadElement {
         let focus_handle = self.message_editor.focus_handle(cx);
 
         v_flex()
-            .p_2()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .child(
-                v_flex().h_full().gap_1().children(
+                v_flex().p_2().h_full().gap_1().children(
                     self.thread
                         .read(cx)
                         .entries()
@@ -153,10 +152,12 @@ impl Render for ThreadElement {
                 ),
             )
             .when(self.send_task.is_some(), |this| {
-                this.my_1().child(
-                    Label::new("Generating...")
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
+                this.child(
+                    div().p_2().child(
+                        Label::new("Generating...")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    ),
                 )
             })
             .child(

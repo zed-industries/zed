@@ -228,6 +228,7 @@ impl Thread {
             {
                 // todo! merge with last chunk if same type
                 chunks.push(chunk);
+                cx.notify();
                 return;
             }
         }

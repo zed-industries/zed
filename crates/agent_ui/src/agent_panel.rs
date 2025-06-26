@@ -897,8 +897,7 @@ impl AgentPanel {
             .next()
             .map(|worktree| worktree.read(cx).abs_path())
         else {
-            // todo! handle no project
-            return;
+            todo!();
         };
 
         let cli_path =
