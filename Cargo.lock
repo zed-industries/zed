@@ -16034,7 +16034,6 @@ dependencies = [
  "indexmap",
  "log",
  "palette",
- "rust-embed",
  "serde",
  "serde_json",
  "serde_json_lenient",
