@@ -309,7 +309,8 @@ mod tests {
     pub fn gemini_agent(project: Entity<Project>, mut cx: AsyncApp) -> Result<Arc<AcpAgent>> {
         let cli_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
-        let child = util::command::new_smol_command("node")
+        let mut command = util::command::new_smol_command("node");
+        command
             .arg(cli_path)
             .arg("--acp")
             .args(["--model", "gemini-2.5-flash"])
@@ -317,9 +318,13 @@ mod tests {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .kill_on_drop(true);
+
+        if let Ok(gemini_key) = std::env::var("GEMINI_API_KEY") {
+            command.env("GEMINI_API_KEY", gemini_key);
+        }
+
+        let child = command.spawn().unwrap();
 
         Ok(AcpAgent::stdio(child, project, &mut cx))
     }
