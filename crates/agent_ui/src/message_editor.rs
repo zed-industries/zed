@@ -375,7 +375,7 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let thread = self.agent.clone();
+        let agent = self.agent.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         let context_task = self.reload_context(cx);
@@ -385,9 +385,9 @@ impl MessageEditor {
             let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
             let loaded_context = loaded_context.unwrap_or_default();
 
-            thread
-                .update(cx, |thread, cx| {
-                    thread.insert_user_message(
+            agent
+                .update(cx, |agent, cx| {
+                    agent.insert_user_message(
                         user_message,
                         loaded_context,
                         checkpoint.ok(),
@@ -397,7 +397,7 @@ impl MessageEditor {
                 })
                 .log_err();
 
-            thread
+            agent
                 .update(cx, |thread, cx| {
                     thread.advance_prompt_id();
                     thread.send_to_model(

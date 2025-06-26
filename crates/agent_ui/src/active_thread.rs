@@ -1834,7 +1834,7 @@ impl ActiveThread {
         };
 
         // Get all the data we need from thread before we start using it in closures
-        let checkpoint = agent.checkpoint_for_message(message_id, cx);
+        let checkpoint = thread.checkpoint_for_message(message_id);
         let configured_model = agent.configured_model().map(|m| m.model);
         let added_context = agent
             .context_for_message(message_id, cx)
@@ -2223,7 +2223,7 @@ impl ActiveThread {
                     let mut is_pending = false;
                     let mut error = None;
                     if let Some(last_restore_checkpoint) =
-                        self.agent.read(cx).last_restore_checkpoint()
+                        self.thread.read(cx).last_restore_checkpoint()
                     {
                         if last_restore_checkpoint.message_id() == message_id {
                             match last_restore_checkpoint {
@@ -2252,7 +2252,7 @@ impl ActiveThread {
                             .label_size(LabelSize::XSmall)
                             .disabled(is_pending)
                             .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.agent.update(cx, |thread, cx| {
+                                this.thread.update(cx, |thread, cx| {
                                     thread
                                         .restore_checkpoint(checkpoint.clone(), cx)
                                         .detach_and_log_err(cx);

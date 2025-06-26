@@ -433,7 +433,6 @@ pub struct ZedAgent {
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
 
     action_log: Entity<ActionLog>,
-    last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
@@ -459,6 +458,8 @@ pub struct Thread {
     summary: ThreadSummary,
     pending_checkpoint: Option<ThreadCheckpoint>,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
+    last_restore_checkpoint: Option<LastRestoreCheckpoint>,
+    project: Entity<Project>,
     updated_at: DateTime<Utc>,
 }
 
@@ -665,6 +666,50 @@ impl Thread {
             .flat_map(|message| message.loaded_context.contexts.iter())
     }
 
+    pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
+        self.checkpoints_by_message.get(&id).cloned()
+    }
+
+    pub fn last_restore_checkpoint(&self) -> Option<&LastRestoreCheckpoint> {
+        self.last_restore_checkpoint.as_ref()
+    }
+
+    pub fn restore_checkpoint(
+        &mut self,
+        checkpoint: ThreadCheckpoint,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.last_restore_checkpoint = Some(LastRestoreCheckpoint::Pending {
+            message_id: checkpoint.message_id,
+        });
+        cx.emit(ThreadEvent::CheckpointChanged);
+        cx.notify();
+
+        let git_store = self.project.read(cx).git_store().clone();
+        let restore = git_store.update(cx, |git_store, cx| {
+            git_store.restore_checkpoint(checkpoint.git_checkpoint.clone(), cx)
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = restore.await;
+            this.update(cx, |this, cx| {
+                if let Err(err) = result.as_ref() {
+                    this.last_restore_checkpoint = Some(LastRestoreCheckpoint::Error {
+                        message_id: checkpoint.message_id,
+                        error: err.to_string(),
+                    });
+                } else {
+                    this.truncate(checkpoint.message_id, cx);
+                    this.last_restore_checkpoint = None;
+                }
+                this.pending_checkpoint = None;
+                cx.emit(ThreadEvent::CheckpointChanged);
+                cx.notify();
+            })?;
+            result
+        })
+    }
+
     fn insert_checkpoint(&mut self, checkpoint: ThreadCheckpoint, cx: &mut Context<Self>) {
         self.checkpoints_by_message
             .insert(checkpoint.message_id, checkpoint);
@@ -744,7 +789,9 @@ impl ZedAgent {
             id: ThreadId::new(),
             messages: Vec::new(),
             checkpoints_by_message: HashMap::default(),
+            last_restore_checkpoint: None,
             updated_at: Utc::now(),
+            project: project.clone(),
         });
 
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
@@ -767,7 +814,6 @@ impl ZedAgent {
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
-            last_restore_checkpoint: None,
             tool_uses_by_assistant_message: HashMap::default(),
             tool_results: HashMap::default(),
             pending_tool_uses_by_id: HashMap::default(),
@@ -908,12 +954,15 @@ impl ZedAgent {
                 ui_only: false, // UI-only messages are not persisted
             })
             .collect();
+
         let thread = cx.new(|_| Thread {
             id,
             next_message_id,
             messages,
             pending_checkpoint: None,
             checkpoints_by_message: HashMap::default(),
+            last_restore_checkpoint: None,
+            project: project.clone(),
             updated_at: serialized.updated_at,
             summary: ThreadSummary::Ready(serialized.summary),
         });
@@ -936,7 +985,6 @@ impl ZedAgent {
             project_context,
             completion_count: 0,
             pending_completions: Vec::new(),
-            last_restore_checkpoint: None,
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
@@ -1174,54 +1222,6 @@ impl ZedAgent {
         !self.pending_tool_uses_by_id.is_empty()
     }
 
-    pub fn checkpoint_for_message(&self, id: MessageId, cx: &App) -> Option<ThreadCheckpoint> {
-        self.thread
-            .read(cx)
-            .checkpoints_by_message
-            .get(&id)
-            .cloned()
-    }
-
-    pub fn restore_checkpoint(
-        &mut self,
-        checkpoint: ThreadCheckpoint,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        self.last_restore_checkpoint = Some(LastRestoreCheckpoint::Pending {
-            message_id: checkpoint.message_id,
-        });
-        cx.emit(ThreadEvent::CheckpointChanged);
-        cx.notify();
-
-        let git_store = self.project().read(cx).git_store().clone();
-        let restore = git_store.update(cx, |git_store, cx| {
-            git_store.restore_checkpoint(checkpoint.git_checkpoint.clone(), cx)
-        });
-
-        cx.spawn(async move |this, cx| {
-            let result = restore.await;
-            this.update(cx, |this, cx| {
-                if let Err(err) = result.as_ref() {
-                    this.last_restore_checkpoint = Some(LastRestoreCheckpoint::Error {
-                        message_id: checkpoint.message_id,
-                        error: err.to_string(),
-                    });
-                } else {
-                    this.thread.update(cx, |thread, cx| {
-                        thread.truncate(checkpoint.message_id, cx);
-                    });
-                    this.last_restore_checkpoint = None;
-                }
-                this.thread.update(cx, |thread, _cx| {
-                    thread.pending_checkpoint = None;
-                });
-                cx.emit(ThreadEvent::CheckpointChanged);
-                cx.notify();
-            })?;
-            result
-        })
-    }
-
     fn finalize_pending_checkpoint(&mut self, cx: &mut Context<Self>) {
         let pending_checkpoint = if self.is_generating() {
             return;
@@ -1274,10 +1274,6 @@ impl ZedAgent {
             }),
         })
         .detach();
-    }
-
-    pub fn last_restore_checkpoint(&self) -> Option<&LastRestoreCheckpoint> {
-        self.last_restore_checkpoint.as_ref()
     }
 
     pub fn tool_use_limit_reached(&self) -> bool {
