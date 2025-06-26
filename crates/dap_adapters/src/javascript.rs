@@ -5,7 +5,7 @@ use gpui::AsyncApp;
 use serde_json::Value;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 use crate::*;
 
@@ -72,6 +72,24 @@ impl JsDebugAdapter {
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
+            maybe!({
+                configuration
+                    .get("type")
+                    .filter(|value| value == &"node-terminal")?;
+                let command = configuration.get("command")?.as_str()?.to_owned();
+                let mut args = shlex::split(&command)?.into_iter();
+                let program = args.next()?;
+                configuration.insert("program".to_owned(), program.into());
+                configuration.insert(
+                    "args".to_owned(),
+                    args.map(Value::from).collect::<Vec<_>>().into(),
+                );
+                configuration.insert("console".to_owned(), "externalTerminal".into());
+                Some(())
+            });
+
+            configuration.entry("type").and_modify(normalize_task_type);
+
             if let Some(program) = configuration
                 .get("program")
                 .cloned()
@@ -96,7 +114,6 @@ impl JsDebugAdapter {
                 .entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
 
-            configuration.entry("type").and_modify(normalize_task_type);
             configuration
                 .entry("console")
                 .or_insert("externalTerminal".into());
@@ -512,7 +529,7 @@ fn normalize_task_type(task_type: &mut Value) {
     };
 
     let new_name = match task_type_str {
-        "node" | "pwa-node" => "pwa-node",
+        "node" | "pwa-node" | "node-terminal" => "pwa-node",
         "chrome" | "pwa-chrome" => "pwa-chrome",
         "edge" | "msedge" | "pwa-edge" | "pwa-msedge" => "pwa-msedge",
         _ => task_type_str,
