@@ -626,7 +626,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test string value replacement
         check_object_replace(
             r#"{
                 "name": "old_name",
@@ -642,7 +641,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test boolean value replacement
         check_object_replace(
             r#"{
                 "enabled": false,
@@ -658,7 +656,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test null value replacement
         check_object_replace(
             r#"{
                 "value": null,
@@ -674,7 +671,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test object value replacement
         check_object_replace(
             r#"{
                 "config": {
@@ -695,7 +691,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test with JSON comments
         check_object_replace(
             r#"{
                 // This is a comment
@@ -715,7 +710,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test empty object
         check_object_replace(
             r#"{}"#.to_string(),
             &["new_key"],
@@ -727,7 +721,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test deleting last key
         check_object_replace(
             r#"{
                 "only_key": 123
@@ -738,7 +731,6 @@ mod tests {
             "{\n    \n}".to_string(),
         );
 
-        // Test deeply nested path
         check_object_replace(
             r#"{
                 "level1": {
@@ -764,7 +756,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test adding to nested empty object
         check_object_replace(
             r#"{
                 "parent": {}
@@ -780,7 +771,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test replacing in object with trailing comma
         check_object_replace(
             r#"{
                 "a": 1,
@@ -796,7 +786,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test array within object
         check_object_replace(
             r#"{
                 "items": [1, 2, 3],
@@ -814,7 +803,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test deleting array element within object
         check_object_replace(
             r#"{
                 "items": [1, 2, 3],
@@ -832,7 +820,6 @@ mod tests {
             .unindent(),
         );
 
-        // Test replacing entire array
         check_object_replace(
             r#"{
                 "items": [1, 2, 3],
@@ -923,6 +910,62 @@ mod tests {
             &[],
             json!({"foo": "bar", "baz": "qux"}),
             r#"[1, { "foo": "bar", "baz": "qux" }, 3,]"#,
+        );
+
+        check_array_replace(
+            r#"[1, { "foo": "bar", "baz": "qux" }, 3,]"#,
+            1,
+            &["baz"],
+            json!({"qux": "quz"}),
+            r#"[1, { "foo": "bar", "baz": { "qux": "quz" } }, 3,]"#,
+        );
+
+        check_array_replace(
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    "baz": "qux"
+                },
+                3
+            ]"#,
+            1,
+            &["baz"],
+            json!({"qux": "quz"}),
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    "baz": {
+                        "qux": "quz"
+                    }
+                },
+                3
+            ]"#,
+        );
+
+        check_array_replace(
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    "baz": {
+                        "qux": "quz"
+                    }
+                },
+                3
+            ]"#,
+            1,
+            &["baz"],
+            json!("qux"),
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    "baz": "qux"
+                },
+                3
+            ]"#,
         );
     }
 
