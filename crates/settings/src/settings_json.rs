@@ -393,7 +393,7 @@ pub fn replace_top_level_array_value_in_json_text(
     let range = cursor.node().range();
     let indent_width = range.start_point.column;
     let offset = range.start_byte;
-    let value_str = std::str::from_utf8(&text.as_bytes()[range.start_byte..range.end_byte])?;
+    let value_str = &text[range.start_byte..range.end_byte];
     let needs_indent = range.start_point.row > 0;
 
     let (mut replace_range, mut replace_value) =
