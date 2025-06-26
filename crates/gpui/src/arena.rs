@@ -214,32 +214,6 @@ impl<T: ?Sized> DerefMut for ArenaBox<T> {
     }
 }
 
-pub struct ArenaRef<T: ?Sized>(ArenaBox<T>);
-
-impl<T: ?Sized> From<ArenaBox<T>> for ArenaRef<T> {
-    fn from(value: ArenaBox<T>) -> Self {
-        ArenaRef(value)
-    }
-}
-
-impl<T: ?Sized> Clone for ArenaRef<T> {
-    fn clone(&self) -> Self {
-        Self(ArenaBox {
-            ptr: self.0.ptr,
-            valid: self.0.valid.clone(),
-        })
-    }
-}
-
-impl<T: ?Sized> Deref for ArenaRef<T> {
-    type Target = T;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, rc::Rc};

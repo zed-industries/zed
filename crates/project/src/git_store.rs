@@ -4556,7 +4556,9 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status(&[WORK_DIRECTORY_REPO_PATH.clone()]).await?;
+    let statuses = backend
+        .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
+        .await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries

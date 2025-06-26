@@ -3897,8 +3897,10 @@ impl Editor {
                             bracket_pair_matching_end = Some(pair.clone());
                         }
                     }
-                    if bracket_pair.is_none() && bracket_pair_matching_end.is_some() {
-                        bracket_pair = Some(bracket_pair_matching_end.unwrap());
+                    if let Some(end) = bracket_pair_matching_end
+                        && bracket_pair.is_none()
+                    {
+                        bracket_pair = Some(end);
                         is_bracket_pair_end = true;
                     }
                 }
@@ -13381,7 +13383,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        self.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
+        self.unfold_ranges(
+            std::slice::from_ref(&range),
+            false,
+            auto_scroll.is_some(),
+            cx,
+        );
         self.change_selections(auto_scroll, window, cx, |s| {
             if replace_newest {
                 s.delete(s.newest_anchor().id);

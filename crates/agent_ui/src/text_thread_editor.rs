@@ -69,7 +69,7 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 use workspace::{
-    Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Save, Toast, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane,
@@ -2924,13 +2924,6 @@ impl FollowableItem for TextThreadEditor {
     }
 }
 
-pub struct ContextEditorToolbarItem {
-    active_context_editor: Option<WeakEntity<TextThreadEditor>>,
-    model_summary_editor: Entity<Editor>,
-}
-
-impl ContextEditorToolbarItem {}
-
 pub fn render_remaining_tokens(
     context_editor: &Entity<TextThreadEditor>,
     cx: &App,
@@ -2982,98 +2975,6 @@ pub fn render_remaining_tokens(
             }),
     )
 }
-
-impl Render for ContextEditorToolbarItem {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let left_side = h_flex()
-            .group("chat-title-group")
-            .gap_1()
-            .items_center()
-            .flex_grow()
-            .child(
-                div()
-                    .w_full()
-                    .when(self.active_context_editor.is_some(), |left_side| {
-                        left_side.child(self.model_summary_editor.clone())
-                    }),
-            )
-            .child(
-                div().visible_on_hover("chat-title-group").child(
-                    IconButton::new("regenerate-context", IconName::RefreshTitle)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Regenerate Title"))
-                        .on_click(cx.listener(move |_, _, _window, cx| {
-                            cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
-                        })),
-                ),
-            );
-
-        let right_side = h_flex()
-            .gap_2()
-            // TODO display this in a nicer way, once we have a design for it.
-            // .children({
-            //     let project = self
-            //         .workspace
-            //         .upgrade()
-            //         .map(|workspace| workspace.read(cx).project().downgrade());
-            //
-            //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
-            //         project.and_then(|project| db.remaining_summaries(&project, cx))
-            //     });
-            //     scan_items_remaining
-            //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
-            // })
-            .children(
-                self.active_context_editor
-                    .as_ref()
-                    .and_then(|editor| editor.upgrade())
-                    .and_then(|editor| render_remaining_tokens(&editor, cx)),
-            );
-
-        h_flex()
-            .px_0p5()
-            .size_full()
-            .gap_2()
-            .justify_between()
-            .child(left_side)
-            .child(right_side)
-    }
-}
-
-impl ToolbarItemView for ContextEditorToolbarItem {
-    fn set_active_pane_item(
-        &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ToolbarItemLocation {
-        self.active_context_editor = active_pane_item
-            .and_then(|item| item.act_as::<TextThreadEditor>(cx))
-            .map(|editor| editor.downgrade());
-        cx.notify();
-        if self.active_context_editor.is_none() {
-            ToolbarItemLocation::Hidden
-        } else {
-            ToolbarItemLocation::PrimaryRight
-        }
-    }
-
-    fn pane_focus_update(
-        &mut self,
-        _pane_focused: bool,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.notify();
-    }
-}
-
-impl EventEmitter<ToolbarItemEvent> for ContextEditorToolbarItem {}
-
-pub enum ContextEditorToolbarItemEvent {
-    RegenerateSummary,
-}
-impl EventEmitter<ContextEditorToolbarItemEvent> for ContextEditorToolbarItem {}
 
 enum PendingSlashCommand {}
 

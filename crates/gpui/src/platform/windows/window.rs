@@ -1250,11 +1250,13 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
         type SetWindowCompositionAttributeType =
             unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
         let module_name = PCSTR::from_raw(c"user32.dll".as_ptr() as *const u8);
-        let user32 = GetModuleHandleA(module_name);
-        if user32.is_ok() {
+        if let Some(user32) = GetModuleHandleA(module_name)
+            .context("Unable to get user32.dll handle")
+            .log_err()
+        {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
+                std::mem::transmute(GetProcAddress(user32, func_name));
             let mut color = color.unwrap_or_default();
             let is_acrylic = state == 4;
             if is_acrylic && color.3 == 0 {
@@ -1275,10 +1277,6 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
                 cb_data: std::mem::size_of::<AccentPolicy>(),
             };
             let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
-        } else {
-            let _ = user32
-                .inspect_err(|e| log::error!("Error getting module: {e}"))
-                .ok();
         }
     }
 }

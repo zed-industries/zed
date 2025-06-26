@@ -5743,7 +5743,10 @@ impl LspStore {
                 match language {
                     Some(language) => {
                         adapter
-                            .labels_for_completions(&[completion_item.clone()], language)
+                            .labels_for_completions(
+                                std::slice::from_ref(&completion_item),
+                                language,
+                            )
                             .await?
                     }
                     None => Vec::new(),

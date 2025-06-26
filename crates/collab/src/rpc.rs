@@ -179,7 +179,7 @@ struct Session {
 }
 
 impl Session {
-    async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
+    async fn db(&self) -> tokio::sync::MutexGuard<'_, DbHandle> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
@@ -1037,7 +1037,7 @@ impl Server {
         }
     }
 
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot {
+    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
                 guard: self.connection_pool.lock(),
