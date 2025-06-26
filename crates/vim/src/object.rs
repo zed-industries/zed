@@ -373,10 +373,10 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.take_count(cx);
+        let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal => self.normal_object(object, window, cx),
+            Mode::Normal => self.normal_object(object, count, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_object(object, window, cx)
             }

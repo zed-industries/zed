@@ -403,7 +403,7 @@ impl Vim {
                                         && object.always_expands_both_ways()
                                     {
                                         if let Some(range) =
-                                            object.range(map, selection.clone(), around)
+                                            object.range(map, selection.clone(), around, None)
                                         {
                                             selection.start = range.start;
                                             selection.end = range.end;

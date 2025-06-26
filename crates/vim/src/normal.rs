@@ -278,7 +278,7 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
-    pub fn normal_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn normal_object(&mut self, object: Object, times: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
@@ -295,7 +295,7 @@ impl Vim {
                     self.indent_object(object, around, IndentDirection::Auto, times, window, cx)
                 }
                 Some(Operator::ShellCommand) => {
-                    self.shell_command_object(object, around, times, window, cx);
+                    self.shell_command_object(object, around, window, cx);
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, times, window, cx),
                 Some(Operator::Lowercase) => {

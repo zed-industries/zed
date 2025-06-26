@@ -1603,7 +1603,7 @@ impl Vim {
             let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
             let range = object
-                .range(&snapshot, start.clone(), around)
+                .range(&snapshot, start.clone(), around, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(None, window, cx, |s| {

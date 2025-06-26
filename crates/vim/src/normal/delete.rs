@@ -88,17 +88,14 @@ impl Vim {
         });
     }
 
-<<<<<<< HEAD
     pub fn delete_object(
         &mut self,
         object: Object,
         around: bool,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-=======
-    pub fn delete_object(&mut self, object: Object, around: bool, times: Option<usize>, cx: &mut ViewContext<Self>) {
->>>>>>> c6d87640f1 (initial paragraph bug fix :D)
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
