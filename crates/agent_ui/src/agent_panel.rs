@@ -1018,7 +1018,6 @@ impl AgentPanel {
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
         match self.active_view {
             ActiveView::Configuration | ActiveView::History => {
-                // todo! check go back works correctly
                 if let Some(previous_view) = self.previous_view.take() {
                     self.active_view = previous_view;
 
