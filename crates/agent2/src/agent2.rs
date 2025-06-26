@@ -219,6 +219,28 @@ impl Thread {
         cx.notify();
     }
 
+    pub fn push_assistant_chunk(&mut self, chunk: MessageChunk, cx: &mut Context<Self>) {
+        if let Some(last_entry) = self.entries.last_mut() {
+            if let AgentThreadEntryContent::Message(Message {
+                ref mut chunks,
+                role: Role::Assistant,
+            }) = last_entry.content
+            {
+                chunks.push(chunk);
+                return;
+            }
+        }
+
+        self.entries.push(ThreadEntry {
+            id: self.next_entry_id.post_inc(),
+            content: AgentThreadEntryContent::Message(Message {
+                role: Role::Assistant,
+                chunks: vec![chunk],
+            }),
+        });
+        cx.notify();
+    }
+
     pub fn send(&mut self, message: Message, cx: &mut Context<Self>) -> Task<Result<()>> {
         let agent = self.agent.clone();
         let id = self.id.clone();

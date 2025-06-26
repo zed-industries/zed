@@ -1,21 +1,20 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use editor::{Editor, MultiBuffer};
-use gpui::{App, Entity, Focusable, SharedString, Window, div, prelude::*};
+use gpui::{App, Entity, Focusable, SharedString, Subscription, Window, div, prelude::*};
 use gpui::{FocusHandle, Task};
 use language::Buffer;
 use ui::Tooltip;
 use ui::prelude::*;
 use zed_actions::agent::Chat;
 
-use crate::{Message, MessageChunk, Role, Thread};
+use crate::{AgentThreadEntryContent, Message, MessageChunk, Role, Thread, ThreadEntry};
 
 pub struct ThreadElement {
     thread: Entity<Thread>,
     // todo! use full message editor from agent2
     message_editor: Entity<Editor>,
     send_task: Option<Task<Result<()>>>,
+    _subscription: Subscription,
 }
 
 impl ThreadElement {
@@ -39,10 +38,15 @@ impl ThreadElement {
             editor
         });
 
+        let subscription = cx.observe(&thread, |_, _, cx| {
+            cx.notify();
+        });
+
         Self {
             thread,
             message_editor,
             send_task: None,
+            _subscription: subscription,
         }
     }
 
@@ -60,17 +64,47 @@ impl ThreadElement {
             return;
         }
 
-        self.send_task = Some(self.thread.update(cx, |thread, cx| {
+        let task = self.thread.update(cx, |thread, cx| {
             let message = Message {
                 role: Role::User,
                 chunks: vec![MessageChunk::Text { chunk: text.into() }],
             };
             thread.send(message, cx)
+        });
+
+        self.send_task = Some(cx.spawn(async move |this, cx| {
+            task.await?;
+
+            this.update(cx, |this, _cx| {
+                this.send_task.take();
+            })
         }));
 
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
         });
+    }
+
+    fn render_entry(
+        &self,
+        entry: &ThreadEntry,
+        _window: &mut Window,
+        _cx: &Context<Self>,
+    ) -> AnyElement {
+        match &entry.content {
+            AgentThreadEntryContent::Message(message) => div()
+                .children(message.chunks.iter().map(|chunk| match chunk {
+                    MessageChunk::Text { chunk } => div().child(chunk.clone()),
+                    _ => todo!(),
+                }))
+                .into_any(),
+            AgentThreadEntryContent::ReadFile { path, content: _ } => {
+                // todo!
+                div()
+                    .child(format!("<Reading file {}>", path.display()))
+                    .into_any()
+            }
+        }
     }
 }
 
@@ -81,7 +115,7 @@ impl Focusable for ThreadElement {
 }
 
 impl Render for ThreadElement {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.message_editor.read(cx).text(cx);
         let is_editor_empty = text.is_empty();
         let focus_handle = self.message_editor.focus_handle(cx);
@@ -89,7 +123,22 @@ impl Render for ThreadElement {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .child(div().h_full())
+            .child(
+                v_flex().h_full().gap_1().children(
+                    self.thread
+                        .read(cx)
+                        .entries()
+                        .iter()
+                        .map(|entry| self.render_entry(entry, window, cx)),
+                ),
+            )
+            .when(self.send_task.is_some(), |this| {
+                this.child(
+                    Label::new("Generating...")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+            })
             .child(
                 div()
                     .bg(cx.theme().colors().editor_background)

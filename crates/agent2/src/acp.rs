@@ -82,8 +82,22 @@ impl acp::Client for AcpClientDelegate {
 
     async fn stream_message_chunk(
         &self,
-        chunk: acp::StreamMessageChunkParams,
+        params: acp::StreamMessageChunkParams,
     ) -> Result<acp::StreamMessageChunkResponse> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.update_thread(&params.thread_id.into(), cx, |thread, cx| {
+                let acp::MessageChunk::Text { chunk } = &params.chunk;
+                thread.push_assistant_chunk(
+                    MessageChunk::Text {
+                        chunk: chunk.into(),
+                    },
+                    cx,
+                )
+            });
+        })?;
+
         Ok(acp::StreamMessageChunkResponse)
     }
 
