@@ -221,9 +221,6 @@ impl ExampleContext {
                 ThreadEvent::ShowError(thread_error) => {
                     tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
-                ThreadEvent::RetryScheduled { .. } => {
-                    // Ignore retry events
-                }
                 ThreadEvent::RetriesFailed { .. } => {
                     // Ignore retries failed events
                 }

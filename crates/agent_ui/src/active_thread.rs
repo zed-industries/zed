@@ -1140,9 +1140,6 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
-            ThreadEvent::RetryScheduled { .. } => {
-                // Message already handled by MessageAdded event
-            }
             ThreadEvent::RetriesFailed { message, .. } => {
                 self.show_notification(message, ui::IconName::Warning, window, cx);
             }

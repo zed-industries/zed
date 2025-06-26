@@ -2109,10 +2109,6 @@ impl Thread {
             ui_only: true,
         });
         cx.emit(ThreadEvent::MessageAdded(id));
-        let message_id = id;
-
-        cx.emit(ThreadEvent::RetryScheduled { message_id });
-
         // Schedule the retry
         let thread_handle = cx.entity().downgrade();
 
@@ -2188,9 +2184,6 @@ impl Thread {
                 ui_only: true,
             });
             cx.emit(ThreadEvent::MessageAdded(id));
-            let message_id = id;
-
-            cx.emit(ThreadEvent::RetryScheduled { message_id });
 
             // Schedule the retry
             let thread_handle = cx.entity().downgrade();
@@ -3173,9 +3166,6 @@ pub enum ThreadEvent {
     CancelEditing,
     CompletionCanceled,
     ProfileChanged,
-    RetryScheduled {
-        message_id: MessageId,
-    },
     RetriesFailed {
         message: SharedString,
         max_attempts: u8,
@@ -4183,27 +4173,12 @@ fn main() {{
             thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
-        // Track retry events
-        let retry_count = Arc::new(Mutex::new(0));
-        let retry_count_clone = retry_count.clone();
-
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetryScheduled { .. } = event {
-                    *retry_count_clone.lock() += 1;
-                }
-            })
-        });
-
         // Start completion
         thread.update(cx, |thread, cx| {
             thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         cx.run_until_parked();
-
-        // Check that a retry was scheduled
-        assert_eq!(*retry_count.lock(), 1, "Should have scheduled one retry");
 
         thread.read_with(cx, |thread, _| {
             assert!(thread.retry_state.is_some(), "Should have retry state");
@@ -4235,6 +4210,25 @@ fn main() {{
                 "Should have added a system retry message"
             );
         });
+
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+
+        assert_eq!(retry_count, 1, "Should have one retry message");
     }
 
     #[gpui::test]
@@ -4252,27 +4246,12 @@ fn main() {{
             thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
-        // Track retry events
-        let retry_count = Arc::new(Mutex::new(0));
-        let retry_count_clone = retry_count.clone();
-
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetryScheduled { .. } = event {
-                    *retry_count_clone.lock() += 1;
-                }
-            })
-        });
-
         // Start completion
         thread.update(cx, |thread, cx| {
             thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         cx.run_until_parked();
-
-        // Check that a retry was scheduled
-        assert_eq!(*retry_count.lock(), 1, "Should have scheduled one retry");
 
         // Check retry state on thread
         thread.read_with(cx, |thread, _| {
@@ -4306,6 +4285,26 @@ fn main() {{
                 "Should have added a system retry message with provider name"
             );
         });
+
+        // Count retry messages
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+
+        assert_eq!(retry_count, 1, "Should have one retry message");
     }
 
     #[gpui::test]
@@ -4324,20 +4323,15 @@ fn main() {{
         });
 
         // Track retry events and completion count
-        let retry_count = Arc::new(Mutex::new(0));
-        let retry_count_clone = retry_count.clone();
+        // Track completion events
         let completion_count = Arc::new(Mutex::new(0));
         let completion_count_clone = completion_count.clone();
 
         let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| match event {
-                ThreadEvent::RetryScheduled { .. } => {
-                    *retry_count_clone.lock() += 1;
-                }
-                ThreadEvent::NewRequest => {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::NewRequest = event {
                     *completion_count_clone.lock() += 1;
                 }
-                _ => {}
             })
         });
 
@@ -4347,8 +4341,24 @@ fn main() {{
         });
         cx.run_until_parked();
 
-        // Should have scheduled first retry
-        assert_eq!(*retry_count.lock(), 1, "Should have scheduled first retry");
+        // Should have scheduled first retry - count retry messages
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(retry_count, 1, "Should have scheduled first retry");
 
         // Check retry state
         thread.read_with(cx, |thread, _| {
@@ -4362,8 +4372,24 @@ fn main() {{
             .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
         cx.run_until_parked();
 
-        // Should have scheduled second retry
-        assert_eq!(*retry_count.lock(), 2, "Should have scheduled second retry");
+        // Should have scheduled second retry - count retry messages
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(retry_count, 2, "Should have scheduled second retry");
 
         // Check retry state updated
         thread.read_with(cx, |thread, _| {
@@ -4382,9 +4408,25 @@ fn main() {{
         cx.run_until_parked();
 
         // Should have scheduled third retry
+        // Count all retry messages now
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
         assert_eq!(
-            *retry_count.lock(),
-            MAX_RETRY_ATTEMPTS as usize,
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
             "Should have scheduled third retry"
         );
 
@@ -4407,12 +4449,28 @@ fn main() {{
             .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 4));
         cx.run_until_parked();
 
-        // No more retries should be scheduled
+        // No more retries should be scheduled after clock was advanced.
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
         assert_eq!(
-            *retry_count.lock(),
-            MAX_RETRY_ATTEMPTS as usize,
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
             "Should not exceed max retries"
         );
+
         // Final completion count should be initial + max retries
         assert_eq!(
             *completion_count.lock(),
@@ -4439,18 +4497,12 @@ fn main() {{
         // Track events
         let retries_failed = Arc::new(Mutex::new(false));
         let retries_failed_clone = retries_failed.clone();
-        let retry_count = Arc::new(Mutex::new(0));
-        let retry_count_clone = retry_count.clone();
 
         let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| match event {
-                ThreadEvent::RetriesFailed { .. } => {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::RetriesFailed { .. } = event {
                     *retries_failed_clone.lock() = true;
                 }
-                ThreadEvent::RetryScheduled { .. } => {
-                    *retry_count_clone.lock() += 1;
-                }
-                _ => {}
             })
         });
 
@@ -4478,10 +4530,26 @@ fn main() {{
             .advance_clock(Duration::from_secs(final_delay));
         cx.run_until_parked();
 
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+
         // After max retries, should emit RetriesFailed event
         assert_eq!(
-            *retry_count.lock(),
-            MAX_RETRY_ATTEMPTS as usize,
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
             "Should have attempted max retries"
         );
         assert!(
@@ -4928,18 +4996,6 @@ fn main() {{
             thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
-        // Track retry events
-        let retry_count = Arc::new(Mutex::new(0));
-        let retry_count_clone = retry_count.clone();
-
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetryScheduled { .. } = event {
-                    *retry_count_clone.lock() += 1;
-                }
-            })
-        });
-
         // Start completion
         thread.update(cx, |thread, cx| {
             thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
@@ -4947,7 +5003,23 @@ fn main() {{
 
         cx.run_until_parked();
 
-        assert_eq!(*retry_count.lock(), 1, "Should have scheduled one retry");
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("rate limit exceeded")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(retry_count, 1, "Should have scheduled one retry");
 
         thread.read_with(cx, |thread, _| {
             assert!(
@@ -5118,18 +5190,6 @@ fn main() {{
             thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
-        // Track retry events
-        let retry_scheduled = Arc::new(Mutex::new(false));
-        let retry_scheduled_clone = retry_scheduled.clone();
-
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if matches!(event, ThreadEvent::RetryScheduled { .. }) {
-                    *retry_scheduled_clone.lock() = true;
-                }
-            })
-        });
-
         // Start completion
         thread.update(cx, |thread, cx| {
             thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
@@ -5137,8 +5197,20 @@ fn main() {{
 
         cx.run_until_parked();
 
-        // Verify retry was scheduled
-        assert!(*retry_scheduled.lock(), "Should have scheduled a retry");
+        // Verify retry was scheduled by checking for retry message
+        let has_retry_message = thread.read_with(cx, |thread, _| {
+            thread.messages.iter().any(|m| {
+                m.ui_only
+                    && m.segments.iter().any(|s| {
+                        if let MessageSegment::Text(text) = s {
+                            text.contains("Retrying") && text.contains("seconds")
+                        } else {
+                            false
+                        }
+                    })
+            })
+        });
+        assert!(has_retry_message, "Should have scheduled a retry");
 
         // Cancel the completion before the retry happens
         thread.update(cx, |thread, cx| {
