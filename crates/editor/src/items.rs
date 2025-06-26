@@ -41,7 +41,8 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemHandle, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace,
+    WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -1078,6 +1079,7 @@ impl SerializableItem for Editor {
                         contents: None,
                         language: None,
                         mtime: None,
+                        pinned: serialized_editor.pinned,
                     }
                 }
             }
@@ -1220,7 +1222,9 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            } => {
+                Task::ready(Err(anyhow!("No path or contents found for buffer")))
+            }
         }
     }
 
@@ -1249,6 +1253,11 @@ impl SerializableItem for Editor {
         }
 
         let workspace_id = workspace.database_id()?;
+        let pane = workspace.pane_for(&cx.entity())?;
+        let pinned = item_id
+            .try_into()
+            .ok()
+            .map(|id| pane.read(cx).is_tab_pinned(id));
 
         let buffer = self.buffer().read(cx).as_singleton()?;
 
@@ -1285,6 +1294,7 @@ impl SerializableItem for Editor {
                     contents,
                     language,
                     mtime,
+                    pinned,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 DB.save_serialized_editor(item_id, workspace_id, editor)
@@ -1987,6 +1997,7 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
+                pinned: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
@@ -2019,6 +2030,7 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
+                pinned: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
@@ -2055,6 +2067,7 @@ mod tests {
                 contents: Some("hello".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: None,
+                pinned: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
@@ -2092,6 +2105,7 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),
+                pinned: None,
             };
 
             DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
