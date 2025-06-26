@@ -1222,9 +1222,7 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => {
-                Task::ready(Err(anyhow!("No path or contents found for buffer")))
-            }
+            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
         }
     }
 
