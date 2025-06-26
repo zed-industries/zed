@@ -278,7 +278,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |_, thread, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary().or_default();
+                        let summary = thread.read(cx).summary(cx).or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);

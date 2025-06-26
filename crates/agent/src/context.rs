@@ -581,7 +581,7 @@ impl ThreadContextHandle {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.thread.read(cx).summary().or_default()
+        self.thread.read(cx).summary(cx).or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
@@ -589,7 +589,7 @@ impl ThreadContextHandle {
             let text = ZedAgent::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
             let title = self
                 .thread
-                .read_with(cx, |thread, _cx| thread.summary().or_default())
+                .read_with(cx, |thread, cx| thread.summary(cx).or_default())
                 .ok()?;
             let context = AgentContext::Thread(ThreadContext {
                 title,

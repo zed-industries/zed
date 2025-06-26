@@ -413,7 +413,6 @@ pub enum QueueState {
 pub struct ZedAgent {
     thread: Entity<Thread>,
     _thread_subscription: Subscription,
-    summary: ThreadSummary,
     pending_summary: Task<Option<()>>,
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
@@ -457,12 +456,36 @@ pub struct Thread {
     id: ThreadId,
     next_message_id: MessageId,
     messages: Vec<Message>,
+    summary: ThreadSummary,
     pending_checkpoint: Option<ThreadCheckpoint>,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     updated_at: DateTime<Utc>,
 }
 
 impl Thread {
+    pub fn summary(&self) -> &ThreadSummary {
+        &self.summary
+    }
+
+    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let current_summary = match &self.summary {
+            ThreadSummary::Pending | ThreadSummary::Generating => return,
+            ThreadSummary::Ready(summary) => summary,
+            ThreadSummary::Error => &ThreadSummary::DEFAULT,
+        };
+
+        let mut new_summary = new_summary.into();
+
+        if new_summary.is_empty() {
+            new_summary = ThreadSummary::DEFAULT;
+        }
+
+        if current_summary != &new_summary {
+            self.summary = ThreadSummary::Ready(new_summary);
+            cx.emit(ThreadEvent::SummaryChanged);
+        }
+    }
+
     pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> + DoubleEndedIterator {
         self.messages.iter()
     }
@@ -707,6 +730,7 @@ impl ZedAgent {
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         let thread = cx.new(|_| Thread {
+            summary: ThreadSummary::Pending,
             pending_checkpoint: None,
             next_message_id: MessageId(0),
             id: ThreadId::new(),
@@ -723,7 +747,6 @@ impl ZedAgent {
         Self {
             thread,
             _thread_subscription: thread_subscription,
-            summary: ThreadSummary::Pending,
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
@@ -884,6 +907,7 @@ impl ZedAgent {
             pending_checkpoint: None,
             checkpoints_by_message: HashMap::default(),
             updated_at: serialized.updated_at,
+            summary: ThreadSummary::Ready(serialized.summary),
         });
 
         let subscription = cx.subscribe(&thread, |_, _, event, cx| {
@@ -894,7 +918,6 @@ impl ZedAgent {
         let mut this = Self {
             thread,
             _thread_subscription: subscription,
-            summary: ThreadSummary::Ready(serialized.summary),
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
@@ -1062,27 +1085,14 @@ impl ZedAgent {
         cx.notify();
     }
 
-    pub fn summary(&self) -> &ThreadSummary {
-        &self.summary
+    pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
+        &self.thread.read(cx).summary()
     }
 
     pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let current_summary = match &self.summary {
-            ThreadSummary::Pending | ThreadSummary::Generating => return,
-            ThreadSummary::Ready(summary) => summary,
-            ThreadSummary::Error => &ThreadSummary::DEFAULT,
-        };
-
-        let mut new_summary = new_summary.into();
-
-        if new_summary.is_empty() {
-            new_summary = ThreadSummary::DEFAULT;
-        }
-
-        if current_summary != &new_summary {
-            self.summary = ThreadSummary::Ready(new_summary);
-            cx.emit(ThreadEvent::SummaryChanged);
-        }
+        self.thread.update(cx, |thread, cx| {
+            thread.set_summary(new_summary, cx);
+        });
     }
 
     pub fn completion_mode(&self) -> CompletionMode {
@@ -1514,7 +1524,7 @@ impl ZedAgent {
             let initial_project_snapshot = initial_project_snapshot.await;
             this.read_with(cx, |this, cx| SerializedThread {
                 version: SerializedThread::VERSION.to_string(),
-                summary: this.summary().or_default(),
+                summary: this.summary(cx).or_default(),
                 updated_at: this.thread.read(cx).updated_at,
                 messages: this
                     .messages(cx)
@@ -1876,17 +1886,17 @@ impl ZedAgent {
 
         self.last_received_chunk_at = Some(Instant::now());
 
-        let task = cx.spawn(async move |thread, cx| {
+        let task = cx.spawn(async move |this, cx| {
             let stream_completion_future = model.stream_completion(request, &cx);
             let initial_token_usage =
-                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
+                this.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
                 let mut events = stream_completion_future.await?;
 
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
-                thread
+                this
                     .update(cx, |_thread, cx| {
                         cx.emit(ThreadEvent::NewRequest);
                     })
@@ -1900,7 +1910,7 @@ impl ZedAgent {
                             .push(event.as_ref().map_err(|error| error.to_string()).cloned());
                     }
 
-                    thread.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         let event = match event {
                             Ok(event) => event,
                             Err(error) => {
@@ -2157,19 +2167,19 @@ impl ZedAgent {
                     smol::future::yield_now().await;
                 }
 
-                thread.update(cx, |thread, cx| {
-                    thread.last_received_chunk_at = None;
-                    thread
+                this.update(cx, |this, cx| {
+                    this.last_received_chunk_at = None;
+                    this
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
 
                     // If there is a response without tool use, summarize the message. Otherwise,
                     // allow two tool uses before summarizing.
-                    if matches!(thread.summary, ThreadSummary::Pending)
-                        && thread.messages(cx).len() >= 2
-                        && (!thread.has_pending_tool_uses() || thread.messages(cx).len() >= 6)
+                    if matches!(this.thread.read(cx).summary, ThreadSummary::Pending)
+                        && this.messages(cx).len() >= 2
+                        && (!this.has_pending_tool_uses() || this.messages(cx).len() >= 6)
                     {
-                        thread.summarize(cx);
+                        this.summarize(cx);
                     }
                 })?;
 
@@ -2179,7 +2189,7 @@ impl ZedAgent {
             let result = stream_completion.await;
             let mut retry_scheduled = false;
 
-            thread
+            this
                 .update(cx, |this, cx| {
                     this.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
@@ -2401,7 +2411,10 @@ impl ZedAgent {
             cx,
         );
 
-        self.summary = ThreadSummary::Generating;
+        self.thread.update(cx, |thread, _cx| {
+            thread.summary = ThreadSummary::Generating;
+        });
+        let thread = self.thread.downgrade();
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             let result = async {
@@ -2438,23 +2451,24 @@ impl ZedAgent {
             }
             .await;
 
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(new_summary) => {
-                        if new_summary.is_empty() {
-                            this.summary = ThreadSummary::Error;
-                        } else {
-                            this.summary = ThreadSummary::Ready(new_summary.into());
+            thread
+                .update(cx, |thread, cx| {
+                    match result {
+                        Ok(new_summary) => {
+                            if new_summary.is_empty() {
+                                thread.summary = ThreadSummary::Error;
+                            } else {
+                                thread.summary = ThreadSummary::Ready(new_summary.into());
+                            }
+                        }
+                        Err(err) => {
+                            thread.summary = ThreadSummary::Error;
+                            log::error!("Failed to generate thread summary: {}", err);
                         }
                     }
-                    Err(err) => {
-                        this.summary = ThreadSummary::Error;
-                        log::error!("Failed to generate thread summary: {}", err);
-                    }
-                }
-                cx.emit(ThreadEvent::SummaryGenerated);
-            })
-            .log_err()?;
+                    cx.emit(ThreadEvent::SummaryGenerated);
+                })
+                .log_err()?;
 
             Some(())
         });
@@ -3341,7 +3355,7 @@ impl ZedAgent {
     pub fn to_markdown(&self, cx: &App) -> Result<String> {
         let mut markdown = Vec::new();
 
-        let summary = self.summary().or_default();
+        let summary = self.summary(cx).or_default();
         writeln!(markdown, "# {summary}\n")?;
 
         for message in self.messages(cx) {
@@ -3895,7 +3909,7 @@ mod tests {
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store, model) =
+        let (_workspace, _thread_store, agent, thread, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         add_file_to_context(&project, &context_store, "test/code.rs", cx)
@@ -3909,8 +3923,8 @@ mod tests {
             .await;
 
         // Insert user message with context
-        let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
+        let message_id = agent.update(cx, |agent, cx| {
+            agent.insert_user_message(
                 "Please explain this code",
                 loaded_context,
                 None,
@@ -3920,8 +3934,8 @@ mod tests {
         });
 
         // Check content and context in message object
-        let message = thread.read_with(cx, |thread, cx| {
-            thread.message(message_id, cx).unwrap().clone()
+        let message = thread.read_with(cx, |thread, _cx| {
+            thread.message(message_id).unwrap().clone()
         });
 
         // Use different path format strings based on platform for the test
@@ -3955,8 +3969,8 @@ fn main() {{
         assert_eq!(message.loaded_context.text, expected_context);
 
         // Check message in request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -3979,7 +3993,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, context_store, model) =
+        let (_, _thread_store, agent, thread, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // First message with context 1
@@ -3987,14 +4001,14 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None, cx)
+            store.new_context_for_thread(agent.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
-        let message1_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 1", loaded_context, None, Vec::new(), cx)
+        let message1_id = agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Message 1", loaded_context, None, Vec::new(), cx)
         });
 
         // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
@@ -4002,14 +4016,14 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None, cx)
+            store.new_context_for_thread(agent.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
-        let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 2", loaded_context, None, Vec::new(), cx)
+        let message2_id = agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Message 2", loaded_context, None, Vec::new(), cx)
         });
 
         // Third message with all three contexts (contexts 1 and 2 should be skipped)
@@ -4018,22 +4032,22 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None, cx)
+            store.new_context_for_thread(agent.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
-        let message3_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 3", loaded_context, None, Vec::new(), cx)
+        let message3_id = agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Message 3", loaded_context, None, Vec::new(), cx)
         });
 
         // Check what contexts are included in each message
-        let (message1, message2, message3) = thread.read_with(cx, |thread, cx| {
+        let (message1, message2, message3) = thread.read_with(cx, |thread, _cx| {
             (
-                thread.message(message1_id, cx).unwrap().clone(),
-                thread.message(message2_id, cx).unwrap().clone(),
-                thread.message(message3_id, cx).unwrap().clone(),
+                thread.message(message1_id).unwrap().clone(),
+                thread.message(message2_id).unwrap().clone(),
+                thread.message(message3_id).unwrap().clone(),
             )
         });
 
@@ -4050,8 +4064,8 @@ fn main() {{
         assert!(message3.loaded_context.text.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // The request should contain all 3 messages
@@ -4074,7 +4088,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 3);
         let loaded_context = cx
@@ -4090,7 +4104,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file4.rs
             store.remove_context(&loaded_context.contexts[2].handle(), cx);
-            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 2);
         let loaded_context = cx
@@ -4106,7 +4120,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file3.rs
             store.remove_context(&loaded_context.contexts[1].handle(), cx);
-            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4130,12 +4144,12 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, _context_store, model) =
+        let (_, _thread_store, agent, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
-        let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
+        let message_id = agent.update(cx, |agent, cx| {
+            agent.insert_user_message(
                 "What is the best way to learn Rust?",
                 ContextLoadResult::default(),
                 None,
@@ -4145,8 +4159,8 @@ fn main() {{
         });
 
         // Check content and context in message object
-        let message = thread.read_with(cx, |thread, cx| {
-            thread.message(message_id, cx).unwrap().clone()
+        let message = thread.read_with(cx, |thread, _cx| {
+            thread.message(message_id).unwrap().clone()
         });
 
         // Context should be empty when no files are included
@@ -4159,8 +4173,8 @@ fn main() {{
         assert_eq!(message.loaded_context.text, "");
 
         // Check message in request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -4170,8 +4184,8 @@ fn main() {{
         );
 
         // Add second message, also without context
-        let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
+        let message2_id = agent.update(cx, |agent, cx| {
+            agent.insert_user_message(
                 "Are there any good books?",
                 ContextLoadResult::default(),
                 None,
@@ -4180,14 +4194,14 @@ fn main() {{
             )
         });
 
-        let message2 = thread.read_with(cx, |thread, cx| {
-            thread.message(message2_id, cx).unwrap().clone()
+        let message2 = thread.read_with(cx, |thread, _cx| {
+            thread.message(message2_id).unwrap().clone()
         });
         assert_eq!(message2.loaded_context.text, "");
 
         // Check that both messages appear in the request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 3);
@@ -4211,11 +4225,11 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, thread_store, thread, _context_store, _model) =
+        let (_workspace, thread_store, agent, _thread, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Check that we are starting with the default profile
-        let profile = cx.read(|cx| thread.read(cx).profile.clone());
+        let profile = cx.read(|cx| agent.read(cx).profile.clone());
         let tool_set = cx.read(|cx| thread_store.read(cx).tools());
         assert_eq!(
             profile,
@@ -4233,26 +4247,26 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, thread_store, thread, _context_store, _model) =
+        let (_workspace, thread_store, agent, _thread, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Profile gets serialized with default values
-        let serialized = thread
-            .update(cx, |thread, cx| thread.serialize(cx))
+        let serialized = agent
+            .update(cx, |agent, cx| agent.serialize(cx))
             .await
             .unwrap();
 
         assert_eq!(serialized.profile, Some(AgentProfileId::default()));
 
         let deserialized = cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
+            agent.update(cx, |agent, cx| {
                 ZedAgent::deserialize(
-                    thread.id(cx).clone(),
+                    agent.id(cx).clone(),
                     serialized,
-                    thread.project.clone(),
-                    thread.tools.clone(),
-                    thread.prompt_builder.clone(),
-                    thread.project_context.clone(),
+                    agent.project.clone(),
+                    agent.tools.clone(),
+                    agent.prompt_builder.clone(),
+                    agent.project_context.clone(),
                     None,
                     cx,
                 )
@@ -4276,7 +4290,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, _context_store, model) =
+        let (_workspace, _thread_store, agent, _thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Both model and provider
@@ -4294,8 +4308,8 @@ fn main() {{
             );
         });
 
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -4314,8 +4328,8 @@ fn main() {{
             );
         });
 
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -4334,8 +4348,8 @@ fn main() {{
             );
         });
 
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -4354,8 +4368,8 @@ fn main() {{
             );
         });
 
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, None);
     }
@@ -4366,7 +4380,7 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_, _thread_store, thread, _context_store, model) =
+        let (_, _thread_store, agent, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Initial state should be pending
@@ -4385,9 +4399,9 @@ fn main() {{
         });
 
         // Send a message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            thread.send_to_model(
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
+            agent.send_to_model(
                 model.clone(),
                 CompletionIntent::ThreadSummarization,
                 None,
@@ -4451,10 +4465,10 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_, _thread_store, thread, _context_store, model) =
+        let (_, _thread_store, agent, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        test_summarize_error(&model, &thread, cx);
+        test_summarize_error(&model, &agent, &thread, cx);
 
         // Now we should be able to set a summary
         thread.update(cx, |thread, cx| {
@@ -4473,21 +4487,21 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_, _thread_store, thread, _context_store, model) =
+        let (_, _thread_store, agent, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        test_summarize_error(&model, &thread, cx);
+        test_summarize_error(&model, &agent, &thread, cx);
 
         // Sending another message should not trigger another summarize request
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message(
                 "How are you?",
                 ContextLoadResult::default(),
                 None,
                 vec![],
                 cx,
             );
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -4499,8 +4513,8 @@ fn main() {{
         });
 
         // But the summarize request can be invoked manually
-        thread.update(cx, |thread, cx| {
-            thread.summarize(cx);
+        agent.update(cx, |agent, cx| {
+            agent.summarize(cx);
         });
 
         thread.read_with(cx, |thread, _| {
@@ -4762,26 +4776,27 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Start completion
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         cx.run_until_parked();
 
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.retry_state.is_some(), "Should have retry state");
+            let retry_state = agent.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
                 retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
@@ -4790,8 +4805,8 @@ fn main() {{
         });
 
         // Check that a retry message was added
-        thread.read_with(cx, |thread, cx| {
-            let mut messages = thread.messages(cx);
+        thread.read_with(cx, |thread, _cx| {
+            let mut messages = thread.messages();
             assert!(
                 messages.any(|msg| {
                     msg.role == Role::System
@@ -4810,9 +4825,9 @@ fn main() {{
             );
         });
 
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4834,27 +4849,28 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Start completion
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         cx.run_until_parked();
 
         // Check retry state on thread
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.retry_state.is_some(), "Should have retry state");
+            let retry_state = agent.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
                 retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
@@ -4863,8 +4879,8 @@ fn main() {{
         });
 
         // Check that a retry message was added with provider name
-        thread.read_with(cx, |thread, cx| {
-            let mut messages = thread.messages(cx);
+        thread.read_with(cx, |thread, _cx| {
+            let mut messages = thread.messages();
             assert!(
                 messages.any(|msg| {
                     msg.role == Role::System
@@ -4885,9 +4901,9 @@ fn main() {{
         });
 
         // Count retry messages
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4909,14 +4925,15 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Track retry events and completion count
@@ -4924,8 +4941,8 @@ fn main() {{
         let completion_count = Arc::new(Mutex::new(0));
         let completion_count_clone = completion_count.clone();
 
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+        let _subscription = agent.update(cx, |_, cx| {
+            cx.subscribe(&agent, move |_, _, event: &ThreadEvent, _| {
                 if let ThreadEvent::NewRequest = event {
                     *completion_count_clone.lock() += 1;
                 }
@@ -4933,15 +4950,15 @@ fn main() {{
         });
 
         // First attempt
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
         cx.run_until_parked();
 
         // Should have scheduled first retry - count retry messages
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4957,9 +4974,9 @@ fn main() {{
         assert_eq!(retry_count, 1, "Should have scheduled first retry");
 
         // Check retry state
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.retry_state.is_some(), "Should have retry state");
+            let retry_state = agent.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
         });
 
@@ -4969,9 +4986,9 @@ fn main() {{
         cx.run_until_parked();
 
         // Should have scheduled second retry - count retry messages
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -4987,9 +5004,9 @@ fn main() {{
         assert_eq!(retry_count, 2, "Should have scheduled second retry");
 
         // Check retry state updated
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.retry_state.is_some(), "Should have retry state");
+            let retry_state = agent.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 2, "Should be second retry attempt");
             assert_eq!(
                 retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
@@ -5004,9 +5021,9 @@ fn main() {{
 
         // Should have scheduled third retry
         // Count all retry messages now
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5025,9 +5042,9 @@ fn main() {{
         );
 
         // Check retry state updated
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.retry_state.is_some(), "Should have retry state");
+            let retry_state = agent.retry_state.as_ref().unwrap();
             assert_eq!(
                 retry_state.attempt, MAX_RETRY_ATTEMPTS,
                 "Should be at max retry attempt"
@@ -5044,9 +5061,9 @@ fn main() {{
         cx.run_until_parked();
 
         // No more retries should be scheduled after clock was advanced.
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5077,22 +5094,23 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Track events
         let retries_failed = Arc::new(Mutex::new(false));
         let retries_failed_clone = retries_failed.clone();
 
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+        let _subscription = agent.update(cx, |_, cx| {
+            cx.subscribe(&agent, move |_, _, event: &ThreadEvent, _| {
                 if let ThreadEvent::RetriesFailed { .. } = event {
                     *retries_failed_clone.lock() = true;
                 }
@@ -5100,8 +5118,8 @@ fn main() {{
         });
 
         // Start initial completion
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
         cx.run_until_parked();
 
@@ -5123,9 +5141,9 @@ fn main() {{
             .advance_clock(Duration::from_secs(final_delay));
         cx.run_until_parked();
 
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5150,15 +5168,16 @@ fn main() {{
         );
 
         // Retry state should be cleared
-        thread.read_with(cx, |thread, cx| {
+        agent.read_with(cx, |agent, cx| {
             assert!(
-                thread.retry_state.is_none(),
+                agent.retry_state.is_none(),
                 "Retry state should be cleared after max retries"
             );
 
             // Verify we have the expected number of retry messages
             let retry_messages = thread
-                .messages(cx)
+                .read(cx)
+                .messages()
                 .filter(|msg| msg.ui_only && msg.role == Role::System)
                 .count();
             assert_eq!(
@@ -5173,7 +5192,8 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // We'll use a wrapper to switch behavior after first failure
         struct RetryTestModel {
@@ -5264,8 +5284,8 @@ fn main() {{
         });
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Track message deletions
@@ -5273,8 +5293,8 @@ fn main() {{
         let retry_completed = Arc::new(Mutex::new(false));
         let retry_completed_clone = retry_completed.clone();
 
-        let _subscription = thread.update(cx, |_, cx| {
-            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+        let _subscription = agent.update(cx, |_, cx| {
+            cx.subscribe(&agent, move |_, _, event: &ThreadEvent, _| {
                 if let ThreadEvent::StreamedCompletion = event {
                     *retry_completed_clone.lock() = true;
                 }
@@ -5282,15 +5302,15 @@ fn main() {{
         });
 
         // Start completion
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
         cx.run_until_parked();
 
         // Get the retry message ID
-        let retry_message_id = thread.read_with(cx, |thread, cx| {
+        let retry_message_id = thread.read_with(cx, |thread, _cx| {
             thread
-                .messages(cx)
+                .messages()
                 .find(|msg| msg.role == Role::System && msg.ui_only)
                 .map(|msg| msg.id)
                 .expect("Should have a retry message")
@@ -5320,9 +5340,9 @@ fn main() {{
         );
 
         // Retry message should still exist but be marked as ui_only
-        thread.read_with(cx, |thread, cx| {
+        thread.read_with(cx, |thread, _cx| {
             let retry_msg = thread
-                .message(retry_message_id, cx)
+                .message(retry_message_id)
                 .expect("Retry message should still exist");
             assert!(retry_msg.ui_only, "Retry message should be ui_only");
             assert_eq!(
@@ -5338,7 +5358,8 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create a model that fails once then succeeds
         struct FailOnceModel {
@@ -5425,8 +5446,8 @@ fn main() {{
         });
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message(
                 "Test message",
                 ContextLoadResult::default(),
                 None,
@@ -5436,8 +5457,8 @@ fn main() {{
         });
 
         // Start completion with fail-once model
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(
                 fail_once_model.clone(),
                 CompletionIntent::UserPrompt,
                 None,
@@ -5448,9 +5469,9 @@ fn main() {{
         cx.run_until_parked();
 
         // Verify retry state exists after first failure
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |agent, _| {
             assert!(
-                thread.retry_state.is_some(),
+                agent.retry_state.is_some(),
                 "Should have retry state after failure"
             );
         });
@@ -5474,14 +5495,16 @@ fn main() {{
         }
         cx.run_until_parked();
 
-        thread.read_with(cx, |thread, cx| {
+        agent.read_with(cx, |agent, _| {
             assert!(
-                thread.retry_state.is_none(),
+                agent.retry_state.is_none(),
                 "Retry state should be cleared after successful completion"
             );
+        });
 
+        thread.read_with(cx, |thread, _| {
             let has_assistant_message = thread
-                .messages(cx)
+                .messages()
                 .any(|msg| msg.role == Role::Assistant && !msg.ui_only);
             assert!(
                 has_assistant_message,
@@ -5495,7 +5518,8 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create a model that returns rate limit error with retry_after
         struct RateLimitModel {
@@ -5582,20 +5606,20 @@ fn main() {{
         });
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Start completion
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         cx.run_until_parked();
 
-        let retry_count = thread.update(cx, |thread, cx| {
+        let retry_count = thread.update(cx, |thread, _| {
             thread
-                .messages(cx)
+                .messages()
                 .filter(|m| {
                     m.ui_only
                         && m.segments.iter().any(|s| {
@@ -5610,17 +5634,17 @@ fn main() {{
         });
         assert_eq!(retry_count, 1, "Should have scheduled one retry");
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |agent, _| {
             assert!(
-                thread.retry_state.is_none(),
+                agent.retry_state.is_none(),
                 "Rate limit errors should not set retry_state"
             );
         });
 
         // Verify we have one retry message
-        thread.read_with(cx, |thread, cx| {
+        thread.read_with(cx, |thread, _| {
             let retry_messages = thread
-                .messages(cx)
+                .messages()
                 .filter(|msg| {
                     msg.ui_only
                         && msg.segments.iter().any(|seg| {
@@ -5639,9 +5663,9 @@ fn main() {{
         });
 
         // Check that retry message doesn't include attempt count
-        thread.read_with(cx, |thread, cx| {
+        thread.read_with(cx, |thread, _cx| {
             let retry_message = thread
-                .messages(cx)
+                .messages()
                 .find(|msg| msg.role == Role::System && msg.ui_only)
                 .expect("Should have a retry message");
 
@@ -5667,36 +5691,33 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, model) = setup_test_environment(cx, project.clone()).await;
 
         // Insert a regular user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Insert a UI-only message (like our retry notifications)
         thread.update(cx, |thread, cx| {
-            thread.thread.update(cx, |thread, cx| {
-                let id = thread.next_message_id.post_inc();
-                thread.messages.push(Message {
-                    id,
-                    role: Role::System,
-                    segments: vec![MessageSegment::Text(
-                        "This is a UI-only message that should not be sent to the model"
-                            .to_string(),
-                    )],
-                    loaded_context: LoadedContext::default(),
-                    creases: Vec::new(),
-                    is_hidden: true,
-                    ui_only: true,
-                });
-                cx.emit(ThreadEvent::MessageAdded(id));
+            let id = thread.next_message_id.post_inc();
+            thread.messages.push(Message {
+                id,
+                role: Role::System,
+                segments: vec![MessageSegment::Text(
+                    "This is a UI-only message that should not be sent to the model".to_string(),
+                )],
+                loaded_context: LoadedContext::default(),
+                creases: Vec::new(),
+                is_hidden: true,
+                ui_only: true,
             });
+            cx.emit(ThreadEvent::MessageAdded(id));
         });
 
         // Insert another regular message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message(
                 "How are you?",
                 ContextLoadResult::default(),
                 None,
@@ -5706,8 +5727,8 @@ fn main() {{
         });
 
         // Generate the completion request
-        let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        let request = agent.update(cx, |agent, cx| {
+            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // Verify that the request only contains non-UI-only messages
@@ -5740,22 +5761,22 @@ fn main() {{
         );
 
         // Verify the thread still has all 3 messages (including UI-only)
-        thread.read_with(cx, |thread, cx| {
+        thread.read_with(cx, |thread, _cx| {
             assert_eq!(
-                thread.messages(cx).count(),
+                thread.messages().count(),
                 3,
                 "Thread should have 3 messages"
             );
             assert_eq!(
-                thread.messages(cx).filter(|m| m.ui_only).count(),
+                thread.messages().filter(|m| m.ui_only).count(),
                 1,
                 "Thread should have 1 UI-only message"
             );
         });
 
         // Verify that UI-only messages are not serialized
-        let serialized = thread
-            .update(cx, |thread, cx| thread.serialize(cx))
+        let serialized = agent
+            .update(cx, |agent, cx| agent.serialize(cx))
             .await
             .unwrap();
         assert_eq!(
@@ -5770,26 +5791,27 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+        let (_, _, agent, thread, _, _base_model) =
+            setup_test_environment(cx, project.clone()).await;
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
         // Insert a user message
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
         });
 
         // Start completion
-        thread.update(cx, |thread, cx| {
-            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         cx.run_until_parked();
 
         // Verify retry was scheduled by checking for retry message
-        let has_retry_message = thread.read_with(cx, |thread, cx| {
-            thread.messages(cx).any(|m| {
+        let has_retry_message = thread.read_with(cx, |thread, _| {
+            thread.messages().any(|m| {
                 m.ui_only
                     && m.segments.iter().any(|s| {
                         if let MessageSegment::Text(text) = s {
@@ -5803,8 +5825,8 @@ fn main() {{
         assert!(has_retry_message, "Should have scheduled a retry");
 
         // Cancel the completion before the retry happens
-        thread.update(cx, |thread, cx| {
-            thread.cancel_last_completion(None, cx);
+        agent.update(cx, |agent, cx| {
+            agent.cancel_last_completion(None, cx);
         });
 
         cx.run_until_parked();
@@ -5818,8 +5840,8 @@ fn main() {{
         );
 
         // Verify the retry was cancelled by checking retry state
-        thread.read_with(cx, |thread, _| {
-            if let Some(retry_state) = &thread.retry_state {
+        agent.read_with(cx, |agent, _| {
+            if let Some(retry_state) = &agent.retry_state {
                 panic!(
                     "retry_state should be cleared after cancellation, but found: attempt={}, max_attempts={}, intent={:?}",
                     retry_state.attempt, retry_state.max_attempts, retry_state.intent
@@ -5830,12 +5852,13 @@ fn main() {{
 
     fn test_summarize_error(
         model: &Arc<dyn LanguageModel>,
-        thread: &Entity<ZedAgent>,
+        agent: &Entity<ZedAgent>,
+        thread: &Entity<Thread>,
         cx: &mut TestAppContext,
     ) {
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            thread.send_to_model(
+        agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
+            agent.send_to_model(
                 model.clone(),
                 CompletionIntent::ThreadSummarization,
                 None,
@@ -5903,6 +5926,7 @@ fn main() {{
         Entity<Workspace>,
         Entity<ThreadStore>,
         Entity<ZedAgent>,
+        Entity<Thread>,
         Entity<ContextStore>,
         Arc<dyn LanguageModel>,
     ) {
@@ -5922,7 +5946,7 @@ fn main() {{
             .await
             .unwrap();
 
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let agent = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
         let provider = Arc::new(FakeLanguageModelProvider);
@@ -5947,8 +5971,9 @@ fn main() {{
                 );
             })
         });
+        let thread = agent.update(cx, |agent, _| agent.thread().clone());
 
-        (workspace, thread_store, thread, context_store, model)
+        (workspace, thread_store, agent, thread, context_store, model)
     }
 
     async fn add_file_to_context(

@@ -840,7 +840,7 @@ impl ActiveThread {
     }
 
     pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
-        self.thread.read(cx).summary()
+        self.thread.read(cx).summary(cx)
     }
 
     pub fn regenerate_summary(&self, cx: &mut App) {
@@ -1182,7 +1182,7 @@ impl ActiveThread {
             return;
         }
 
-        let title = self.thread.read(cx).summary().unwrap_or("Agent Panel");
+        let title = self.thread.read(cx).summary(cx).unwrap_or("Agent Panel");
 
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -3603,7 +3603,7 @@ pub(crate) fn open_active_thread_as_markdown(
         workspace.update_in(cx, |workspace, window, cx| {
             let thread = thread.read(cx);
             let markdown = thread.to_markdown(cx)?;
-            let thread_summary = thread.summary().or_default().to_string();
+            let thread_summary = thread.summary(cx).or_default().to_string();
 
             let project = workspace.project().clone();
 
