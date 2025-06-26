@@ -2913,7 +2913,12 @@ impl BufferSnapshot {
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
-        let significant_indentation = config.significant_indentation;
+
+        #[derive(Debug, Clone)]
+        struct StartPosition {
+            start: Point,
+            suffix: SharedString,
+        }
 
         // Find the suggested indentation ranges based on the syntax tree.
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
@@ -2929,13 +2934,13 @@ impl BufferSnapshot {
             .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
+        let mut start_positions = Vec::<StartPosition>::new();
         let mut outdent_positions = Vec::<Point>::new();
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
-            let mut outdent: Option<Point> = None;
 
-            let config = &indent_configs[mat.grammar_index];
+            let config = indent_configs[mat.grammar_index];
             for capture in mat.captures {
                 if capture.index == config.indent_capture_ix {
                     start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
@@ -2945,21 +2950,18 @@ impl BufferSnapshot {
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
-                    let point = Point::from_ts_point(capture.node.start_position());
-                    outdent.get_or_insert(point);
-                    outdent_positions.push(point);
+                    outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
+                } else if let Some(suffix) = config.suffixed_start_captures.get(&capture.index) {
+                    start_positions.push(StartPosition {
+                        start: Point::from_ts_point(capture.node.start_position()),
+                        suffix: suffix.clone(),
+                    });
                 }
             }
 
             matches.advance();
-            // in case of significant indentation expand end to outdent position
-            let end = if significant_indentation {
-                outdent.or(end)
-            } else {
-                end
-            };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && (!significant_indentation || start.column < end.column) {
+                if start.row == end.row {
                     continue;
                 }
                 let range = start..end;
@@ -2997,24 +2999,26 @@ impl BufferSnapshot {
             matches.advance();
         }
 
-        // we don't use outdent positions to truncate in case of significant indentation
-        // rather we use them to expand (handled above)
-        if !significant_indentation {
-            outdent_positions.sort();
-            for outdent_position in outdent_positions {
-                // find the innermost indent range containing this outdent_position
-                // set its end to the outdent position
-                if let Some(range_to_truncate) = indent_ranges
-                    .iter_mut()
-                    .filter(|indent_range| indent_range.contains(&outdent_position))
-                    .next_back()
-                {
-                    range_to_truncate.end = outdent_position;
-                }
+        outdent_positions.sort();
+        for outdent_position in outdent_positions {
+            // find the innermost indent range containing this outdent_position
+            // set its end to the outdent position
+            if let Some(range_to_truncate) = indent_ranges
+                .iter_mut()
+                .filter(|indent_range| indent_range.contains(&outdent_position))
+                .next_back()
+            {
+                range_to_truncate.end = outdent_position;
             }
         }
 
+        start_positions.sort_by_key(|b| b.start);
+
         // Find the suggested indentation increases and decreased based on regexes.
+        let mut regex_outdent_map = HashMap::default();
+        let mut last_seen_suffix: HashMap<String, Vec<Point>> = HashMap::default();
+        let mut start_positions_iter = start_positions.iter().peekable();
+
         let mut indent_change_rows = Vec::<(u32, Ordering)>::new();
         self.for_each_line(
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0)
@@ -3034,6 +3038,33 @@ impl BufferSnapshot {
                 {
                     indent_change_rows.push((row + 1, Ordering::Greater));
                 }
+                while let Some(pos) = start_positions_iter.peek() {
+                    if pos.start.row < row {
+                        let pos = start_positions_iter.next().unwrap();
+                        last_seen_suffix
+                            .entry(pos.suffix.to_string())
+                            .or_default()
+                            .push(pos.start);
+                    } else {
+                        break;
+                    }
+                }
+                for rule in &config.decrease_indent_patterns {
+                    if rule.pattern.as_ref().map_or(false, |r| r.is_match(line)) {
+                        let row_start_column = self.indent_size_for_line(row).len;
+                        let basis_row = rule
+                            .valid_after
+                            .iter()
+                            .filter_map(|valid_suffix| last_seen_suffix.get(valid_suffix))
+                            .flatten()
+                            .filter(|start_point| start_point.column <= row_start_column)
+                            .max_by_key(|start_point| start_point.row);
+                        if let Some(outdent_to_row) = basis_row {
+                            regex_outdent_map.insert(row, outdent_to_row.row);
+                        }
+                        break;
+                    }
+                }
             },
         );
 
@@ -3043,6 +3074,7 @@ impl BufferSnapshot {
         } else {
             row_range.start.saturating_sub(1)
         };
+
         let mut prev_row_start = Point::new(prev_row, self.indent_size_for_line(prev_row).len);
         Some(row_range.map(move |row| {
             let row_start = Point::new(row, self.indent_size_for_line(row).len);
@@ -3080,15 +3112,15 @@ impl BufferSnapshot {
                 if range.start.row == prev_row && range.end > row_start {
                     indent_from_prev_row = true;
                 }
-                if significant_indentation && self.is_line_blank(row) && range.start.row == prev_row
-                {
-                    indent_from_prev_row = true;
+                if range.end > prev_row_start && range.end <= row_start {
+                    outdent_to_row = outdent_to_row.min(range.start.row);
                 }
-                if !significant_indentation || !self.is_line_blank(row) {
-                    if range.end > prev_row_start && range.end <= row_start {
-                        outdent_to_row = outdent_to_row.min(range.start.row);
-                    }
-                }
+            }
+
+            if let Some(basis_row) = regex_outdent_map.get(&row) {
+                indent_from_prev_row = false;
+                outdent_to_row = *basis_row;
+                from_regex = true;
             }
 
             let within_error = error_ranges
