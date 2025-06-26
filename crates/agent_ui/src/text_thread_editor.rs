@@ -2924,8 +2924,6 @@ impl FollowableItem for TextThreadEditor {
     }
 }
 
-
-
 pub fn render_remaining_tokens(
     context_editor: &Entity<TextThreadEditor>,
     cx: &App,

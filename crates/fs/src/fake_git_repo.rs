@@ -429,7 +429,10 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn restore_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<'_, Result<()>> {
+    fn restore_checkpoint(
+        &self,
+        _checkpoint: GitRepositoryCheckpoint,
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
