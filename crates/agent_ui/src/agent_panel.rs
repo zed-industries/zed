@@ -1029,7 +1029,7 @@ impl AgentPanel {
                         ActiveView::TextThread { context_editor, .. } => {
                             context_editor.focus_handle(cx).focus(window);
                         }
-                        _ => {}
+                        ActiveView::History | ActiveView::Configuration => {}
                     }
                 }
                 cx.notify();
