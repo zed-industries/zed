@@ -410,7 +410,7 @@ pub enum QueueState {
 }
 
 /// A thread of conversation with the LLM.
-pub struct Thread {
+pub struct ZedAgent {
     id: ThreadId,
     updated_at: DateTime<Utc>,
     summary: ThreadSummary,
@@ -499,7 +499,7 @@ pub struct ExceededWindowError {
     token_count: u64,
 }
 
-impl Thread {
+impl ZedAgent {
     pub fn new(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
@@ -2099,7 +2099,7 @@ impl Thread {
                                 project.set_agent_location(None, cx);
                             });
 
-                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<Thread>) {
+                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<ZedAgent>) {
                                 let error_message = error
                                     .chain()
                                     .map(|err| err.to_string())
@@ -2759,7 +2759,7 @@ impl Thread {
         tool_use_id: LanguageModelToolUseId,
         hallucinated_tool_name: Arc<str>,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Thread>,
+        cx: &mut Context<ZedAgent>,
     ) {
         let available_tools = self.profile.enabled_tools(cx);
 
@@ -2795,7 +2795,7 @@ impl Thread {
         invalid_json: Arc<str>,
         error: String,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Thread>,
+        cx: &mut Context<ZedAgent>,
     ) {
         log::error!("The model returned invalid input JSON: {invalid_json}");
 
@@ -2831,7 +2831,7 @@ impl Thread {
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Thread>,
+        cx: &mut Context<ZedAgent>,
     ) {
         let task =
             self.spawn_tool_use(tool_use_id.clone(), request, input, tool, model, window, cx);
@@ -2851,7 +2851,7 @@ impl Thread {
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Thread>,
+        cx: &mut Context<ZedAgent>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
@@ -2871,7 +2871,7 @@ impl Thread {
         }
 
         cx.spawn({
-            async move |thread: WeakEntity<Thread>, cx| {
+            async move |thread: WeakEntity<ZedAgent>, cx| {
                 let output = tool_result.output.await;
 
                 thread
@@ -3636,7 +3636,7 @@ pub enum ThreadEvent {
     },
 }
 
-impl EventEmitter<ThreadEvent> for Thread {}
+impl EventEmitter<ThreadEvent> for ZedAgent {}
 
 struct PendingCompletion {
     id: usize,
@@ -4111,7 +4111,7 @@ fn main() {{
 
         let deserialized = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                Thread::deserialize(
+                ZedAgent::deserialize(
                     thread.id.clone(),
                     serialized,
                     thread.project.clone(),
@@ -5704,7 +5704,7 @@ fn main() {{
 
     fn test_summarize_error(
         model: &Arc<dyn LanguageModel>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         cx: &mut TestAppContext,
     ) {
         thread.update(cx, |thread, cx| {
@@ -5776,7 +5776,7 @@ fn main() {{
     ) -> (
         Entity<Workspace>,
         Entity<ThreadStore>,
-        Entity<Thread>,
+        Entity<ZedAgent>,
         Entity<ContextStore>,
         Arc<dyn LanguageModel>,
     ) {

@@ -1,6 +1,6 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
 use agent::{
-    Thread,
+    ZedAgent,
     agent_profile::{AgentProfile, AvailableProfiles},
 };
 use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
@@ -17,7 +17,7 @@ use ui::{
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
     fs: Arc<dyn Fs>,
-    thread: Entity<Thread>,
+    thread: Entity<ZedAgent>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -26,7 +26,7 @@ pub struct ProfileSelector {
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {

@@ -1,5 +1,5 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
-use agent::{Thread, ThreadEvent};
+use agent::{ZedAgent, ThreadEvent};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -40,7 +40,7 @@ use zed_actions::assistant::ToggleFocus;
 pub struct AgentDiffPane {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    thread: Entity<Thread>,
+    thread: Entity<ZedAgent>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
     title: SharedString,
@@ -49,7 +49,7 @@ pub struct AgentDiffPane {
 
 impl AgentDiffPane {
     pub fn deploy(
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -60,7 +60,7 @@ impl AgentDiffPane {
     }
 
     pub fn deploy_in_workspace(
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -80,7 +80,7 @@ impl AgentDiffPane {
     }
 
     pub fn new(
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -287,7 +287,7 @@ impl AgentDiffPane {
 fn keep_edits_in_selection(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &Entity<ZedAgent>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -302,7 +302,7 @@ fn keep_edits_in_selection(
 fn reject_edits_in_selection(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &Entity<ZedAgent>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -316,7 +316,7 @@ fn reject_edits_in_selection(
 fn keep_edits_in_ranges(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &Entity<ZedAgent>,
     ranges: Vec<Range<editor::Anchor>>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -341,7 +341,7 @@ fn keep_edits_in_ranges(
 fn reject_edits_in_ranges(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
-    thread: &Entity<Thread>,
+    thread: &Entity<ZedAgent>,
     ranges: Vec<Range<editor::Anchor>>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -646,7 +646,7 @@ impl Render for AgentDiffPane {
     }
 }
 
-fn diff_hunk_controls(thread: &Entity<Thread>) -> editor::RenderDiffHunkControlsFn {
+fn diff_hunk_controls(thread: &Entity<ZedAgent>) -> editor::RenderDiffHunkControlsFn {
     let thread = thread.clone();
 
     Arc::new(
@@ -681,7 +681,7 @@ fn render_diff_hunk_controls(
     hunk_range: Range<editor::Anchor>,
     is_created_file: bool,
     line_height: Pixels,
-    thread: &Entity<Thread>,
+    thread: &Entity<ZedAgent>,
     editor: &Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -1192,7 +1192,7 @@ pub enum EditorState {
 }
 
 struct WorkspaceThread {
-    thread: WeakEntity<Thread>,
+    thread: WeakEntity<ZedAgent>,
     _thread_subscriptions: [Subscription; 2],
     singleton_editors: HashMap<WeakEntity<Buffer>, HashMap<WeakEntity<Editor>, Subscription>>,
     _settings_subscription: Subscription,
@@ -1217,7 +1217,7 @@ impl AgentDiff {
 
     pub fn set_active_thread(
         workspace: &WeakEntity<Workspace>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -1229,7 +1229,7 @@ impl AgentDiff {
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1324,7 +1324,7 @@ impl AgentDiff {
 
     fn register_review_action<T: Action>(
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState
+        review: impl Fn(&Entity<Editor>, &Entity<ZedAgent>, &mut Window, &mut App) -> PostReviewState
         + 'static,
         this: &Entity<AgentDiff>,
     ) {
@@ -1611,7 +1611,7 @@ impl AgentDiff {
 
     fn keep_all(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1631,7 +1631,7 @@ impl AgentDiff {
 
     fn reject_all(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1651,7 +1651,7 @@ impl AgentDiff {
 
     fn keep(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1664,7 +1664,7 @@ impl AgentDiff {
 
     fn reject(
         editor: &Entity<Editor>,
-        thread: &Entity<Thread>,
+        thread: &Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1687,7 +1687,7 @@ impl AgentDiff {
     fn review_in_active_editor(
         &mut self,
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState,
+        review: impl Fn(&Entity<Editor>, &Entity<ZedAgent>, &mut Window, &mut App) -> PostReviewState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {

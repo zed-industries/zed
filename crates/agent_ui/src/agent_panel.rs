@@ -26,7 +26,7 @@ use crate::{
     ui::AgentOnboardingModal,
 };
 use agent::{
-    Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
+    ZedAgent, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
     context_store::ContextStore,
     history_store::{HistoryEntryId, HistoryStore},
     thread_store::{TextThreadStore, ThreadStore},
@@ -971,7 +971,7 @@ impl AgentPanel {
 
     pub(crate) fn open_thread(
         &mut self,
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1228,7 +1228,7 @@ impl AgentPanel {
         }
     }
 
-    pub(crate) fn active_thread(&self, cx: &App) -> Option<Entity<Thread>> {
+    pub(crate) fn active_thread(&self, cx: &App) -> Option<Entity<ZedAgent>> {
         match &self.active_view {
             ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
             _ => None,

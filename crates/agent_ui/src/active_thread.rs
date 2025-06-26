@@ -7,7 +7,7 @@ use crate::ui::{
 use crate::{AgentPanel, ModelUsageContext};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
-    Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary,
+    ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary, ZedAgent,
     context::{self, AgentContextHandle, RULES_ICON},
     thread::{PendingToolUseStatus, ToolUse},
     thread_store::RulesLoadingError,
@@ -64,7 +64,7 @@ pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
-    thread: Entity<Thread>,
+    thread: Entity<ZedAgent>,
     workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
@@ -757,7 +757,7 @@ struct EditingMessageState {
 
 impl ActiveThread {
     pub fn new(
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
         context_store: Entity<ContextStore>,
@@ -830,7 +830,7 @@ impl ActiveThread {
         this
     }
 
-    pub fn thread(&self) -> &Entity<Thread> {
+    pub fn thread(&self) -> &Entity<ZedAgent> {
         &self.thread
     }
 
@@ -939,7 +939,7 @@ impl ActiveThread {
 
     fn handle_thread_event(
         &mut self,
-        _thread: &Entity<Thread>,
+        _thread: &Entity<ZedAgent>,
         event: &ThreadEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3580,7 +3580,7 @@ impl Render for ActiveThread {
 }
 
 pub(crate) fn open_active_thread_as_markdown(
-    thread: Entity<Thread>,
+    thread: Entity<ZedAgent>,
     workspace: Entity<Workspace>,
     window: &mut Window,
     cx: &mut App,
@@ -4063,7 +4063,7 @@ mod tests {
         &mut VisualTestContext,
         Entity<ActiveThread>,
         Entity<Workspace>,
-        Entity<Thread>,
+        Entity<ZedAgent>,
         Arc<dyn LanguageModel>,
     ) {
         let (workspace, cx) =

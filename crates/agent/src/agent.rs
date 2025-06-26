@@ -9,8 +9,8 @@ pub mod thread_store;
 pub use context::{AgentContext, ContextId, ContextLoadResult};
 pub use context_store::ContextStore;
 pub use thread::{
-    LastRestoreCheckpoint, Message, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback, ThreadId, ThreadSummary, TokenUsageRatio,
+    LastRestoreCheckpoint, Message, MessageCrease, MessageId, MessageSegment, ThreadError,
+    ThreadEvent, ThreadFeedback, ThreadId, ThreadSummary, TokenUsageRatio, ZedAgent,
 };
 pub use thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 

@@ -1,4 +1,4 @@
-use crate::thread::Thread;
+use crate::thread::ZedAgent;
 use assistant_context::AssistantContext;
 use assistant_tool::outline;
 use collections::HashSet;
@@ -560,7 +560,7 @@ impl Display for FetchedUrlContext {
 
 #[derive(Debug, Clone)]
 pub struct ThreadContextHandle {
-    pub thread: Entity<Thread>,
+    pub thread: Entity<ZedAgent>,
     pub context_id: ContextId,
 }
 
@@ -586,7 +586,7 @@ impl ThreadContextHandle {
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
         cx.spawn(async move |cx| {
-            let text = Thread::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
+            let text = ZedAgent::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
             let title = self
                 .thread
                 .read_with(cx, |thread, _cx| thread.summary().or_default())

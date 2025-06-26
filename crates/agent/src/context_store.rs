@@ -4,7 +4,7 @@ use crate::{
         FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
         SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
     },
-    thread::{MessageId, Thread, ThreadId},
+    thread::{MessageId, ZedAgent, ThreadId},
     thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -66,7 +66,7 @@ impl ContextStore {
 
     pub fn new_context_for_thread(
         &self,
-        thread: &Thread,
+        thread: &ZedAgent,
         exclude_messages_from_id: Option<MessageId>,
     ) -> Vec<AgentContextHandle> {
         let existing_context = thread
@@ -206,7 +206,7 @@ impl ContextStore {
 
     pub fn add_thread(
         &mut self,
-        thread: Entity<Thread>,
+        thread: Entity<ZedAgent>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<AgentContextHandle> {
@@ -570,7 +570,7 @@ pub enum SuggestedContext {
     },
     Thread {
         name: SharedString,
-        thread: WeakEntity<Thread>,
+        thread: WeakEntity<ZedAgent>,
     },
     TextThread {
         name: SharedString,

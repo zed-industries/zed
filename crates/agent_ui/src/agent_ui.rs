@@ -26,7 +26,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use agent::{Thread, ThreadId};
+use agent::{ZedAgent, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -114,7 +114,7 @@ impl ManageProfiles {
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
-    Thread(Entity<Thread>),
+    Thread(Entity<ZedAgent>),
     InlineAssistant,
 }
 
