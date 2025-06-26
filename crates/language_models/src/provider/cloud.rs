@@ -865,7 +865,22 @@ impl LanguageModel for CloudLanguageModel {
                                     );
                                 }
                             }
-                            anyhow!(api_err)
+                            // Convert 5xx errors to known errors with the server's message
+                            match api_err.status.as_u16() {
+                                429 => anyhow!(LanguageModelKnownError::RateLimitExceeded(
+                                    api_err.body.clone(),
+                                    Duration::from_secs(10),
+                                )),
+                                503 | 529 => anyhow!(LanguageModelKnownError::Overloaded(
+                                    api_err.body.clone(),
+                                )),
+                                500..=599 => {
+                                    anyhow!(LanguageModelKnownError::ApiInternalServerError(
+                                        api_err.body.clone(),
+                                    ))
+                                }
+                                _ => anyhow!(api_err),
+                            }
                         }
                         Err(err) => anyhow!(err),
                     })?;

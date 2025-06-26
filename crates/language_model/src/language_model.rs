@@ -280,6 +280,10 @@ pub trait LanguageModel: Send + Sync {
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
 
+    fn is_zed(&self) -> bool {
+        self.provider_id().is_zed()
+    }
+
     fn api_key(&self, _cx: &App) -> Option<String> {
         None
     }
@@ -399,32 +403,76 @@ pub trait LanguageModel: Send + Sync {
 pub enum LanguageModelKnownError {
     #[error("Context window limit exceeded ({tokens})")]
     ContextWindowLimitExceeded { tokens: u64 },
-    #[error("Language model provider's API is currently overloaded")]
-    Overloaded,
-    #[error("Language model provider's API encountered an internal server error")]
-    ApiInternalServerError,
+    #[error("{0}")]
+    Overloaded(String),
+    #[error("{0}")]
+    ApiInternalServerError(String),
     #[error("I/O error while reading response from language model provider's API: {0:?}")]
     ReadResponseError(io::Error),
     #[error("Error deserializing response from language model provider's API: {0:?}")]
     DeserializeResponse(serde_json::Error),
     #[error("Language model provider's API returned a response in an unknown format")]
     UnknownResponseFormat(String),
-    #[error("Rate limit exceeded for language model provider's API; retry in {retry_after:?}")]
-    RateLimitExceeded { retry_after: Duration },
+    #[error("{0}")]
+    RateLimitExceeded(String, Duration),
 }
 
 impl LanguageModelKnownError {
     /// Attempts to map an HTTP response status code to a known error type.
     /// Returns None if the status code doesn't map to a specific known error.
-    pub fn from_http_response(status: u16, _body: &str) -> Option<Self> {
+    ///
+    /// If provider_name is None, the body is used as the error message directly.
+    /// If provider_name is Some, the error message is formatted with the provider name.
+    pub fn from_http_response(
+        status: u16,
+        body: &str,
+        provider_name: Option<&str>,
+    ) -> Option<Self> {
         match status {
-            429 => Some(Self::RateLimitExceeded {
-                retry_after: DEFAULT_RATE_LIMIT_RETRY_AFTER,
-            }),
-            503 => Some(Self::Overloaded),
-            500..=599 => Some(Self::ApiInternalServerError),
+            429 => Some(Self::RateLimitExceeded(
+                match provider_name {
+                    Some(name) => format!("{}'s API rate limit exceeded", name),
+                    None => body.to_string(),
+                },
+                DEFAULT_RATE_LIMIT_RETRY_AFTER,
+            )),
+            503 => Some(Self::Overloaded(match provider_name {
+                Some(name) => format!("{}'s API servers are overloaded right now", name),
+                None => body.to_string(),
+            })),
+            500..=599 => Some(Self::ApiInternalServerError(match provider_name {
+                Some(name) => format!("{}'s API server reported an internal server error", name),
+                None => body.to_string(),
+            })),
             _ => None,
         }
+    }
+
+    /// Creates a RateLimitExceeded error with the appropriate message based on provider.
+    pub fn rate_limit_exceeded(provider_name: Option<&str>, retry_after: Duration) -> Self {
+        Self::RateLimitExceeded(
+            match provider_name {
+                Some(name) => format!("{}'s API rate limit exceeded", name),
+                None => "Rate limit exceeded".to_string(),
+            },
+            retry_after,
+        )
+    }
+
+    /// Creates an Overloaded error with the appropriate message based on provider.
+    pub fn overloaded(provider_name: Option<&str>) -> Self {
+        Self::Overloaded(match provider_name {
+            Some(name) => format!("{}'s API servers are overloaded right now", name),
+            None => "API servers are overloaded right now".to_string(),
+        })
+    }
+
+    /// Creates an ApiInternalServerError with the appropriate message based on provider.
+    pub fn api_internal_server_error(provider_name: Option<&str>) -> Self {
+        Self::ApiInternalServerError(match provider_name {
+            Some(name) => format!("{}'s API server reported an internal server error", name),
+            None => "API server reported an internal server error".to_string(),
+        })
     }
 }
 
@@ -505,6 +553,12 @@ pub struct LanguageModelName(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderId(pub SharedString);
+
+impl LanguageModelProviderId {
+    pub fn is_zed(&self) -> bool {
+        self.0 == language_model::ZED_CLOUD_PROVIDER_ID
+    }
+}
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
