@@ -89,15 +89,34 @@ impl ThreadElement {
         &self,
         entry: &ThreadEntry,
         _window: &mut Window,
-        _cx: &Context<Self>,
+        cx: &Context<Self>,
     ) -> AnyElement {
         match &entry.content {
-            AgentThreadEntryContent::Message(message) => div()
-                .children(message.chunks.iter().map(|chunk| match chunk {
-                    MessageChunk::Text { chunk } => div().child(chunk.clone()),
-                    _ => todo!(),
-                }))
-                .into_any(),
+            AgentThreadEntryContent::Message(message) => {
+                let message_body = div()
+                    .children(message.chunks.iter().map(|chunk| match chunk {
+                        MessageChunk::Text { chunk } => {
+                            // todo! markdown
+                            Label::new(chunk.clone())
+                        }
+                        _ => todo!(),
+                    }))
+                    .into_any();
+
+                match message.role {
+                    Role::User => div()
+                        .my_1()
+                        .p_2()
+                        .bg(cx.theme().colors().editor_background)
+                        .rounded_lg()
+                        .shadow_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(message_body)
+                        .into_any(),
+                    Role::Assistant => message_body,
+                }
+            }
             AgentThreadEntryContent::ReadFile { path, content: _ } => {
                 // todo!
                 div()
@@ -121,6 +140,7 @@ impl Render for ThreadElement {
         let focus_handle = self.message_editor.focus_handle(cx);
 
         v_flex()
+            .p_2()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .child(
@@ -133,7 +153,7 @@ impl Render for ThreadElement {
                 ),
             )
             .when(self.send_task.is_some(), |this| {
-                this.child(
+                this.my_1().child(
                     Label::new("Generating...")
                         .color(Color::Muted)
                         .size(LabelSize::Small),

@@ -226,6 +226,7 @@ impl Thread {
                 role: Role::Assistant,
             }) = last_entry.content
             {
+                // todo! merge with last chunk if same type
                 chunks.push(chunk);
                 return;
             }
