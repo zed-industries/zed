@@ -144,14 +144,17 @@ pub fn init(cx: &mut App) {
                     workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| {
-                            panel.message_editor.update(cx, |editor, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        return;
+                    };
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                    panel.update(cx, |panel, cx| {
+                        if let Some(message_editor) = panel.active_message_editor() {
+                            message_editor.update(cx, |editor, cx| {
                                 editor.expand_message_editor(&ExpandMessageEditor, window, cx);
                             });
-                        });
-                    }
+                        }
+                    });
                 })
                 .register_action(|workspace, _: &ToggleNavigationMenu, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -191,6 +194,7 @@ enum ActiveView {
     Thread {
         thread: Entity<ActiveThread>,
         change_title_editor: Entity<Editor>,
+        message_editor: Entity<MessageEditor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     Agent2Thread {
@@ -225,6 +229,7 @@ impl ActiveView {
 
     pub fn thread(
         active_thread: Entity<ActiveThread>,
+        message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<AgentPanel>,
     ) -> Self {
@@ -237,6 +242,24 @@ impl ActiveView {
         });
 
         let subscriptions = vec![
+            cx.subscribe(&message_editor, |this, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+                MessageEditorEvent::ScrollThreadToBottom => match &this.active_view {
+                    ActiveView::Thread { thread, .. } => {
+                        thread.update(cx, |thread, cx| {
+                            thread.scroll_to_bottom(cx);
+                        });
+                    }
+                    ActiveView::Agent2Thread { .. } => {
+                        // todo!
+                    }
+                    ActiveView::TextThread { .. }
+                    | ActiveView::History
+                    | ActiveView::Configuration => {}
+                },
+            }),
             window.subscribe(&editor, cx, {
                 {
                     let thread = active_thread.clone();
@@ -289,6 +312,7 @@ impl ActiveView {
         Self::Thread {
             change_title_editor: editor,
             thread: active_thread,
+            message_editor: message_editor,
             _subscriptions: subscriptions,
         }
     }
@@ -401,9 +425,6 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
-    // todo! move to active view?
-    message_editor: Entity<MessageEditor>,
-    _message_editor_subscription: Subscription,
     _default_model_subscription: Subscription,
     context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
@@ -548,24 +569,6 @@ impl AgentPanel {
             )
         });
 
-        let message_editor_subscription =
-            cx.subscribe(&message_editor, |this, _, event, cx| match event {
-                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
-                    cx.notify();
-                }
-                MessageEditorEvent::ScrollThreadToBottom => match &this.active_view {
-                    ActiveView::Thread { thread, .. } => {
-                        thread.update(cx, |thread, cx| {
-                            thread.scroll_to_bottom(cx);
-                        });
-                    }
-                    ActiveView::Agent2Thread { .. } => todo!(),
-                    ActiveView::TextThread { .. }
-                    | ActiveView::History
-                    | ActiveView::Configuration => {}
-                },
-            });
-
         let thread_id = thread.read(cx).id().clone();
         let history_store = cx.new(|cx| {
             HistoryStore::new(
@@ -593,7 +596,7 @@ impl AgentPanel {
 
         let panel_type = AgentSettings::get_global(cx).default_view;
         let active_view = match panel_type {
-            DefaultView::Thread => ActiveView::thread(active_thread, window, cx),
+            DefaultView::Thread => ActiveView::thread(active_thread, message_editor, window, cx),
             DefaultView::TextThread => {
                 let context =
                     context_store.update(cx, |context_store, cx| context_store.create(cx));
@@ -684,8 +687,6 @@ impl AgentPanel {
             fs: fs.clone(),
             language_registry,
             thread_store: thread_store.clone(),
-            message_editor,
-            _message_editor_subscription: message_editor_subscription,
             _default_model_subscription,
             context_store,
             prompt_store,
@@ -757,12 +758,27 @@ impl AgentPanel {
         }
     }
 
+    fn active_message_editor(&self) -> Option<&Entity<MessageEditor>> {
+        match &self.active_view {
+            ActiveView::Thread { message_editor, .. } => Some(message_editor),
+            ActiveView::Agent2Thread { .. } => {
+                // todo!
+              None
+            }
+            ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
+        }
+    }
+
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         // Preserve chat box text when using creating new thread from summary'
-        let preserved_text = action
-            .from_thread_id
-            .is_some()
-            .then(|| self.message_editor.read(cx).get_text(cx).trim().to_string());
+        let preserved_text = if action.from_thread_id.is_some() {
+            self.active_message_editor()
+                .map(|editor| editor.read(cx).get_text(cx).trim().to_string())
+        } else {
+            None
+        };
 
         let thread = self
             .thread_store
@@ -774,22 +790,6 @@ impl AgentPanel {
                 Some(self.thread_store.downgrade()),
             )
         });
-
-        let active_thread = cx.new(|cx| {
-            ActiveThread::new(
-                thread.clone(),
-                self.thread_store.clone(),
-                self.context_store.clone(),
-                context_store.clone(),
-                self.language_registry.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            )
-        });
-
-        let thread_view = ActiveView::thread(active_thread.clone(), window, cx);
-        self.set_active_view(thread_view, window, cx);
 
         if let Some(other_thread_id) = action.from_thread_id.clone() {
             let other_thread_task = self.thread_store.update(cx, |this, cx| {
@@ -810,48 +810,47 @@ impl AgentPanel {
             })
             .detach_and_log_err(cx);
         }
+        
+        let active_thread = cx.new(|cx| {
+            ActiveThread::new(
+                thread.clone(),
+                self.thread_store.clone(),
+                self.context_store.clone(),
+                context_store.clone(),
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+        });
 
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
-
-        // todo! move message editor to active view?
-        self.message_editor = cx.new(|cx| {
+        let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
                 self.user_store.clone(),
-                context_store,
+                context_store.clone(),
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
-                thread,
+                thread.clone(),
                 window,
                 cx,
             )
         });
 
         if let Some(text) = preserved_text {
-            self.message_editor.update(cx, |editor, cx| {
+            message_editor.update(cx, |editor, cx| {
                 editor.set_text(text, window, cx);
             });
         }
 
-        self.message_editor.focus_handle(cx).focus(window);
+        message_editor.focus_handle(cx).focus(window);
 
-        let message_editor_subscription = cx.subscribe(&self.message_editor, {
-            let active_thread = active_thread.clone();
-            move |_, _, event, cx| match event {
-                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
-                    cx.notify();
-                }
-                MessageEditorEvent::ScrollThreadToBottom => {
-                    active_thread.update(cx, |thread, cx| {
-                        thread.scroll_to_bottom(cx);
-                    });
-                }
-            }
-        });
+        let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
+        self.set_active_view(thread_view, window, cx);
 
-        self._message_editor_subscription = message_editor_subscription;
+        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1058,11 +1057,8 @@ impl AgentPanel {
                 cx,
             )
         });
-        let thread_view = ActiveView::thread(active_thread.clone(), window, cx);
-        self.set_active_view(thread_view, window, cx);
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
 
-        self.message_editor = cx.new(|cx| {
+        let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -1071,28 +1067,16 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
-                thread,
+                thread.clone(),
                 window,
                 cx,
             )
         });
-        self.message_editor.focus_handle(cx).focus(window);
+        message_editor.focus_handle(cx).focus(window);
 
-        let message_editor_subscription = cx.subscribe(&self.message_editor, {
-            let active_thread = active_thread.clone();
-            move |_, _, event, cx| match event {
-                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
-                    cx.notify();
-                }
-                MessageEditorEvent::ScrollThreadToBottom => {
-                    active_thread.update(cx, |thread, cx| {
-                        thread.scroll_to_bottom(cx);
-                    });
-                }
-            }
-        });
-
-        self._message_editor_subscription = message_editor_subscription;
+        let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
+        self.set_active_view(thread_view, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
     }
 
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
@@ -1103,13 +1087,16 @@ impl AgentPanel {
                     self.active_view = previous_view;
 
                     match &self.active_view {
-                        ActiveView::Thread { .. } => {
-                            self.message_editor.focus_handle(cx).focus(window);
+                        ActiveView::Thread { message_editor, .. } => {
+                            message_editor.focus_handle(cx).focus(window);
+                        }
+                        ActiveView::Agent2Thread { .. } => {
+                            todo!()
                         }
                         ActiveView::TextThread { context_editor, .. } => {
                             context_editor.focus_handle(cx).focus(window);
                         }
-                        _ => {}
+                        ActiveView::History | ActiveView::Configuration => {}
                     }
                 }
                 cx.notify();
@@ -1333,10 +1320,6 @@ impl AgentPanel {
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
     }
 
-    pub(crate) fn has_active_thread(&self) -> bool {
-        matches!(self.active_view, ActiveView::Thread { .. })
-    }
-
     fn continue_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ActiveView::Thread { thread, .. } = &self.active_view else {
             return;
@@ -1531,8 +1514,11 @@ impl AgentPanel {
 impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
-            ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
-            ActiveView::Agent2Thread { .. } => self.message_editor.focus_handle(cx),
+            ActiveView::Thread { message_editor, .. } => message_editor.focus_handle(cx),
+            ActiveView::Agent2Thread { .. } => {
+                // todo! add own message editor to agent2
+                cx.focus_handle()
+            }
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
@@ -1991,8 +1977,12 @@ impl AgentPanel {
     }
 
     fn render_token_count(&self, cx: &App) -> Option<AnyElement> {
-        let active_thread = match &self.active_view {
-            ActiveView::Thread { thread, .. } => thread.read(cx),
+        let (active_thread, message_editor) = match &self.active_view {
+            ActiveView::Thread {
+                thread,
+                message_editor,
+                ..
+            } => (thread.read(cx), message_editor.read(cx)),
             ActiveView::Agent2Thread { .. } => {
                 todo!();
             }
@@ -2001,17 +1991,14 @@ impl AgentPanel {
             }
         };
 
-        let editor_empty = self.message_editor.read(cx).is_editor_fully_empty(cx);
+        let editor_empty = message_editor.is_editor_fully_empty(cx);
 
         if active_thread.is_empty() && editor_empty {
             return None;
         }
 
         let thread = active_thread.thread().read(cx);
-
         let is_generating = thread.is_generating();
-        let message_editor = self.message_editor.read(cx);
-
         let conversation_token_usage = thread.total_token_usage()?;
 
         let (total_token_usage, is_estimating) =
@@ -3198,7 +3185,11 @@ impl Render for AgentPanel {
             .children(self.render_upsell(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
-                ActiveView::Thread { thread, .. } => parent
+                ActiveView::Thread {
+                    thread,
+                    message_editor,
+                    ..
+                } => parent
                     .relative()
                     .child(if thread.read(cx).is_empty() {
                         self.render_thread_empty_state(window, cx)
@@ -3207,7 +3198,7 @@ impl Render for AgentPanel {
                         thread.clone().into_any_element()
                     })
                     .children(self.render_tool_use_limit_reached(window, cx))
-                    .child(h_flex().child(self.message_editor.clone()))
+                    .child(h_flex().child(message_editor.clone()))
                     .when_some(thread.read(cx).last_error(), |this, last_error| {
                         this.child(
                             div()
@@ -3236,7 +3227,8 @@ impl Render for AgentPanel {
                 ActiveView::Agent2Thread { .. } => parent
                     .relative()
                     .child("todo!")
-                    .child(h_flex().child(self.message_editor.clone()))
+                    // todo!
+                    // .child(h_flex().child(self.message_editor.clone()))
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::TextThread {
@@ -3378,8 +3370,8 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if panel.has_active_thread() {
-                    panel.message_editor.update(cx, |message_editor, cx| {
+                if let Some(message_editor) = panel.active_message_editor() {
+                    message_editor.update(cx, |message_editor, cx| {
                         message_editor.context_store().update(cx, |store, cx| {
                             let buffer = buffer.read(cx);
                             let selection_ranges = selection_ranges
