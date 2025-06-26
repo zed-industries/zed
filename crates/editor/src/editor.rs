@@ -213,7 +213,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
-use zed_actions::{self, DiffText, SelectionData, SourceLocation, TextData};
+use zed_actions;
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -12163,7 +12163,7 @@ impl Editor {
     ) {
         let selections = self.selections.all::<usize>(cx);
 
-        let Some(first_selection) = selections.first() else {
+        if selections.first().is_none() {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return;
         };
@@ -12181,55 +12181,10 @@ impl Editor {
             return;
         };
 
-        let buffer = self.buffer.read(cx).snapshot(cx);
-
-        let selection_range = if first_selection.is_empty() {
-            0..buffer.len()
-        } else {
-            first_selection.range()
-        };
-
-        let mut selected_text = String::new();
-
-        for chunk in buffer.text_for_range(selection_range.clone()) {
-            selected_text.push_str(chunk);
-        }
-
-        let (full_path, language_name) =
-            buffer
-                .as_singleton()
-                .map_or((None, None), |(_, _, buffer)| {
-                    let file = buffer.file();
-                    let full_path = file.map(|f| f.full_path(cx).to_path_buf());
-                    let language_name = buffer
-                        .language()
-                        .map(|language| language.name().to_string());
-                    (full_path, language_name)
-                });
-
-        let selection_start = selection_range.start.to_point(&buffer);
-        let selection_end = selection_range.end.to_point(&buffer);
-
         window.dispatch_action(
             Box::new(DiffText {
-                old_text_data: TextData {
-                    text: clipboard_text,
-                    source_location: SourceLocation::Custom("clipboard".into()),
-                    // We assume that the text in the clipboard is of the same language as the selected text
-                    language: language_name.clone(),
-                    selection_data: None,
-                },
-                new_text_data: TextData {
-                    text: selected_text,
-                    source_location: SourceLocation::Path(full_path),
-                    language: language_name,
-                    selection_data: Some(SelectionData {
-                        start_row: selection_start.row,
-                        start_column: selection_start.column,
-                        end_row: selection_end.row,
-                        end_column: selection_end.column,
-                    }),
-                },
+                old_text_source: TextSource::Clipboard(clipboard_text),
+                new_text_source: TextSource::MultiBuffer(self.buffer().clone()),
             }),
             cx,
         );

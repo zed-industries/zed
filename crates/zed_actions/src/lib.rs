@@ -1,7 +1,6 @@
 use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -26,41 +25,6 @@ pub struct OpenBrowser {
 #[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
     pub url: String,
-}
-
-#[derive(Clone, PartialEq, Default, Action)]
-#[action(no_json, no_register)]
-pub struct DiffText {
-    pub old_text_data: TextData,
-    pub new_text_data: TextData,
-}
-
-#[derive(Clone, PartialEq, Default)]
-pub struct TextData {
-    pub text: String,
-    pub source_location: SourceLocation,
-    pub language: Option<String>,
-    pub selection_data: Option<SelectionData>,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum SourceLocation {
-    Path(Option<PathBuf>),
-    Custom(String),
-}
-
-impl Default for SourceLocation {
-    fn default() -> Self {
-        SourceLocation::Path(None)
-    }
-}
-
-#[derive(Clone, PartialEq, Default)]
-pub struct SelectionData {
-    pub start_row: u32,
-    pub start_column: u32,
-    pub end_row: u32,
-    pub end_column: u32,
 }
 
 actions!(

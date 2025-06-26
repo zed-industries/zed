@@ -259,6 +259,19 @@ pub struct SpawnNearestTask {
     pub reveal: task::RevealStrategy,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(no_json, no_register)]
+pub struct DiffText {
+    pub old_text_source: TextSource,
+    pub new_text_source: TextSource,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum TextSource {
+    MultiBuffer(Entity<MultiBuffer>),
+    Clipboard(String),
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
 pub enum UuidVersion {
     #[default]
