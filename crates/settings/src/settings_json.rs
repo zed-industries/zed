@@ -348,34 +348,58 @@ pub fn replace_top_level_array_value_in_json_text(
     }
 
     // false if no children
-    if !cursor.goto_first_child() {
-        todo!("appends (if index is 0)")
-    }
+    //
+    cursor.goto_first_child();
+    debug_assert_eq!(cursor.node().kind(), "[");
 
     let mut index = 0;
 
     while index <= array_index {
-        if !matches!(cursor.node().kind(), "[" | "]" | TS_COMMENT_KIND | ",") {
+        let node = cursor.node();
+        if !matches!(node.kind(), "[" | "]" | TS_COMMENT_KIND | ",")
+            && !node.is_extra()
+            && !node.is_missing()
+        {
             if index == array_index {
                 break;
             }
             index += 1;
         }
         if !cursor.goto_next_sibling() {
-            todo!("appends (if index is out of bounds)")
+            if let Some(new_value) = new_value {
+                return append_top_level_array_value_in_json_text(text, new_value, tab_size);
+            } else {
+                return Ok((0..0, String::new()));
+            }
         }
     }
 
-    let range = cursor.node().byte_range();
-    let offset = range.start;
-    let value_str = std::str::from_utf8(&text.as_bytes()[range])?;
+    let range = cursor.node().range();
+    let indent_width = range.start_point.column;
+    let offset = range.start_byte;
+    let value_str = std::str::from_utf8(&text.as_bytes()[range.start_byte..range.end_byte])?;
+    let needs_indent = range.start_point.row > 0;
 
-    let (mut replace_range, value) =
+    let (mut replace_range, mut replace_value) =
         replace_value_in_json_text(value_str, key_path, tab_size, new_value);
 
     replace_range.start += offset;
     replace_range.end += offset;
-    return Ok((replace_range, value));
+
+    if needs_indent {
+        let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
+        replace_value = replace_value.replace('\n', &increased_indent);
+        // replace_value.push('\n');
+    } else {
+        while let Some(idx) = replace_value.find("\n ") {
+            replace_value.remove(idx + 1);
+        }
+        while let Some(idx) = replace_value.find("\n") {
+            replace_value.replace_range(idx..idx + 1, " ");
+        }
+    }
+
+    return Ok((replace_range, replace_value));
 }
 
 pub fn append_top_level_array_value_in_json_text(
@@ -457,20 +481,19 @@ pub fn append_top_level_array_value_in_json_text(
             let increased_indent = format!("\n{space:width$}", width = indent_width);
             replace_value = replace_value.replace('\n', &increased_indent);
             replace_value.push('\n');
+            replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
+        } else {
+            while let Some(idx) = replace_value.find("\n ") {
+                replace_value.remove(idx + 1);
+            }
+            while let Some(idx) = replace_value.find("\n") {
+                replace_value.replace_range(idx..idx + 1, " ");
+            }
+            replace_value.insert(0, ' ');
         }
 
         if comma_range.is_none() {
-            if needs_newline {
-                replace_value.insert_str(0, &format!(",\n{space:width$}", width = indent_width));
-            } else {
-                replace_value.insert_str(0, ", ");
-            }
-        } else {
-            if needs_newline {
-                replace_value.insert_str(0, &format!("\n{space:width$}", width = indent_width));
-            } else {
-                replace_value.insert_str(0, " ");
-            }
+            replace_value.insert(0, ',');
         }
     } else {
         let indent = format!("\n{space:width$}", width = tab_size);
@@ -522,8 +545,6 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use unindent::Unindent;
-
-    // todo! tests for update and replace in obj
 
     #[test]
     fn object_replace() {
@@ -850,16 +871,59 @@ mod tests {
 
     #[test]
     fn array_replace() {
-        fn check_array_replace(input: &str, index: usize, value: Value, expected: &str) {
-            let result =
-                replace_top_level_array_value_in_json_text(input, &[], Some(&value), index, 4)
-                    .expect("replace succeeded");
-            let mut result_str = input.to_string();
+        #[track_caller]
+        fn check_array_replace(
+            input: impl ToString,
+            index: usize,
+            key_path: &[&str],
+            value: Value,
+            expected: impl ToString,
+        ) {
+            let input = input.to_string();
+            let result = replace_top_level_array_value_in_json_text(
+                &input,
+                key_path,
+                Some(&value),
+                index,
+                4,
+            )
+            .expect("replace succeeded");
+            let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
-            pretty_assertions::assert_eq!(expected, result_str);
+            pretty_assertions::assert_eq!(expected.to_string(), result_str);
         }
 
-        check_array_replace(r#"[1, 3, 3]"#, 1, json!(2), r#"[1, 2, 3]"#);
+        check_array_replace(r#"[1, 3, 3]"#, 1, &[], json!(2), r#"[1, 2, 3]"#);
+        check_array_replace(r#"[1, 3, 3]"#, 2, &[], json!(2), r#"[1, 3, 2]"#);
+        check_array_replace(r#"[1, 3, 3,]"#, 3, &[], json!(2), r#"[1, 3, 3, 2]"#);
+        check_array_replace(r#"[1, 3, 3,]"#, 100, &[], json!(2), r#"[1, 3, 3, 2]"#);
+        check_array_replace(
+            r#"[
+                1,
+                2,
+                3,
+            ]"#
+            .unindent(),
+            1,
+            &[],
+            json!({"foo": "bar", "baz": "qux"}),
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    "baz": "qux"
+                },
+                3,
+            ]"#
+            .unindent(),
+        );
+        check_array_replace(
+            r#"[1, 3, 3,]"#,
+            1,
+            &[],
+            json!({"foo": "bar", "baz": "qux"}),
+            r#"[1, { "foo": "bar", "baz": "qux" }, 3,]"#,
+        );
     }
 
     #[test]
@@ -931,11 +995,7 @@ mod tests {
         check_array_append(
             r#"[ 1, 2, 3, ]"#.unindent(),
             json!({"foo": "bar", "baz": "qux"}),
-            r#"[ 1, 2, 3, {
-                "foo": "bar",
-                "baz": "qux"
-            }]"#
-            .unindent(),
+            r#"[ 1, 2, 3, { "foo": "bar", "baz": "qux" }]"#.unindent(),
         );
         check_array_append(
             r#"[]"#,
