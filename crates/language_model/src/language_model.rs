@@ -556,7 +556,7 @@ pub struct LanguageModelProviderId(pub SharedString);
 
 impl LanguageModelProviderId {
     pub fn is_zed(&self) -> bool {
-        self.0 == language_model::ZED_CLOUD_PROVIDER_ID
+        self.0 == ZED_CLOUD_PROVIDER_ID
     }
 }
 

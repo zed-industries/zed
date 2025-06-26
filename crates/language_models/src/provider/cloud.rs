@@ -8,6 +8,7 @@ use google_ai::GoogleModelMode;
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
 };
+use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
@@ -48,6 +49,7 @@ use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
 pub const PROVIDER_NAME: &str = "Zed";
+pub const DEFAULT_RETRY_DELAY_SECONDS: u64 = 10;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -640,18 +642,77 @@ impl CloudLanguageModel {
                     );
                 }
 
-                Timer::after(retry_delay).await;
+                match parse_retry_after(response.headers()) {
+                    Some(retry_after) => Timer::after(retry_after).await,
+                    None => {
+                        Timer::after(retry_delay).await;
+                        retry_delay *= 2; // If it fails again, wait longer.
+                    }
+                }
 
                 retries_remaining -= 1;
-                retry_delay *= 2; // If it fails again, wait longer.
             } else if status == StatusCode::PAYMENT_REQUIRED {
                 return Err(anyhow!(PaymentRequiredError));
             } else {
                 let mut body = String::new();
+                let headers = response.headers().clone();
                 response.body_mut().read_to_string(&mut body).await?;
-                return Err(anyhow!(ApiError { status, body }));
+                return Err(anyhow!(ApiError {
+                    status,
+                    body,
+                    headers
+                }));
             }
         }
+    }
+}
+
+/// Parses the Retry-After header value according to RFC 7231.
+/// Returns None if the header is not present or cannot be parsed.
+///
+/// This implementation supports:
+/// - delay-seconds: A non-negative decimal integer indicating seconds
+/// - HTTP-date: An absolute date/time after which to retry (RFC 7231 format)
+fn parse_retry_after(headers: &HeaderMap<HeaderValue>) -> Option<Duration> {
+    headers
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            // First try to parse as a number of seconds (most common format)
+            if let Ok(seconds) = value.parse::<u64>() {
+                return Some(Duration::from_secs(seconds));
+            }
+
+            // Then try to parse as an HTTP-date
+            parse_http_date_to_duration(value)
+        })
+}
+
+/// Attempts to parse an HTTP-date and convert it to a duration from now.
+/// Returns None if parsing fails or if the date is in the past.
+fn parse_http_date_to_duration(date_str: &str) -> Option<Duration> {
+    use chrono::{DateTime, Utc};
+
+    // Parse the HTTP-date string
+    let date_time = DateTime::parse_from_rfc2822(date_str)
+        .or_else(|_| {
+            // Try parsing as RFC 3339 if RFC 2822 fails
+            DateTime::parse_from_rfc3339(date_str)
+        })
+        .ok()?;
+
+    // Get current time
+    let now = Utc::now();
+
+    // Calculate duration
+    let duration = date_time.signed_duration_since(now);
+
+    // Only return positive durations
+    if duration.num_seconds() > 0 {
+        Some(Duration::from_secs(duration.num_seconds() as u64))
+    } else {
+        // If the date is in the past, return None
+        None
     }
 }
 
@@ -660,6 +721,7 @@ impl CloudLanguageModel {
 struct ApiError {
     status: StatusCode,
     body: String,
+    headers: HeaderMap<HeaderValue>,
 }
 
 impl LanguageModel for CloudLanguageModel {
@@ -776,6 +838,7 @@ impl LanguageModel for CloudLanguageModel {
                         .body(serde_json::to_string(&request_body)?.into())?;
                     let mut response = http_client.send(request).await?;
                     let status = response.status();
+                    let headers = response.headers().clone();
                     let mut response_body = String::new();
                     response
                         .body_mut()
@@ -790,7 +853,8 @@ impl LanguageModel for CloudLanguageModel {
                     } else {
                         Err(anyhow!(ApiError {
                             status,
-                            body: response_body
+                            body: response_body,
+                            headers
                         }))
                     }
                 }
@@ -869,7 +933,9 @@ impl LanguageModel for CloudLanguageModel {
                             match api_err.status.as_u16() {
                                 429 => anyhow!(LanguageModelKnownError::RateLimitExceeded(
                                     api_err.body.clone(),
-                                    Duration::from_secs(10),
+                                    parse_retry_after(&api_err.headers).unwrap_or_else(|| {
+                                        Duration::from_secs(DEFAULT_RETRY_DELAY_SECONDS)
+                                    }),
                                 )),
                                 503 | 529 => anyhow!(LanguageModelKnownError::Overloaded(
                                     api_err.body.clone(),
@@ -1161,5 +1227,160 @@ impl Render for ConfigurationView {
                         .on_click(cx.listener(move |this, _, _, cx| this.authenticate(cx))),
                 )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_client::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn test_parse_retry_after_with_seconds() {
+        let mut headers = HeaderMap::new();
+
+        // Test with valid seconds value
+        headers.insert("retry-after", HeaderValue::from_static("120"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(120)));
+
+        // Test with zero seconds
+        headers.insert("retry-after", HeaderValue::from_static("0"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(0)));
+
+        // Test with large number
+        headers.insert("retry-after", HeaderValue::from_static("3600"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn test_parse_retry_after_missing_header() {
+        let headers = HeaderMap::new();
+        assert_eq!(parse_retry_after(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_retry_after_invalid_values() {
+        let mut headers = HeaderMap::new();
+
+        // Test with non-numeric value
+        headers.insert("retry-after", HeaderValue::from_static("not-a-number"));
+        assert_eq!(parse_retry_after(&headers), None);
+
+        // Test with negative number (which won't parse as u64)
+        headers.insert("retry-after", HeaderValue::from_static("-10"));
+        assert_eq!(parse_retry_after(&headers), None);
+
+        // Test with floating point number
+        headers.insert("retry-after", HeaderValue::from_static("10.5"));
+        assert_eq!(parse_retry_after(&headers), None);
+
+        // Test with empty value
+        headers.insert("retry-after", HeaderValue::from_static(""));
+        assert_eq!(parse_retry_after(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_retry_after_case_insensitive() {
+        let mut headers = HeaderMap::new();
+
+        // HTTP headers are case-insensitive, but HeaderMap handles this
+        // The header name will be normalized to lowercase internally
+        headers.insert("Retry-After", HeaderValue::from_static("60"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(60)));
+
+        headers.insert("RETRY-AFTER", HeaderValue::from_static("90"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn test_parse_retry_after_with_http_date() {
+        use chrono::{Duration as ChronoDuration, Utc};
+
+        let mut headers = HeaderMap::new();
+
+        // Test with a future date (should return a positive duration)
+        let future_date = Utc::now() + ChronoDuration::seconds(300);
+        let future_date_str = future_date.to_rfc2822();
+        headers.insert(
+            "retry-after",
+            HeaderValue::from_str(&future_date_str).unwrap(),
+        );
+
+        // Should return approximately 300 seconds (might be slightly less due to execution time)
+        let duration = parse_retry_after(&headers).unwrap();
+        assert!(duration.as_secs() >= 299 && duration.as_secs() <= 301);
+
+        // Test with a past date (should return None)
+        let past_date = Utc::now() - ChronoDuration::seconds(300);
+        let past_date_str = past_date.to_rfc2822();
+        headers.insert(
+            "retry-after",
+            HeaderValue::from_str(&past_date_str).unwrap(),
+        );
+        assert_eq!(parse_retry_after(&headers), None);
+
+        // Test with a fixed date string in the past
+        headers.insert(
+            "retry-after",
+            HeaderValue::from_static("Fri, 31 Dec 1999 23:59:59 GMT"),
+        );
+        assert_eq!(parse_retry_after(&headers), None);
+
+        // Test with IMF-fixdate format (common HTTP date format)
+        // This should work since chrono's RFC 2822 parser handles this format
+        let future_imf = Utc::now() + ChronoDuration::seconds(180);
+        let imf_date_str = future_imf.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        headers.insert("retry-after", HeaderValue::from_str(&imf_date_str).unwrap());
+        let duration = parse_retry_after(&headers).unwrap();
+        assert!(duration.as_secs() >= 179 && duration.as_secs() <= 181);
+    }
+
+    #[test]
+    fn test_parse_http_date_to_duration() {
+        use chrono::{Duration as ChronoDuration, Utc};
+
+        // Test with a future date
+        let future_date = Utc::now() + ChronoDuration::seconds(120);
+        let future_date_str = future_date.to_rfc2822();
+        let duration = parse_http_date_to_duration(&future_date_str).unwrap();
+        assert!(duration.as_secs() >= 119 && duration.as_secs() <= 121);
+
+        // Test with a past date
+        let past_date = Utc::now() - ChronoDuration::seconds(120);
+        let past_date_str = past_date.to_rfc2822();
+        assert_eq!(parse_http_date_to_duration(&past_date_str), None);
+
+        // Test with invalid date string
+        assert_eq!(parse_http_date_to_duration("not a date"), None);
+
+        // Test with various HTTP date formats
+        // RFC 2822 format
+        let rfc2822_future = Utc::now() + ChronoDuration::seconds(60);
+        let rfc2822_str = rfc2822_future.to_rfc2822();
+        assert!(parse_http_date_to_duration(&rfc2822_str).is_some());
+
+        // RFC 3339 format
+        let rfc3339_future = Utc::now() + ChronoDuration::seconds(60);
+        let rfc3339_str = rfc3339_future.to_rfc3339();
+        assert!(parse_http_date_to_duration(&rfc3339_str).is_some());
+    }
+
+    #[test]
+    fn test_rate_limit_error_with_retry_after() {
+        // This test verifies the integration with the actual error handling
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", HeaderValue::from_static("30"));
+
+        let api_err = ApiError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: "Rate limit exceeded".to_string(),
+            headers: headers.clone(),
+        };
+
+        // Verify that parse_retry_after correctly extracts the duration
+        assert_eq!(
+            parse_retry_after(&api_err.headers),
+            Some(Duration::from_secs(30))
+        );
     }
 }

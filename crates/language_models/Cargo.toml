@@ -20,6 +20,7 @@ aws-credential-types = { workspace = true, features = [
 ] }
 aws_http_client.workspace = true
 bedrock.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
