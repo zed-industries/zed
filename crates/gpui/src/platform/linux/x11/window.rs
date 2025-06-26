@@ -288,7 +288,7 @@ pub(crate) struct X11WindowStatePtr {
 }
 
 impl rwh::HasWindowHandle for RawWindow {
-    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         let Some(non_zero) = NonZeroU32::new(self.window_id) else {
             log::error!("RawWindow.window_id zero when getting window handle.");
             return Err(rwh::HandleError::Unavailable);
@@ -299,7 +299,7 @@ impl rwh::HasWindowHandle for RawWindow {
     }
 }
 impl rwh::HasDisplayHandle for RawWindow {
-    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         let Some(non_zero) = NonNull::new(self.connection) else {
             log::error!("Null RawWindow.connection when getting display handle.");
             return Err(rwh::HandleError::Unavailable);
@@ -310,12 +310,12 @@ impl rwh::HasDisplayHandle for RawWindow {
 }
 
 impl rwh::HasWindowHandle for X11Window {
-    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
-    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
@@ -676,26 +676,6 @@ impl X11WindowState {
             width: size.width.into(),
             height: size.height.into(),
         }
-    }
-}
-
-/// A handle to an X11 window which destroys it on Drop.
-pub struct X11WindowHandle {
-    id: xproto::Window,
-    xcb: Rc<XCBConnection>,
-}
-
-impl Drop for X11WindowHandle {
-    fn drop(&mut self) {
-        maybe!({
-            check_reply(
-                || "X11 DestroyWindow failed while dropping X11WindowHandle.",
-                self.xcb.destroy_window(self.id),
-            )?;
-            xcb_flush(&self.xcb);
-            anyhow::Ok(())
-        })
-        .log_err();
     }
 }
 
