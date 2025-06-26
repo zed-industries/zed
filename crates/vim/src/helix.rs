@@ -188,10 +188,10 @@ impl Vim {
                 self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found =
-                        left_kind != right_kind && right_kind != CharKind::Whitespace || at_newline;
+                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -200,10 +200,10 @@ impl Vim {
                 self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = left_kind != right_kind
-                        && (left_kind != CharKind::Whitespace || at_newline);
+                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -212,10 +212,10 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = left_kind != right_kind
-                        && (left_kind != CharKind::Whitespace || at_newline);
+                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -224,11 +224,10 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = left_kind != right_kind
-                        && right_kind != CharKind::Whitespace
-                        && !at_newline;
+                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
