@@ -10,7 +10,7 @@ use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
-use ui::{Context, IconButtonShape, Indicator, Tooltip, Window, prelude::*};
+use ui::{Context, Indicator, Tooltip, Window, prelude::*};
 
 use workspace::{StatusItemView, Workspace};
 
