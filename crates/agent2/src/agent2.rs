@@ -183,7 +183,7 @@ impl Thread {
         thread_id: ThreadId,
         entries: Vec<AgentThreadEntryContent>,
         project: Entity<Project>,
-        cx: &mut Context<Self>,
+        _: &mut Context<Self>,
     ) -> Self {
         let mut next_entry_id = ThreadEntryId(0);
         Self {
@@ -216,7 +216,7 @@ impl Thread {
     pub fn send(&mut self, message: Message, cx: &mut Context<Self>) -> Task<Result<()>> {
         let agent = self.agent.clone();
         let id = self.id.clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_, cx| {
             agent.send_thread_message(id, message, cx).await?;
             Ok(())
         })
@@ -298,7 +298,7 @@ mod tests {
         });
     }
 
-    pub fn gemini_agent(project: Entity<Project>, cx: AsyncApp) -> Result<AcpAgent> {
+    pub fn gemini_agent(project: Entity<Project>, mut cx: AsyncApp) -> Result<Arc<AcpAgent>> {
         let cli_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
         let child = util::command::new_smol_command("node")
@@ -313,6 +313,6 @@ mod tests {
             .spawn()
             .unwrap();
 
-        Ok(AcpAgent::stdio(child, project, cx))
+        Ok(AcpAgent::stdio(child, project, &mut cx))
     }
 }

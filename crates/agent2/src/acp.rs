@@ -5,7 +5,7 @@ use crate::{
     ThreadEntryId, ThreadId,
 };
 use agentic_coding_protocol as acp;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
@@ -178,14 +178,10 @@ impl acp::Client for AcpClientDelegate {
     async fn glob_search(&self, request: acp::GlobSearchParams) -> Result<acp::GlobSearchResponse> {
         todo!()
     }
-
-    async fn end_turn(&self, request: acp::EndTurnParams) -> Result<acp::EndTurnResponse> {
-        todo!()
-    }
 }
 
 impl AcpAgent {
-    pub fn stdio(mut process: Child, project: Entity<Project>, cx: AsyncApp) -> Self {
+    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut AsyncApp) -> Arc<Self> {
         let stdin = process.stdin.take().expect("process didn't have stdin");
         let stdout = process.stdout.take().expect("process didn't have stdout");
 
@@ -201,13 +197,13 @@ impl AcpAgent {
             process.status().await.log_err();
         });
 
-        Self {
+        Arc::new(Self {
             project,
             connection: Arc::new(connection),
             threads,
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
-        }
+        })
     }
 }
 
@@ -291,12 +287,6 @@ impl Agent for AcpAgent {
         message: crate::Message,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let thread = self
-            .threads
-            .lock()
-            .get(&thread_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("no such thread"))?;
         self.connection
             .request(acp::SendMessageParams {
                 thread_id: thread_id.clone().into(),
