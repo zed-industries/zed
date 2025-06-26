@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use gpui::{AsyncApp, Global};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ impl TransportRegistry {
                 return transport.connect(&config, delegate, cx).await;
             }
         }
-        
+
         Err(anyhow!("No transport found for configuration"))
     }
 
@@ -50,11 +50,11 @@ impl Global for TransportRegistry {}
 impl Default for TransportRegistry {
     fn default() -> Self {
         let mut registry = Self::new();
-        
+
         // Register built-in transports
         use crate::ssh_transport::SshTransport;
         registry.register(Arc::new(SshTransport::new()));
-        
+
         registry
     }
 }

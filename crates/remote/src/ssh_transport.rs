@@ -32,11 +32,11 @@ impl Transport for SshTransport {
         let TransportConfig::Ssh(ssh_config) = config;
 
         // Create temporary directory for control socket
-        let temp_dir = TempDir::new()
-            .context("failed to create temporary directory for SSH connection")?;
-        
+        let temp_dir =
+            TempDir::new().context("failed to create temporary directory for SSH connection")?;
+
         let socket_path = temp_dir.path().join("ssh.sock");
-        
+
         let socket = SshSocket {
             connection_options: ssh_config.clone(),
             socket_path,
@@ -102,16 +102,21 @@ impl TransportConnection for SshRemoteConnectionAdapter {
     ) -> Task<Result<i32>> {
         // This would be implemented by moving logic from SshRemoteConnection::start_proxy
         // For now, return a placeholder
-        cx.background_spawn(async move {
-            Ok(0)
-        })
+        cx.background_spawn(async move { Ok(0) })
     }
 
-    fn upload_directory(&self, _src_path: PathBuf, _dest_path: PathBuf, cx: &App) -> Task<Result<()>> {
+    fn upload_directory(
+        &self,
+        _src_path: PathBuf,
+        _dest_path: PathBuf,
+        cx: &App,
+    ) -> Task<Result<()>> {
         // TODO: This would need to be properly implemented by moving logic from SshRemoteConnection
         // For now, return a placeholder
         cx.background_spawn(async move {
-            Err(anyhow::anyhow!("Upload directory not yet implemented for transport adapter"))
+            Err(anyhow::anyhow!(
+                "Upload directory not yet implemented for transport adapter"
+            ))
         })
     }
 
@@ -137,4 +142,3 @@ impl TransportConnection for SshRemoteConnectionAdapter {
         TransportConfig::Ssh(self.connection_options.clone())
     }
 }
-
