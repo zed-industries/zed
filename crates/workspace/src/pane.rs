@@ -2254,7 +2254,7 @@ impl Pane {
         });
     }
 
-    fn is_tab_pinned(&self, ix: usize) -> bool {
+    pub fn is_tab_pinned(&self, ix: usize) -> bool {
         self.pinned_tab_count > ix
     }
 
