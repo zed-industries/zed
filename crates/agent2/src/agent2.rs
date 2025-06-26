@@ -40,11 +40,11 @@ pub struct AgentThreadSummary {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileContent {
     pub path: PathBuf,
     pub version: FileVersion,
-    pub content: String,
+    pub content: SharedString,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -53,16 +53,16 @@ pub enum Role {
     Assistant,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Message {
     pub role: Role,
     pub chunks: Vec<MessageChunk>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessageChunk {
     Text {
-        chunk: String,
+        chunk: SharedString,
     },
     File {
         content: FileContent,
@@ -75,28 +75,28 @@ pub enum MessageChunk {
         path: PathBuf,
         range: Range<u64>,
         version: FileVersion,
-        name: String,
-        content: String,
+        name: SharedString,
+        content: SharedString,
     },
     Thread {
-        title: String,
+        title: SharedString,
         content: Vec<AgentThreadEntryContent>,
     },
     Fetch {
-        url: String,
-        content: String,
+        url: SharedString,
+        content: SharedString,
     },
 }
 
 impl From<&str> for MessageChunk {
     fn from(chunk: &str) -> Self {
         MessageChunk::Text {
-            chunk: chunk.to_string(),
+            chunk: chunk.to_string().into(),
         }
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentThreadEntryContent {
     Message(Message),
     ReadFile { path: PathBuf, content: String },
@@ -224,6 +224,7 @@ impl Thread {
     pub fn send(&mut self, message: Message, cx: &mut Context<Self>) -> Task<Result<()>> {
         let agent = self.agent.clone();
         let id = self.id.clone();
+        self.push_entry(AgentThreadEntryContent::Message(message.clone()), cx);
         cx.spawn(async move |_, cx| {
             agent.send_thread_message(id, message, cx).await?;
             Ok(())
@@ -291,6 +292,19 @@ mod tests {
             })
             .await
             .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.entries[0].content,
+                AgentThreadEntryContent::Message(Message {
+                    role: Role::User,
+                    ..
+                })
+            ));
+        });
+
+        cx.run_until_parked();
+
         thread.read_with(cx, |thread, _| {
             assert!(
                 thread.entries().iter().any(|entry| {

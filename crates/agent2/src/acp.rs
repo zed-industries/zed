@@ -270,7 +270,9 @@ impl Agent for AcpAgent {
                             .chunks
                             .into_iter()
                             .map(|chunk| match chunk {
-                                acp::MessageChunk::Text { chunk } => MessageChunk::Text { chunk },
+                                acp::MessageChunk::Text { chunk } => MessageChunk::Text {
+                                    chunk: chunk.into(),
+                                },
                             })
                             .collect(),
                     })
@@ -300,11 +302,12 @@ impl Agent for AcpAgent {
                         .chunks
                         .into_iter()
                         .map(|chunk| match chunk {
-                            MessageChunk::Text { chunk } => acp::MessageChunk::Text { chunk },
+                            MessageChunk::Text { chunk } => acp::MessageChunk::Text {
+                                chunk: chunk.into(),
+                            },
                             MessageChunk::File { .. } => todo!(),
                             MessageChunk::Directory { .. } => todo!(),
                             MessageChunk::Symbol { .. } => todo!(),
-                            MessageChunk::Thread { .. } => todo!(),
                             MessageChunk::Fetch { .. } => todo!(),
                         })
                         .collect(),
