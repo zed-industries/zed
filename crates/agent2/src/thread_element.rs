@@ -143,6 +143,7 @@ impl Render for ThreadElement {
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .child(
+                // todo! use gpui::list
                 v_flex().p_2().h_full().gap_1().children(
                     self.thread
                         .read(cx)
@@ -169,26 +170,43 @@ impl Render for ThreadElement {
                     .child(self.message_editor.clone()),
             )
             .child(
-                h_flex().p_2().justify_end().child(
-                    IconButton::new("send-message", IconName::Send)
-                        .icon_color(Color::Accent)
-                        .style(ButtonStyle::Filled)
-                        .disabled(is_editor_empty)
-                        .on_click({
-                            let focus_handle = focus_handle.clone();
-                            move |_event, window, cx| {
-                                focus_handle.dispatch_action(&Chat, window, cx);
-                            }
-                        })
-                        .when(!is_editor_empty, |button| {
-                            button.tooltip(move |window, cx| {
-                                Tooltip::for_action("Send", &Chat, window, cx)
+                h_flex()
+                    .p_2()
+                    .justify_end()
+                    .child(if self.send_task.is_some() {
+                        IconButton::new("stop-generation", IconName::StopFilled)
+                            .icon_color(Color::Error)
+                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action(
+                                    "Stop Generation",
+                                    &editor::actions::Cancel,
+                                    window,
+                                    cx,
+                                )
                             })
-                        })
-                        .when(is_editor_empty, |button| {
-                            button.tooltip(Tooltip::text("Type a message to submit"))
-                        }),
-                ),
+                            .disabled(is_editor_empty)
+                            .on_click(cx.listener(|this, _event, _, _| this.cancel()))
+                    } else {
+                        IconButton::new("send-message", IconName::Send)
+                            .icon_color(Color::Accent)
+                            .style(ButtonStyle::Filled)
+                            .disabled(is_editor_empty)
+                            .on_click({
+                                let focus_handle = focus_handle.clone();
+                                move |_event, window, cx| {
+                                    focus_handle.dispatch_action(&Chat, window, cx);
+                                }
+                            })
+                            .when(!is_editor_empty, |button| {
+                                button.tooltip(move |window, cx| {
+                                    Tooltip::for_action("Send", &Chat, window, cx)
+                                })
+                            })
+                            .when(is_editor_empty, |button| {
+                                button.tooltip(Tooltip::text("Type a message to submit"))
+                            })
+                    }),
             )
     }
 }
