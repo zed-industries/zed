@@ -64,7 +64,8 @@ pub struct Message {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessageChunk {
     Text {
-        chunk: SharedString,
+        // todo! should it be shared string? what about streaming?
+        chunk: String,
     },
     File {
         content: FileContent,
@@ -226,10 +227,17 @@ impl Thread {
                 role: Role::Assistant,
             }) = last_entry.content
             {
-                // todo! merge with last chunk if same type
+                if let (
+                    Some(MessageChunk::Text { chunk: old_chunk }),
+                    MessageChunk::Text { chunk: new_chunk },
+                ) = (chunks.last_mut(), &chunk)
+                {
+                    old_chunk.push_str(&new_chunk);
+                    return cx.notify();
+                }
+
                 chunks.push(chunk);
-                cx.notify();
-                return;
+                return cx.notify();
             }
         }
 
