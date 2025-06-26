@@ -117,6 +117,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "collections",
+ "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
@@ -126,9 +127,11 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "ui",
  "util",
  "uuid",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]

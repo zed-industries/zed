@@ -198,7 +198,12 @@ pub mod agent {
 
     actions!(
         agent,
-        [OpenConfiguration, OpenOnboardingModal, ResetOnboarding]
+        [
+            OpenConfiguration,
+            OpenOnboardingModal,
+            ResetOnboarding,
+            Chat
+        ]
     );
 }
 

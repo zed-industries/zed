@@ -754,7 +754,7 @@ impl AgentPanel {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
             ActiveView::Agent2Thread { thread_element, .. } => {
-                thread_element.update(cx, |thread_element, cx| thread_element.cancel(window, cx));
+                thread_element.update(cx, |thread_element, _cx| thread_element.cancel());
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
@@ -919,7 +919,8 @@ impl AgentPanel {
         cx.spawn_in(window, async move |this, cx| {
             let agent = AcpAgent::stdio(child, project, cx);
             let thread = agent.create_thread(cx).await?;
-            let thread_element = cx.new(|_cx| agent2::ThreadElement::new(thread))?;
+            let thread_element =
+                cx.new_window_entity(|window, cx| agent2::ThreadElement::new(thread, window, cx))?;
             this.update_in(cx, |this, window, cx| {
                 this.set_active_view(ActiveView::Agent2Thread { thread_element }, window, cx);
             })
@@ -1521,10 +1522,7 @@ impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Thread { message_editor, .. } => message_editor.focus_handle(cx),
-            ActiveView::Agent2Thread { .. } => {
-                // todo! add own message editor to agent2
-                cx.focus_handle()
-            }
+            ActiveView::Agent2Thread { thread_element, .. } => thread_element.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {

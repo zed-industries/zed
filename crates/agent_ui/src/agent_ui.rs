@@ -66,7 +66,6 @@ actions!(
         OpenHistory,
         AddContextServer,
         RemoveSelectedThread,
-        Chat,
         ChatWithFollow,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
