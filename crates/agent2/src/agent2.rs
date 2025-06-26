@@ -78,10 +78,6 @@ pub enum MessageChunk {
         name: SharedString,
         content: SharedString,
     },
-    Thread {
-        title: SharedString,
-        content: Vec<AgentThreadEntryContent>,
-    },
     Fetch {
         url: SharedString,
         content: SharedString,
