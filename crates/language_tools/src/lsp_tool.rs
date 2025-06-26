@@ -3,6 +3,7 @@ use std::{collections::hash_map, path::PathBuf, sync::Arc, time::Duration};
 use client::proto;
 use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Corner, DismissEvent, Entity, Focusable as _, Subscription, Task, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, LocalFile, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
@@ -243,6 +244,10 @@ impl LanguageServers {
                 },
             );
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.binary_statuses.is_empty() && self.health_statuses.is_empty()
     }
 }
 
@@ -865,6 +870,10 @@ impl StatusItemView for LspTool {
 
 impl Render for LspTool {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+        if !cx.is_staff() || self.state.read(cx).language_servers.is_empty() {
+            return div();
+        }
+
         let Some(lsp_picker) = self.lsp_picker.clone() else {
             return div();
         };

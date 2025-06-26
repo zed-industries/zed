@@ -2484,11 +2484,11 @@ impl LocalLspStore {
                                }
                            }
                         };
-                        let lsp_tool = self.weak.clone();
+                        let lsp_store = self.weak.clone();
                         let server_name = server_node.name();
                         let buffer_abs_path = abs_path.to_string_lossy().to_string();
                         cx.defer(move |cx| {
-                            lsp_tool.update(cx, |_, cx| cx.emit(LspStoreEvent::LanguageServerUpdate {
+                            lsp_store.update(cx, |_, cx| cx.emit(LspStoreEvent::LanguageServerUpdate {
                                 language_server_id: server_id,
                                 name: server_name,
                                 message: proto::update_language_server::Variant::RegisteredForBuffer(proto::RegisteredForBuffer {
