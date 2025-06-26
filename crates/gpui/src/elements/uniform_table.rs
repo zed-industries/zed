@@ -5,8 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Div, Element, ElementId, GlobalElementId,
     Hitbox, InspectorElementId, Interactivity, IntoElement, IsZero as _, LayoutId, Length,
-    Overflow, Pixels, ScrollHandle, Size, StyleRefinement, Styled as _, Window, div, point, px,
-    size,
+    Overflow, Pixels, ScrollHandle, Size, StyleRefinement, Styled, Window, point, px, size,
 };
 
 /// todo!
@@ -71,6 +70,12 @@ impl<const COLS: usize> IntoElement for UniformTable<COLS> {
     }
 }
 
+impl<const COLS: usize> Styled for UniformTable<COLS> {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.interactivity.base_style
+    }
+}
+
 impl<const COLS: usize> Element for UniformTable<COLS> {
     type RequestLayoutState = ();
 
@@ -93,38 +98,41 @@ impl<const COLS: usize> Element for UniformTable<COLS> {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let measure_cx = MeasureContext::new(self);
         let item_size = measure_cx.measure_item(AvailableSpace::MinContent, None, window, cx);
-        let layout_id = self.interactivity.request_layout(
-            global_id,
-            inspector_id,
-            window,
-            cx,
-            |style, window, _cx| {
-                window.with_text_style(style.text_style().cloned(), |window| {
-                    window.request_measured_layout(
-                        style,
-                        move |known_dimensions, available_space, window, cx| {
-                            let desired_height = item_size.height * measure_cx.row_count;
-                            let width =
-                                known_dimensions
+        let layout_id =
+            self.interactivity.request_layout(
+                global_id,
+                inspector_id,
+                window,
+                cx,
+                |style, window, _cx| {
+                    window.with_text_style(style.text_style().cloned(), |window| {
+                        window.request_measured_layout(
+                            style,
+                            move |known_dimensions, available_space, window, cx| {
+                                let desired_height = item_size.height * measure_cx.row_count;
+                                let width = known_dimensions.width.unwrap_or(match available_space
                                     .width
-                                    .unwrap_or(match available_space.width {
-                                        AvailableSpace::Definite(x) => x,
-                                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                            item_size.width
-                                        }
-                                    });
-                            let height = match available_space.height {
-                                AvailableSpace::Definite(height) => desired_height.min(height),
-                                AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                                    desired_height
-                                }
-                            };
-                            size(width, height)
-                        },
-                    )
-                })
-            },
-        );
+                                {
+                                    AvailableSpace::Definite(x) => x,
+                                    AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                                        item_size.width
+                                    }
+                                });
+                                let height =
+                                    known_dimensions.height.unwrap_or(
+                                        match available_space.height {
+                                            AvailableSpace::Definite(height) => desired_height
+                                                .min(dbg!(window.bounds()).size.height),
+                                            AvailableSpace::MinContent
+                                            | AvailableSpace::MaxContent => desired_height,
+                                        },
+                                    );
+                                size(width, height)
+                            },
+                        )
+                    })
+                },
+            );
 
         (layout_id, ())
     }
@@ -191,6 +199,7 @@ impl<const COLS: usize> Element for UniformTable<COLS> {
             window,
             cx,
             |style, mut scroll_offset, hitbox, window, cx| {
+                dbg!(bounds, window.bounds());
                 let border = style.border_widths.to_pixels(window.rem_size());
                 let padding = style
                     .padding
@@ -230,7 +239,7 @@ impl<const COLS: usize> Element for UniformTable<COLS> {
                         if y_flipped {
                             ix = self.row_count.saturating_sub(ix + 1);
                         }
-                        let list_height = padded_bounds.size.height;
+                        let list_height = dbg!(padded_bounds.size.height);
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
                         let item_top = row_height * ix + padding.top;
                         let item_bottom = item_top + row_height;
@@ -272,7 +281,6 @@ impl<const COLS: usize> Element for UniformTable<COLS> {
                         .ceil() as usize;
                     let visible_range =
                         first_visible_element_ix..cmp::min(last_visible_element_ix, self.row_count);
-
                     let rows = if y_flipped {
                         let flipped_range = self.row_count.saturating_sub(visible_range.end)
                             ..self.row_count.saturating_sub(visible_range.start);

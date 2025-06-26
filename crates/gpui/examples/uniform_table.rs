@@ -15,7 +15,7 @@ impl Render for UniformTableExample {
             headers[column] = column;
         }
 
-        div().bg(rgb(0xffffff)).child(
+        div().bg(rgb(0xffffff)).size_full().child(
             gpui::uniform_table("simple table", ROWS, move |range, _, _| {
                 dbg!(&range);
                 range
@@ -30,7 +30,11 @@ impl Render for UniformTableExample {
                     })
                     .collect()
             })
-            .with_width_from_item(Some(ROWS - 1)),
+            .with_width_from_item(Some(ROWS - 1))
+            // todo! without this, the AvailableSpace passed in window.request_measured_layout is a Definite(2600px) on Anthony's machine
+            // this doesn't make sense, and results in the full range of elements getting rendered. This also occurs on uniform_list
+            // This is resulting from windows.bounds() being called
+            .h_full(),
         )
     }
 }

@@ -12,6 +12,7 @@ impl Render for UniformListExample {
                 "entries",
                 50,
                 cx.processor(|_this, range, _window, _cx| {
+                    dbg!(&range);
                     let mut items = Vec::new();
                     for ix in range {
                         let item = ix + 1;
