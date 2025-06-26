@@ -50,7 +50,6 @@ use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
-// Retry constants
 const MAX_RETRY_ATTEMPTS: u8 = 3;
 const BASE_RETRY_DELAY_SECS: u64 = 5;
 
