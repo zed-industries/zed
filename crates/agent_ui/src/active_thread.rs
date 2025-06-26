@@ -3812,15 +3812,9 @@ mod tests {
 
         // Stream response to user message
         thread.update(cx, |thread, cx| {
-            let request =
-                thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx);
-            thread.stream_completion(
-                request,
-                model,
-                CompletionIntent::UserPrompt,
-                cx.active_window(),
-                cx,
-            )
+            let intent = CompletionIntent::UserPrompt;
+            let request = thread.to_completion_request(model.clone(), intent, cx);
+            thread.stream_completion(request, model, intent, cx.active_window(), cx)
         });
         // Follow the agent
         cx.update(|window, cx| {
