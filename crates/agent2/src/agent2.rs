@@ -297,11 +297,6 @@ mod tests {
                     ..
                 })
             ));
-        });
-
-        cx.run_until_parked();
-
-        thread.read_with(cx, |thread, _| {
             assert!(
                 thread.entries().iter().any(|entry| {
                     entry.content
