@@ -214,7 +214,6 @@ impl<T: ?Sized> DerefMut for ArenaBox<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, rc::Rc};
