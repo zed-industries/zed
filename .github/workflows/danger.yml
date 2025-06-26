@@ -13,6 +13,9 @@ jobs:
   danger:
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
+    concurrency:
+      group: danger-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
