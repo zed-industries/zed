@@ -12,7 +12,6 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use serde_json_lenient::json;
 use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
 use util::{
     asset_str,
@@ -21,7 +20,7 @@ use util::{
 
 use crate::{
     SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
-    replace_top_level_array_value_in_json_text, update_settings_file, update_value_in_json_text,
+    replace_top_level_array_value_in_json_text,
 };
 
 pub trait KeyBindingValidator: Send + Sync {

@@ -418,7 +418,6 @@ pub fn replace_top_level_array_value_in_json_text(
     return Ok((replace_range, replace_value));
 }
 
-// todo! Result required?
 pub fn append_top_level_array_value_in_json_text(
     text: &str,
     new_value: &Value,
@@ -443,10 +442,10 @@ pub fn append_top_level_array_value_in_json_text(
         anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
     }
 
-    // false if no children
-    if !cursor.goto_last_child() {
-        todo!("appends (if index is 0)")
-    }
+    anyhow::ensure!(
+        cursor.goto_last_child(),
+        "Malformed JSON syntax tree, expected `]` at end of array"
+    );
     debug_assert_eq!(cursor.node().kind(), "]");
     let close_bracket_start = cursor.node().start_byte();
     cursor.goto_previous_sibling();
@@ -503,7 +502,7 @@ pub fn append_top_level_array_value_in_json_text(
             while let Some(idx) = replace_value.find("\n ") {
                 replace_value.remove(idx + 1);
             }
-            while let Some(idx) = replace_value.find("\n") {
+            while let Some(idx) = replace_value.find('\n') {
                 replace_value.replace_range(idx..idx + 1, " ");
             }
             replace_value.insert(0, ' ');
