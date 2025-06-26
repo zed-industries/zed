@@ -463,6 +463,14 @@ pub struct Thread {
 }
 
 impl Thread {
+    pub fn id(&self) -> &ThreadId {
+        &self.id
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+
     pub fn summary(&self) -> &ThreadSummary {
         &self.summary
     }
@@ -1058,7 +1066,7 @@ impl ZedAgent {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.thread.read(cx).messages.is_empty()
+        self.thread.read(cx).is_empty()
     }
 
     pub fn advance_prompt_id(&mut self) {
@@ -4001,7 +4009,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(agent.read(cx), None, cx)
+            store.new_context_for_thread(thread.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4016,7 +4024,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(agent.read(cx), None, cx)
+            store.new_context_for_thread(thread.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4032,7 +4040,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(agent.read(cx), None, cx)
+            store.new_context_for_thread(thread.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4088,7 +4096,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 3);
         let loaded_context = cx
@@ -4104,7 +4112,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file4.rs
             store.remove_context(&loaded_context.contexts[2].handle(), cx);
-            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 2);
         let loaded_context = cx
@@ -4120,7 +4128,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file3.rs
             store.remove_context(&loaded_context.contexts[1].handle(), cx);
-            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx

@@ -122,8 +122,8 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         match &panel.read(cx).active_view {
                             ActiveView::Thread { thread, .. } => {
-                                let thread = thread.read(cx).thread().clone();
-                                AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
+                                let agent = thread.read(cx).agent().clone();
+                                AgentDiffPane::deploy_in_workspace(agent, workspace, window, cx);
                             }
                             ActiveView::TextThread { .. }
                             | ActiveView::History
@@ -278,7 +278,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |_, thread, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary(cx).or_default();
+                        let summary = thread.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -649,9 +649,9 @@ impl AgentPanel {
                     ActiveView::Thread { thread, .. } => {
                         thread
                             .read(cx)
-                            .thread()
+                            .agent()
                             .clone()
-                            .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
+                            .update(cx, |agent, cx| agent.get_or_init_configured_model(cx));
                     }
                     ActiveView::TextThread { .. }
                     | ActiveView::History
@@ -1137,10 +1137,10 @@ impl AgentPanel {
     ) {
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
-                let thread = thread.read(cx).thread().clone();
+                let agent = thread.read(cx).agent().clone();
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx)
+                        AgentDiffPane::deploy_in_workspace(agent, workspace, window, cx)
                     })
                     .log_err();
             }
@@ -1190,7 +1190,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
                 active_thread::open_active_thread_as_markdown(
-                    thread.read(cx).thread().clone(),
+                    thread.read(cx).agent().clone(),
                     workspace,
                     window,
                     cx,
@@ -1230,7 +1230,7 @@ impl AgentPanel {
 
     pub(crate) fn active_thread(&self, cx: &App) -> Option<Entity<ZedAgent>> {
         match &self.active_view {
-            ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
+            ActiveView::Thread { thread, .. } => Some(thread.read(cx).agent().clone()),
             _ => None,
         }
     }
@@ -1249,18 +1249,18 @@ impl AgentPanel {
             return;
         };
 
-        let thread_state = thread.read(cx).thread().read(cx);
-        if !thread_state.tool_use_limit_reached() {
+        let agent_state = thread.read(cx).agent().read(cx);
+        if !agent_state.tool_use_limit_reached() {
             return;
         }
 
-        let model = thread_state.configured_model().map(|cm| cm.model.clone());
+        let model = agent_state.configured_model().map(|cm| cm.model.clone());
         if let Some(model) = model {
             thread.update(cx, |active_thread, cx| {
-                active_thread.thread().update(cx, |thread, cx| {
-                    thread.insert_invisible_continue_message(cx);
-                    thread.advance_prompt_id();
-                    thread.send_to_model(
+                active_thread.agent().update(cx, |agent, cx| {
+                    agent.insert_invisible_continue_message(cx);
+                    agent.advance_prompt_id();
+                    agent.send_to_model(
                         model,
                         CompletionIntent::UserPrompt,
                         Some(window.window_handle()),
@@ -1284,10 +1284,10 @@ impl AgentPanel {
         };
 
         thread.update(cx, |active_thread, cx| {
-            active_thread.thread().update(cx, |thread, _cx| {
-                let current_mode = thread.completion_mode();
+            active_thread.agent().update(cx, |agent, _cx| {
+                let current_mode = agent.completion_mode();
 
-                thread.set_completion_mode(match current_mode {
+                agent.set_completion_mode(match current_mode {
                     CompletionMode::Burn => CompletionMode::Normal,
                     CompletionMode::Normal => CompletionMode::Burn,
                 });
@@ -1330,7 +1330,7 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 let thread = thread.read(cx);
                 if thread.is_empty() {
-                    let id = thread.thread().read(cx).id(cx).clone();
+                    let id = thread.thread().read(cx).id().clone();
                     self.history_store.update(cx, |store, cx| {
                         store.remove_recently_opened_thread(id, cx);
                     });
@@ -1341,7 +1341,7 @@ impl AgentPanel {
 
         match &new_view {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
-                let id = thread.read(cx).thread().read(cx).id(cx).clone();
+                let id = thread.read(cx).thread().read(cx).id().clone();
                 store.push_recently_opened_entry(HistoryEntryId::Thread(id), cx);
             }),
             ActiveView::TextThread { context_editor, .. } => {
@@ -1757,11 +1757,11 @@ impl AgentPanel {
                         .action("New Text Thread", NewTextThread.boxed_clone())
                         .when_some(active_thread, |this, active_thread| {
                             let thread = active_thread.read(cx);
-                            if !thread.is_empty(cx) {
+                            if !thread.is_empty() {
                                 this.action(
                                     "New From Summary",
                                     Box::new(NewThread {
-                                        from_thread_id: Some(thread.id(cx).clone()),
+                                        from_thread_id: Some(thread.id().clone()),
                                     }),
                                 )
                             } else {
@@ -1904,13 +1904,13 @@ impl AgentPanel {
             return None;
         }
 
-        let thread = active_thread.thread().read(cx);
-        let is_generating = thread.is_generating();
-        let conversation_token_usage = thread.total_token_usage(cx)?;
+        let agent = active_thread.agent().read(cx);
+        let is_generating = agent.is_generating();
+        let conversation_token_usage = agent.total_token_usage(cx)?;
 
         let (total_token_usage, is_estimating) =
             if let Some((editing_message_id, unsent_tokens)) = active_thread.editing_message_id() {
-                let combined = thread
+                let combined = agent
                     .token_usage_up_to_message(editing_message_id, cx)
                     .add(unsent_tokens);
 
@@ -2022,7 +2022,7 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 let is_using_zed_provider = thread
                     .read(cx)
-                    .thread()
+                    .agent()
                     .read(cx)
                     .configured_model()
                     .map_or(false, |model| {
@@ -2622,14 +2622,14 @@ impl AgentPanel {
             }
         };
 
-        let thread = active_thread.read(cx).thread().read(cx);
+        let agent = active_thread.read(cx).agent().read(cx);
 
-        let tool_use_limit_reached = thread.tool_use_limit_reached();
+        let tool_use_limit_reached = agent.tool_use_limit_reached();
         if !tool_use_limit_reached {
             return None;
         }
 
-        let model = thread.configured_model()?.model;
+        let model = agent.configured_model()?.model;
 
         let focus_handle = self.focus_handle(cx);
 
@@ -2677,8 +2677,8 @@ impl AgentPanel {
                                     let active_thread = active_thread.clone();
                                     cx.listener(move |this, _, window, cx| {
                                         active_thread.update(cx, |active_thread, cx| {
-                                            active_thread.thread().update(cx, |thread, _cx| {
-                                                thread.set_completion_mode(CompletionMode::Burn);
+                                            active_thread.agent().update(cx, |agent, _cx| {
+                                                agent.set_completion_mode(CompletionMode::Burn);
                                             });
                                         });
                                         this.continue_conversation(window, cx);
@@ -3062,8 +3062,8 @@ impl Render for AgentPanel {
                 match &this.active_view {
                     ActiveView::Thread { thread, .. } => {
                         thread.update(cx, |active_thread, cx| {
-                            active_thread.thread().update(cx, |thread, _cx| {
-                                thread.set_completion_mode(CompletionMode::Burn);
+                            active_thread.agent().update(cx, |agent, _cx| {
+                                agent.set_completion_mode(CompletionMode::Burn);
                             });
                         });
                         this.continue_conversation(window, cx);

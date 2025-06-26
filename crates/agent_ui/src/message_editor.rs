@@ -65,7 +65,7 @@ use agent::{
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
-    thread: Entity<ZedAgent>,
+    agent: Entity<ZedAgent>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
@@ -223,7 +223,7 @@ impl MessageEditor {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             user_store,
-            thread,
+            agent: thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
@@ -313,11 +313,11 @@ impl MessageEditor {
             return;
         }
 
-        self.thread.update(cx, |thread, cx| {
+        self.agent.update(cx, |thread, cx| {
             thread.cancel_editing(cx);
         });
 
-        if self.thread.read(cx).is_generating() {
+        if self.agent.read(cx).is_generating() {
             self.stop_current_and_send_new_message(window, cx);
             return;
         }
@@ -354,7 +354,7 @@ impl MessageEditor {
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ConfiguredModel { model, provider }) = self
-            .thread
+            .agent
             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx))
         else {
             return;
@@ -375,7 +375,7 @@ impl MessageEditor {
         self.last_estimated_token_count.take();
         cx.emit(MessageEditorEvent::EstimatedTokenCount);
 
-        let thread = self.thread.clone();
+        let thread = self.agent.clone();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         let context_task = self.reload_context(cx);
@@ -413,11 +413,11 @@ impl MessageEditor {
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.thread.update(cx, |thread, cx| {
+        self.agent.update(cx, |thread, cx| {
             thread.cancel_editing(cx);
         });
 
-        let cancelled = self.thread.update(cx, |thread, cx| {
+        let cancelled = self.agent.update(cx, |thread, cx| {
             thread.cancel_last_completion(Some(window.window_handle()), cx)
         });
 
@@ -459,7 +459,7 @@ impl MessageEditor {
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.edits_expanded = true;
-        AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        AgentDiffPane::deploy(self.agent.clone(), self.workspace.clone(), window, cx).log_err();
         cx.notify();
     }
 
@@ -475,7 +475,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         if let Ok(diff) =
-            AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
+            AgentDiffPane::deploy(self.agent.clone(), self.workspace.clone(), window, cx)
         {
             let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
@@ -488,7 +488,7 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.thread.update(cx, |thread, _cx| {
+        self.agent.update(cx, |thread, _cx| {
             let active_completion_mode = thread.completion_mode();
 
             thread.set_completion_mode(match active_completion_mode {
@@ -499,28 +499,28 @@ impl MessageEditor {
     }
 
     fn handle_accept_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.thread.read(cx).has_pending_edit_tool_uses() {
+        if self.agent.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
-        self.thread.update(cx, |thread, cx| {
+        self.agent.update(cx, |thread, cx| {
             thread.keep_all_edits(cx);
         });
         cx.notify();
     }
 
     fn handle_reject_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.thread.read(cx).has_pending_edit_tool_uses() {
+        if self.agent.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
         // Since there's no reject_all_edits method in the thread API,
         // we need to iterate through all buffers and reject their edits
-        let action_log = self.thread.read(cx).action_log().clone();
+        let action_log = self.agent.read(cx).action_log().clone();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         for (buffer, _) in changed_buffers {
-            self.thread.update(cx, |thread, cx| {
+            self.agent.update(cx, |thread, cx| {
                 let buffer_snapshot = buffer.read(cx);
                 let start = buffer_snapshot.anchor_before(Point::new(0, 0));
                 let end = buffer_snapshot.anchor_after(buffer_snapshot.max_point());
@@ -538,11 +538,11 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.thread.read(cx).has_pending_edit_tool_uses() {
+        if self.agent.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
-        self.thread.update(cx, |thread, cx| {
+        self.agent.update(cx, |thread, cx| {
             let buffer_snapshot = buffer.read(cx);
             let start = buffer_snapshot.anchor_before(Point::new(0, 0));
             let end = buffer_snapshot.anchor_after(buffer_snapshot.max_point());
@@ -559,11 +559,11 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.thread.read(cx).has_pending_edit_tool_uses() {
+        if self.agent.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
-        self.thread.update(cx, |thread, cx| {
+        self.agent.update(cx, |thread, cx| {
             let buffer_snapshot = buffer.read(cx);
             let start = buffer_snapshot.anchor_before(Point::new(0, 0));
             let end = buffer_snapshot.anchor_after(buffer_snapshot.max_point());
@@ -573,7 +573,7 @@ impl MessageEditor {
     }
 
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let thread = self.thread.read(cx);
+        let thread = self.agent.read(cx);
         let model = thread.configured_model();
         if !model?.model.supports_max_mode() {
             return None;
@@ -644,7 +644,7 @@ impl MessageEditor {
     }
 
     fn render_editor(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let thread = self.thread.read(cx);
+        let thread = self.agent.read(cx);
         let model = thread.configured_model();
 
         let editor_bg_color = cx.theme().colors().editor_background;
@@ -945,7 +945,7 @@ impl MessageEditor {
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
         let is_edit_changes_expanded = self.edits_expanded;
-        let thread = self.thread.read(cx);
+        let thread = self.agent.read(cx);
         let pending_edits = thread.has_pending_edit_tool_uses();
 
         const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
@@ -1247,7 +1247,7 @@ impl MessageEditor {
     }
 
     fn is_using_zed_provider(&self, cx: &App) -> bool {
-        self.thread
+        self.agent
             .read(cx)
             .configured_model()
             .map_or(false, |model| {
@@ -1325,7 +1325,7 @@ impl MessageEditor {
                 Button::new("start-new-thread", "Start New Thread")
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id(cx).clone());
+                        let from_thread_id = Some(this.agent.read(cx).id(cx).clone());
                         window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
                     })),
             );
@@ -1360,7 +1360,7 @@ impl MessageEditor {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
                 let new_context = this.context_store.read(cx).new_context_for_thread(
-                    this.thread.read(cx),
+                    this.agent.read(cx).thread().read(cx),
                     None,
                     cx,
                 );
@@ -1395,7 +1395,7 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
 
-        let Some(model) = self.thread.read(cx).configured_model() else {
+        let Some(model) = self.agent.read(cx).configured_model() else {
             self.last_estimated_token_count.take();
             return;
         };
@@ -1600,7 +1600,7 @@ impl Focusable for MessageEditor {
 
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let thread = self.thread.read(cx);
+        let thread = self.agent.read(cx);
         let token_usage_ratio = thread
             .total_token_usage(cx)
             .map_or(TokenUsageRatio::Normal, |total_token_usage| {
@@ -1609,7 +1609,7 @@ impl Render for MessageEditor {
 
         let burn_mode_enabled = thread.completion_mode() == CompletionMode::Burn;
 
-        let action_log = self.thread.read(cx).action_log();
+        let action_log = self.agent.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
@@ -1692,7 +1692,7 @@ impl AgentPreview for MessageEditor {
             let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
             let active_thread = active_thread.read(cx);
-            let thread = active_thread.thread().clone();
+            let agent = active_thread.agent().clone();
             let thread_store = active_thread.thread_store().clone();
             let text_thread_store = active_thread.text_thread_store().clone();
 
@@ -1705,7 +1705,7 @@ impl AgentPreview for MessageEditor {
                     None,
                     thread_store.downgrade(),
                     text_thread_store.downgrade(),
-                    thread,
+                    agent,
                     window,
                     cx,
                 )

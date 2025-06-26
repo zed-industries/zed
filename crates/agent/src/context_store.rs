@@ -4,7 +4,7 @@ use crate::{
         FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
         SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
     },
-    thread::{MessageId, ThreadId, ZedAgent},
+    thread::{MessageId, Thread, ThreadId, ZedAgent},
     thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -66,12 +66,12 @@ impl ContextStore {
 
     pub fn new_context_for_thread(
         &self,
-        thread: &ZedAgent,
+        agent: &Thread,
         exclude_messages_from_id: Option<MessageId>,
-        cx: &App,
+        _cx: &App,
     ) -> Vec<AgentContextHandle> {
-        let existing_context = thread
-            .messages(cx)
+        let existing_context = agent
+            .messages()
             .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
             .flat_map(|message| {
                 message
