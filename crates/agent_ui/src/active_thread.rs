@@ -1831,6 +1831,7 @@ impl ActiveThread {
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
+
         let editing_message_state = self
             .editing_message
             .as_ref()
