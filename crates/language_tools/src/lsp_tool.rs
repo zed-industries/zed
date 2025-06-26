@@ -909,7 +909,7 @@ impl Render for LspTool {
                     .icon_size(IconSize::Small)
                     .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                 move |_, cx| Tooltip::simple("Language Servers", cx),
-                Corner::BottomRight,
+                Corner::BottomLeft,
                 cx,
             )
             .render(window, cx),
