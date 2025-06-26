@@ -1250,7 +1250,10 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
         type SetWindowCompositionAttributeType =
             unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
         let module_name = PCSTR::from_raw(c"user32.dll".as_ptr() as *const u8);
-        if let Some(user32) = GetModuleHandleA(module_name).context("Unable to get user32.dll handle").log_err() {
+        if let Some(user32) = GetModuleHandleA(module_name)
+            .context("Unable to get user32.dll handle")
+            .log_err()
+        {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
                 std::mem::transmute(GetProcAddress(user32, func_name));
@@ -1378,6 +1381,9 @@ mod tests {
         assert_eq!(
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
+        );
+    }
+}
         );
     }
 }
