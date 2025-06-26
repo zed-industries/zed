@@ -402,6 +402,7 @@ pub fn replace_top_level_array_value_in_json_text(
     return Ok((replace_range, replace_value));
 }
 
+// todo! Result required?
 pub fn append_top_level_array_value_in_json_text(
     text: &str,
     new_value: &Value,

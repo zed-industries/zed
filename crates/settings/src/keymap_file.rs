@@ -21,7 +21,7 @@ use util::{
 
 use crate::{
     SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
-    update_settings_file, update_value_in_json_text,
+    replace_top_level_array_value_in_json_text, update_settings_file, update_value_in_json_text,
 };
 
 pub trait KeyBindingValidator: Send + Sync {
@@ -639,75 +639,109 @@ impl KeymapFile {
         mut keymap_contents: String,
         tab_size: usize,
     ) -> Result<String> {
-        // todo! how to resolve conflicts if user has keymap json open in buffer with unsaved changes and we modify
-        // the file out from under them?
-
-        // todo! how to make sure we don't concurrently update?
-
-        // match operation {
-        //     KeybindUpdateOperation::Replace { source, target }
-        //         if target.source != KeybindSource::User =>
-        //     {
-        //         operation = KeybindUpdateOperation::Add {
-        //             key_binding: source,
-        //             use_key_equivalents: target.use_key_equivalents,
-        //         };
-        //     }
-        //     _ => {}
-        // }
-
-        let keymap = Self::parse(&keymap_contents)?;
-        let keymap_json_value: Value = parse_json_with_comments(&keymap_contents)?;
-
-        let replace_range;
-        let replace_value;
-
+        // if trying to replace a keybinding that is not user-defined, treat it as an add operation
         match operation {
-            KeybindUpdateOperation::Replace { source, target, .. } => todo!(),
-            KeybindUpdateOperation::Add(keybinding) => {
-                let mut value = serde_json::Map::with_capacity(4);
-                if let Some(context) = keybinding.context {
-                    value.insert("context".to_string(), context.into());
-                }
-                if keybinding.use_key_equivalents {
-                    value.insert("use_key_equivalents".to_string(), true.into());
-                }
+            KeybindUpdateOperation::Replace {
+                target_source,
+                source,
+                ..
+            } if target_source != KeybindSource::User => {
+                operation = KeybindUpdateOperation::Add(source);
+            }
+            _ => {}
+        }
 
-                value.insert("bindings".to_string(), {
-                    let mut bindings = serde_json::Map::new();
-                    let action_name: Value = keybinding.action_name.into();
-                    let action = match keybinding.input {
-                        Some(input) => {
-                            let input = serde_json::from_str::<Value>(input)
-                                .context("Failed to parse action input as JSON")?;
-                            serde_json::json!([action_name, input])
-                        }
-                        None => action_name,
-                    };
-                    bindings.insert(keybinding.keystrokes.into(), action);
-                    bindings.into()
-                });
+        // Sanity check that keymap contents are valid, even though we only use it for Replace.
+        // We don't want to modify the file if it's invalid.
+        let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
 
-                (replace_range, replace_value) = append_top_level_array_value_in_json_text(
+        if let KeybindUpdateOperation::Replace { source, target, .. } = operation {
+            let mut found_index = None;
+            let target_action_value = target
+                .action_value()
+                .context("Failed to generate target action JSON value")?;
+            let source_action_value = source
+                .action_value()
+                .context("Failed to generate source action JSON value")?;
+            'sections: for (index, section) in keymap.sections().enumerate() {
+                if section.context != target.context.unwrap_or("") {
+                    continue;
+                }
+                if section.use_key_equivalents != target.use_key_equivalents {
+                    continue;
+                }
+                let Some(bindings) = &section.bindings else {
+                    continue;
+                };
+                for (keystrokes, action) in bindings {
+                    if keystrokes != target.keystrokes {
+                        continue;
+                    }
+                    if action.0 != target_action_value {
+                        continue;
+                    }
+                    found_index = Some(index);
+                    break 'sections;
+                }
+            }
+
+            if let Some(index) = found_index {
+                let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
                     &keymap_contents,
-                    &value.into(),
+                    &["bindings", target.keystrokes],
+                    None,
+                    index,
                     tab_size,
-                )?;
+                )
+                .context("Failed to replace keybinding")?;
+                keymap_contents.replace_range(replace_range, &replace_value);
+                let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                    &keymap_contents,
+                    &["bindings", source.keystrokes],
+                    Some(&source_action_value),
+                    index,
+                    tab_size,
+                )
+                .context("Failed to replace keybinding")?;
+                keymap_contents.replace_range(replace_range, &replace_value);
+
+                return Ok(keymap_contents);
+            } else {
+                log::warn!(
+                    "Failed to find keybinding to update `{:?} -> {}` creating new binding for `{:?} -> {}` instead",
+                    target.keystrokes,
+                    target_action_value,
+                    source.keystrokes,
+                    source_action_value,
+                );
+                operation = KeybindUpdateOperation::Add(source);
             }
         }
-        keymap_contents.replace_range(replace_range, &replace_value);
 
-        // update_value_in_json_text(
-        //     text,
-        //     key_path,
-        //     tab_size,
-        //     old_value,
-        //     new_value,
-        //     preserved_keys,
-        //     edits,
-        // );
+        if let KeybindUpdateOperation::Add(keybinding) = operation {
+            let mut value = serde_json::Map::with_capacity(4);
+            if let Some(context) = keybinding.context {
+                value.insert("context".to_string(), context.into());
+            }
+            if keybinding.use_key_equivalents {
+                value.insert("use_key_equivalents".to_string(), true.into());
+            }
 
-        Ok(keymap_contents)
+            value.insert("bindings".to_string(), {
+                let mut bindings = serde_json::Map::new();
+                let action = keybinding.action_value()?;
+                bindings.insert(keybinding.keystrokes.into(), action);
+                bindings.into()
+            });
+
+            let (replace_range, replace_value) = append_top_level_array_value_in_json_text(
+                &keymap_contents,
+                &value.into(),
+                tab_size,
+            )?;
+            keymap_contents.replace_range(replace_range, &replace_value);
+        }
+        return Ok(keymap_contents);
     }
 }
 
@@ -728,6 +762,21 @@ pub struct KeybindUpdateTarget<'a> {
     action_name: &'a str,
     use_key_equivalents: bool,
     input: Option<&'a str>,
+}
+
+impl<'a> KeybindUpdateTarget<'a> {
+    fn action_value(&self) -> Result<Value> {
+        let action_name: Value = self.action_name.into();
+        let value = match self.input {
+            Some(input) => {
+                let input = serde_json::from_str::<Value>(input)
+                    .context("Failed to parse action input as JSON")?;
+                serde_json::json!([action_name, input])
+            }
+            None => action_name,
+        };
+        return Ok(value);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -811,6 +860,7 @@ mod tests {
 
     #[test]
     fn keymap_update() {
+        zlog::init_test();
         #[track_caller]
         fn check_keymap_update(
             input: impl ToString,
@@ -907,5 +957,171 @@ mod tests {
             ]"#
             .unindent(),
         );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Add(KeybindUpdateTarget {
+                keystrokes: "ctrl-b",
+                action_name: "zed::SomeOtherAction",
+                context: Some("Zed > Editor && some_condition = true"),
+                use_key_equivalents: true,
+                input: Some(r#"{"foo": "bar"}"#),
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                },
+                {
+                    "context": "Zed > Editor && some_condition = true",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "ctrl-b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: "ctrl-a",
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: "ctrl-b",
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: Some(r#"{"foo": "bar"}"#),
+                },
+                target_source: KeybindSource::Base,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                },
+                {
+                    "bindings": {
+                        "ctrl-b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: "ctrl-a",
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: "ctrl-b",
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: Some(r#"{"foo": "bar"}"#),
+                },
+                target_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: "ctrl-a",
+                    action_name: "zed::SomeNonexistentAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: "ctrl-b",
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                target_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "ctrl-a": "zed::SomeAction"
+                    }
+                },
+                {
+                    "bindings": {
+                        "ctrl-b": "zed::SomeOtherAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        )
     }
 }

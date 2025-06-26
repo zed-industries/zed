@@ -14560,6 +14560,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
