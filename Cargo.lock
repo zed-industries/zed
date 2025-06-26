@@ -4161,6 +4161,7 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
+ "shlex",
  "task",
  "util",
  "workspace-hack",
