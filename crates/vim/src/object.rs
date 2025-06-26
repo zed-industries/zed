@@ -1410,7 +1410,7 @@ fn paragraph(
     let mut paragraph_start = start_of_paragraph(map, relative_to);
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
-    for _ in 0..times {
+    for i in 0..times {
 
         let paragraph_end_row = paragraph_end.row();
         let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
@@ -1430,7 +1430,9 @@ fn paragraph(
                     paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
                 }
             } else {
-                let next_paragraph_start = Point::new(paragraph_end_row.0 + 1, 0).to_display_point(map);
+                let mut start_row = paragraph_end_row.0 + 1;
+                if i > 0 { start_row += 1; }
+                let next_paragraph_start = Point::new(start_row, 0).to_display_point(map);
                 paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
         }
