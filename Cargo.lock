@@ -16865,8 +16865,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-python"
 version = "0.23.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d065aaa27f3aaceaf60c1f0e0ac09e1cb9eb8ed28e7bcdaa52129cffc7f4b04"
+source = "git+https://github.com/zed-industries/tree-sitter-python?rev=218fcbf3fda3d029225f3dec005cb497d111b35e#218fcbf3fda3d029225f3dec005cb497d111b35e"
 dependencies = [
  "cc",
  "tree-sitter-language",
