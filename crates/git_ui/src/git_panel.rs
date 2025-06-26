@@ -1510,21 +1510,8 @@ impl GitPanel {
         } else if message.trim().is_empty() {
             return None;
         }
-        let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(message, cx);
-            buffer.set_language(git_commit_language, cx);
-            buffer
-        });
-        let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
-        let wrapped_message = editor.update(cx, |editor, cx| {
-            editor.select_all(&Default::default(), window, cx);
-            editor.rewrap(&Default::default(), window, cx);
-            editor.text(cx)
-        });
-        if wrapped_message.trim().is_empty() {
-            return None;
-        }
-        Some(wrapped_message)
+        // Return the message as-is without automatic rewrapping to preserve user's intended formatting
+        Some(message)
     }
 
     fn has_commit_message(&self, cx: &mut Context<Self>) -> bool {
