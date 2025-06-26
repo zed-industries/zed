@@ -1,7 +1,6 @@
 use std::ops::Range;
 use std::{
     cmp::{self, Reverse},
-    collections::HashSet,
     sync::Arc,
 };
 
@@ -10,20 +9,17 @@ use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    MouseButton, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity,
-    Window, actions, div, rems,
+    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
+    rems,
 };
 use language::{Outline, OutlineItem};
-use menu::SelectPrevious;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{Disclosure, ListItem, ListItemSpacing, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
-
-actions!(outline, [ToggleExpand, ExpandSelected, CollapseSelected]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -61,24 +57,12 @@ pub fn toggle(
 }
 
 pub struct OutlineView {
-    picker: Option<Entity<Picker<OutlineViewDelegate>>>,
-    tree_view: Option<Entity<OutlineTreeView>>,
-    use_tree_mode: bool,
+    picker: Entity<Picker<OutlineViewDelegate>>,
 }
 
 impl Focusable for OutlineView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.use_tree_mode {
-            if let Some(tree_view) = &self.tree_view {
-                tree_view.read(cx).focus_handle.clone()
-            } else {
-                cx.focus_handle()
-            }
-        } else if let Some(picker) = &self.picker {
-            picker.read(cx).focus_handle(cx)
-        } else {
-            cx.focus_handle()
-        }
+        self.picker.focus_handle(cx)
     }
 }
 
@@ -89,34 +73,16 @@ impl ModalView for OutlineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DismissDecision {
-        if self.use_tree_mode {
-            if let Some(tree_view) = &self.tree_view {
-                tree_view.update(cx, |tree_view, cx| {
-                    tree_view.restore_active_editor(window, cx)
-                });
-            }
-        } else if let Some(picker) = &self.picker {
-            picker.update(cx, |picker, cx| {
-                picker.delegate.restore_active_editor(window, cx)
-            });
-        }
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.restore_active_editor(window, cx)
+        });
         DismissDecision::Dismiss(true)
     }
 }
 
 impl Render for OutlineView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        if self.use_tree_mode {
-            if let Some(tree_view) = &self.tree_view {
-                v_flex().w(rems(34.)).child(tree_view.clone())
-            } else {
-                div()
-            }
-        } else if let Some(picker) = &self.picker {
-            v_flex().w(rems(34.)).child(picker.clone())
-        } else {
-            div()
-        }
+        v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
@@ -140,25 +106,11 @@ impl OutlineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> OutlineView {
-        // TODO: Make this configurable via settings
-        let use_tree_mode = true;
-
-        let (picker, tree_view) = if use_tree_mode {
-            let tree_view = OutlineTreeView::new(editor, outline, cx);
-            (None, Some(cx.new(|_| tree_view)))
-        } else {
-            let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
-            let picker = cx.new(|cx| {
-                Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window)))
-            });
-            (Some(picker), None)
-        };
-
-        OutlineView {
-            picker,
-            tree_view,
-            use_tree_mode,
-        }
+        let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window)))
+        });
+        OutlineView { picker }
     }
 }
 
@@ -376,333 +328,6 @@ impl PickerDelegate for OutlineViewDelegate {
                         .child(render_item(outline_item, mat.ranges(), cx)),
                 ),
         )
-    }
-}
-
-// Tree view implementation
-pub struct OutlineTreeView {
-    focus_handle: FocusHandle,
-    active_editor: Entity<Editor>,
-    outline: Option<Outline<Anchor>>,
-    expanded_items: HashSet<usize>,
-    selected_index: Option<usize>,
-    filter_query: String,
-    filtered_indices: Vec<usize>,
-    prev_scroll_position: Option<Point<f32>>,
-    auto_expand_depth: usize,
-}
-
-impl OutlineTreeView {
-    fn new(editor: Entity<Editor>, outline: Outline<Anchor>, cx: &mut App) -> Self {
-        let focus_handle = cx.focus_handle();
-        let mut this = Self {
-            focus_handle: focus_handle.clone(),
-            active_editor: editor.clone(),
-            outline: Some(outline),
-            expanded_items: HashSet::new(),
-            selected_index: None,
-            filter_query: String::new(),
-            filtered_indices: Vec::new(),
-            prev_scroll_position: None,
-            auto_expand_depth: 2,
-        };
-
-        this.update_filtered_indices();
-        this.auto_expand_to_depth();
-
-        this
-    }
-
-    fn update_filtered_indices(&mut self) {
-        if let Some(outline) = &self.outline {
-            if self.filter_query.is_empty() {
-                self.filtered_indices = (0..outline.items.len()).collect();
-            } else {
-                // TODO: Implement proper fuzzy filtering
-                self.filtered_indices = (0..outline.items.len())
-                    .filter(|&i| {
-                        outline.items[i]
-                            .text
-                            .to_lowercase()
-                            .contains(&self.filter_query.to_lowercase())
-                    })
-                    .collect();
-            }
-        } else {
-            self.filtered_indices.clear();
-        }
-    }
-
-    fn auto_expand_to_depth(&mut self) {
-        if let Some(outline) = &self.outline {
-            for (index, item) in outline.items.iter().enumerate() {
-                if item.depth < self.auto_expand_depth && self.has_children(index) {
-                    self.expanded_items.insert(index);
-                }
-            }
-        }
-    }
-
-    fn has_children(&self, index: usize) -> bool {
-        if let Some(outline) = &self.outline {
-            let parent_depth = outline.items[index].depth;
-            outline
-                .items
-                .get(index + 1)
-                .map(|next| next.depth > parent_depth)
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    }
-
-    fn toggle_expand(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.expanded_items.contains(&index) {
-            self.expanded_items.remove(&index);
-        } else {
-            self.expanded_items.insert(index);
-        }
-        cx.notify();
-    }
-
-    fn is_visible(&self, index: usize) -> bool {
-        if let Some(outline) = &self.outline {
-            let item_depth = outline.items[index].depth;
-
-            // Check if any parent is collapsed
-            for i in (0..index).rev() {
-                let prev_item = &outline.items[i];
-                if prev_item.depth < item_depth {
-                    if prev_item.depth == item_depth - 1 && !self.expanded_items.contains(&i) {
-                        return false;
-                    }
-                }
-            }
-
-            // Check filter
-            if !self.filter_query.is_empty() {
-                return self.filtered_indices.contains(&index);
-            }
-
-            true
-        } else {
-            false
-        }
-    }
-
-    fn visible_items(&self) -> Vec<(usize, &OutlineItem<Anchor>)> {
-        if let Some(outline) = &self.outline {
-            outline
-                .items
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| self.is_visible(*i))
-                .collect()
-        } else {
-            Vec::new()
-        }
-    }
-
-    fn move_up(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
-        let visible = self.visible_items();
-        if visible.is_empty() {
-            return;
-        }
-
-        let current_index = self.selected_index.unwrap_or(visible[0].0);
-
-        // Find current position in visible items
-        let current_pos = visible.iter().position(|(idx, _)| *idx == current_index);
-
-        if let Some(pos) = current_pos {
-            if pos > 0 {
-                self.selected_index = Some(visible[pos - 1].0);
-            } else {
-                // Wrap to bottom
-                self.selected_index = Some(visible[visible.len() - 1].0);
-            }
-        } else {
-            // If current selection is not visible, select first visible
-            self.selected_index = Some(visible[0].0);
-        }
-
-        cx.notify();
-    }
-
-    fn move_down(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
-        let visible = self.visible_items();
-        if visible.is_empty() {
-            return;
-        }
-
-        let current_index = self.selected_index.unwrap_or(visible[visible.len() - 1].0);
-
-        // Find current position in visible items
-        let current_pos = visible.iter().position(|(idx, _)| *idx == current_index);
-
-        if let Some(pos) = current_pos {
-            if pos < visible.len() - 1 {
-                self.selected_index = Some(visible[pos + 1].0);
-            } else {
-                // Wrap to top
-                self.selected_index = Some(visible[0].0);
-            }
-        } else {
-            // If current selection is not visible, select last visible
-            self.selected_index = Some(visible[visible.len() - 1].0);
-        }
-
-        cx.notify();
-    }
-
-    fn expand_selected(&mut self, _: &ExpandSelected, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.selected_index {
-            if self.has_children(index) && !self.expanded_items.contains(&index) {
-                self.expanded_items.insert(index);
-                cx.notify();
-            }
-        }
-    }
-
-    fn collapse_selected(&mut self, _: &CollapseSelected, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.selected_index {
-            if self.has_children(index) && self.expanded_items.contains(&index) {
-                self.expanded_items.remove(&index);
-                cx.notify();
-            }
-        }
-    }
-
-    fn toggle_selected(&mut self, _: &ToggleExpand, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.selected_index {
-            if self.has_children(index) {
-                self.toggle_expand(index, cx);
-            }
-        }
-    }
-
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(index) = self.selected_index {
-            self.select_item(index, window, cx);
-        }
-    }
-
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        self.restore_active_editor(window, cx);
-        cx.emit(DismissEvent);
-    }
-
-    fn select_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_index = Some(index);
-
-        if let Some(outline) = &self.outline {
-            let item = &outline.items[index];
-            self.active_editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_ranges([item.range.start..item.range.start]);
-                });
-                cx.focus_self(window);
-            });
-        }
-
-        cx.emit(DismissEvent);
-    }
-
-    fn restore_active_editor(&mut self, window: &mut Window, cx: &mut App) {
-        if let Some(scroll_position) = self.prev_scroll_position {
-            self.active_editor.update(cx, |editor, cx| {
-                editor.set_scroll_position(scroll_position, window, cx);
-            });
-        }
-    }
-
-    fn render_item(
-        &self,
-        index: usize,
-        item: &OutlineItem<Anchor>,
-        cx: &mut Context<OutlineTreeView>,
-    ) -> impl IntoElement {
-        let has_children = self.has_children(index);
-        let is_expanded = self.expanded_items.contains(&index);
-        let is_selected = self.selected_index == Some(index);
-
-        h_flex()
-            .gap_2()
-            .pl(px(item.depth as f32 * 20.0))
-            .w_full()
-            .py_1()
-            .px_2()
-            .rounded_md()
-            .when(is_selected, |this| {
-                this.bg(cx.theme().colors().element_selected)
-            })
-            .hover(|style| style.bg(cx.theme().colors().element_hover))
-            .child(if has_children {
-                Disclosure::new(("outline-tree", index), is_expanded)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_expand(index, cx);
-                    }))
-                    .into_any_element()
-            } else {
-                div().w(px(16.0)).into_any_element()
-            })
-            .child(render_item(item, None, cx))
-            .cursor_pointer()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    this.select_item(index, window, cx);
-                }),
-            )
-    }
-}
-
-impl Focusable for OutlineTreeView {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl EventEmitter<DismissEvent> for OutlineTreeView {}
-
-impl Render for OutlineTreeView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let visible_items = self.visible_items();
-
-        v_flex()
-            .size_full()
-            .key_context("OutlineTreeView")
-            .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::move_down))
-            .on_action(cx.listener(Self::expand_selected))
-            .on_action(cx.listener(Self::collapse_selected))
-            .on_action(cx.listener(Self::toggle_selected))
-            .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::cancel))
-            .child(
-                div().px_2().py_1().child(
-                    // Search input placeholder for now
-                    div()
-                        .h_7()
-                        .px_2()
-                        .rounded_md()
-                        .bg(cx.theme().colors().element_background)
-                        .child("Search outline..."),
-                ),
-            )
-            .child(
-                div()
-                    .id("outline-tree-scroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .child({
-                        let items: Vec<_> = visible_items
-                            .into_iter()
-                            .map(|(index, item)| div().child(self.render_item(index, item, cx)))
-                            .collect();
-                        v_flex().w_full().children(items)
-                    }),
-            )
     }
 }
 
