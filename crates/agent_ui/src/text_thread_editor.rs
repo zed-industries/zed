@@ -69,7 +69,7 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 use workspace::{
-    Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Save, Toast, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane,

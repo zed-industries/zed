@@ -1094,7 +1094,6 @@ mod tests {
     };
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
-    use serde::Serialize;
     use settings::SettingsStore;
     use std::{future, sync::Arc};
 
