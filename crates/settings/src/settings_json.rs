@@ -108,7 +108,8 @@ pub fn update_value_in_json_text<'a>(
                 );
             } else {
                 // Key was removed from new object, remove the entire key-value pair
-                let (range, replacement) = replace_value_in_json_text(text, key_path, 0, None);
+                let (range, replacement) =
+                    replace_value_in_json_text(text, key_path, 0, None, None);
                 text.replace_range(range.clone(), &replacement);
                 edits.push((range, replacement));
             }
@@ -139,17 +140,19 @@ pub fn update_value_in_json_text<'a>(
             new_object.retain(|_, v| !v.is_null());
         }
         let (range, replacement) =
-            replace_value_in_json_text(text, key_path, tab_size, Some(&new_value));
+            replace_value_in_json_text(text, key_path, tab_size, Some(&new_value), None);
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
 }
 
+/// * `replace_key` - When an exact key match according to `key_path` is found, replace the key with `replace_key` if `Some`.
 fn replace_value_in_json_text(
     text: &str,
     key_path: &[&str],
     tab_size: usize,
     new_value: Option<&Value>,
+    replace_key: Option<&str>,
 ) -> (Range<usize>, String) {
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
         Query::new(
@@ -220,7 +223,19 @@ fn replace_value_in_json_text(
     if depth == key_path.len() {
         if let Some(new_value) = new_value {
             let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
-            (existing_value_range, new_val)
+            if let Some(replace_key) = replace_key {
+                let new_key = format!("\"{}\": ", replace_key);
+                if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
+                    if let Some(prev_key_start) = text[..key_start].rfind('"') {
+                        existing_value_range.start = prev_key_start;
+                    } else {
+                        existing_value_range.start = key_start;
+                    }
+                }
+                (existing_value_range, new_key + &new_val)
+            } else {
+                (existing_value_range, new_val)
+            }
         } else {
             let mut removal_start = first_key_start.unwrap_or(existing_value_range.start);
             let mut removal_end = existing_value_range.end;
@@ -325,6 +340,7 @@ pub fn replace_top_level_array_value_in_json_text(
     text: &str,
     key_path: &[&str],
     new_value: Option<&Value>,
+    replace_key: Option<&str>,
     array_index: usize,
     tab_size: usize,
 ) -> Result<(Range<usize>, String)> {
@@ -381,7 +397,7 @@ pub fn replace_top_level_array_value_in_json_text(
     let needs_indent = range.start_point.row > 0;
 
     let (mut replace_range, mut replace_value) =
-        replace_value_in_json_text(value_str, key_path, tab_size, new_value);
+        replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
 
     replace_range.start += offset;
     replace_range.end += offset;
@@ -460,7 +476,7 @@ pub fn append_top_level_array_value_in_json_text(
     }
 
     let (mut replace_range, mut replace_value) =
-        replace_value_in_json_text("", &[], tab_size, Some(new_value));
+        replace_value_in_json_text("", &[], tab_size, Some(new_value), None);
 
     let offset = if let Some(comma_range) = &comma_range {
         comma_range.end
@@ -555,7 +571,7 @@ mod tests {
             value: Option<Value>,
             expected: String,
         ) {
-            let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref());
+            let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref(), None);
             let mut result_str = input.to_string();
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected, result_str);
@@ -872,6 +888,7 @@ mod tests {
                 &input,
                 key_path,
                 Some(&value),
+                None,
                 index,
                 4,
             )
@@ -964,6 +981,35 @@ mod tests {
                 {
                     "foo": "bar",
                     "baz": "qux"
+                },
+                3
+            ]"#,
+        );
+
+        check_array_replace(
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    // some comment to keep
+                    "baz": {
+                        // some comment to remove
+                        "qux": "quz"
+                    }
+                    // some other comment to keep
+                },
+                3
+            ]"#,
+            1,
+            &["baz"],
+            json!("qux"),
+            r#"[
+                1,
+                {
+                    "foo": "bar",
+                    // some comment to keep
+                    "baz": "qux"
+                    // some other comment to keep
                 },
                 3
             ]"#,

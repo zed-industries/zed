@@ -689,16 +689,8 @@ impl KeymapFile {
                 let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
                     &keymap_contents,
                     &["bindings", target.keystrokes],
-                    None,
-                    index,
-                    tab_size,
-                )
-                .context("Failed to replace keybinding")?;
-                keymap_contents.replace_range(replace_range, &replace_value);
-                let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
-                    &keymap_contents,
-                    &["bindings", source.keystrokes],
                     Some(&source_action_value),
+                    Some(source.keystrokes),
                     index,
                     tab_size,
                 )
@@ -1122,6 +1114,51 @@ mod tests {
                 }
             ]"#
             .unindent(),
-        )
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        // some comment
+                        "ctrl-a": "zed::SomeAction"
+                        // some other comment
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: "ctrl-a",
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: "ctrl-b",
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    use_key_equivalents: false,
+                    input: Some(r#"{"foo": "bar"}"#),
+                },
+                target_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        // some comment
+                        "ctrl-b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                        // some other comment
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
     }
 }
