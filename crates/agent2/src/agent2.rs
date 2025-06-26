@@ -1,4 +1,5 @@
 mod acp;
+mod thread_element;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -8,6 +9,7 @@ use project::Project;
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
 pub use acp::AcpAgent;
+pub use thread_element::ThreadElement;
 
 #[async_trait(?Send)]
 pub trait Agent: 'static {

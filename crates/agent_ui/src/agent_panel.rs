@@ -198,7 +198,7 @@ enum ActiveView {
         _subscriptions: Vec<gpui::Subscription>,
     },
     Agent2Thread {
-        thread: Entity<agent2::Thread>,
+        thread_element: Entity<agent2::ThreadElement>,
     },
     TextThread {
         context_editor: Entity<TextThreadEditor>,
@@ -670,7 +670,9 @@ impl AgentPanel {
                             .clone()
                             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
                     }
-                    ActiveView::Agent2Thread { .. } => todo!(),
+                    ActiveView::Agent2Thread { .. } => {
+                        // todo!
+                    }
                     ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
@@ -751,8 +753,8 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
-            ActiveView::Agent2Thread { .. } => {
-                todo!()
+            ActiveView::Agent2Thread { thread_element, .. } => {
+                thread_element.update(cx, |thread_element, cx| thread_element.cancel(window, cx));
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
@@ -763,11 +765,9 @@ impl AgentPanel {
             ActiveView::Thread { message_editor, .. } => Some(message_editor),
             ActiveView::Agent2Thread { .. } => {
                 // todo!
-              None
+                None
             }
-            ActiveView::TextThread { .. }
-            | ActiveView::History
-            | ActiveView::Configuration => None,
+            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
         }
     }
 
@@ -810,7 +810,7 @@ impl AgentPanel {
             })
             .detach_and_log_err(cx);
         }
-        
+
         let active_thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
@@ -897,6 +897,7 @@ impl AgentPanel {
             .next()
             .map(|worktree| worktree.read(cx).abs_path())
         else {
+            // todo! handle no project
             return;
         };
 
@@ -918,8 +919,9 @@ impl AgentPanel {
         cx.spawn_in(window, async move |this, cx| {
             let agent = AcpAgent::stdio(child, project, cx);
             let thread = agent.create_thread(cx).await?;
+            let thread_element = cx.new(|_cx| agent2::ThreadElement::new(thread))?;
             this.update_in(cx, |this, window, cx| {
-                this.set_active_view(ActiveView::Agent2Thread { thread }, window, cx);
+                this.set_active_view(ActiveView::Agent2Thread { thread_element }, window, cx);
             })
         })
         .detach();
@@ -1412,7 +1414,9 @@ impl AgentPanel {
                     });
                 }
             }
-            ActiveView::Agent2Thread { .. } => todo!(),
+            ActiveView::Agent2Thread { .. } => {
+                // todo!
+            }
             _ => {}
         }
 
@@ -1428,7 +1432,9 @@ impl AgentPanel {
                     }
                 })
             }
-            ActiveView::Agent2Thread { .. } => todo!(),
+            ActiveView::Agent2Thread { .. } => {
+                // todo! push history entry
+            }
             _ => {}
         }
 
@@ -1675,9 +1681,11 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
-            ActiveView::Agent2Thread { thread } => Label::new(thread.read(cx).title())
-                .truncate()
-                .into_any_element(),
+            ActiveView::Agent2Thread { thread_element } => {
+                Label::new(thread_element.read(cx).title(cx))
+                    .truncate()
+                    .into_any_element()
+            }
             ActiveView::TextThread {
                 title_editor,
                 context_editor,
@@ -1984,7 +1992,8 @@ impl AgentPanel {
                 ..
             } => (thread.read(cx), message_editor.read(cx)),
             ActiveView::Agent2Thread { .. } => {
-                todo!();
+                // todo!
+                return None;
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
                 return None;
@@ -3224,9 +3233,9 @@ impl Render for AgentPanel {
                         )
                     })
                     .child(self.render_drag_target(cx)),
-                ActiveView::Agent2Thread { .. } => parent
+                ActiveView::Agent2Thread { thread_element, .. } => parent
                     .relative()
-                    .child("todo!")
+                    .child(thread_element.clone())
                     // todo!
                     // .child(h_flex().child(self.message_editor.clone()))
                     .child(self.render_drag_target(cx)),
