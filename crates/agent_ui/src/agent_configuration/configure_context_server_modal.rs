@@ -748,7 +748,7 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: colors.element_selection_background,
         link: TextStyleRefinement {
             background_color: Some(colors.editor_foreground.opacity(0.025)),
             underline: Some(UnderlineStyle {
