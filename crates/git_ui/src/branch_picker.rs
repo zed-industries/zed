@@ -245,7 +245,7 @@ impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select branch...".into()
+        "Select branch…".into()
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
@@ -439,13 +439,29 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
+        let branch_name = if entry.is_new {
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new(format!("Create branch \"{}\"…", entry.branch.name()))
+                        .single_line()
+                        .truncate(),
+                )
+                .into_any_element()
+        } else {
+            HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
+                .truncate()
+                .into_any_element()
+        };
+
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
-                .spacing(match self.style {
-                    BranchListStyle::Modal => ListItemSpacing::default(),
-                    BranchListStyle::Popover => ListItemSpacing::ExtraDense,
-                })
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
@@ -454,34 +470,12 @@ impl PickerDelegate for BranchListDelegate {
                         .overflow_hidden()
                         .child(
                             h_flex()
-                                .w_full()
-                                .flex_shrink()
-                                .overflow_x_hidden()
-                                .gap_2()
+                                .gap_6()
                                 .justify_between()
-                                .child(div().flex_1().min_w_0().overflow_x_hidden().child(
-                                    if entry.is_new {
-                                        let truncated_name =
-                                            util::truncate_and_trailoff(entry.branch.name(), 32);
-                                        Label::new(format!("Create branch \"{}\"…", truncated_name))
-                                            .single_line()
-                                            .into_any_element()
-                                    } else {
-                                        let truncated_name =
-                                            util::truncate_and_trailoff(entry.branch.name(), 32);
-                                        let adjusted_positions: Vec<usize> = entry
-                                            .positions
-                                            .iter()
-                                            .filter(|&&pos| pos < truncated_name.len())
-                                            .copied()
-                                            .collect();
-                                        HighlightedLabel::new(truncated_name, adjusted_positions)
-                                            .single_line()
-                                            .into_any_element()
-                                    },
-                                ))
-                                .when_some(commit_time, |el, commit_time| {
-                                    el.child(
+                                .overflow_x_hidden()
+                                .child(branch_name)
+                                .when_some(commit_time, |label, commit_time| {
+                                    label.child(
                                         Label::new(commit_time)
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
