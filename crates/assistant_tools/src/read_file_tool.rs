@@ -31,8 +31,8 @@ pub struct ReadFileToolInput {
     /// <example>
     /// If the project has the following root directories:
     ///
-    /// - directory1
-    /// - directory2
+    /// - /a/b/directory1
+    /// - /c/d/directory2
     ///
     /// If you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.

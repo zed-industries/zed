@@ -221,7 +221,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
     }
 
     if let Some(updater) = AutoUpdater::get(cx) {
-        updater.update(cx, |updater, cx| updater.poll(cx));
+        updater.update(cx, |updater, cx| updater.poll(UpdateCheckType::Manual, cx));
     } else {
         drop(window.prompt(
             gpui::PromptLevel::Info,
@@ -296,6 +296,11 @@ impl InstallerDir {
     }
 }
 
+pub enum UpdateCheckType {
+    Automatic,
+    Manual,
+}
+
 impl AutoUpdater {
     pub fn get(cx: &mut App) -> Option<Entity<Self>> {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
@@ -313,13 +318,13 @@ impl AutoUpdater {
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(async move |this, cx| {
             loop {
-                this.update(cx, |this, cx| this.poll(cx))?;
+                this.update(cx, |this, cx| this.poll(UpdateCheckType::Automatic, cx))?;
                 cx.background_executor().timer(POLL_INTERVAL).await;
             }
         })
     }
 
-    pub fn poll(&mut self, cx: &mut Context<Self>) {
+    pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
         if self.pending_poll.is_some() {
             return;
         }
@@ -331,8 +336,18 @@ impl AutoUpdater {
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
-                    log::error!("auto-update failed: error:{:?}", error);
-                    this.status = AutoUpdateStatus::Errored;
+                    this.status = match check_type {
+                        // Be quiet if the check was automated (e.g. when offline)
+                        UpdateCheckType::Automatic => {
+                            log::info!("auto-update check failed: error:{:?}", error);
+                            AutoUpdateStatus::Idle
+                        }
+                        UpdateCheckType::Manual => {
+                            log::error!("auto-update failed: error:{:?}", error);
+                            AutoUpdateStatus::Errored
+                        }
+                    };
+
                     cx.notify();
                 }
             })

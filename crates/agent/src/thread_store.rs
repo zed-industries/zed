@@ -1,22 +1,25 @@
-use std::cell::{Ref, RefCell};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-
+use crate::{
+    context_server_tool::ContextServerTool,
+    thread::{
+        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
+    },
+};
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
-use futures::channel::{mpsc, oneshot};
-use futures::future::{self, BoxFuture, Shared};
-use futures::{FutureExt as _, StreamExt as _};
+use futures::{
+    FutureExt as _, StreamExt as _,
+    channel::{mpsc, oneshot},
+    future::{self, BoxFuture, Shared},
+};
 use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
-    Subscription, Task, prelude::*,
+    Subscription, Task, Window, prelude::*,
 };
-
+use indoc::indoc;
 use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -25,19 +28,18 @@ use prompt_store::{
     UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use ui::Window;
-use util::ResultExt as _;
-
-use crate::context_server_tool::ContextServerTool;
-use crate::thread::{
-    DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
-};
-use indoc::indoc;
 use sqlez::{
     bindable::{Bind, Column},
     connection::Connection,
     statement::Statement,
 };
+use std::{
+    cell::{Ref, RefCell},
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
+use util::ResultExt as _;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -69,7 +71,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 8] = [
+const RULES_FILE_NAMES: [&'static str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -78,6 +80,7 @@ const RULES_FILE_NAMES: [&'static str; 8] = [
     "CLAUDE.md",
     "AGENT.md",
     "AGENTS.md",
+    "GEMINI.md",
 ];
 
 pub fn init(cx: &mut App) {
@@ -94,7 +97,7 @@ impl SharedProjectContext {
     }
 }
 
-pub type TextThreadStore = assistant_context_editor::ContextStore;
+pub type TextThreadStore = assistant_context::ContextStore;
 
 pub struct ThreadStore {
     project: Entity<Project>,
@@ -305,17 +308,19 @@ impl ThreadStore {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
-        let root_name = worktree.read(cx).root_name().into();
+        let tree = worktree.read(cx);
+        let root_name = tree.root_name().into();
+        let abs_path = tree.abs_path();
+
+        let mut context = WorktreeContext {
+            root_name,
+            abs_path,
+            rules_file: None,
+        };
 
         let rules_task = Self::load_worktree_rules_file(worktree, project, cx);
         let Some(rules_task) = rules_task else {
-            return Task::ready((
-                WorktreeContext {
-                    root_name,
-                    rules_file: None,
-                },
-                None,
-            ));
+            return Task::ready((context, None));
         };
 
         cx.spawn(async move |_| {
@@ -328,11 +333,8 @@ impl ThreadStore {
                     }),
                 ),
             };
-            let worktree_info = WorktreeContext {
-                root_name,
-                rules_file,
-            };
-            (worktree_info, rules_file_error)
+            context.rules_file = rules_file;
+            (context, rules_file_error)
         })
     }
 
@@ -341,12 +343,12 @@ impl ThreadStore {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Task<Result<RulesFileContext>>> {
-        let worktree_ref = worktree.read(cx);
-        let worktree_id = worktree_ref.id();
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
         let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
-                worktree_ref
+                worktree
                     .entry_for_path(name)
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
@@ -730,7 +732,7 @@ pub enum SerializedMessageSegment {
         signature: Option<String>,
     },
     RedactedThinking {
-        data: Vec<u8>,
+        data: String,
     },
 }
 

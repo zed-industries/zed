@@ -2607,7 +2607,7 @@ impl MultiBuffer {
                 return file.file_name(cx).to_string_lossy();
             }
 
-            if let Some(title) = self.buffer_based_title(buffer) {
+            if let Some(title) = self.buffer_content_title(buffer) {
                 return title;
             }
         };
@@ -2615,7 +2615,7 @@ impl MultiBuffer {
         "untitled".into()
     }
 
-    fn buffer_based_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
+    fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
         let mut is_leading_whitespace = true;
         let mut count = 0;
         let mut prev_was_space = false;
@@ -2647,11 +2647,11 @@ impl MultiBuffer {
 
         let title = title.trim_end().to_string();
 
-        if !title.is_empty() {
-            return Some(title.into());
+        if title.is_empty() {
+            return None;
         }
 
-        None
+        Some(title.into())
     }
 
     pub fn set_title(&mut self, title: String, cx: &mut Context<Self>) {
@@ -4212,6 +4212,19 @@ impl MultiBufferSnapshot {
 
     pub fn has_diff_hunks(&self) -> bool {
         self.diffs.values().any(|diff| !diff.is_empty())
+    }
+
+    pub fn is_inside_word<T: ToOffset>(&self, position: T, for_completion: bool) -> bool {
+        let position = position.to_offset(self);
+        let classifier = self
+            .char_classifier_at(position)
+            .for_completion(for_completion);
+        let next_char_kind = self.chars_at(position).next().map(|c| classifier.kind(c));
+        let prev_char_kind = self
+            .reversed_chars_at(position)
+            .next()
+            .map(|c| classifier.kind(c));
+        prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
     }
 
     pub fn surrounding_word<T: ToOffset>(
@@ -7722,14 +7735,24 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let diff_transform_end = diff_transform_end.min(self.range.end);
 
                 if diff_transform_end < chunk_end {
-                    let (before, after) =
-                        chunk.text.split_at(diff_transform_end - self.range.start);
+                    let split_idx = diff_transform_end - self.range.start;
+                    let (before, after) = chunk.text.split_at(split_idx);
                     self.range.start = diff_transform_end;
+                    let mask = (1 << split_idx) - 1;
+                    let chars = chunk.chars & mask;
+                    let tabs = chunk.tabs & mask;
+
                     chunk.text = after;
+                    chunk.chars = chunk.chars >> split_idx;
+                    chunk.tabs = chunk.tabs >> split_idx;
+
                     // FIXME: We should be handling bitmap for tabs and chars here
                     // Because we do a split at operation the bitmaps will be off
+
                     Some(Chunk {
-                        text: dbg!(before),
+                        text: before,
+                        chars,
+                        tabs,
                         ..chunk.clone()
                     })
                 } else {
@@ -7767,7 +7790,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let chunk = if let Some(chunk) = chunks.next() {
                     self.range.start += chunk.text.len();
                     self.diff_base_chunks = Some((*buffer_id, chunks));
-                    dbg!(chunk)
+                    chunk
                 } else {
                     debug_assert!(has_trailing_newline);
                     self.range.start += "\n".len();

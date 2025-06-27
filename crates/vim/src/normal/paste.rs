@@ -1,9 +1,11 @@
 use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
-use gpui::{Context, Window, impl_actions};
+use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::cmp;
+use vim_mode_setting::HelixModeSetting;
 
 use crate::{
     Vim,
@@ -12,7 +14,8 @@ use crate::{
     state::{Mode, Register},
 };
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct Paste {
     #[serde(default)]
@@ -20,8 +23,6 @@ pub struct Paste {
     #[serde(default)]
     preserve_clipboard: bool,
 }
-
-impl_actions!(vim, [Paste]);
 
 impl Vim {
     pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -218,7 +219,11 @@ impl Vim {
             });
         });
 
-        self.switch_mode(self.default_mode(cx), true, window, cx);
+        if HelixModeSetting::get_global(cx).0 {
+            self.switch_mode(Mode::HelixNormal, true, window, cx);
+        } else {
+            self.switch_mode(Mode::Normal, true, window, cx);
+        }
     }
 
     pub fn replace_with_register_object(

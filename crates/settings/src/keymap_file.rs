@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, NoAction,
 };
 use schemars::{
     JsonSchema,
@@ -151,9 +151,21 @@ impl KeymapFile {
         parse_json_with_comments::<Self>(content)
     }
 
-    pub fn load_asset(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
+    pub fn load_asset(
+        asset_path: &str,
+        source: Option<KeybindSource>,
+        cx: &App,
+    ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { key_bindings } => Ok(key_bindings),
+            KeymapFileLoadResult::Success { mut key_bindings } => match source {
+                Some(source) => Ok({
+                    for key_binding in &mut key_bindings {
+                        key_binding.set_meta(source.meta());
+                    }
+                    key_bindings
+                }),
+                None => Ok(key_bindings),
+            },
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
             }
@@ -414,14 +426,21 @@ impl KeymapFile {
             .into_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
-        let deprecations = cx.action_deprecations();
-        KeymapFile::generate_json_schema(generator, action_schemas, deprecations)
+        let deprecations = cx.deprecated_actions_to_preferred_actions();
+        let deprecation_messages = cx.action_deprecation_messages();
+        KeymapFile::generate_json_schema(
+            generator,
+            action_schemas,
+            deprecations,
+            deprecation_messages,
+        )
     }
 
     fn generate_json_schema(
         generator: SchemaGenerator,
-        action_schemas: Vec<(SharedString, Option<Schema>)>,
-        deprecations: &HashMap<SharedString, SharedString>,
+        action_schemas: Vec<(&'static str, Option<Schema>)>,
+        deprecations: &HashMap<&'static str, &'static str>,
+        deprecation_messages: &HashMap<&'static str, &'static str>,
     ) -> serde_json::Value {
         fn set<I, O>(input: I) -> Option<O>
         where
@@ -492,9 +511,9 @@ impl KeymapFile {
         };
         let mut keymap_action_alternatives = vec![plain_action.into(), action_with_input.into()];
 
-        for (name, action_schema) in action_schemas.iter() {
+        for (name, action_schema) in action_schemas.into_iter() {
             let schema = if let Some(Schema::Object(schema)) = action_schema {
-                Some(schema.clone())
+                Some(schema)
             } else {
                 None
             };
@@ -509,7 +528,7 @@ impl KeymapFile {
             let deprecation = if name == NoAction.name() {
                 Some("null")
             } else {
-                deprecations.get(name).map(|new_name| new_name.as_ref())
+                deprecations.get(name).copied()
             };
 
             // Add an alternative for plain action names.
@@ -518,7 +537,9 @@ impl KeymapFile {
                 const_value: Some(Value::String(name.to_string())),
                 ..Default::default()
             };
-            if let Some(new_name) = deprecation {
+            if let Some(message) = deprecation_messages.get(name) {
+                add_deprecation(&mut plain_action, message.to_string());
+            } else if let Some(new_name) = deprecation {
                 add_deprecation_preferred_name(&mut plain_action, new_name);
             }
             if let Some(description) = description.clone() {
@@ -538,9 +559,11 @@ impl KeymapFile {
                         ..Default::default()
                     };
                     if let Some(description) = description.clone() {
-                        add_description(&mut matches_action_name, description.to_string());
+                        add_description(&mut matches_action_name, description);
                     }
-                    if let Some(new_name) = deprecation {
+                    if let Some(message) = deprecation_messages.get(name) {
+                        add_deprecation(&mut matches_action_name, message.to_string());
+                    } else if let Some(new_name) = deprecation {
                         add_deprecation_preferred_name(&mut matches_action_name, new_name);
                     }
                     let action_with_input = SchemaObject {
@@ -605,6 +628,61 @@ impl KeymapFile {
                 Err(err)
             }
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum KeybindSource {
+    User,
+    Default,
+    Base,
+    Vim,
+}
+
+impl KeybindSource {
+    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
+    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
+    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
+    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            KeybindSource::User => "User",
+            KeybindSource::Default => "Default",
+            KeybindSource::Base => "Base",
+            KeybindSource::Vim => "Vim",
+        }
+    }
+
+    pub fn meta(&self) -> KeyBindingMetaIndex {
+        match self {
+            KeybindSource::User => Self::USER,
+            KeybindSource::Default => Self::DEFAULT,
+            KeybindSource::Base => Self::BASE,
+            KeybindSource::Vim => Self::VIM,
+        }
+    }
+
+    pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
+        match index {
+            _ if index == Self::USER => KeybindSource::User,
+            _ if index == Self::USER => KeybindSource::Base,
+            _ if index == Self::DEFAULT => KeybindSource::Default,
+            _ if index == Self::VIM => KeybindSource::Vim,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<KeyBindingMetaIndex> for KeybindSource {
+    fn from(index: KeyBindingMetaIndex) -> Self {
+        Self::from_meta(index)
+    }
+}
+
+impl From<KeybindSource> for KeyBindingMetaIndex {
+    fn from(source: KeybindSource) -> Self {
+        return source.meta();
     }
 }
 

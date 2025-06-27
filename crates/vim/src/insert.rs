@@ -2,6 +2,8 @@ use crate::{Vim, state::Mode};
 use editor::{Bias, Editor, scroll::Autoscroll};
 use gpui::{Action, Context, Window, actions};
 use language::SelectionGoal;
+use settings::Settings;
+use vim_mode_setting::HelixModeSetting;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);
 
@@ -27,16 +29,25 @@ impl Vim {
         self.stop_recording_immediately(action.boxed_clone(), cx);
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), window, cx);
+
             self.update_editor(window, cx, |_, editor, window, cx| {
                 editor.dismiss_menus_and_popups(false, window, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.move_cursors_with(|map, mut cursor, _| {
-                        *cursor.column_mut() = cursor.column().saturating_sub(1);
-                        (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+
+                if !HelixModeSetting::get_global(cx).0 {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.move_cursors_with(|map, mut cursor, _| {
+                            *cursor.column_mut() = cursor.column().saturating_sub(1);
+                            (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+                        });
                     });
-                });
+                }
             });
-            self.switch_mode(self.default_mode(cx), false, window, cx);
+
+            if HelixModeSetting::get_global(cx).0 {
+                self.switch_mode(Mode::HelixNormal, false, window, cx);
+            } else {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
             return;
         }
 

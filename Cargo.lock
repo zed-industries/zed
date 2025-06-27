@@ -14,6 +14,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "proto",
  "release_channel",
  "smallvec",
  "ui",
@@ -55,7 +56,83 @@ version = "0.1.0"
 dependencies = [
  "agent_settings",
  "anyhow",
- "assistant_context_editor",
+ "assistant_context",
+ "assistant_tool",
+ "assistant_tools",
+ "chrono",
+ "client",
+ "collections",
+ "component",
+ "context_server",
+ "convert_case 0.8.0",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "git",
+ "gpui",
+ "heed",
+ "http_client",
+ "icons",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "log",
+ "paths",
+ "postage",
+ "pretty_assertions",
+ "project",
+ "prompt_store",
+ "proto",
+ "rand 0.8.5",
+ "ref-cast",
+ "rope",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "sqlez",
+ "telemetry",
+ "text",
+ "theme",
+ "thiserror 2.0.12",
+ "time",
+ "util",
+ "uuid",
+ "workspace",
+ "workspace-hack",
+ "zed_llm_client",
+ "zstd",
+]
+
+[[package]]
+name = "agent_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "gpui",
+ "language_model",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "workspace-hack",
+ "zed_llm_client",
+]
+
+[[package]]
+name = "agent_ui"
+version = "0.1.0"
+dependencies = [
+ "agent",
+ "agent_settings",
+ "anyhow",
+ "assistant_context",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
@@ -67,18 +144,16 @@ dependencies = [
  "collections",
  "component",
  "context_server",
- "convert_case 0.8.0",
  "db",
  "editor",
  "extension",
+ "extension_host",
  "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
  "fuzzy",
- "git",
  "gpui",
- "heed",
  "html_to_markdown",
  "http_client",
  "indexed_docs",
@@ -88,6 +163,7 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
+ "languages",
  "log",
  "lsp",
  "markdown",
@@ -98,13 +174,11 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
- "postage",
  "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
  "rand 0.8.5",
- "ref-cast",
  "release_channel",
  "rope",
  "rules_library",
@@ -115,7 +189,6 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
- "sqlez",
  "streaming_diff",
  "telemetry",
  "telemetry_events",
@@ -123,11 +196,11 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
- "thiserror 2.0.12",
  "time",
  "time_format",
+ "tree-sitter-md",
  "ui",
- "ui_input",
+ "unindent",
  "urlencoding",
  "util",
  "uuid",
@@ -135,33 +208,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
- "zed_llm_client",
- "zstd",
-]
-
-[[package]]
-name = "agent_settings"
-version = "0.1.0"
-dependencies = [
- "anthropic",
- "anyhow",
- "collections",
- "deepseek",
- "fs",
- "gpui",
- "language_model",
- "lmstudio",
- "log",
- "mistral",
- "ollama",
- "open_ai",
- "paths",
- "schemars",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "workspace-hack",
  "zed_llm_client",
 ]
 
@@ -491,7 +537,6 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
- "shlex",
  "smol",
  "tempfile",
  "util",
@@ -509,7 +554,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant_context_editor"
+name = "assistant_context"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
@@ -521,31 +566,23 @@ dependencies = [
  "clock",
  "collections",
  "context_server",
- "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "indexed_docs",
  "indoc",
  "language",
  "language_model",
- "languages",
  "log",
- "multi_buffer",
  "open_ai",
- "ordered-float 2.10.1",
  "parking_lot",
  "paths",
- "picker",
  "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
  "rand 0.8.5",
  "regex",
- "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -554,15 +591,12 @@ dependencies = [
  "smol",
  "telemetry_events",
  "text",
- "theme",
- "tree-sitter-md",
  "ui",
  "unindent",
  "util",
  "uuid",
  "workspace",
  "workspace-hack",
- "zed_actions",
  "zed_llm_client",
 ]
 
@@ -2042,7 +2076,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.6.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "ash",
  "ash-window",
@@ -2075,7 +2109,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2085,7 +2119,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.2.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2649,6 +2683,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "postage",
  "rand 0.8.5",
  "release_channel",
  "rpc",
@@ -2822,7 +2857,9 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
+ "derive_more",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
@@ -2834,6 +2871,7 @@ dependencies = [
  "paths",
  "postage",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "rustls-pki-types",
@@ -2858,6 +2896,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -2978,7 +3017,7 @@ version = "0.44.0"
 dependencies = [
  "agent_settings",
  "anyhow",
- "assistant_context_editor",
+ "assistant_context",
  "assistant_slash_command",
  "async-stripe",
  "async-trait",
@@ -3345,6 +3384,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "dirs 4.0.0",
  "editor",
  "fs",
  "futures 0.3.31",
@@ -3541,6 +3581,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "coreaudio-rs"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aae284fbaf7d27aa0e292f7677dfbe26503b0d555026f702940805a630eac17"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+ "objc2-audio-toolbox",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "coreaudio-sys"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3575,7 +3629,8 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.15.3"
-source = "git+https://github.com/zed-industries/cpal?rev=fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50#fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "873dab07c8f743075e57f524c583985fbaf745602acbe916a01539364369a779"
 dependencies = [
  "alsa",
  "core-foundation-sys",
@@ -3585,9 +3640,35 @@ dependencies = [
  "js-sys",
  "libc",
  "mach2",
- "ndk",
+ "ndk 0.8.0",
  "ndk-context",
  "oboe",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows 0.54.0",
+]
+
+[[package]]
+name = "cpal"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbd307f43cc2a697e2d1f8bc7a1d824b5269e052209e28883e5bc04d095aaa3f"
+dependencies = [
+ "alsa",
+ "coreaudio-rs 0.13.0",
+ "dasp_sample",
+ "jni",
+ "js-sys",
+ "libc",
+ "mach2",
+ "ndk 0.9.0",
+ "ndk-context",
+ "num-derive",
+ "num-traits",
+ "objc2-audio-toolbox",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -4199,6 +4280,7 @@ dependencies = [
  "gpui",
  "serde_json",
  "task",
+ "util",
  "workspace-hack",
 ]
 
@@ -4224,6 +4306,7 @@ dependencies = [
 name = "debugger_ui"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "client",
  "collections",
@@ -4233,7 +4316,6 @@ dependencies = [
  "db",
  "debugger_tools",
  "editor",
- "feature_flags",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -4250,13 +4332,18 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "shlex",
  "sysinfo",
  "task",
  "tasks_ui",
+ "telemetry",
  "terminal_view",
  "theme",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-json",
  "ui",
  "unindent",
  "util",
@@ -4702,7 +4789,6 @@ dependencies = [
  "dap",
  "db",
  "emojis",
- "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -5014,6 +5100,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
@@ -6122,6 +6209,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "buffer_diff",
+ "call",
  "chrono",
  "collections",
  "command_palette_hooks",
@@ -6160,6 +6248,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "watch",
  "windows 0.61.1",
  "workspace",
  "workspace-hack",
@@ -8110,12 +8199,11 @@ dependencies = [
 name = "inline_completion"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "client",
  "gpui",
  "language",
  "project",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -8831,6 +8919,7 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "log",
  "parking_lot",
  "proto",
  "schemars",
@@ -8866,6 +8955,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "language",
  "language_model",
  "lmstudio",
  "log",
@@ -8889,7 +8979,9 @@ dependencies = [
  "tiktoken-rs",
  "tokio",
  "ui",
+ "ui_input",
  "util",
+ "vercel",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -8928,6 +9020,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "lsp",
+ "picker",
  "project",
  "release_channel",
  "serde_json",
@@ -9321,7 +9414,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-video",
  "coreaudio-rs 0.12.1",
- "cpal",
+ "cpal 0.16.0",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
@@ -10091,7 +10184,21 @@ dependencies = [
  "bitflags 2.9.0",
  "jni-sys",
  "log",
- "ndk-sys",
+ "ndk-sys 0.5.0+25.2.9519653",
+ "num_enum",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "ndk"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f42e7bbe13d351b6bead8286a43aac9534b82bd3cc43e47037f012ebfd62d4"
+dependencies = [
+ "bitflags 2.9.0",
+ "jni-sys",
+ "log",
+ "ndk-sys 0.6.0+11769913",
  "num_enum",
  "thiserror 1.0.69",
 ]
@@ -10107,6 +10214,15 @@ name = "ndk-sys"
 version = "0.5.0+25.2.9519653"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c196769dd60fd4f363e11d948139556a344e79d451aeb2fa2fd040738ef7691"
+dependencies = [
+ "jni-sys",
+]
+
+[[package]]
+name = "ndk-sys"
+version = "0.6.0+11769913"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
 ]
@@ -10525,6 +10641,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cbe18d879e20a4aea544f8befe38bcf52255eb63d3f23eca2842f3319e4c07"
+dependencies = [
+ "bitflags 2.9.0",
+ "libc",
+ "objc2",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-core-audio"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca44961e888e19313b808f23497073e3f6b3c22bb485056674c8b49f3b025c82"
+dependencies = [
+ "dispatch2",
+ "objc2",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-core-audio-types"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f1cc99bb07ad2ddb6527ddf83db6a15271bb036b3eb94b801cd44fdc666ee1"
+dependencies = [
+ "bitflags 2.9.0",
+ "objc2",
+]
+
+[[package]]
 name = "objc2-core-foundation"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10629,7 +10782,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8b61bebd49e5d43f5f8cc7ee2891c16e0f41ec7954d36bcb6c14c5e0de867fb"
 dependencies = [
  "jni",
- "ndk",
+ "ndk 0.8.0",
  "ndk-context",
  "num-derive",
  "num-traits",
@@ -11079,9 +11232,9 @@ dependencies = [
 
 [[package]]
 name = "pathfinder_simd"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cf07ef4804cfa9aea3b04a7bbdd5a40031dbb6b4f2cbaf2b011666c80c5b4f2"
+checksum = "bf9027960355bf3afff9841918474a81a5f972ac6d226d518060bba758b5ad57"
 dependencies = [
  "rustc_version",
 ]
@@ -13011,6 +13164,7 @@ dependencies = [
  "thiserror 2.0.12",
  "urlencoding",
  "util",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -13031,6 +13185,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "debug_adapter_extension",
+ "editor",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -13069,6 +13224,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "workspace",
  "worktree",
  "zlog",
 ]
@@ -13401,7 +13557,7 @@ version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7ceb6607dd738c99bc8cb28eff249b7cd5c8ec88b9db96c0608c1480d140fb1"
 dependencies = [
- "cpal",
+ "cpal 0.15.3",
  "hound",
 ]
 
@@ -13495,6 +13651,7 @@ dependencies = [
  "serde",
  "settings",
  "theme",
+ "title_bar",
  "ui",
  "util",
  "workspace",
@@ -14413,12 +14570,12 @@ dependencies = [
  "fs",
  "gpui",
  "log",
- "paths",
  "schemars",
  "serde",
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -15279,6 +15436,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "util",
  "workspace-hack",
 ]
 
@@ -15749,6 +15907,7 @@ dependencies = [
  "theme",
  "thiserror 2.0.12",
  "url",
+ "urlencoding",
  "util",
  "windows 0.61.1",
  "workspace-hack",
@@ -17156,12 +17315,14 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
+ "nix 0.29.0",
  "rand 0.8.5",
  "regex",
  "rust-embed",
  "serde",
  "serde_json",
  "serde_json_lenient",
+ "shlex",
  "smol",
  "take-until",
  "tempfile",
@@ -17261,6 +17422,17 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vercel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "strum 0.27.1",
+ "workspace-hack",
+]
 
 [[package]]
 name = "version-compare"
@@ -19323,6 +19495,7 @@ dependencies = [
  "num-rational",
  "num-traits",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
  "objc2-metal",
  "object",
@@ -19743,16 +19916,16 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.191.0"
+version = "0.194.0"
 dependencies = [
  "activity_indicator",
  "agent",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "ashpd",
  "askpass",
  "assets",
- "assistant_context_editor",
  "assistant_tool",
  "assistant_tools",
  "audio",
@@ -19783,7 +19956,6 @@ dependencies = [
  "extension",
  "extension_host",
  "extensions_ui",
- "feature_flags",
  "feedback",
  "file_finder",
  "fs",
@@ -19800,6 +19972,7 @@ dependencies = [
  "inline_completion_button",
  "inspector_ui",
  "install_cli",
+ "itertools 0.14.0",
  "jj_ui",
  "journal",
  "language",
@@ -19824,6 +19997,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pretty_assertions",
  "profiling",
  "project",
  "project_panel",

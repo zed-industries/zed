@@ -108,6 +108,12 @@ pub struct LanguageServer {
     root_uri: Url,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LanguageServerSelector {
+    Id(LanguageServerId),
+    Name(LanguageServerName),
+}
+
 /// Identifies a running language server.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -804,6 +810,9 @@ impl LanguageServer {
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
+                    color_provider: Some(DocumentColorClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -1590,7 +1599,7 @@ impl FakeLanguageServer {
         T: 'static + request::Request,
         T::Params: 'static + Send,
         F: 'static + Send + FnMut(T::Params, gpui::AsyncApp) -> Fut,
-        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_request_handler::<T>();

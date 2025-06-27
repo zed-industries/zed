@@ -1,12 +1,6 @@
-pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
-    proto,
-};
 use crate::{
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
-    TreeSitterOptions,
+    DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
+    TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -16,6 +10,12 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
+};
+pub use crate::{
+    Grammar, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet,
+    highlight_map::{HighlightId, HighlightMap},
+    proto,
 };
 use anyhow::{Context as _, Result};
 pub use clock::ReplicaId;
@@ -107,6 +107,7 @@ pub struct Buffer {
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
+    wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_map: Mutex<SyntaxMap>,
@@ -949,6 +950,7 @@ impl Buffer {
             sync_parse_timeout: Duration::from_millis(1),
             parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
+            wait_for_autoindent_txs: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
             remote_selections: Default::default(),
@@ -1454,7 +1456,7 @@ impl Buffer {
         self.syntax_map.lock().contains_unknown_injections()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
         self.sync_parse_timeout = timeout;
     }
@@ -1605,6 +1607,9 @@ impl Buffer {
             }
         } else {
             self.autoindent_requests.clear();
+            for tx in self.wait_for_autoindent_txs.drain(..) {
+                tx.send(()).ok();
+            }
         }
     }
 
@@ -1786,6 +1791,9 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
+        for tx in self.wait_for_autoindent_txs.drain(..) {
+            tx.send(()).ok();
+        }
 
         let edits: Vec<_> = indent_sizes
             .into_iter()
@@ -2123,6 +2131,16 @@ impl Buffer {
     /// [`Buffer::wait_for_version`] to resolve with an error.
     pub fn give_up_waiting(&mut self) {
         self.text.give_up_waiting();
+    }
+
+    pub fn wait_for_autoindent_applied(&mut self) -> Option<oneshot::Receiver<()>> {
+        let mut rx = None;
+        if !self.autoindent_requests.is_empty() {
+            let channel = oneshot::channel();
+            self.wait_for_autoindent_txs.push(channel.0);
+            rx = Some(channel.1);
+        }
+        rx
     }
 
     /// Stores a set of selections that should be broadcasted to all of the buffer's replicas.
@@ -3835,6 +3853,74 @@ impl BufferSnapshot {
             .filter(|pair| !pair.newline_only)
     }
 
+    pub fn debug_variables_query<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<usize>, DebuggerTextObject)> + '_ {
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+
+        let mut matches = self.syntax.matches_with_options(
+            range.clone(),
+            &self.text,
+            TreeSitterOptions::default(),
+            |grammar| grammar.debug_variables_config.as_ref().map(|c| &c.query),
+        );
+
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.debug_variables_config.as_ref())
+            .collect::<Vec<_>>();
+
+        let mut captures = Vec::<(Range<usize>, DebuggerTextObject)>::new();
+
+        iter::from_fn(move || {
+            loop {
+                while let Some(capture) = captures.pop() {
+                    if capture.0.overlaps(&range) {
+                        return Some(capture);
+                    }
+                }
+
+                let mat = matches.peek()?;
+
+                let Some(config) = configs[mat.grammar_index].as_ref() else {
+                    matches.advance();
+                    continue;
+                };
+
+                for capture in mat.captures {
+                    let Some(ix) = config
+                        .objects_by_capture_ix
+                        .binary_search_by_key(&capture.index, |e| e.0)
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    let text_object = config.objects_by_capture_ix[ix].1;
+                    let byte_range = capture.node.byte_range();
+
+                    let mut found = false;
+                    for (range, existing) in captures.iter_mut() {
+                        if existing == &text_object {
+                            range.start = range.start.min(byte_range.start);
+                            range.end = range.end.max(byte_range.end);
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        captures.push((byte_range, text_object));
+                    }
+                }
+
+                matches.advance();
+            }
+        })
+    }
+
     pub fn text_object_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -4271,6 +4357,11 @@ impl BufferSnapshot {
     /// the buffer's text itself (which is versioned via a version vector).
     pub fn non_text_state_update_count(&self) -> usize {
         self.non_text_state_update_count
+    }
+
+    /// An integer version that changes when the buffer's syntax changes.
+    pub fn syntax_update_count(&self) -> usize {
+        self.syntax.update_count()
     }
 
     /// Returns a snapshot of underlying file.

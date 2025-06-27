@@ -26,6 +26,7 @@ gpui.workspace = true
 http_client.workspace = true
 icons.workspace = true
 image.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 proto.workspace = true
 schemars.workspace = true

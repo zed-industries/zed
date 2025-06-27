@@ -82,7 +82,10 @@ fn view_release_notes_locally(
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, cx)
+                                let buffer = project.create_local_buffer("", markdown, cx);
+                                project
+                                    .mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
+                                buffer
                             });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
@@ -129,6 +132,11 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     let Some(updater) = AutoUpdater::get(cx) else {
         return;
     };
+
+    if let ReleaseChannel::Nightly = ReleaseChannel::global(cx) {
+        return;
+    }
+
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
     cx.spawn(async move |cx| {
         let should_show_notification = should_show_notification.await?;

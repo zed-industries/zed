@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::Path};
+use std::borrow::Cow;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -11,8 +11,6 @@ pub(crate) struct NodeLocator;
 
 const TYPESCRIPT_RUNNER_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_RUNNER"));
-const TYPESCRIPT_JEST_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST"));
 
 #[async_trait]
 impl DapLocator for NodeLocator {
@@ -21,45 +19,36 @@ impl DapLocator for NodeLocator {
     }
 
     /// Determines whether this locator can generate debug target for given task.
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
         if adapter.0.as_ref() != "JavaScript" {
             return None;
         }
-        if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
+        if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value()
+            && build_config.command != "npm"
+            && build_config.command != "pnpm"
+            && build_config.command != "yarn"
+        {
             return None;
         }
-        let test_library = build_config.args.first()?;
-        let program_path = Path::new("$ZED_WORKTREE_ROOT")
-            .join("node_modules")
-            .join(".bin")
-            .join(test_library);
-
-        let mut args = if test_library == "jest"
-            || test_library == &TYPESCRIPT_JEST_TASK_VARIABLE.template_value()
-        {
-            vec!["--runInBand".to_owned()]
-        } else {
-            vec![]
-        };
-        args.extend(build_config.args[1..].iter().cloned());
 
         let config = serde_json::json!({
             "request": "launch",
             "type": "pwa-node",
-            "runtimeExecutable": program_path,
-            "args": args,
+            "args": build_config.args.clone(),
             "cwd": build_config.cwd.clone(),
+            "runtimeExecutable": build_config.command.clone(),
+            "env": build_config.env.clone(),
             "runtimeArgs": ["--inspect-brk"],
             "console": "integratedTerminal",
         });
 
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
             build: None,
             config,

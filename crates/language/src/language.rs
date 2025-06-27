@@ -32,7 +32,9 @@ use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-pub use language_registry::{LanguageName, LoadedLanguage};
+pub use language_registry::{
+    LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
@@ -1080,6 +1082,7 @@ pub struct Grammar {
     pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
+    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -1100,6 +1103,22 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DebuggerTextObject {
+    Variable,
+    Scope,
+}
+
+impl DebuggerTextObject {
+    pub fn from_capture_name(name: &str) -> Option<DebuggerTextObject> {
+        match name {
+            "debug-variable" => Some(DebuggerTextObject::Variable),
+            "debug-scope" => Some(DebuggerTextObject::Scope),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1204,6 +1223,11 @@ struct BracketsPatternConfig {
     newline_only: bool,
 }
 
+pub struct DebugVariablesConfig {
+    pub query: Query,
+    pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
+}
+
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
@@ -1235,6 +1259,7 @@ impl Language {
                     redactions_config: None,
                     runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
+                    debug_variables_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1304,6 +1329,11 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
+        }
+        if let Some(query) = queries.debugger {
+            self = self
+                .with_debug_variables_query(query.as_ref())
+                .context("Error loading debug variables query")?;
         }
         Ok(self)
     }
@@ -1420,6 +1450,24 @@ impl Language {
                 keep_capture_ix,
             });
         }
+        Ok(self)
+    }
+
+    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut objects_by_capture_ix = Vec::new();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(text_object) = DebuggerTextObject::from_capture_name(name) {
+                objects_by_capture_ix.push((ix as u32, text_object));
+            }
+        }
+
+        grammar.debug_variables_config = Some(DebugVariablesConfig {
+            query,
+            objects_by_capture_ix,
+        });
         Ok(self)
     }
 
@@ -1928,6 +1976,10 @@ impl Grammar {
             .capture_index_for_name(name)?;
         Some(self.highlight_map.lock().get(capture_id))
     }
+
+    pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
+        self.debug_variables_config.as_ref()
+    }
 }
 
 impl CodeLabel {
@@ -1980,25 +2032,27 @@ impl CodeLabel {
         } else {
             label.clone()
         };
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..label_length);
         Self {
             text,
             runs,
-            filter_range: 0..label_length,
+            filter_range,
         }
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
-        let mut result = Self {
+        let filter_range = filter_text
+            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..text.len());
+        Self {
             runs: Vec::new(),
-            filter_range: 0..text.len(),
+            filter_range,
             text,
-        };
-        if let Some(filter_text) = filter_text {
-            if let Some(ix) = result.text.find(filter_text) {
-                result.filter_range = ix..ix + filter_text.len();
-            }
         }
-        result
     }
 
     pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {

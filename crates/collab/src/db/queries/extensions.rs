@@ -321,6 +321,9 @@ impl Database {
                         provides_snippets: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::Snippets),
                         ),
+                        provides_debug_adapters: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::DebugAdapters),
+                        ),
                         download_count: ActiveValue::NotSet,
                     }
                 }))
@@ -429,6 +432,10 @@ fn apply_provides_filter(
 
     if provides_filter.contains(&ExtensionProvides::Snippets) {
         condition = condition.add(extension_version::Column::ProvidesSnippets.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::DebugAdapters) {
+        condition = condition.add(extension_version::Column::ProvidesDebugAdapters.eq(true));
     }
 
     condition

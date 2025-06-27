@@ -3860,10 +3860,26 @@ fn test_random_chunk_bitmaps_with_diffs(cx: &mut App, mut rng: StdRng) {
             multibuffer.set_all_diff_hunks_expanded(cx);
         } else {
             let snapshot = multibuffer.snapshot(cx);
+            let text = snapshot.text();
+
             let mut ranges = Vec::new();
             for _ in 0..rng.gen_range(1..5) {
-                let start = rng.gen_range(0..snapshot.len());
-                let end = rng.gen_range(start..snapshot.len().min(start + 1000));
+                if snapshot.len() == 0 {
+                    break;
+                }
+
+                let diff_size = rng.gen_range(5..1000);
+                let mut start = rng.gen_range(0..snapshot.len());
+
+                while !text.is_char_boundary(start) {
+                    start = start.saturating_sub(1);
+                }
+
+                let mut end = rng.gen_range(start..snapshot.len().min(start + diff_size));
+
+                while !text.is_char_boundary(end) {
+                    end = end.saturating_add(1);
+                }
                 let start_anchor = snapshot.anchor_after(start);
                 let end_anchor = snapshot.anchor_before(end);
                 ranges.push(start_anchor..end_anchor);

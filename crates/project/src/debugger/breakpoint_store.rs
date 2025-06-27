@@ -275,7 +275,7 @@ impl BreakpointStore {
             .context("Could not resolve provided abs path")?;
         let buffer = this
             .update(&mut cx, |this, cx| {
-                this.buffer_store().read(cx).get_by_path(&path, cx)
+                this.buffer_store().read(cx).get_by_path(&path)
             })?
             .context("Could not find buffer for a given path")?;
         let breakpoint = message
@@ -841,7 +841,7 @@ impl BreakpointStore {
                         } else {
                             "breakpoint"
                         };
-                        log::info!("Deserialized {count} {breakpoint_str} at path: {path}");
+                        log::debug!("Deserialized {count} {breakpoint_str} at path: {path}");
                     }
 
                     this.breakpoints = new_breakpoints;

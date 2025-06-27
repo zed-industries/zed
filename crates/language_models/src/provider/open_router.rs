@@ -12,9 +12,11 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
-use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
+use open_router::{
+    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -40,9 +42,44 @@ pub struct OpenRouterSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for OpenRouterModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => OpenRouterModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => {
+                OpenRouterModelMode::Thinking { budget_tokens }
+            }
+        }
+    }
+}
+
+impl From<OpenRouterModelMode> for ModelMode {
+    fn from(value: OpenRouterModelMode) -> Self {
+        match value {
+            OpenRouterModelMode::Default => ModelMode::Default,
+            OpenRouterModelMode::Thinking { budget_tokens } => {
+                ModelMode::Thinking { budget_tokens }
+            }
+        }
+    }
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -56,6 +93,7 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<()>>>,
+    settings: OpenRouterSettings,
     _subscription: Subscription,
 }
 
@@ -98,6 +136,7 @@ impl State {
                 .log_err();
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })
         })
@@ -130,6 +169,7 @@ impl State {
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             })?;
 
@@ -153,8 +193,10 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
-        self.fetch_models_task.replace(task);
+        if self.is_authenticated() {
+            let task = self.fetch_models(cx);
+            self.fetch_models_task.replace(task);
+        }
     }
 }
 
@@ -166,8 +208,14 @@ impl OpenRouterLanguageModelProvider {
             http_client: http_client.clone(),
             available_models: Vec::new(),
             fetch_models_task: None,
+            settings: OpenRouterSettings::default(),
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.restart_fetch_models_task(cx);
+                let current_settings = &AllLanguageModelSettings::get_global(cx).open_router;
+                let settings_changed = current_settings != &this.settings;
+                if settings_changed {
+                    this.settings = current_settings.clone();
+                    this.restart_fetch_models_task(cx);
+                }
                 cx.notify();
             }),
         });
@@ -227,7 +275,9 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
-                supports_tools: Some(false),
+                supports_tools: model.supports_tools,
+                supports_images: model.supports_images,
+                mode: model.mode.clone().unwrap_or_default().into(),
             });
         }
 
@@ -328,11 +378,11 @@ impl LanguageModel for OpenRouterLanguageModel {
         format!("openrouter/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -345,14 +395,14 @@ impl LanguageModel for OpenRouterLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images.unwrap_or(false)
     }
 
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_open_router_tokens(request, self.model.clone(), cx)
     }
 
@@ -383,23 +433,28 @@ impl LanguageModel for OpenRouterLanguageModel {
 pub fn into_open_router(
     request: LanguageModelRequest,
     model: &Model,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> open_router::Request {
     let mut messages = Vec::new();
-    for req_message in request.messages {
-        for content in req_message.content {
+    for message in request.messages {
+        for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                    .push(match req_message.role {
-                        Role::User => open_router::RequestMessage::User { content: text },
-                        Role::Assistant => open_router::RequestMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => open_router::RequestMessage::System { content: text },
-                    }),
+                MessageContent::Text(text) => add_message_content_part(
+                    open_router::MessagePart::Text { text },
+                    message.role,
+                    &mut messages,
+                ),
+                MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image(image) => {
+                    add_message_content_part(
+                        open_router::MessagePart::Image {
+                            image_url: image.to_base64_url(),
+                        },
+                        message.role,
+                        &mut messages,
+                    );
+                }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_router::ToolCall {
                         id: tool_use.id.to_string(),
@@ -425,16 +480,20 @@ pub fn into_open_router(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                      LanguageModelToolResultContent::Text(text) => {
-                          text.to_string()
+                        LanguageModelToolResultContent::Text(text) => {
+                            vec![open_router::MessagePart::Text {
+                                text: text.to_string(),
+                            }]
                         }
-                        LanguageModelToolResultContent::Image(_) => {
-                          "[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()
+                        LanguageModelToolResultContent::Image(image) => {
+                            vec![open_router::MessagePart::Image {
+                                image_url: image.to_base64_url(),
+                            }]
                         }
                     };
 
                     messages.push(open_router::RequestMessage::Tool {
-                        content: content,
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -454,6 +513,17 @@ pub fn into_open_router(
         } else {
             None
         },
+        usage: open_router::RequestUsage { include: true },
+        reasoning: if let OpenRouterModelMode::Thinking { budget_tokens } = model.mode {
+            Some(open_router::Reasoning {
+                effort: None,
+                max_tokens: budget_tokens,
+                exclude: Some(false),
+                enabled: Some(true),
+            })
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -470,6 +540,42 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+    }
+}
+
+fn add_message_content_part(
+    new_part: open_router::MessagePart,
+    role: Role,
+    messages: &mut Vec<open_router::RequestMessage>,
+) {
+    match (role, messages.last_mut()) {
+        (Role::User, Some(open_router::RequestMessage::User { content }))
+        | (Role::System, Some(open_router::RequestMessage::System { content })) => {
+            content.push_part(new_part);
+        }
+        (
+            Role::Assistant,
+            Some(open_router::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        ) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => open_router::RequestMessage::User {
+                    content: open_router::MessageContent::from(vec![new_part]),
+                },
+                Role::Assistant => open_router::RequestMessage::Assistant {
+                    content: Some(open_router::MessageContent::from(vec![new_part])),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_router::RequestMessage::System {
+                    content: open_router::MessageContent::from(vec![new_part]),
+                },
+            });
+        }
     }
 }
 
@@ -508,8 +614,19 @@ impl OpenRouterEventMapper {
         };
 
         let mut events = Vec::new();
+        if let Some(reasoning) = choice.delta.reasoning.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning,
+                signature: None,
+            }));
+        }
+
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            // OpenRouter send empty content string with the reasoning content
+            // This is a workaround for the OpenRouter API bug
+            if !content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
@@ -530,6 +647,15 @@ impl OpenRouterEventMapper {
                     }
                 }
             }
+        }
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
         }
 
         match choice.finish_reason.as_deref() {
@@ -560,7 +686,7 @@ impl OpenRouterEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
             Some(stop_reason) => {
-                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                log::error!("Unexpected OpenRouter stop_reason: {stop_reason:?}",);
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
@@ -581,7 +707,7 @@ pub fn count_open_router_tokens(
     request: LanguageModelRequest,
     _model: open_router::Model,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request
             .messages
@@ -598,7 +724,7 @@ pub fn count_open_router_tokens(
             })
             .collect::<Vec<_>>();
 
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
+        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
     })
     .boxed()
 }

@@ -1,20 +1,17 @@
-use criterion::{
-    BatchSize, Bencher, BenchmarkId, Criterion, Throughput, black_box, criterion_group,
-    criterion_main,
-};
-use editor::{Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer};
-use gpui::{AppContext, Focusable as _, Render, TestAppContext, TestDispatcher};
+use criterion::{Bencher, BenchmarkId};
+use editor::{Editor, EditorMode, MultiBuffer};
+use gpui::{AppContext, Focusable as _, TestAppContext, TestDispatcher};
 use project::Project;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
-use settings::{Settings, SettingsStore};
-use ui::{Element, IntoElement};
+use settings::SettingsStore;
+use ui::IntoElement;
 use util::RandomCharIter;
 
 fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     let mut cx = cx.clone();
     let buffer = cx.update(|cx| {
         let mut rng = StdRng::seed_from_u64(1);
-        let text_len = rng.gen_range(0..100);
+        let text_len = rng.gen_range(1000..10000);
         if rng.r#gen() {
             let text = RandomCharIter::new(&mut rng)
                 .take(text_len)
@@ -26,7 +23,7 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     });
 
     let cx = cx.add_empty_window();
-    let mut editor = cx.update(|window, cx| {
+    let editor = cx.update(|window, cx| {
         let editor = cx.new(|cx| Editor::new(EditorMode::full(), buffer, None, window, cx));
         window.focus(&editor.focus_handle(cx));
         editor
@@ -36,7 +33,7 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
         cx.update(|window, cx| {
             let mut view = editor.clone().into_any_element();
             let _ = view.request_layout(window, cx);
-            let prepaint = view.prepaint(window, cx);
+            let _ = view.prepaint(window, cx);
             view.paint(window, cx);
         });
     })

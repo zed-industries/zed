@@ -285,10 +285,12 @@ pub fn task_contexts(
                 .worktree_for_id(*worktree_id, cx)
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         })
-        .or(workspace
-            .visible_worktrees(cx)
-            .next()
-            .map(|tree| tree.read(cx).id()));
+        .or_else(|| {
+            workspace
+                .visible_worktrees(cx)
+                .next()
+                .map(|tree| tree.read(cx).id())
+        });
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
@@ -398,7 +400,7 @@ mod tests {
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::{path, separator};
+    use util::path;
     use workspace::{AppState, Workspace};
 
     use crate::task_contexts;
@@ -522,7 +524,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
@@ -554,7 +556,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
