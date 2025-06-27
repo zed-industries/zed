@@ -250,6 +250,8 @@ fn replace_value_in_json_text(
                 }
             }
 
+            dbg!(&text[removal_start..removal_end]);
+
             // Look backward for a preceding comma first
             let preceding_text = text.get(0..removal_start).unwrap_or("");
             if let Some(comma_pos) = preceding_text.rfind(',') {
@@ -259,6 +261,8 @@ fn replace_value_in_json_text(
                     removal_start = comma_pos;
                 }
             }
+
+            dbg!(&text[removal_start..removal_end]);
 
             if let Some(remaining_text) = text.get(existing_value_range.end..) {
                 let mut chars = remaining_text.char_indices();
@@ -325,6 +329,26 @@ fn replace_value_in_json_text(
             let mut new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
             if depth == 0 {
                 new_val.push('\n');
+            }
+            // best effort to keep comments with best effort indentation
+            let mut replace_text = &text[existing_value_range.clone()];
+            while let Some(comment_start) = replace_text.rfind("//") {
+                if let Some(comment_end) = replace_text[comment_start..].find('\n') {
+                    let mut comment_with_indent_start = replace_text[..comment_start]
+                        .rfind('\n')
+                        .unwrap_or(comment_start);
+                    if !replace_text[comment_with_indent_start..comment_start]
+                        .trim()
+                        .is_empty()
+                    {
+                        comment_with_indent_start = comment_start;
+                    }
+                    new_val.insert_str(
+                        1,
+                        &replace_text[comment_with_indent_start..comment_start + comment_end],
+                    );
+                }
+                replace_text = &replace_text[..comment_start];
             }
 
             (existing_value_range, new_val)
@@ -564,6 +588,7 @@ mod tests {
 
     #[test]
     fn object_replace() {
+        #[track_caller]
         fn check_object_replace(
             input: String,
             key_path: &[&str],
@@ -870,6 +895,166 @@ mod tests {
             }"#
             .unindent(),
         );
+        // Test with comments between object members
+        check_object_replace(
+            r#"{
+                "a": 1,
+                // Comment between members
+                "b": 2,
+                /* Block comment */
+                "c": 3
+            }"#
+            .unindent(),
+            &["b"],
+            Some(json!({"nested": true})),
+            r#"{
+                "a": 1,
+                // Comment between members
+                "b": {
+                    "nested": true
+                },
+                /* Block comment */
+                "c": 3
+            }"#
+            .unindent(),
+        );
+
+        // Test with trailing comments on replaced value
+        check_object_replace(
+            r#"{
+                "a": 1, // keep this comment
+                "b": 2  // this should stay
+            }"#
+            .unindent(),
+            &["a"],
+            Some(json!("changed")),
+            r#"{
+                "a": "changed", // keep this comment
+                "b": 2  // this should stay
+            }"#
+            .unindent(),
+        );
+
+        // Test with deep indentation
+        check_object_replace(
+            r#"{
+                        "deeply": {
+                                "nested": {
+                                        "value": "old"
+                                }
+                        }
+                }"#
+            .unindent(),
+            &["deeply", "nested", "value"],
+            Some(json!("new")),
+            r#"{
+                        "deeply": {
+                                "nested": {
+                                        "value": "new"
+                                }
+                        }
+                }"#
+            .unindent(),
+        );
+
+        // Test removing value with comment preservation
+        check_object_replace(
+            r#"{
+                // Header comment
+                "a": 1,
+                // This comment belongs to b
+                "b": 2,
+                // This comment belongs to c
+                "c": 3
+            }"#
+            .unindent(),
+            &["b"],
+            None,
+            r#"{
+                // Header comment
+                "a": 1,
+                // This comment belongs to b
+                // This comment belongs to c
+                "c": 3
+            }"#
+            .unindent(),
+        );
+
+        // Test with multiline block comments
+        check_object_replace(
+            r#"{
+                /*
+                 * This is a multiline
+                 * block comment
+                 */
+                "value": "old",
+                /* Another block */ "other": 123
+            }"#
+            .unindent(),
+            &["value"],
+            Some(json!("new")),
+            r#"{
+                /*
+                 * This is a multiline
+                 * block comment
+                 */
+                "value": "new",
+                /* Another block */ "other": 123
+            }"#
+            .unindent(),
+        );
+
+        // todo! Inserting into empty object removes comments
+        check_object_replace(
+            r#"{
+                // This object is empty
+            }"#
+            .unindent(),
+            &["key"],
+            Some(json!("value")),
+            r#"{
+                // This object is empty
+                "key": "value"
+            }
+            "#
+            .unindent(),
+        );
+
+        // Test replacing in object with only comments
+        check_object_replace(
+            r#"{
+                // Comment 1
+                // Comment 2
+            }"#
+            .unindent(),
+            &["new"],
+            Some(json!(42)),
+            r#"{
+                // Comment 1
+                // Comment 2
+                "new": 42
+            }
+            "#
+            .unindent(),
+        );
+
+        // Test with inconsistent spacing
+        check_object_replace(
+            r#"{
+              "a":1,
+                    "b"  :  2  ,
+                "c":   3
+            }"#
+            .unindent(),
+            &["b"],
+            Some(json!("spaced")),
+            r#"{
+              "a":1,
+                    "b"  :  "spaced"  ,
+                "c":   3
+            }"#
+            .unindent(),
+        );
     }
 
     #[test]
@@ -1013,6 +1198,169 @@ mod tests {
                 3
             ]"#,
         );
+
+        // Test with comments between array elements
+        check_array_replace(
+            r#"[
+                1,
+                // This is element 2
+                2,
+                /* Block comment */ 3,
+                4 // Trailing comment
+            ]"#,
+            2,
+            &[],
+            json!("replaced"),
+            r#"[
+                1,
+                // This is element 2
+                2,
+                /* Block comment */ "replaced",
+                4 // Trailing comment
+            ]"#,
+        );
+
+        // Test empty array with comments
+        check_array_replace(
+            r#"[
+                // Empty array with comment
+            ]"#,
+            0,
+            &[],
+            json!("first"),
+            r#"[
+                "first"
+                // Empty array with comment
+            ]"#,
+        );
+
+        // Test array with leading comments
+        check_array_replace(
+            r#"[
+                // Leading comment
+                // Another leading comment
+                1,
+                2
+            ]"#,
+            0,
+            &[],
+            json!({"new": "object"}),
+            r#"[
+                // Leading comment
+                // Another leading comment
+                {
+                    "new": "object"
+                },
+                2
+            ]"#,
+        );
+
+        // Test with deep indentation
+        check_array_replace(
+            r#"[
+                        1,
+                        2,
+                        3
+                    ]"#,
+            1,
+            &[],
+            json!("deep"),
+            r#"[
+                        1,
+                        "deep",
+                        3
+                    ]"#,
+        );
+
+        // Test with mixed spacing
+        check_array_replace(
+            r#"[1,2,   3,    4]"#,
+            2,
+            &[],
+            json!("spaced"),
+            r#"[1,2,   "spaced",    4]"#,
+        );
+
+        // Test replacing nested array element
+        check_array_replace(
+            r#"[
+                [1, 2, 3],
+                [4, 5, 6],
+                [7, 8, 9]
+            ]"#,
+            1,
+            &[],
+            json!(["a", "b", "c", "d"]),
+            r#"[
+                [1, 2, 3],
+                [
+                    "a",
+                    "b",
+                    "c",
+                    "d"
+                ],
+                [7, 8, 9]
+            ]"#,
+        );
+
+        // Test with multiline block comments
+        check_array_replace(
+            r#"[
+                /*
+                 * This is a
+                 * multiline comment
+                 */
+                "first",
+                "second"
+            ]"#,
+            0,
+            &[],
+            json!("updated"),
+            r#"[
+                /*
+                 * This is a
+                 * multiline comment
+                 */
+                "updated",
+                "second"
+            ]"#,
+        );
+
+        // Test replacing with null
+        check_array_replace(
+            r#"[true, false, true]"#,
+            1,
+            &[],
+            json!(null),
+            r#"[true, null, true]"#,
+        );
+
+        // Test single element array
+        check_array_replace(
+            r#"[42]"#,
+            0,
+            &[],
+            json!({"answer": 42}),
+            r#"[{ "answer": 42 }]"#,
+        );
+
+        // Test array with only comments
+        check_array_replace(
+            r#"[
+                // Comment 1
+                // Comment 2
+                // Comment 3
+            ]"#,
+            10,
+            &[],
+            json!(123),
+            r#"[
+                123
+                // Comment 1
+                // Comment 2
+                // Comment 3
+            ]"#,
+        );
     }
 
     #[test]
@@ -1095,6 +1443,169 @@ mod tests {
                 }
             ]"#
             .unindent(),
+        );
+
+        // Test with comments between array elements
+        check_array_append(
+            r#"[
+                1,
+                // Comment between elements
+                2,
+                /* Block comment */ 3
+            ]"#,
+            json!(4),
+            r#"[
+                1,
+                // Comment between elements
+                2,
+                /* Block comment */ 3,
+                4
+            ]"#,
+        );
+
+        // Test with trailing comment on last element
+        check_array_append(
+            r#"[
+                1,
+                2,
+                3 // Trailing comment
+            ]"#,
+            json!("new"),
+            r#"[
+                1,
+                2,
+                3, // Trailing comment
+                "new"
+            ]"#,
+        );
+
+        // Test empty array with comments
+        check_array_append(
+            r#"[
+                // Empty array with comment
+            ]"#,
+            json!("first"),
+            r#"[
+                // Empty array with comment
+                "first"
+            ]"#,
+        );
+
+        // Test with multiline block comment at end
+        check_array_append(
+            r#"[
+                1,
+                2
+                /*
+                 * This is a
+                 * multiline comment
+                 */
+            ]"#,
+            json!(3),
+            r#"[
+                1,
+                2,
+                /*
+                 * This is a
+                 * multiline comment
+                 */
+                3
+            ]"#,
+        );
+
+        // Test with deep indentation
+        check_array_append(
+            r#"[
+                        1,
+                        2,
+                        3
+                    ]"#,
+            json!("deep"),
+            r#"[
+                        1,
+                        2,
+                        3,
+                        "deep"
+                    ]"#,
+        );
+
+        // Test with no spacing
+        check_array_append(r#"[1,2,3]"#, json!(4), r#"[1,2,3, 4]"#);
+
+        // Test appending complex nested structure
+        check_array_append(
+            r#"[
+                {"a": 1},
+                {"b": 2}
+            ]"#,
+            json!({"c": {"nested": [1, 2, 3]}}),
+            r#"[
+                {"a": 1},
+                {"b": 2},
+                {
+                    "c": {
+                        "nested": [
+                            1,
+                            2,
+                            3
+                        ]
+                    }
+                }
+            ]"#,
+        );
+
+        // Test array ending with comment after bracket
+        check_array_append(
+            r#"[
+                1,
+                2,
+                3
+            ] // Comment after array"#,
+            json!(4),
+            r#"[
+                1,
+                2,
+                3,
+                4
+            ] // Comment after array"#,
+        );
+
+        // Test with inconsistent element formatting
+        check_array_append(
+            r#"[1,
+               2,
+                    3,
+            ]"#,
+            json!(4),
+            r#"[1,
+               2,
+                    3,
+               4
+            ]"#,
+        );
+
+        // Test appending to single-line array with trailing comma
+        check_array_append(
+            r#"[1, 2, 3,]"#,
+            json!({"key": "value"}),
+            r#"[1, 2, 3, { "key": "value" }]"#,
+        );
+
+        // Test appending null value
+        check_array_append(r#"[true, false]"#, json!(null), r#"[true, false, null]"#);
+
+        // Test appending to array with only comments
+        check_array_append(
+            r#"[
+                // Just comments here
+                // More comments
+            ]"#,
+            json!(42),
+            r#"[
+                // Just comments here
+                // More comments
+                42
+            ]"#,
         );
     }
 }
