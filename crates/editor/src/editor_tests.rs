@@ -5254,170 +5254,115 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that non-contiguous selections are treated separately.
+    // Test multiple cursors in different paragraphs trigger separate rewraps
     assert_rewrap(
         indoc! {"
-            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
-            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
-            //
-            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
-            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+            // ˇThis is the first paragraph, first line.
+            // ˇThis is the first paragraph, second line.
+
+            // ˇThis is the second paragraph, first line.
+            // ˇThis is the second paragraph, second line.
         "},
         indoc! {"
-            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. ˇVivamus mollis elit
-            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque.
-            //
-            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
-            // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
-            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
-            // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
-            // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
-            // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
-            // vulputate turpis porttitor id. Aliquam id accumsan eros.
+            // ˇThis is the first paragraph, first
+            // line. ˇThis is the first paragraph,
+            // second line.
+
+            // ˇThis is the second paragraph, first
+            // line. ˇThis is the second paragraph,
+            // second line.
         "},
         language_with_c_comments.clone(),
         &mut cx,
     );
 
-    // Test that different comment prefixes are supported.
+    // Test that change in comment prefix (e.g., `//` to `///`) trigger seperate rewraps
     assert_rewrap(
         indoc! {"
-            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+              «// A regular long long comment to be wrapped.
+              /// A documentation long comment to be wrapped.ˇ»
+          "},
+        indoc! {"
+              «// A regular long long comment to be
+              // wrapped.
+              /// A documentation long comment to be
+              /// wrapped.ˇ»
+          "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    // Test that change in indentation level trigger seperate rewraps
+    assert_rewrap(
+        indoc! {"
+            fn foo() {
+                «// This is a long comment at the base indent.
+                    // This is a long comment at the next indent.ˇ»
+            }
         "},
         indoc! {"
-            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            # purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
-            # eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
-            # hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
-            # lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit
-            # amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet
-            # in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur
-            # adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis.
-            # Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id
-            # accumsan eros.
+            fn foo() {
+                «// This is a long comment at the
+                // base indent.
+                    // This is a long comment at the
+                    // next indent.ˇ»
+            }
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    // Test that different comment prefix characters (e.g., '#') are handled correctly
+    assert_rewrap(
+        indoc! {"
+            # ˇThis is a long comment using a pound sign.
+        "},
+        indoc! {"
+            # ˇThis is a long comment using a pound
+            # sign.
         "},
         language_with_pound_comments.clone(),
         &mut cx,
     );
 
-    // Test that rewrapping only affects comments and not regular code, even if code is very long
+    // Test rewrapping only affects comments, not code even when selected
     assert_rewrap(
         indoc! {"
-            /// Adds two numbers.
-            /// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
-            fn add(a: u32, b: u32) -> u32 {
-                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
-            }
+            «/// This doc comment is long and should be wrapped.
+            fn my_func(a: u32, b: u32, c: u32, d: u32) {}ˇ»
         "},
         indoc! {"
-            /// Adds two numbers. Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-            /// Vivamus mollis elit purus, a ornare lacus gravida vitae.ˇ
-            fn add(a: u32, b: u32) -> u32 {
-                a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + b + a + bˇ
-            }
+            «/// This doc comment is long and
+            /// should be wrapped.
+            fn my_func(a: u32, b: u32, c: u32, d: u32) {}ˇ»
         "},
         language_with_doc_comments.clone(),
         &mut cx,
     );
 
-    // Test that rewrapping works in Markdown documents (languages with allow_rewrap=Anywhere)
+    // Test that rewrapping works in Markdown documents where `allow_rewrap` is `Anywhere`
     assert_rewrap(
         indoc! {"
-            # Hello
-
-            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
-        "},
+             # Header
+             A long line of markdown text to wrap.ˇ
+         "},
         indoc! {"
-            # Hello
-
-            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit
-            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
-            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
-            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
-            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
-            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
-            Integer sit amet scelerisque nisi.
-        "},
+             # Header
+             A long line of markdown text to
+             wrap.ˇ
+         "},
         markdown_language,
         &mut cx,
     );
 
-    // Test that rewrapping works in Plain Text documents (languages with allow_rewrap=Anywhere)
+    // Test: Rewrapping works in plain text where `allow_rewrap` is `Anywhere`
     assert_rewrap(
+        "ˇThis is a very long line of plain text that will be wrapped.",
         indoc! {"
-            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
-        "},
-        indoc! {"
-            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit
-            purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
-            eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
-            hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
-            lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
-            nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
-            Integer sit amet scelerisque nisi.
-        "},
+              ˇThis is a very long line of plain
+              text that will be wrapped.
+          "},
         plaintext_language.clone(),
-        &mut cx,
-    );
-
-    // Test rewrapping comments that have different indentation levels within a selection
-    assert_rewrap(
-        indoc! {"
-            fn foo() {
-                if true {
-            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
-            // Praesent semper egestas tellus id dignissim.ˇ»
-                    do_something();
-                } else {
-                    //
-                }
-            }
-        "},
-        indoc! {"
-            fn foo() {
-                if true {
-            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
-                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
-                    // egestas tellus id dignissim.ˇ»
-                    do_something();
-                } else {
-                    //
-                }
-            }
-        "},
-        language_with_doc_comments.clone(),
-        &mut cx,
-    );
-
-    // Test rewrapping indented comments with selection starting at beginning of line
-    assert_rewrap(
-        indoc! {"
-            fn foo() {
-                if true {
-            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
-            // Praesent semper egestas tellus id dignissim.»
-                    do_something();
-                } else {
-                    //
-                }
-
-            }
-        "},
-        indoc! {"
-            fn foo() {
-                if true {
-            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
-                    // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
-                    // egestas tellus id dignissim.»
-                    do_something();
-                } else {
-                    //
-                }
-
-            }
-        "},
-        language_with_doc_comments.clone(),
         &mut cx,
     );
 
