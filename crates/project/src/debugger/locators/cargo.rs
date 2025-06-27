@@ -4,9 +4,11 @@ use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
 use serde_json::Value;
 use smol::{
+    Timer,
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
+use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct CargoLocator;
@@ -25,14 +27,29 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
             continue;
         };
         let mut test_lines = String::default();
-        if let Some(mut stdout) = child.stdout.take() {
-            stdout.read_to_string(&mut test_lines).await.ok();
+        let exec_result = smol::future::race(
+            async {
+                if let Some(mut stdout) = child.stdout.take() {
+                    stdout.read_to_string(&mut test_lines).await?;
+                }
+                Ok(())
+            },
+            async {
+                Timer::after(Duration::from_secs(3)).await;
+                anyhow::bail!("Timed out waiting for executable stdout")
+            },
+        );
+
+        if let Err(err) = exec_result.await {
+            log::warn!("Failed to list tests for {executable}: {err}");
+        } else {
             for line in test_lines.lines() {
                 if line.contains(&test_name) {
                     return Some(executable.clone());
                 }
             }
         }
+        let _ = child.kill();
     }
     None
 }
@@ -119,10 +136,28 @@ impl DapLocator for CargoLocator {
         let status = child.status().await?;
         anyhow::ensure!(status.success(), "Cargo command failed");
 
+        let is_test = build_config
+            .args
+            .first()
+            .map_or(false, |arg| arg == "test" || arg == "t");
+
         let executables = output
             .lines()
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| serde_json::from_str(line).ok())
+            .filter(|json: &Value| {
+                let is_test_binary = json
+                    .get("profile")
+                    .and_then(|profile| profile.get("test"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                if is_test {
+                    is_test_binary
+                } else {
+                    !is_test_binary
+                }
+            })
             .filter_map(|json: Value| {
                 json.get("executable")
                     .and_then(Value::as_str)
@@ -133,10 +168,6 @@ impl DapLocator for CargoLocator {
             !executables.is_empty(),
             "Couldn't get executable in cargo locator"
         );
-        let is_test = build_config
-            .args
-            .first()
-            .map_or(false, |arg| arg == "test" || arg == "t");
 
         let mut test_name = None;
         if is_test {
