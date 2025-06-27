@@ -31,6 +31,7 @@ pub struct OutlinePanelSettings {
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+    pub default_outline_expansion_depth: usize,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -105,6 +106,11 @@ pub struct OutlinePanelSettingsContent {
     pub indent_guides: Option<IndentGuidesSettingsContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Default depth to expand outline items when opening a file.
+    /// Set to 0 to collapse all items by default.
+    ///
+    /// Default: 1
+    pub default_outline_expansion_depth: Option<usize>,
 }
 
 impl Settings for OutlinePanelSettings {

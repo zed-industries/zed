@@ -121,6 +121,7 @@ pub struct OutlinePanel {
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
     preserve_selection_on_buffer_fold_toggles: HashSet<BufferId>,
+    pending_default_expansion_depth: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -864,6 +865,7 @@ impl OutlinePanel {
                 updating_cached_entries: false,
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
+                pending_default_expansion_depth: None,
                 fs_entries_update_task: Task::ready(()),
                 cached_entries_update_task: Task::ready(()),
                 reveal_selection_task: Task::ready(Ok(())),
@@ -3026,6 +3028,15 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         self.clear_previous(window, cx);
+
+        // Apply default outline expansion depth for the new active editor
+        let default_expansion_depth =
+            OutlinePanelSettings::get_global(cx).default_outline_expansion_depth;
+        if default_expansion_depth > 0 {
+            // We'll apply the expansion depth after outlines are loaded
+            self.pending_default_expansion_depth = Some(default_expansion_depth);
+        }
+
         let buffer_search_subscription = cx.subscribe_in(
             &new_active_editor,
             window,
@@ -3074,6 +3085,7 @@ impl OutlinePanel {
         self.selected_entry = SelectedEntry::None;
         self.pinned = false;
         self.mode = ItemsDisplayMode::Outline;
+        self.pending_default_expansion_depth = None;
     }
 
     fn location_for_editor_selection(
@@ -3334,7 +3346,11 @@ impl OutlinePanel {
                             .await;
                         outline_panel
                             .update_in(cx, |outline_panel, window, cx| {
-                                if let Some(excerpt) = outline_panel
+                                let pending_default_depth =
+                                    outline_panel.pending_default_expansion_depth.take();
+
+                                // First, update the excerpt and collect outlines
+                                let outlines_to_check = if let Some(excerpt) = outline_panel
                                     .excerpts
                                     .entry(buffer_id)
                                     .or_default()
@@ -3348,6 +3364,50 @@ impl OutlinePanel {
                                         Some(UPDATE_DEBOUNCE)
                                     };
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
+
+                                    // Collect outlines to check for default expansion
+                                    let outlines_to_check = if let Some(default_depth) =
+                                        pending_default_depth
+                                    {
+                                        if let ExcerptOutlines::Outlines(outlines) =
+                                            &excerpt.outlines
+                                        {
+                                            outlines
+                                                .iter()
+                                                .filter(|outline| outline.depth >= default_depth)
+                                                .cloned()
+                                                .collect::<Vec<_>>()
+                                        } else {
+                                            Vec::new()
+                                        }
+                                    } else {
+                                        Vec::new()
+                                    };
+
+                                    Some((debounce, outlines_to_check))
+                                } else {
+                                    None
+                                };
+
+                                // Now check which outlines have children and should be collapsed
+                                if let Some((debounce, outlines_to_check)) = outlines_to_check {
+                                    for outline in outlines_to_check {
+                                        let outline_entry = OutlineEntryOutline {
+                                            buffer_id,
+                                            excerpt_id,
+                                            outline: outline.clone(),
+                                        };
+                                        if outline_panel.has_outline_children(&outline_entry, cx) {
+                                            outline_panel.collapsed_entries.insert(
+                                                CollapsedEntry::Outline(
+                                                    buffer_id,
+                                                    excerpt_id,
+                                                    outline.range.clone(),
+                                                ),
+                                            );
+                                        }
+                                    }
+
                                     outline_panel.update_cached_entries(debounce, window, cx);
                                 }
                             })
