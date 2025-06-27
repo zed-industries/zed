@@ -414,6 +414,44 @@ struct PendingTurn {
     _cancel_tx: oneshot::Sender<()>,
 }
 
+struct PendingToolUse2 {
+    request: LanguageModelToolUse,
+    output: Option<Task<Result<ToolResultOutput>>>,
+}
+
+impl PendingToolUse2 {
+    async fn result(&mut self) -> LanguageModelToolResult {
+        let is_error;
+        let content;
+        let output;
+        match self.output.take().unwrap().await {
+            Ok(tool_output) => {
+                is_error = false;
+                content = match tool_output.content {
+                    ToolResultContent::Text(text) => {
+                        LanguageModelToolResultContent::Text(text.into())
+                    }
+                    ToolResultContent::Image(image) => LanguageModelToolResultContent::Image(image),
+                };
+                output = tool_output.output;
+            }
+            Err(error) => {
+                is_error = true;
+                content = LanguageModelToolResultContent::Text(error.to_string().into());
+                output = None;
+            }
+        };
+
+        LanguageModelToolResult {
+            tool_use_id: self.request.id.clone(),
+            tool_name: self.request.name.clone(),
+            is_error,
+            content,
+            output,
+        }
+    }
+}
+
 /// A thread of conversation with the LLM.
 pub struct ZedAgent {
     thread: Entity<Thread>,
@@ -1641,11 +1679,6 @@ impl ZedAgent {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        struct PendingToolUse {
-            request: LanguageModelToolUse,
-            output: Task<Result<ToolResultOutput>>,
-        }
-
         let prev_turn = self.cancel();
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
         self.pending_turn = Some(PendingTurn {
@@ -1654,6 +1687,7 @@ impl ZedAgent {
                     prev_turn.await?;
                 }
 
+                let mut intent = intent;
                 loop {
                     let mut assistant_message = LanguageModelRequestMessage {
                         role: Role::Assistant,
@@ -1718,16 +1752,16 @@ impl ZedAgent {
                                                         cx,
                                                     )
                                                 })?;
-                                                pending_tool_uses.push(PendingToolUse {
-                                                    output: tool_result.output,
+                                                pending_tool_uses.push(PendingToolUse2 {
+                                                    output: Some(tool_result.output),
                                                     request: tool_use,
                                                 });
                                             }
                                             Err(error) => {
                                                 // todo!("show error in thread")
-                                                pending_tool_uses.push(PendingToolUse {
+                                                pending_tool_uses.push(PendingToolUse2 {
                                                     request: tool_use,
-                                                    output: Task::ready(Err(error)),
+                                                    output: Some(Task::ready(Err(error))),
                                                 });
                                             }
                                         }
@@ -1756,43 +1790,13 @@ impl ZedAgent {
                             }
                         }
 
-                        while let Some(pending_tool_use) = pending_tool_uses.pop() {
-                            let is_error;
-                            let content;
-                            let output;
-                            match pending_tool_use.output.await {
-                                Ok(tool_output) => {
-                                    is_error = false;
-                                    content = match tool_output.content {
-                                        ToolResultContent::Text(text) => {
-                                            LanguageModelToolResultContent::Text(text.into())
-                                        }
-                                        ToolResultContent::Image(image) => {
-                                            LanguageModelToolResultContent::Image(image)
-                                        }
-                                    };
-                                    output = tool_output.output;
-                                }
-                                Err(error) => {
-                                    is_error = true;
-                                    content = LanguageModelToolResultContent::Text(
-                                        error.to_string().into(),
-                                    );
-                                    output = None;
-                                }
-                            };
-
-                            tool_results_message
-                                .content
-                                .push(MessageContent::ToolResult(LanguageModelToolResult {
-                                    tool_use_id: pending_tool_use.request.id.clone(),
-                                    tool_name: pending_tool_use.request.name.clone(),
-                                    is_error,
-                                    content,
-                                    output,
-                                }));
+                        while let Some(mut pending_tool_use) = pending_tool_uses.pop() {
+                            let tool_result = pending_tool_use.result().await;
                             assistant_message
                                 .push(MessageContent::ToolUse(pending_tool_use.request));
+                            tool_results_message
+                                .content
+                                .push(MessageContent::ToolResult(tool_result));
                         }
 
                         anyhow::Ok(())
@@ -1834,21 +1838,122 @@ impl ZedAgent {
                             // todo!("decide what to do on error")
                             drop(send);
 
-                            let done = this.update(cx, |this, _cx| {
-                                if !assistant_message.content.is_empty() {
-                                    this.messages.push(assistant_message);
-                                }
+                            for mut pending_tool_use in pending_tool_uses {
+                                let tool_result = pending_tool_use.result().await;
+                                assistant_message
+                                    .push(MessageContent::ToolUse(pending_tool_use.request));
+                                tool_results_message
+                                    .content
+                                    .push(MessageContent::ToolResult(tool_result));
+                            }
 
-                                if tool_results_message.content.is_empty() {
+                            // if let Err(error) = result {
+                            //     if error.is::<PaymentRequiredError>() {
+                            //         cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                            //     } else if let Some(error) =
+                            //         error.downcast_ref::<ModelRequestLimitReachedError>()
+                            //     {
+                            //         cx.emit(ThreadEvent::ShowError(
+                            //             ThreadError::ModelRequestLimitReached { plan: error.plan },
+                            //         ));
+                            //     } else if let Some(known_error) =
+                            //         error.downcast_ref::<LanguageModelKnownError>()
+                            //     {
+                            //         match known_error {
+                            //             LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
+                            //                 this.exceeded_window_error = Some(ExceededWindowError {
+                            //                     model_id: model.id(),
+                            //                     token_count: *tokens,
+                            //                 });
+                            //                 cx.notify();
+                            //             }
+                            //             LanguageModelKnownError::RateLimitExceeded { retry_after } => {
+                            //                 let provider_name = model.provider_name();
+                            //                 let error_message = format!(
+                            //                     "{}'s API rate limit exceeded",
+                            //                     provider_name.0.as_ref()
+                            //                 );
+
+                            //                 this.handle_rate_limit_error(
+                            //                     &error_message,
+                            //                     *retry_after,
+                            //                     model.clone(),
+                            //                     intent,
+                            //                     window,
+                            //                     cx,
+                            //                 );
+                            //                 retry_scheduled = true;
+                            //             }
+                            //             LanguageModelKnownError::Overloaded => {
+                            //                 let provider_name = model.provider_name();
+                            //                 let error_message = format!(
+                            //                     "{}'s API servers are overloaded right now",
+                            //                     provider_name.0.as_ref()
+                            //                 );
+
+                            //                 retry_scheduled = this.handle_retryable_error(
+                            //                     &error_message,
+                            //                     model.clone(),
+                            //                     intent,
+                            //                     window,
+                            //                     cx,
+                            //                 );
+                            //                 if !retry_scheduled {
+                            //                     emit_generic_error(error, cx);
+                            //                 }
+                            //             }
+                            //             LanguageModelKnownError::ApiInternalServerError => {
+                            //                 let provider_name = model.provider_name();
+                            //                 let error_message = format!(
+                            //                     "{}'s API server reported an internal server error",
+                            //                     provider_name.0.as_ref()
+                            //                 );
+
+                            //                 retry_scheduled = this.handle_retryable_error(
+                            //                     &error_message,
+                            //                     model.clone(),
+                            //                     intent,
+                            //                     window,
+                            //                     cx,
+                            //                 );
+                            //                 if !retry_scheduled {
+                            //                     // todo!("emit_generic_error(error, cx)");
+                            //                 }
+                            //             }
+                            //             LanguageModelKnownError::ReadResponseError(_) |
+                            //             LanguageModelKnownError::DeserializeResponse(_) |
+                            //             LanguageModelKnownError::UnknownResponseFormat(_) => {
+                            //                 // In the future we will attempt to re-roll response, but only once
+                            //                 // todo!(emit_generic_error(error, cx);)
+                            //             }
+                            //         }
+                            //     } else {
+                            //         // todo!(emit_generic_error(error, cx));
+                            //     }
+
+                            //     if !retry_scheduled {
+                            //         this.cancel_last_completion(window, cx);
+                            //     }
+                            // }
+
+                            let done = this.update(cx, |this, _cx| {
+                                if assistant_message.content.is_empty() {
                                     true
                                 } else {
-                                    this.messages.push(tool_results_message);
-                                    false
+                                    this.messages.push(assistant_message);
+                                    if tool_results_message.content.is_empty() {
+                                        true
+                                    } else {
+                                        this.messages.push(tool_results_message);
+                                        false
+                                    }
                                 }
                             })?;
 
                             if done {
                                 break;
+                            } else {
+                                intent = CompletionIntent::ToolResults;
                             }
                         }
                     }
