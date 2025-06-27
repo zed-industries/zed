@@ -41,8 +41,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemHandle, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace,
-    WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
