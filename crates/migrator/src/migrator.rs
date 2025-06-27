@@ -156,6 +156,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_06_25::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_25,
         ),
+        (
+            migrations::m_2025_06_27::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_27,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -261,6 +265,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_06_25,
     migrations::m_2025_06_25::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_06_27,
+    migrations::m_2025_06_27::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -953,22 +961,18 @@ mod tests {
         },
         "custom_server": {
             "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
+            "command": "foo",
+            "args": ["bar"],
+            "env": {
+                "FOO": "BAR"
             }
         },
         "invalid_server": {
             "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
+            "command": "foo",
+            "args": ["bar"],
+            "env": {
+                "FOO": "BAR"
             },
             "settings": {
                 "foo": "bar"
@@ -989,24 +993,20 @@ mod tests {
         "custom_server2": {
             "source": "custom",
             "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
+            "command": "foo",
+            "args": ["bar"],
+            "env": {
+                "FOO": "BAR"
             },
             "bar": "foo"
         },
         "invalid_server2": {
             "source": "custom",
             "foo": "bar",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
+            "command": "foo",
+            "args": ["bar"],
+            "env": {
+                "FOO": "BAR"
             },
             "bar": "foo",
             "settings": {
@@ -1035,22 +1035,18 @@ mod tests {
         },
         "custom_server": {
             "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
+            "command": "foo",
+            "args": ["bar"],
+            "env": {
+                "FOO": "BAR"
             }
         },
         "invalid_server": {
             "source": "custom",
-            "command": {
-                "path": "foo",
-                "args": ["bar"],
-                "env": {
-                    "FOO": "BAR"
-                }
+            "command": "foo",
+            "args": ["bar"],
+            "env": {
+                "FOO": "BAR"
             },
             "settings": {
                 "foo": "bar"
@@ -1129,6 +1125,102 @@ mod tests {
     }
 }"#,
             None,
+        );
+    }
+
+    #[test]
+    fn test_flatten_context_server_command() {
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "some-mcp-server": {
+            "source": "custom",
+            "command": {
+                "path": "npx",
+                "args": [
+                    "-y",
+                    "@supabase/mcp-server-supabase@latest",
+                    "--read-only",
+                    "--project-ref=<project-ref>"
+                ],
+                "env": {
+                    "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+                }
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "some-mcp-server": {
+            "source": "custom",
+            "command": "npx",
+            "args": [
+                "-y",
+                "@supabase/mcp-server-supabase@latest",
+                "--read-only",
+                "--project-ref=<project-ref>"
+            ],
+            "env": {
+                "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+            }
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test with additional keys in server object
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "server-with-extras": {
+            "source": "custom",
+            "command": {
+                "path": "/usr/bin/node",
+                "args": ["server.js"]
+            },
+            "settings": {}
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "server-with-extras": {
+            "source": "custom",
+            "command": "/usr/bin/node",
+            "args": ["server.js"],
+            "settings": {}
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test command without args or env
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "simple-server": {
+            "source": "custom",
+            "command": {
+                "path": "simple-mcp-server"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "simple-server": {
+            "source": "custom",
+            "command": "simple-mcp-server"
+        }
+    }
+}"#,
+            ),
         );
     }
 }
