@@ -259,6 +259,33 @@ async fn copy_extension_resources(
         }
     }
 
+    if !manifest.debug_adapters.is_empty() {
+        let output_debug_adapter_schemas_dir = output_dir.join("debug_adapter_schemas");
+        fs::create_dir_all(&output_debug_adapter_schemas_dir)?;
+        for (debug_adapter, entry) in &manifest.debug_adapters {
+            let schema_path = entry.schema_path.clone().unwrap_or_else(|| {
+                PathBuf::from("debug_adapter_schemas".to_owned())
+                    .join(format!("{debug_adapter}.json"))
+            });
+            copy_recursive(
+                fs.as_ref(),
+                &extension_path.join(schema_path.clone()),
+                &output_debug_adapter_schemas_dir.join(format!("{debug_adapter}.json")),
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to copy debug adapter schema '{}'",
+                    schema_path.display()
+                )
+            })?;
+        }
+    }
+
     Ok(())
 }
 
