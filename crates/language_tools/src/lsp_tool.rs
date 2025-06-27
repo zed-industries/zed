@@ -4,7 +4,10 @@ use client::proto;
 use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{Corner, DismissEvent, Entity, Focusable as _, Subscription, Task, WeakEntity, actions};
+use gpui::{
+    Corner, DismissEvent, Entity, Focusable as _, MouseButton, Subscription, Task, WeakEntity,
+    actions,
+};
 use language::{BinaryStatus, BufferId, LocalFile, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
@@ -204,10 +207,12 @@ impl LspPickerDelegate {
             let mut new_lsp_items =
                 Vec::with_capacity(buffer_servers.len() + other_servers.len() + 1);
             new_lsp_items.extend(buffer_servers.into_iter().map(ServerData::into_lsp_item));
-            if !other_servers.is_empty() {
+            if !new_lsp_items.is_empty() {
                 other_servers_start_index = Some(new_lsp_items.len());
-                new_lsp_items.push(LspItem::Header(SharedString::new("Other Servers")));
-                new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
+            }
+            new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
+            if !new_lsp_items.is_empty() {
+                new_lsp_items.push(LspItem::StopAllButton);
             }
 
             self.items = new_lsp_items;
@@ -217,7 +222,7 @@ impl LspPickerDelegate {
 
     fn server_info(&self, ix: usize) -> Option<ServerInfo> {
         match self.items.get(ix)? {
-            LspItem::Header(..) => None,
+            LspItem::StopAllButton => None,
             LspItem::WithHealthCheck(
                 language_server_id,
                 language_server_health_status,
@@ -311,7 +316,7 @@ enum LspItem {
         Option<LanguageServerBinaryStatus>,
     ),
     WithBinaryStatus(LanguageServerName, LanguageServerBinaryStatus),
-    Header(SharedString),
+    StopAllButton,
 }
 
 impl ServerData<'_> {
@@ -348,12 +353,6 @@ impl PickerDelegate for LspPickerDelegate {
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         cx.notify();
-    }
-
-    fn can_select(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
-        self.items
-            .get(ix)
-            .is_some_and(|item| !matches!(item, LspItem::Header(..)))
     }
 
     fn update_matches(
@@ -413,17 +412,36 @@ impl PickerDelegate for LspPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        if let Some(LspItem::Header(header)) = self.items.get(ix) {
+        let rendered_match = h_flex().px_1().gap_1();
+        let rendered_match_contents = h_flex()
+            .id(("lsp-item", ix))
+            .w_full()
+            .px_2()
+            .gap_2()
+            .when(selected, |server_entry| {
+                server_entry.bg(cx.theme().colors().element_hover)
+            })
+            .hover(|s| s.bg(cx.theme().colors().element_hover));
+
+        if let Some(LspItem::StopAllButton) = self.items.get(ix) {
+            let lsp_store = self.state.read(cx).lsp_store.clone();
             return Some(
-                div()
-                    .px_2p5()
-                    .mb_1()
+                rendered_match
                     .child(
-                        Label::new(header.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        rendered_match_contents.child(
+                            Button::new("stop-all-servers", "Stop All Servers")
+                                .disabled(self.items.is_empty())
+                                .on_click({
+                                    move |_, _, cx| {
+                                        lsp_store
+                                            .update(cx, |lsp_store, cx| {
+                                                lsp_store.stop_all_language_servers(cx);
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                        ),
                     )
-                    .cursor_default()
                     .into_any_element(),
             );
         }
@@ -460,21 +478,11 @@ impl PickerDelegate for LspPickerDelegate {
             .unwrap_or(Color::Success);
 
         Some(
-            h_flex()
-                .px_1()
-                .gap_1()
+            rendered_match
                 .child(
-                    h_flex()
-                        .id(("server-entry", ix))
-                        .w_full()
-                        .px_2()
-                        .gap_2()
+                    rendered_match_contents
                         .child(Indicator::dot().color(status_color))
                         .child(Label::new(server_info.name.0.clone()))
-                        .when(selected, |server_entry| {
-                            server_entry.bg(cx.theme().colors().element_hover)
-                        })
-                        .hover(|s| s.bg(cx.theme().colors().element_hover))
                         .when_some(
                             server_info.message.clone(),
                             |server_entry, server_message| {
@@ -485,7 +493,7 @@ impl PickerDelegate for LspPickerDelegate {
                 .when_else(
                     has_logs,
                     |server_entry| {
-                        server_entry.on_any_mouse_down({
+                        server_entry.on_mouse_down(MouseButton::Left, {
                             let workspace = workspace.clone();
                             let lsp_logs = lsp_logs.downgrade();
                             let server_selector = server_selector.clone();
@@ -518,29 +526,18 @@ impl PickerDelegate for LspPickerDelegate {
         div().child(div().track_focus(&editor.focus_handle(cx)))
     }
 
-    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        let lsp_store = self.state.read(cx).lsp_store.clone();
-
-        Some(
-            div()
-                .p_1()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("stop-all-servers", "Stop All Servers")
-                        .disabled(self.items.is_empty())
-                        .on_click({
-                            move |_, _, cx| {
-                                lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.stop_all_language_servers(cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-        )
+    fn separators_after_indices(&self) -> Vec<usize> {
+        if self.items.is_empty() {
+            return Vec::new();
+        }
+        let mut indices = vec![self.items.len().saturating_sub(2)];
+        if let Some(other_servers_start_index) = self.other_servers_start_index {
+            if other_servers_start_index > 0 {
+                indices.insert(0, other_servers_start_index - 1);
+                indices.dedup();
+            }
+        }
+        indices
     }
 }
 
