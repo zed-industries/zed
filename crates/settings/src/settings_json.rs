@@ -250,8 +250,6 @@ fn replace_value_in_json_text(
                 }
             }
 
-            dbg!(&text[removal_start..removal_end]);
-
             // Look backward for a preceding comma first
             let preceding_text = text.get(0..removal_start).unwrap_or("");
             if let Some(comma_pos) = preceding_text.rfind(',') {
@@ -261,8 +259,6 @@ fn replace_value_in_json_text(
                     removal_start = comma_pos;
                 }
             }
-
-            dbg!(&text[removal_start..removal_end]);
 
             if let Some(remaining_text) = text.get(existing_value_range.end..) {
                 let mut chars = remaining_text.char_indices();
@@ -508,9 +504,7 @@ pub fn append_top_level_array_value_in_json_text(
             prev_item_range.start_point.column,
             |idx| {
                 prev_item_range.start_point.column
-                    - dbg!(&text[idx + 1..prev_item_range.start_byte])
-                        .trim_start()
-                        .len()
+                    - text[idx + 1..prev_item_range.start_byte].trim_start().len()
             },
         );
 
@@ -550,8 +544,7 @@ pub fn append_top_level_array_value_in_json_text(
         replace_value.insert_str(0, &indent);
         replace_value.push('\n');
     }
-    dbg!(text);
-    return Ok((replace_range, dbg!(replace_value)));
+    return Ok((replace_range, replace_value));
 }
 
 pub fn to_pretty_json(
