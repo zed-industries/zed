@@ -100,26 +100,11 @@ impl AgentSettings {
         });
     }
 
-    fn create_model_selection(provider: &str, model: &str) -> LanguageModelSelection {
-        LanguageModelSelection {
+    pub fn is_favorite_model(&self, provider: &str, model: &str) -> bool {
+        self.favorite_models.contains(&LanguageModelSelection {
             provider: provider.into(),
             model: model.to_string(),
-        }
-    }
-
-    pub fn add_favorite_model(&mut self, provider: &str, model: &str) {
-        self.favorite_models
-            .insert(Self::create_model_selection(provider, model));
-    }
-
-    pub fn remove_favorite_model(&mut self, provider: &str, model: &str) {
-        self.favorite_models
-            .shift_remove(&Self::create_model_selection(provider, model));
-    }
-
-    pub fn is_favorite_model(&self, provider: &str, model: &str) -> bool {
-        self.favorite_models
-            .contains(&Self::create_model_selection(provider, model))
+        })
     }
 }
 
@@ -230,6 +215,28 @@ impl AgentSettingsContent {
         );
 
         Ok(())
+    }
+
+    fn create_model_selection(provider: &str, model: &str) -> LanguageModelSelection {
+        LanguageModelSelection {
+            provider: provider.into(),
+            model: model.to_string(),
+        }
+    }
+
+    pub fn add_favorite_model(&mut self, provider: &str, model: &str) {
+        self.favorite_models
+            .insert(Self::create_model_selection(provider, model));
+    }
+
+    pub fn remove_favorite_model(&mut self, provider: &str, model: &str) {
+        self.favorite_models
+            .shift_remove(&Self::create_model_selection(provider, model));
+    }
+
+    pub fn is_favorite_model(&self, provider: &str, model: &str) -> bool {
+        self.favorite_models
+            .contains(&Self::create_model_selection(provider, model))
     }
 }
 

@@ -1,5 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
+use agent_settings::AgentSettings;
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -13,13 +14,18 @@ use language_model::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsStore, update_settings_file};
+use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
 
 actions!(
     agent,
     [
         #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
-        ToggleModelSelector
+        ToggleModelSelector,
+        ToggleFavoriteHotkey,
+        // ToggleModelFavorite
     ]
 );
 
@@ -72,13 +78,42 @@ fn all_models(cx: &App) -> GroupedModels {
         })
         .collect();
 
-    GroupedModels::new(other, recommended)
+    let favorites: Vec<_> = AgentSettings::get_global(cx)
+        .favorite_models
+        .iter()
+        .filter_map(|selection| {
+            providers.iter().find_map(|provider| {
+                if provider.id().0 == selection.provider.0 {
+                    provider
+                        .provided_models(cx)
+                        .into_iter()
+                        .find(|model| model.id().0 == selection.model)
+                        .map(|model| ModelInfo {
+                            model,
+                            icon: provider.icon(),
+                        })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    GroupedModels::new(other, recommended, favorites)
 }
 
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
     icon: IconName,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct ToggleModelFavorite {
+    #[serde(default)]
+    pub provider_id: String,
+    #[serde(default)]
+    pub model_id: String,
 }
 
 pub struct LanguageModelPickerDelegate {
@@ -99,34 +134,41 @@ impl LanguageModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let on_model_changed = Arc::new(on_model_changed);
-        let models = all_models(cx);
-        let entries = models.entries();
+        let all_models = Arc::new(all_models(cx));
+        let entries = all_models.entries();
 
         Self {
             on_model_changed: on_model_changed.clone(),
-            all_models: Arc::new(models),
+            all_models,
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
-            _subscriptions: vec![cx.subscribe_in(
-                &LanguageModelRegistry::global(cx),
-                window,
-                |picker, _, event, window, cx| {
-                    match event {
+            _subscriptions: vec![
+                cx.subscribe_in(
+                    &LanguageModelRegistry::global(cx),
+                    window,
+                    |picker, _, event, window, cx| match event {
                         language_model::Event::ProviderStateChanged
                         | language_model::Event::AddedProvider(_)
                         | language_model::Event::RemovedProvider(_) => {
                             let query = picker.query(cx);
-                            picker.delegate.all_models = Arc::new(all_models(cx));
+                            picker.delegate.all_models =
+                                Arc::new(crate::language_model_selector::all_models(cx));
                             // Update matches will automatically drop the previous task
                             // if we get a provider event again
                             picker.update_matches(query, window, cx)
                         }
                         _ => {}
-                    }
-                },
-            )],
+                    },
+                ),
+                cx.observe_global_in::<SettingsStore>(window, |picker, window, cx| {
+                    let query = picker.query(cx);
+                    picker.delegate.all_models =
+                        Arc::new(crate::language_model_selector::all_models(cx));
+                    picker.update_matches(query, window, cx)
+                }),
+            ],
         }
     }
 
@@ -205,23 +247,76 @@ impl LanguageModelPickerDelegate {
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
         (self.get_active_model)(cx)
     }
+
+    pub fn handle_toggle_favorite(
+        &mut self,
+        action: &ToggleModelFavorite,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let provider_id = &action.provider_id;
+        let model_id = &action.model_id;
+
+        let fs = <dyn fs::Fs>::global(cx);
+        update_settings_file::<AgentSettings>(fs, cx, {
+            let provider_id = provider_id.clone();
+            let model_id = model_id.clone();
+
+            move |settings, _| {
+                if settings.is_favorite_model(&provider_id, &model_id) {
+                    settings.remove_favorite_model(&provider_id, &model_id);
+                } else {
+                    settings.add_favorite_model(&provider_id, &model_id);
+                }
+            }
+        });
+    }
+
+    fn toggle_selected_favorite(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(LanguageModelPickerEntry::Model(model_info)) =
+            self.filtered_entries.get(self.selected_index)
+        {
+            let provider_id = model_info.model.provider_id().0.to_string();
+            let model_id = model_info.model.id().0.to_string();
+            self.handle_toggle_favorite(
+                &ToggleModelFavorite {
+                    provider_id,
+                    model_id,
+                },
+                window,
+                cx,
+            );
+        }
+    }
 }
 
 struct GroupedModels {
     recommended: Vec<ModelInfo>,
+    favorites: Vec<ModelInfo>,
     other: IndexMap<LanguageModelProviderId, Vec<ModelInfo>>,
 }
 
 impl GroupedModels {
-    pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
+    pub fn new(
+        other: Vec<ModelInfo>,
+        recommended: Vec<ModelInfo>,
+        favorites: Vec<ModelInfo>,
+    ) -> Self {
         let recommended_ids = recommended
+            .iter()
+            .map(|info| (info.model.provider_id(), info.model.id()))
+            .collect::<HashSet<_>>();
+
+        let favorite_ids = favorites
             .iter()
             .map(|info| (info.model.provider_id(), info.model.id()))
             .collect::<HashSet<_>>();
 
         let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
         for model in other {
-            if recommended_ids.contains(&(model.model.provider_id(), model.model.id())) {
+            if recommended_ids.contains(&(model.model.provider_id(), model.model.id()))
+                || favorite_ids.contains(&(model.model.provider_id(), model.model.id()))
+            {
                 continue;
             }
 
@@ -235,6 +330,7 @@ impl GroupedModels {
 
         Self {
             recommended,
+            favorites,
             other: other_by_provider,
         }
     }
@@ -246,6 +342,15 @@ impl GroupedModels {
             entries.push(LanguageModelPickerEntry::Separator("Recommended".into()));
             entries.extend(
                 self.recommended
+                    .iter()
+                    .map(|info| LanguageModelPickerEntry::Model(info.clone())),
+            );
+        }
+
+        if !self.favorites.is_empty() {
+            entries.push(LanguageModelPickerEntry::Separator("Favorites".into()));
+            entries.extend(
+                self.favorites
                     .iter()
                     .map(|info| LanguageModelPickerEntry::Model(info.clone())),
             );
@@ -274,8 +379,9 @@ impl GroupedModels {
             .flat_map(|model| model.iter())
             .cloned()
             .collect::<Vec<_>>();
-        self.recommended
+        self.favorites
             .iter()
+            .chain(&self.recommended)
             .chain(&other)
             .cloned()
             .collect::<Vec<_>>()
@@ -431,12 +537,26 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .collect::<Vec<_>>();
 
         let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
-        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
+        let matcher_all = ModelMatcher::new(available_models.clone(), bg_executor.clone());
 
         let recommended = matcher_rec.exact_search(&query);
         let all = matcher_all.fuzzy_search(&query);
 
-        let filtered_models = GroupedModels::new(all, recommended);
+        let favorites: Vec<_> = AgentSettings::get_global(cx)
+            .favorite_models
+            .iter()
+            .filter_map(|selection| {
+                available_models
+                    .iter()
+                    .find(|model| {
+                        model.model.provider_id().0 == selection.provider.0
+                            && model.model.id().0 == selection.model
+                    })
+                    .cloned()
+            })
+            .collect();
+
+        let filtered_models = GroupedModels::new(all, recommended, favorites);
 
         cx.spawn_in(window, async move |this, cx| {
             this.update_in(cx, |this, window, cx| {
@@ -498,6 +618,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .into_any_element(),
             ),
             LanguageModelPickerEntry::Model(model_info) => {
+                let agent_settings = AgentSettings::get_global(cx);
+
                 let active_model = (self.get_active_model)(cx);
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
                 let active_model_id = active_model.map(|m| m.model.id());
@@ -511,6 +633,15 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     Color::Muted
                 };
 
+                let is_favorite = agent_settings
+                    .is_favorite_model(&model_info.model.provider_id().0, &model_info.model.id().0);
+
+                let (favorite_icon, favorite_color, favorite_tooltip) = if is_favorite {
+                    (IconName::StarFilled, Color::Accent, "Remove from favorites")
+                } else {
+                    (IconName::Star, Color::Muted, "Add to favorites")
+                };
+
                 Some(
                     ListItem::new(ix)
                         .inset(true)
@@ -522,20 +653,44 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 .size(IconSize::Small),
                         )
                         .child(
-                            h_flex()
-                                .w_full()
-                                .pl_0p5()
-                                .gap_1p5()
-                                .w(px(240.))
-                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                            Label::new(model_info.model.name().0.clone())
+                                .truncate()
+                                .ml_0p5(),
                         )
-                        .end_slot(div().pr_3().when(is_selected, |this| {
-                            this.child(
-                                Icon::new(IconName::Check)
-                                    .color(Color::Accent)
-                                    .size(IconSize::Small),
-                            )
-                        }))
+                        .end_slot(
+                            h_flex()
+                                .gap_1()
+                                .pr_3()
+                                .child(
+                                    IconButton::new(("favorite", ix), favorite_icon)
+                                        .icon_color(favorite_color)
+                                        .icon_size(IconSize::XSmall)
+                                        .tooltip(Tooltip::text(favorite_tooltip))
+                                        .on_click({
+                                            let provider_id =
+                                                model_info.model.provider_id().0.to_string();
+                                            let model_id = model_info.model.id().0.to_string();
+
+                                            cx.listener(move |picker, _, window, cx| {
+                                                picker.delegate.handle_toggle_favorite(
+                                                    &ToggleModelFavorite {
+                                                        provider_id: provider_id.clone(),
+                                                        model_id: model_id.clone(),
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                        }),
+                                )
+                                .when(is_selected, |this| {
+                                    this.child(
+                                        Icon::new(IconName::Check)
+                                            .color(Color::Accent)
+                                            .size(IconSize::Small),
+                                    )
+                                }),
+                        )
                         .into_any_element(),
                 )
             }
@@ -796,7 +951,7 @@ mod tests {
             ("copilot", "o3"),
         ]);
 
-        let grouped_models = GroupedModels::new(all_models, recommended_models);
+        let grouped_models = GroupedModels::new(all_models, recommended_models, vec![]);
 
         let actual_other_models = grouped_models
             .other
@@ -818,7 +973,7 @@ mod tests {
             ("copilot", "claude"), // Should not be filtered out from "other"
         ]);
 
-        let grouped_models = GroupedModels::new(all_models, recommended_models);
+        let grouped_models = GroupedModels::new(all_models, recommended_models, vec![]);
 
         let actual_other_models = grouped_models
             .other
