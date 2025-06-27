@@ -386,10 +386,18 @@ impl PickerDelegate for LspPickerDelegate {
             return;
         };
         let lsp_logs = cx.global::<GlobalLogStore>().0.clone();
+        let lsp_store = self.state.read(cx).lsp_store.clone();
         let workspace = self.state.read(cx).workspace.clone();
         lsp_logs
             .update(cx, |lsp_logs, cx| {
-                lsp_logs.open_server_trace(workspace, server_selector, window, cx);
+                let has_logs = lsp_store
+                    .update(cx, |lsp_store, _| {
+                        lsp_store.as_local().is_some() && lsp_logs.has_server_logs(&server_selector)
+                    })
+                    .unwrap_or(false);
+                if has_logs {
+                    lsp_logs.open_server_trace(workspace, server_selector, window, cx);
+                }
             })
             .ok();
     }
@@ -466,6 +474,7 @@ impl PickerDelegate for LspPickerDelegate {
                         .when(selected, |server_entry| {
                             server_entry.bg(cx.theme().colors().element_hover)
                         })
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
                         .when_some(
                             server_info.message.clone(),
                             |server_entry, server_message| {
@@ -476,25 +485,23 @@ impl PickerDelegate for LspPickerDelegate {
                 .when_else(
                     has_logs,
                     |server_entry| {
-                        server_entry
-                            .hover(|s| s.bg(cx.theme().colors().element_hover))
-                            .on_any_mouse_down({
-                                let workspace = workspace.clone();
-                                let lsp_logs = lsp_logs.downgrade();
-                                let server_selector = server_selector.clone();
-                                move |_, window, cx| {
-                                    lsp_logs
-                                        .update(cx, |lsp_logs, cx| {
-                                            lsp_logs.open_server_trace(
-                                                workspace.clone(),
-                                                server_selector.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            })
+                        server_entry.on_any_mouse_down({
+                            let workspace = workspace.clone();
+                            let lsp_logs = lsp_logs.downgrade();
+                            let server_selector = server_selector.clone();
+                            move |_, window, cx| {
+                                lsp_logs
+                                    .update(cx, |lsp_logs, cx| {
+                                        lsp_logs.open_server_trace(
+                                            workspace.clone(),
+                                            server_selector.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        })
                     },
                     |div| div.cursor_default(),
                 )
