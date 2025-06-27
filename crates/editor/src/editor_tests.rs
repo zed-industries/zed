@@ -4335,7 +4335,8 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
+    cx.assert_editor_state(
+        indoc! {"
         «
         abc                 // No indentation
            abc              // 1 tab
@@ -4353,7 +4354,8 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
 
     // Test on just a few lines, the others should remain unchanged
     // Only lines (3, 5, 10, 11) should change
-    cx.set_state(indoc! {"
+    cx.set_state(
+        indoc! {"
 ·
             abc                 // No indentation
             \tabcˇ               // 1 tab
@@ -4371,7 +4373,8 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
+    cx.assert_editor_state(
+        indoc! {"
 ·
         abc                 // No indentation
         «   abc               // 1 tabˇ»
@@ -4405,7 +4408,8 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
+    cx.assert_editor_state(
+        indoc! {"
         «
         abc                 // No indentation
            abc               // 1 tab
@@ -4467,7 +4471,8 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
 
     // Test on just a few lines, the other should remain unchanged
     // Only lines (4, 8, 11, 12) should change
-    cx.set_state(indoc! {"
+    cx.set_state(
+        indoc! {"
 ·
             abc                 // No indentation
              abc                // 1 space (< 3 so dont convert)
@@ -4488,7 +4493,8 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
+    cx.assert_editor_state(
+        indoc! {"
 ·
             abc                 // No indentation
              abc                // 1 space (< 3 so dont convert)

@@ -3545,7 +3545,8 @@ pub struct LspStore {
     lsp_data: Option<LspData>,
 }
 
-type DocumentColorTask = Shared<Task<std::result::Result<Vec<DocumentColor>, Arc<anyhow::Error>>>>;
+type DocumentColorTask =
+    Shared<Task<std::result::Result<HashSet<DocumentColor>, Arc<anyhow::Error>>>>;
 
 #[derive(Debug)]
 struct LspData {
@@ -3557,7 +3558,7 @@ struct LspData {
 
 #[derive(Debug, Default)]
 struct BufferLspData {
-    colors: Option<Vec<DocumentColor>>,
+    colors: Option<HashSet<DocumentColor>>,
 }
 
 #[derive(Debug)]
@@ -6237,13 +6238,13 @@ impl LspStore {
             .flat_map(|lsp_data| lsp_data.buffer_lsp_data.values())
             .filter_map(|buffer_data| buffer_data.get(&abs_path))
             .filter_map(|buffer_data| {
-                let colors = buffer_data.colors.as_deref()?;
+                let colors = buffer_data.colors.as_ref()?;
                 received_colors_data = true;
                 Some(colors)
             })
             .flatten()
             .cloned()
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
 
         if buffer_lsp_data.is_empty() || for_server_id.is_some() {
             if received_colors_data && for_server_id.is_none() {
@@ -6297,8 +6298,13 @@ impl LspStore {
             let task_abs_path = abs_path.clone();
             let new_task = cx
                 .spawn(async move |lsp_store, cx| {
-                    match call_lsp_for_colors(lsp_store.clone(), buffer, task_abs_path.clone(), cx)
-                        .await
+                    match fetch_document_colors(
+                        lsp_store.clone(),
+                        buffer,
+                        task_abs_path.clone(),
+                        cx,
+                    )
+                    .await
                     {
                         Ok(colors) => Ok(colors),
                         Err(e) => {
@@ -6328,11 +6334,11 @@ impl LspStore {
         }
     }
 
-    fn fetch_document_colors(
+    fn fetch_document_colors_for_buffer(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<(LanguageServerId, Vec<DocumentColor>)>>> {
+    ) -> Task<anyhow::Result<Vec<(LanguageServerId, HashSet<DocumentColor>)>>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
                 project_id,
@@ -6381,7 +6387,9 @@ impl LspStore {
                 .await
                 .into_iter()
                 .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                    acc.entry(server_id).or_insert_with(Vec::new).extend(colors);
+                    acc.entry(server_id)
+                        .or_insert_with(HashSet::default)
+                        .extend(colors);
                     acc
                 })
                 .into_iter()
@@ -6396,7 +6404,9 @@ impl LspStore {
                     .await
                     .into_iter()
                     .fold(HashMap::default(), |mut acc, (server_id, colors)| {
-                        acc.entry(server_id).or_insert_with(Vec::new).extend(colors);
+                        acc.entry(server_id)
+                            .or_insert_with(HashSet::default)
+                            .extend(colors);
                         acc
                     })
                     .into_iter()
@@ -10669,21 +10679,21 @@ impl LspStore {
     }
 }
 
-async fn call_lsp_for_colors(
+async fn fetch_document_colors(
     lsp_store: WeakEntity<LspStore>,
     buffer: Entity<Buffer>,
     task_abs_path: PathBuf,
     cx: &mut AsyncApp,
-) -> anyhow::Result<Vec<DocumentColor>> {
+) -> anyhow::Result<HashSet<DocumentColor>> {
     cx.background_executor()
         .timer(Duration::from_millis(50))
         .await;
     let Some(buffer_mtime) = buffer.update(cx, |buffer, _| buffer.saved_mtime())? else {
-        return Ok(Vec::new());
+        return Ok(HashSet::default());
     };
     let fetched_colors = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.fetch_document_colors(buffer, cx)
+            lsp_store.fetch_document_colors_for_buffer(buffer, cx)
         })?
         .await
         .with_context(|| {
@@ -10696,7 +10706,7 @@ async fn call_lsp_for_colors(
                 "Document lsp data got updated between fetch and update for path {task_abs_path:?}"
             )
         })?;
-        let mut lsp_colors = Vec::new();
+        let mut lsp_colors = HashSet::default();
         anyhow::ensure!(
             lsp_data.mtime == buffer_mtime,
             "Buffer lsp data got updated between fetch and update for path {task_abs_path:?}"
