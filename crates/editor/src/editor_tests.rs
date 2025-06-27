@@ -5131,6 +5131,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 "Markdown".into(),
                 LanguageSettingsContent {
                     allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
                     ..Default::default()
                 },
             ),
@@ -5138,6 +5139,31 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 "Plain Text".into(),
                 LanguageSettingsContent {
                     allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
+                    ..Default::default()
+                },
+            ),
+            (
+                "C++".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Python".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Rust".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
                     ..Default::default()
                 },
             ),
@@ -5148,6 +5174,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
 
     let language_with_c_comments = Arc::new(Language::new(
         LanguageConfig {
+            name: "C++".into(),
             line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
@@ -5155,6 +5182,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ));
     let language_with_pound_comments = Arc::new(Language::new(
         LanguageConfig {
+            name: "Python".into(),
             line_comments: vec!["# ".into()],
             ..LanguageConfig::default()
         },
@@ -5169,6 +5197,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ));
     let language_with_doc_comments = Arc::new(Language::new(
         LanguageConfig {
+            name: "Rust".into(),
             line_comments: vec!["// ".into(), "/// ".into()],
             ..LanguageConfig::default()
         },
@@ -5183,68 +5212,44 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         None,
     ));
 
-    // Test basic rewrapping of a single long comment line into multiple properly wrapped lines
+    // Test basic rewrapping of a long line with a cursor
     assert_rewrap(
         indoc! {"
-            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+            // ˇThis is a long comment that needs to be wrapped.
         "},
         indoc! {"
-            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
-            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
-            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
-            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
-            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
-            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
-            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.
+            // ˇThis is a long comment that needs to
+            // be wrapped.
         "},
         language_with_c_comments.clone(),
         &mut cx,
     );
 
-    // Test that rewrapping works inside of a selection
+    // Test rewrapping a full selection
     assert_rewrap(
         indoc! {"
-            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ»
-        "},
+            «// This selected long comment needs to be wrapped.ˇ»"
+        },
         indoc! {"
-            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
-            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
-            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
-            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
-            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
-            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
-            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇ»
-        "},
+            «// This selected long comment needs to
+            // be wrapped.ˇ»"
+        },
         language_with_c_comments.clone(),
         &mut cx,
     );
 
-    // Test that cursors that expand to the same region are not collapsed.
+    // Test multiple cursors on different lines within the same paragraph are preserved after rewrapping
     assert_rewrap(
         indoc! {"
-            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
-            // ˇVivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
-            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
-            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
-        "},
+            // ˇThis is the first line.
+            // Thisˇ is the second line.
+            // This is the thirdˇ line, all part of one paragraph.
+         "},
         indoc! {"
-            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. ˇVivamus mollis elit
-            // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque. ˇVivamus sit amet neque et quam
-            // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
-            // Pellentesque odio lectus, iaculis ac volutpat et, ˇblandit quis urna. Sed
-            // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
-            // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
-            // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
-            // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.
-        "},
+            // ˇThis is the first line. Thisˇ is the
+            // second line. This is the thirdˇ line,
+            // all part of one paragraph.
+         "},
         language_with_c_comments.clone(),
         &mut cx,
     );
