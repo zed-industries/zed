@@ -1693,15 +1693,34 @@ impl ZedAgent {
                                     if language_model_tool_use.is_input_complete {
                                         let mut pending_request = request.clone();
                                         pending_request.messages.push(assistant_message.clone());
-                                        let tool_result = this.update(cx, |this, cx| {
-                                            this.run_tool2(
-                                                language_model_tool_use.clone(),
-                                                Arc::new(pending_request),
-                                                model.clone(),
-                                                window.clone(),
-                                                cx,
-                                            )
+                                        let tool = this.update(cx, |this, cx| {
+                                            this.tool_for_name(&language_model_tool_use.name, cx)
                                         })?;
+
+                                        match tool {
+                                            Ok(tool) => {
+                                                let confirmed = if tool.needs_confirmation(&tool_use.input, cx)
+                                                    && !AgentSettings::get_global(cx).always_allow_tool_actions
+                                                {
+                                                    thread.update(cx, |thread,cx| thread.gimme_confirmation()).await;
+                                                } else {
+                                                    true
+                                                };
+                                                
+                                                if confirmed {
+                                                    
+                                                } else {
+                                                    
+                                                }
+                                            },
+                                            Err(error) => {
+                                                // todo!("show error in thread")
+                                                pending_tool_uses.push(PendingToolUse {
+                                                    request: language_model_tool_use,
+                                                    output: Task::ready(Err(error)),
+                                                });
+                                            },
+                                        }
 
                                         match tool_result {
                                             Ok(tool_result) => {
@@ -3266,6 +3285,31 @@ impl ZedAgent {
         });
 
         self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
+    }
+
+    fn tool_for_name(&self, name: &str, cx: &App) -> Result<Arc<dyn Tool>> {
+        if let Some(tool) = self.tools.read(cx).tool(name, cx)
+            && self.profile.is_tool_enabled(tool.source(), tool.name(), cx)
+        {
+            Ok(tool)
+        } else {
+            let available_tools = self.profile.enabled_tools(cx);
+            let tool_list = available_tools
+                .iter()
+                .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let error_message = format!(
+                "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
+                name, tool_list
+            );
+            Err(anyhow!(error_message))
+            // todo!("what do we wanna do here?")
+            // cx.emit(ThreadEvent::MissingToolUse {
+            //     tool_use_id: tool_use_id.clone(),
+            //     ui_text: error_message.into(),
+            // });
+        }
     }
 
     pub fn run_tool2(
