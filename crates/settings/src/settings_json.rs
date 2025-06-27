@@ -504,7 +504,22 @@ pub fn append_top_level_array_value_in_json_text(
     let space = ' ';
     if let Some(prev_item_range) = prev_item_range {
         let needs_newline = prev_item_range.start_point.row > 0;
-        let indent_width = prev_item_range.start_point.column;
+        let indent_width = text[..prev_item_range.start_byte].rfind('\n').map_or(
+            prev_item_range.start_point.column,
+            |idx| {
+                prev_item_range.start_point.column
+                    - dbg!(&text[idx + 1..prev_item_range.start_byte])
+                        .trim_start()
+                        .len()
+            },
+        );
+
+        let prev_item_end = comma_range
+            .as_ref()
+            .map_or(prev_item_range.end_byte, |range| range.end);
+        if text[prev_item_end..replace_range.start].trim().is_empty() {
+            replace_range.start = prev_item_end;
+        }
 
         if needs_newline {
             let increased_indent = format!("\n{space:width$}", width = indent_width);
@@ -998,7 +1013,6 @@ mod tests {
             .unindent(),
         );
 
-        // todo! Inserting into empty object removes comments
         check_object_replace(
             r#"{
                 // This object is empty
@@ -1460,7 +1474,8 @@ mod tests {
                 // Comment between elements
                 2,
                 /* Block comment */ 3
-            ]"#,
+            ]"#
+            .unindent(),
             json!(4),
             r#"[
                 1,
@@ -1468,7 +1483,8 @@ mod tests {
                 2,
                 /* Block comment */ 3,
                 4
-            ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test with trailing comment on last element
@@ -1477,26 +1493,31 @@ mod tests {
                 1,
                 2,
                 3 // Trailing comment
-            ]"#,
+            ]"#
+            .unindent(),
             json!("new"),
             r#"[
                 1,
                 2,
-                3, // Trailing comment
+                3 // Trailing comment
+            ,
                 "new"
-            ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test empty array with comments
         check_array_append(
             r#"[
                 // Empty array with comment
-            ]"#,
+            ]"#
+            .unindent(),
             json!("first"),
             r#"[
                 // Empty array with comment
                 "first"
-            ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test with multiline block comment at end
@@ -1508,33 +1529,38 @@ mod tests {
                  * This is a
                  * multiline comment
                  */
-            ]"#,
+            ]"#
+            .unindent(),
             json!(3),
             r#"[
                 1,
-                2,
+                2
                 /*
                  * This is a
                  * multiline comment
                  */
+            ,
                 3
-            ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test with deep indentation
         check_array_append(
             r#"[
-                        1,
-                        2,
+                1,
+                    2,
                         3
-                    ]"#,
+            ]"#
+            .unindent(),
             json!("deep"),
             r#"[
-                        1,
-                        2,
+                1,
+                    2,
                         3,
                         "deep"
-                    ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test with no spacing
@@ -1545,7 +1571,8 @@ mod tests {
             r#"[
                 {"a": 1},
                 {"b": 2}
-            ]"#,
+            ]"#
+            .unindent(),
             json!({"c": {"nested": [1, 2, 3]}}),
             r#"[
                 {"a": 1},
@@ -1559,7 +1586,8 @@ mod tests {
                         ]
                     }
                 }
-            ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test array ending with comment after bracket
@@ -1568,14 +1596,16 @@ mod tests {
                 1,
                 2,
                 3
-            ] // Comment after array"#,
+            ] // Comment after array"#
+                .unindent(),
             json!(4),
             r#"[
                 1,
                 2,
                 3,
                 4
-            ] // Comment after array"#,
+            ] // Comment after array"#
+                .unindent(),
         );
 
         // Test with inconsistent element formatting
@@ -1583,13 +1613,15 @@ mod tests {
             r#"[1,
                2,
                     3,
-            ]"#,
+            ]"#
+            .unindent(),
             json!(4),
             r#"[1,
                2,
                     3,
-               4
-            ]"#,
+                    4
+            ]"#
+            .unindent(),
         );
 
         // Test appending to single-line array with trailing comma
@@ -1607,13 +1639,15 @@ mod tests {
             r#"[
                 // Just comments here
                 // More comments
-            ]"#,
+            ]"#
+            .unindent(),
             json!(42),
             r#"[
                 // Just comments here
                 // More comments
                 42
-            ]"#,
+            ]"#
+            .unindent(),
         );
     }
 }
