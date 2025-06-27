@@ -37,12 +37,13 @@ impl SvgPreviewView {
                     let view = Self::create_svg_view(
                         SvgPreviewMode::Default,
                         workspace,
-                        editor,
+                        editor.clone(),
                         window,
                         cx,
                     );
                     workspace.active_pane().update(cx, |pane, cx| {
-                        if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane)
+                        if let Some(existing_view_idx) =
+                            Self::find_existing_preview_item_idx(pane, &editor, cx)
                         {
                             pane.activate_item(existing_view_idx, true, true, window, cx);
                         } else {
@@ -57,10 +58,11 @@ impl SvgPreviewView {
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_svg_editor(workspace, cx) {
                 if Self::is_svg_file(&editor, cx) {
+                    let editor_clone = editor.clone();
                     let view = Self::create_svg_view(
                         SvgPreviewMode::Default,
                         workspace,
-                        editor.clone(),
+                        editor_clone,
                         window,
                         cx,
                     );
@@ -75,14 +77,14 @@ impl SvgPreviewView {
                             )
                         });
                     pane.update(cx, |pane, cx| {
-                        if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane)
+                        if let Some(existing_view_idx) =
+                            Self::find_existing_preview_item_idx(pane, &editor, cx)
                         {
                             pane.activate_item(existing_view_idx, true, true, window, cx);
                         } else {
                             pane.add_item(Box::new(view), false, false, None, window, cx)
                         }
                     });
-                    editor.focus_handle(cx).focus(window);
                     cx.notify();
                 }
             }
@@ -107,9 +109,17 @@ impl SvgPreviewView {
         });
     }
 
-    fn find_existing_preview_item_idx(pane: &Pane) -> Option<usize> {
+    fn find_existing_preview_item_idx(
+        pane: &Pane,
+        editor: &Entity<Editor>,
+        cx: &App,
+    ) -> Option<usize> {
+        let editor_path = Self::get_svg_path(editor, cx);
         pane.items_of_type::<SvgPreviewView>()
-            .nth(0)
+            .find(|view| {
+                let view_read = view.read(cx);
+                view_read.svg_path.is_some() && view_read.svg_path == editor_path
+            })
             .and_then(|view| pane.index_for_item(&view))
     }
 
