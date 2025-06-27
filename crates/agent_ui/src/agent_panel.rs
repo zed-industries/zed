@@ -1656,8 +1656,15 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_store = self.user_store.read(cx);
-        let usage = user_store.model_request_usage();
+        let usage = self
+            .active_thread(cx)
+            .and_then(|thread| {
+                thread
+                    .read(cx)
+                    .configured_model()
+                    .map(|model| model.provider.usage(cx))
+            })
+            .unwrap_or_default();
 
         let account_url = zed_urls::account_url(cx);
 
