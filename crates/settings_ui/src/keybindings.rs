@@ -159,20 +159,22 @@ impl KeymapEditor {
         let mut string_match_candidates = Vec::new();
 
         for key_binding in key_bindings {
-            let mut keystroke_text = String::new();
-            for keystroke in key_binding.keystrokes() {
-                write!(&mut keystroke_text, "{} ", keystroke.unparse()).ok();
-            }
-            let keystroke_text = keystroke_text.trim().to_string();
+            let source = key_binding
+                .meta()
+                .map(|meta| settings::KeybindSource::from_meta(meta));
+
+            let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
+            let ui_key_binding = Some(
+                ui::KeyBinding::new(key_binding.clone(), cx)
+                    .vim_mode(source == Some(settings::KeybindSource::Vim)),
+            );
 
             let context = key_binding
                 .predicate()
                 .map(|predicate| predicate.to_string())
                 .unwrap_or_else(|| "<global>".to_string());
 
-            let source = key_binding
-                .meta()
-                .map(|meta| settings::KeybindSource::from_meta(meta).name().into());
+            let source = source.map(|source| source.name().into());
 
             let action_name = key_binding.action().name();
             unmapped_action_names.remove(&action_name);
@@ -181,6 +183,7 @@ impl KeymapEditor {
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
+                ui_key_binding,
                 action: action_name.into(),
                 action_input: key_binding.action_input(),
                 context: context.into(),
@@ -195,6 +198,7 @@ impl KeymapEditor {
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
+                ui_key_binding: None,
                 action: (*action_name).into(),
                 action_input: None,
                 context: empty.clone(),
@@ -363,6 +367,7 @@ impl KeymapEditor {
 #[derive(Clone)]
 struct ProcessedKeybinding {
     keystroke_text: SharedString,
+    ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
     action_input: Option<SharedString>,
     context: SharedString,
@@ -438,12 +443,15 @@ impl Render for KeymapEditor {
                                             binding.action_input.clone(),
                                             |this, binding_input| this.child(binding_input),
                                         );
-                                    let keystrokes = binding.keystroke_text.clone();
+                                    let keystrokes = binding.ui_key_binding.clone().map_or(
+                                        binding.keystroke_text.clone().into_any_element(),
+                                        IntoElement::into_any_element,
+                                    );
                                     let context = binding.context.clone();
                                     let source = binding.source.clone().unwrap_or_default();
                                     Some([
                                         action.into_any_element(),
-                                        keystrokes.into_any_element(),
+                                        keystrokes,
                                         context.into_any_element(),
                                         source.into_any_element(),
                                     ])
