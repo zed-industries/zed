@@ -137,15 +137,29 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             *chunk = self.buffer_chunks.next().unwrap();
         }
 
-        let (prefix, suffix) = chunk
-            .text
-            .split_at(chunk.text.len().min(next_highlight_endpoint - self.offset));
+        let split_idx = chunk.text.len().min(next_highlight_endpoint - self.offset);
+        let (prefix, suffix) = chunk.text.split_at(split_idx);
+
+        let (chars, tabs) = if split_idx == 128 {
+            let output = (chunk.chars, chunk.tabs);
+            chunk.chars = 0;
+            chunk.tabs = 0;
+            output
+        } else {
+            let mask = (1 << split_idx) - 1;
+            let output = (chunk.chars & mask, chunk.tabs & mask);
+            chunk.chars = chunk.chars >> split_idx;
+            chunk.tabs = chunk.tabs >> split_idx;
+            output
+        };
 
         chunk.text = suffix;
         self.offset += prefix.len();
         // FIXME: chunk cloning is wrong because the bitmaps might be off
         let mut prefix = Chunk {
             text: prefix,
+            chars,
+            tabs,
             ..chunk.clone()
         };
         if !self.active_highlights.is_empty() {
