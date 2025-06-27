@@ -179,7 +179,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
 
     // No event is emitted when the mutation is a no-op.
     _ = editor2.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([0..0]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([0..0])
+        });
 
         editor.backspace(&Backspace, window, cx);
     });
@@ -202,7 +204,9 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.start_transaction_at(now, window, cx);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([2..4]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([2..4])
+        });
 
         editor.insert("cd", window, cx);
         editor.end_transaction_at(now, cx);
@@ -210,14 +214,18 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         assert_eq!(editor.selections.ranges(cx), vec![4..4]);
 
         editor.start_transaction_at(now, window, cx);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([4..5]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([4..5])
+        });
         editor.insert("e", window, cx);
         editor.end_transaction_at(now, cx);
         assert_eq!(editor.text(cx), "12cde6");
         assert_eq!(editor.selections.ranges(cx), vec![5..5]);
 
         now += group_interval + Duration::from_millis(1);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([2..2]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([2..2])
+        });
 
         // Simulate an edit in another editor
         buffer.update(cx, |buffer, cx| {
@@ -325,7 +333,7 @@ fn test_ime_composition(cx: &mut TestAppContext) {
         assert_eq!(editor.marked_text_ranges(cx), None);
 
         // Start a new IME composition with multiple cursors.
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 OffsetUtf16(1)..OffsetUtf16(1),
                 OffsetUtf16(3)..OffsetUtf16(3),
@@ -623,7 +631,7 @@ fn test_clone(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(selection_ranges.clone())
         });
         editor.fold_creases(
@@ -709,12 +717,12 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
                 ])
             });
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)
                 ])
@@ -723,7 +731,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(13), 0)..DisplayPoint::new(DisplayRow(13), 3)
                 ])
@@ -893,7 +901,7 @@ fn test_fold_action(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(12), 0)
             ]);
@@ -984,7 +992,7 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(10), 0)
             ]);
@@ -1069,7 +1077,7 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(11), 0)
             ]);
@@ -1301,7 +1309,7 @@ fn test_move_cursor(cx: &mut TestAppContext) {
             &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
 
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 2)
             ]);
@@ -1446,7 +1454,7 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
         build_editor(buffer.clone(), window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([empty_range(0, "ⓐⓑⓒⓓⓔ".len())]);
         });
 
@@ -1536,7 +1544,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4),
@@ -1731,7 +1739,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
 
         // First, let's assert behavior on the first line, that was not soft-wrapped.
         // Start the cursor at the `k` on the first line
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 7)
             ]);
@@ -1753,7 +1761,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
 
         // Now, let's assert behavior on the second line, that ended up being soft-wrapped.
         // Start the cursor at the last line (`y` that was wrapped to a new line)
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0)
             ]);
@@ -1819,7 +1827,7 @@ fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4),
@@ -1901,7 +1909,7 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 11)..DisplayPoint::new(DisplayRow(0), 11),
                 DisplayPoint::new(DisplayRow(2), 4)..DisplayPoint::new(DisplayRow(2), 4),
@@ -1971,7 +1979,7 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
             "use one::{\n    two::three::\n    four::five\n};"
         );
 
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(1), 7)..DisplayPoint::new(DisplayRow(1), 7)
             ]);
@@ -2234,7 +2242,7 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
     // on screen, the editor autoscrolls to reveal the newest cursor, and
     // allows the vertical scroll margin below that cursor.
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges([
                 Point::new(0, 0)..Point::new(0, 0),
                 Point::new(6, 0)..Point::new(6, 0),
@@ -2262,7 +2270,7 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
     // Add a cursor above the visible area. Since both cursors fit on screen,
     // the editor scrolls to show both.
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges([
                 Point::new(1, 0)..Point::new(1, 0),
                 Point::new(6, 0)..Point::new(6, 0),
@@ -2429,7 +2437,7 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 // an empty selection - the preceding word fragment is deleted
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
@@ -2448,7 +2456,7 @@ fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 // an empty selection - the following word fragment is deleted
                 DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
@@ -2483,7 +2491,7 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
     };
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1)
             ])
@@ -2519,7 +2527,7 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     };
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
             ])
@@ -2558,7 +2566,7 @@ fn test_newline(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
                 DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
@@ -2591,7 +2599,7 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
             cx,
         );
         let mut editor = build_editor(buffer.clone(), window, cx);
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(2, 4)..Point::new(2, 5),
                 Point::new(5, 4)..Point::new(5, 5),
@@ -3078,7 +3086,7 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
         let mut editor = build_editor(buffer.clone(), window, cx);
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([3..4, 11..12, 19..20])
         });
         editor
@@ -3727,7 +3735,7 @@ fn test_delete_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
@@ -3750,7 +3758,7 @@ fn test_delete_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(0), 1)
             ])
@@ -3787,7 +3795,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         );
 
         // When multiple lines are selected, remove newlines that are spanned by the selection
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 5)..Point::new(2, 2)])
         });
         editor.join_lines(&JoinLines, window, cx);
@@ -3806,7 +3814,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
         );
 
         // When joining an empty line don't insert a space
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(2, 1)..Point::new(2, 2)])
         });
         editor.join_lines(&JoinLines, window, cx);
@@ -3846,7 +3854,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
 
         // We remove any leading spaces
         assert_eq!(buffer.read(cx).text(), "aaa bbb\n  c\n  \n\td");
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 1)..Point::new(0, 1)])
         });
         editor.join_lines(&JoinLines, window, cx);
@@ -3873,7 +3881,7 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
         let mut editor = build_editor(buffer.clone(), window, cx);
         let buffer = buffer.read(cx).as_singleton().unwrap();
 
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(0, 2)..Point::new(1, 1),
                 Point::new(1, 2)..Point::new(1, 2),
@@ -4713,7 +4721,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
@@ -4739,7 +4747,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(1), 1),
                 DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(2), 1),
@@ -4763,7 +4771,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
@@ -4789,7 +4797,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(1), 1),
                 DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(2), 1),
@@ -4811,7 +4819,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(1), 1),
                 DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(2), 1),
@@ -4848,7 +4856,7 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
             window,
             cx,
         );
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(3), 1)..DisplayPoint::new(DisplayRow(3), 1),
@@ -4951,7 +4959,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
             Some(Autoscroll::fit()),
             cx,
         );
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
         });
         editor.move_line_down(&MoveLineDown, window, cx);
@@ -5036,7 +5044,9 @@ fn test_transpose(cx: &mut TestAppContext) {
     _ = cx.add_window(|window, cx| {
         let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), window, cx);
         editor.set_style(EditorStyle::default(), window, cx);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([1..1]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1])
+        });
         editor.transpose(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "bac");
         assert_eq!(editor.selections.ranges(cx), [2..2]);
@@ -5055,12 +5065,16 @@ fn test_transpose(cx: &mut TestAppContext) {
     _ = cx.add_window(|window, cx| {
         let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), window, cx);
         editor.set_style(EditorStyle::default(), window, cx);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([3..3]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([3..3])
+        });
         editor.transpose(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "acb\nde");
         assert_eq!(editor.selections.ranges(cx), [3..3]);
 
-        editor.change_selections(None, window, cx, |s| s.select_ranges([4..4]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([4..4])
+        });
         editor.transpose(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "acbd\ne");
         assert_eq!(editor.selections.ranges(cx), [5..5]);
@@ -5079,7 +5093,9 @@ fn test_transpose(cx: &mut TestAppContext) {
     _ = cx.add_window(|window, cx| {
         let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), window, cx);
         editor.set_style(EditorStyle::default(), window, cx);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([1..1, 2..2, 4..4]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1, 2..2, 4..4])
+        });
         editor.transpose(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "bacd\ne");
         assert_eq!(editor.selections.ranges(cx), [2..2, 3..3, 5..5]);
@@ -5106,7 +5122,9 @@ fn test_transpose(cx: &mut TestAppContext) {
     _ = cx.add_window(|window, cx| {
         let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), window, cx);
         editor.set_style(EditorStyle::default(), window, cx);
-        editor.change_selections(None, window, cx, |s| s.select_ranges([4..4]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([4..4])
+        });
         editor.transpose(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "🏀🍐✋");
         assert_eq!(editor.selections.ranges(cx), [8..8]);
@@ -6085,7 +6103,7 @@ fn test_select_line(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
@@ -6212,7 +6230,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
@@ -6231,7 +6249,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         .assert_editor_state("aˇaˇaaa\nbbbbb\nˇccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiiiˇ");
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(0), 1)
             ])
@@ -6977,7 +6995,7 @@ async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
 
     // Move cursor to a different position
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(4, 2)..Point::new(4, 2)]);
         });
     });
@@ -7082,7 +7100,7 @@ async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(9, 2)..Point::new(9, 2)]);
         });
     });
@@ -7342,7 +7360,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 25)..DisplayPoint::new(DisplayRow(0), 25),
                 DisplayPoint::new(DisplayRow(2), 24)..DisplayPoint::new(DisplayRow(2), 12),
@@ -7524,7 +7542,7 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
 
     // Test case 1: Cursor at end of word
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 5)
             ]);
@@ -7548,7 +7566,7 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
 
     // Test case 2: Cursor at end of statement
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 11)..DisplayPoint::new(DisplayRow(0), 11)
             ]);
@@ -7593,7 +7611,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 
     // Test 1: Cursor on a letter of a string word
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(3), 17)..DisplayPoint::new(DisplayRow(3), 17)
             ]);
@@ -7627,7 +7645,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 
     // Test 2: Partial selection within a word
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(3), 17)..DisplayPoint::new(DisplayRow(3), 19)
             ]);
@@ -7661,7 +7679,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 
     // Test 3: Complete word already selected
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(3), 16)..DisplayPoint::new(DisplayRow(3), 21)
             ]);
@@ -7695,7 +7713,7 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 
     // Test 4: Selection spanning across words
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(3), 19)..DisplayPoint::new(DisplayRow(3), 24)
             ]);
@@ -7897,7 +7915,9 @@ async fn test_autoindent(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([5..5, 8..8, 9..9]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([5..5, 8..8, 9..9])
+        });
         editor.newline(&Newline, window, cx);
         assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
         assert_eq!(
@@ -8679,7 +8699,7 @@ async fn test_surround_with_pair(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 1),
@@ -8829,7 +8849,7 @@ async fn test_delete_autoclose_pair(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(0, 1)..Point::new(0, 1),
                 Point::new(1, 1)..Point::new(1, 1),
@@ -9511,16 +9531,22 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
 
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-            s.select_ranges(Some(1..2))
-        });
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::Next),
+            window,
+            cx,
+            |s| s.select_ranges(Some(1..2)),
+        );
         editor.insert("|one|two|three|", window, cx);
     });
     assert!(cx.read(|cx| multi_buffer_editor.is_dirty(cx)));
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-            s.select_ranges(Some(60..70))
-        });
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::Next),
+            window,
+            cx,
+            |s| s.select_ranges(Some(60..70)),
+        );
         editor.insert("|four|five|six|", window, cx);
     });
     assert!(cx.read(|cx| multi_buffer_editor.is_dirty(cx)));
@@ -9683,9 +9709,12 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
 
     // Edit only the first buffer
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-            s.select_ranges(Some(10..10))
-        });
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::Next),
+            window,
+            cx,
+            |s| s.select_ranges(Some(10..10)),
+        );
         editor.insert("// edited", window, cx);
     });
 
@@ -11097,7 +11126,9 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([0..0]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([0..0])
+        });
     });
 
     let mocked_response = lsp::SignatureHelp {
@@ -11184,7 +11215,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     // When selecting a range, the popover is gone.
     // Avoid using `cx.set_state` to not actually edit the document, just change its selections.
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(Some(Point::new(1, 25)..Point::new(1, 19)));
         })
     });
@@ -11201,7 +11232,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
 
     // When unselecting again, the popover is back if within the brackets.
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
         })
     });
@@ -11221,7 +11252,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
 
     // Test to confirm that SignatureHelp does not appear after deselecting multiple ranges when it was hidden by pressing Escape.
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(Some(Point::new(0, 0)..Point::new(0, 0)));
             s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
         })
@@ -11262,7 +11293,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     cx.condition(|editor, _| !editor.signature_help_state.is_shown())
         .await;
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(Some(Point::new(1, 25)..Point::new(1, 19)));
         })
     });
@@ -11274,7 +11305,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
         fn sample(param1: u8, param2: u8) {}
     "});
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(Some(Point::new(1, 19)..Point::new(1, 19)));
         })
     });
@@ -11930,7 +11961,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     let fake_server = fake_servers.next().await.unwrap();
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(1, 11)..Point::new(1, 11),
                 Point::new(7, 11)..Point::new(7, 11),
@@ -13571,7 +13602,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
     editor.update_in(cx, |editor, window, cx| {
         assert_eq!(editor.text(cx), "aaaa\nbbbb");
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(0, 0)..Point::new(0, 0),
                 Point::new(1, 0)..Point::new(1, 0),
@@ -13589,7 +13620,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         );
 
         // Ensure the cursor's head is respected when deleting across an excerpt boundary.
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 2)..Point::new(1, 2)])
         });
         editor.backspace(&Default::default(), window, cx);
@@ -13599,7 +13630,7 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
             [Point::new(1, 0)..Point::new(1, 0)]
         );
 
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 1)..Point::new(0, 1)])
         });
         editor.backspace(&Default::default(), window, cx);
@@ -13647,7 +13678,9 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
             true,
         );
         assert_eq!(editor.text(cx), expected_text);
-        editor.change_selections(None, window, cx, |s| s.select_ranges(selection_ranges));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(selection_ranges)
+        });
 
         editor.handle_input("X", window, cx);
 
@@ -13708,7 +13741,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| {
         let mut editor = build_editor(multibuffer.clone(), window, cx);
         let snapshot = editor.snapshot(window, cx);
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 3)..Point::new(1, 3)])
         });
         editor.begin_selection(
@@ -13730,7 +13763,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
 
     // Refreshing selections is a no-op when excerpts haven't changed.
     _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.refresh());
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -13755,7 +13788,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
 
         // Refreshing selections will relocate the first selection to the original buffer
         // location.
-        editor.change_selections(None, window, cx, |s| s.refresh());
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [
@@ -13817,7 +13850,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
         );
 
         // Ensure we don't panic when selections are refreshed and that the pending selection is finalized.
-        editor.change_selections(None, window, cx, |s| s.refresh());
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| s.refresh());
         assert_eq!(
             editor.selections.ranges(cx),
             [Point::new(0, 3)..Point::new(0, 3)]
@@ -13876,7 +13909,7 @@ async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
                 DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),
@@ -14055,7 +14088,9 @@ async fn test_following(cx: &mut TestAppContext) {
 
     // Update the selections only
     _ = leader.update(cx, |leader, window, cx| {
-        leader.change_selections(None, window, cx, |s| s.select_ranges([1..1]));
+        leader.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1])
+        });
     });
     follower
         .update(cx, |follower, window, cx| {
@@ -14103,7 +14138,9 @@ async fn test_following(cx: &mut TestAppContext) {
     // Update the selections and scroll position. The follower's scroll position is updated
     // via autoscroll, not via the leader's exact scroll position.
     _ = leader.update(cx, |leader, window, cx| {
-        leader.change_selections(None, window, cx, |s| s.select_ranges([0..0]));
+        leader.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([0..0])
+        });
         leader.request_autoscroll(Autoscroll::newest(), cx);
         leader.set_scroll_position(gpui::Point::new(1.5, 3.5), window, cx);
     });
@@ -14127,7 +14164,9 @@ async fn test_following(cx: &mut TestAppContext) {
 
     // Creating a pending selection that precedes another selection
     _ = leader.update(cx, |leader, window, cx| {
-        leader.change_selections(None, window, cx, |s| s.select_ranges([1..1]));
+        leader.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1])
+        });
         leader.begin_selection(DisplayPoint::new(DisplayRow(0), 0), true, 1, window, cx);
     });
     follower
@@ -14783,7 +14822,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
 
     editor_handle.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx));
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 21)..Point::new(0, 20)])
         });
         editor.handle_input("{", window, cx);
@@ -16398,7 +16437,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
         });
         editor.git_restore(&Default::default(), window, cx);
@@ -16542,9 +16581,12 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-            s.select_ranges(Some(1..2))
-        });
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::Next),
+            window,
+            cx,
+            |s| s.select_ranges(Some(1..2)),
+        );
         editor.open_excerpts(&OpenExcerpts, window, cx);
     });
     cx.executor().run_until_parked();
@@ -16594,9 +16636,12 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
         .unwrap();
 
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-            s.select_ranges(Some(39..40))
-        });
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::Next),
+            window,
+            cx,
+            |s| s.select_ranges(Some(39..40)),
+        );
         editor.open_excerpts(&OpenExcerpts, window, cx);
     });
     cx.executor().run_until_parked();
@@ -16650,9 +16695,12 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
         .unwrap();
 
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-            s.select_ranges(Some(70..70))
-        });
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::Next),
+            window,
+            cx,
+            |s| s.select_ranges(Some(70..70)),
+        );
         editor.open_excerpts(&OpenExcerpts, window, cx);
     });
     cx.executor().run_until_parked();
@@ -18254,7 +18302,7 @@ async fn test_active_indent_guide_single_line(cx: &mut TestAppContext) {
     .await;
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
         });
     });
@@ -18282,7 +18330,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
     .await;
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
         });
     });
@@ -18298,7 +18346,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
         });
     });
@@ -18314,7 +18362,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(3, 0)..Point::new(3, 0)])
         });
     });
@@ -18345,7 +18393,7 @@ async fn test_active_indent_guide_empty_line(cx: &mut TestAppContext) {
     .await;
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
         });
     });
@@ -18371,7 +18419,7 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut TestAppContext) {
     .await;
 
     cx.update_editor(|editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
         });
     });
@@ -19309,14 +19357,14 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
         );
 
         // Test finding task when cursor is inside function body
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
         });
         let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
         assert_eq!(row, 3, "Should find task for cursor inside runnable_1");
 
         // Test finding task when cursor is on function name
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(8, 4)..Point::new(8, 4)])
         });
         let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
@@ -19470,7 +19518,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
                 .collect::<String>(),
             "bbbb"
         );
-        editor.change_selections(None, window, cx, |selections| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(vec![Point::new(1, 0)..Point::new(1, 0)]);
         });
         editor.handle_input("B", window, cx);
@@ -19697,7 +19745,9 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
             HighlightStyle::color(Hsla::green()),
             cx,
         );
-        editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(Some(highlight_range))
+        });
     });
 
     let full_text = format!("\n\n{sample_text}");
@@ -21067,7 +21117,7 @@ println!("5");
         })
     });
     editor_1.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(expected_ranges.clone());
         });
     });
@@ -21513,7 +21563,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("<ad></ad>", window, cx);
-        editor.change_selections(None, window, cx, |selections| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
         });
         let Some((buffer, _)) = editor
@@ -22519,7 +22569,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
 
     // Moving cursor should not trigger diagnostic request
     editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
         });
     });
