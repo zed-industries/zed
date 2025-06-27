@@ -428,7 +428,6 @@ impl NewProcessModal {
                 );
                 return Err(anyhow::anyhow!("No open project"));
             };
-            let label = scenario.label.clone();
 
             let Ok(Ok(save_scenario)) = this.update_in(cx, |this, window, cx| {
                 this.debug_panel.update(cx, |panel, cx| {
@@ -437,6 +436,8 @@ impl NewProcessModal {
             }) else {
                 return Err(anyhow::anyhow!("Failed to save debug scenario"));
             };
+
+            let label = scenario.label.clone();
             let Ok(path) = save_scenario.await else {
                 return Err(anyhow::anyhow!("Failed to save debug scenario"));
             };
@@ -453,7 +454,7 @@ impl NewProcessModal {
             .ok();
             Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn adapter_drop_down_menu(
@@ -1379,11 +1380,10 @@ impl PickerDelegate for DebugDelegate {
             let debug_panel = self.debug_panel.clone();
             cx.spawn_in(window, async move |_, cx| {
                 // TODO: switch to calling save_debug_scenario(window, cx);
-                debug_panel
-                    .update_in(cx, |debug_panel, window, cx| {
-                        debug_panel.save_scenario(&debug_scenario, id, window, cx)
-                    })?
-                    .await?;
+                dbg!(debug_panel.update_in(cx, |debug_panel, window, cx| {
+                    debug_panel.save_scenario(&debug_scenario, id, window, cx)
+                })?)
+                .await?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
