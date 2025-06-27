@@ -1,5 +1,5 @@
 use crate::{
-    burn_mode_tooltip::MaxModeTooltip,
+    burn_mode_tooltip::BurnModeTooltip,
     language_model_selector::{
         LanguageModelSelector, ToggleModelSelector, language_model_selector,
     },
@@ -2107,7 +2107,7 @@ impl TextThreadEditor {
                     });
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
