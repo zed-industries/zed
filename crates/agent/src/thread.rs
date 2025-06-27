@@ -58,8 +58,6 @@ use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 const MAX_RETRY_ATTEMPTS: u8 = 3;
-// todo! remove
-const BASE_RETRY_DELAY_SECS: u64 = 5;
 const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(
@@ -308,6 +306,7 @@ pub enum MessageSegment {
         output: Option<Result<LanguageModelToolResultContent, Arc<anyhow::Error>>>,
     },
 }
+
 #[cfg(test)]
 impl PartialEq for MessageSegment {
     fn eq(&self, other: &Self) -> bool {
@@ -3303,8 +3302,7 @@ impl ZedAgent {
             let delay = if let Some(custom_delay) = custom_delay {
                 custom_delay
             } else {
-                let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow((attempt - 1) as u32);
-                Duration::from_secs(delay_secs)
+                BASE_RETRY_DELAY * 2u32.pow((attempt - 1) as u32)
             };
 
             // Add a transient message to inform the user
@@ -3740,54 +3738,6 @@ impl ZedAgent {
             let error_message = format!(
                 "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
                 name, tool_list
-            );
-            Err(anyhow!(error_message))
-            // todo!("what do we wanna do here?")
-            // cx.emit(ThreadEvent::MissingToolUse {
-            //     tool_use_id: tool_use_id.clone(),
-            //     ui_text: error_message.into(),
-            // });
-        }
-    }
-
-    pub fn run_tool2(
-        &mut self,
-        tool_use: LanguageModelToolUse,
-        request: Arc<LanguageModelRequest>, // todo!("do we actually need an arc?")
-        model: Arc<dyn LanguageModel>,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) -> Result<assistant_tool::ToolResult> {
-        if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx)
-            && self.profile.is_tool_enabled(tool.source(), tool.name(), cx)
-        {
-            if tool.needs_confirmation(&tool_use.input, cx)
-                && !AgentSettings::get_global(cx).always_allow_tool_actions
-            {
-                todo!()
-                // self.confirm_tool_use(tool_use.id, tool_use.ui_text, tool_use.input, request, tool);
-                // cx.emit(ThreadEvent::ToolConfirmationNeeded);
-            } else {
-                Ok(tool.run(
-                    tool_use.input,
-                    request,
-                    self.project.clone(),
-                    self.action_log(cx),
-                    model,
-                    window,
-                    cx,
-                ))
-            }
-        } else {
-            let available_tools = self.profile.enabled_tools(cx);
-            let tool_list = available_tools
-                .iter()
-                .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let error_message = format!(
-                "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
-                tool_use.name, tool_list
             );
             Err(anyhow!(error_message))
             // todo!("what do we wanna do here?")
@@ -5972,8 +5922,7 @@ fn main() {{
         });
 
         // Advance clock for first retry
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
         // Should have scheduled second retry - count retry messages
@@ -6006,8 +5955,7 @@ fn main() {{
         });
 
         // Advance clock for second retry (exponential backoff)
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 2));
+        cx.executor().advance_clock(BASE_RETRY_DELAY * 2);
         cx.run_until_parked();
 
         // Should have scheduled third retry
@@ -6047,8 +5995,7 @@ fn main() {{
         });
 
         // Advance clock for third retry (exponential backoff)
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 4));
+        cx.executor().advance_clock(BASE_RETRY_DELAY * 4);
         cx.run_until_parked();
 
         // No more retries should be scheduled after clock was advanced.
@@ -6117,19 +6064,18 @@ fn main() {{
         // Advance through all retries
         for i in 0..MAX_RETRY_ATTEMPTS {
             let delay = if i == 0 {
-                BASE_RETRY_DELAY_SECS
+                BASE_RETRY_DELAY
             } else {
-                BASE_RETRY_DELAY_SECS * 2u64.pow(i as u32 - 1)
+                BASE_RETRY_DELAY * 2u32.pow(i as u32 - 1)
             };
-            cx.executor().advance_clock(Duration::from_secs(delay));
+            cx.executor().advance_clock(delay);
             cx.run_until_parked();
         }
 
         // After the 3rd retry is scheduled, we need to wait for it to execute and fail
         // The 3rd retry has a delay of BASE_RETRY_DELAY_SECS * 4 (20 seconds)
-        let final_delay = BASE_RETRY_DELAY_SECS * 2u64.pow((MAX_RETRY_ATTEMPTS - 1) as u32);
-        cx.executor()
-            .advance_clock(Duration::from_secs(final_delay));
+        let final_delay = BASE_RETRY_DELAY * 2u32.pow(MAX_RETRY_ATTEMPTS as u32 - 1);
+        cx.executor().advance_clock(final_delay);
         cx.run_until_parked();
 
         let retry_count = thread.update(cx, |thread, _cx| {
@@ -6308,8 +6254,7 @@ fn main() {{
         });
 
         // Wait for retry
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
         // Stream some successful content
@@ -6468,8 +6413,7 @@ fn main() {{
         });
 
         // Wait for retry delay
-        cx.executor()
-            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
         // The retry should now use our FailOnceModel which should succeed
