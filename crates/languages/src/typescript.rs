@@ -822,9 +822,7 @@ impl LspAdapter for EsLintLspAdapter {
             "rulesCustomizations": [],
             "run": "onType",
             "nodePath": null,
-            "workingDirectory": {
-                "mode": "auto"
-            },
+            "workingDirectories": [{ "mode": "auto" }],
             "workspaceFolder": {
                 "uri": workspace_root,
                 "name": workspace_root.file_name()

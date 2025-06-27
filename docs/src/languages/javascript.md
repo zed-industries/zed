@@ -156,18 +156,16 @@ You can configure ESLint's `rulesCustomizations` setting:
 }
 ```
 
-### Configure ESLint's `workingDirectory`:
+### Configure ESLint's `workingDirectories`:
 
-You can configure ESLint's `workingDirectory` setting:
+You can configure ESLint's `workingDirectories` setting:
 
 ```json
 {
   "lsp": {
     "eslint": {
       "settings": {
-        "workingDirectory": {
-          "mode": "auto"
-        }
+        "workingDirectories": [{ "mode": "auto" }]
       }
     }
   }
