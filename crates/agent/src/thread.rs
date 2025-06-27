@@ -1607,9 +1607,7 @@ impl Thread {
                                     };
                                 }
                             }
-                            LanguageModelCompletionEvent::RedactedThinking {
-                                data
-                            } => {
+                            LanguageModelCompletionEvent::RedactedThinking { data } => {
                                 thread.received_chunk();
 
                                 if let Some(last_message) = thread.messages.last_mut() {
@@ -1658,7 +1656,7 @@ impl Thread {
                                     });
                                 }
                             }
-                            LanguageModelCompletionEvent::ToolUseJsonParseError  {
+                            LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id,
                                 tool_name,
                                 raw_input: invalid_input_json,
@@ -1674,31 +1672,41 @@ impl Thread {
                                 );
                             }
                             LanguageModelCompletionEvent::StatusUpdate(status_update) => {
+                                // todo! Should this really ignore failures if the pending completion doesn't match?
                                 if let Some(completion) = thread
                                     .pending_completions
                                     .iter_mut()
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
                                     match status_update {
-                                        CompletionRequestStatus::Queued {
-                                            position,
-                                        } => {
-                                            completion.queue_state = QueueState::Queued { position };
+                                        CompletionRequestStatus::Queued { position } => {
+                                            completion.queue_state =
+                                                QueueState::Queued { position };
                                         }
                                         CompletionRequestStatus::Started => {
-                                            completion.queue_state =  QueueState::Started;
+                                            completion.queue_state = QueueState::Started;
                                         }
                                         CompletionRequestStatus::Failed {
-                                            code, message, request_id
+                                            code,
+                                            message,
+                                            request_id: _,
+                                            retry_after,
                                         } => {
-                                            // todo! This is where HTTP errors from cloud models actually get reported.
-                                            // Should add `retry_after` to failed and clarify upstream vs internal errors.
-                                            anyhow::bail!("completion request failed. request_id: {request_id}, code: {code}, message: {message}");
+                                            return Err(
+                                                LanguageModelCompletionError::from_cloud_failure(
+                                                    model.provider_name(),
+                                                    code,
+                                                    message,
+                                                    retry_after.map(Duration::from_secs_f64),
+                                                ),
+                                            );
                                         }
-                                        CompletionRequestStatus::UsageUpdated {
-                                            amount, limit
-                                        } => {
-                                            thread.update_model_request_usage(amount as u32, limit, cx);
+                                        CompletionRequestStatus::UsageUpdated { amount, limit } => {
+                                            thread.update_model_request_usage(
+                                                amount as u32,
+                                                limit,
+                                                cx,
+                                            );
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1749,10 +1757,11 @@ impl Thread {
                         Ok(stop_reason) => {
                             match stop_reason {
                                 StopReason::ToolUse => {
-                                    let tool_uses = thread.use_pending_tools(window, model.clone(), cx);
+                                    let tool_uses =
+                                        thread.use_pending_tools(window, model.clone(), cx);
                                     cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                                 }
-                                StopReason::EndTurn | StopReason::MaxTokens  => {
+                                StopReason::EndTurn | StopReason::MaxTokens => {
                                     thread.project.update(cx, |project, cx| {
                                         project.set_agent_location(None, cx);
                                     });
@@ -1768,7 +1777,9 @@ impl Thread {
                                     {
                                         let mut messages_to_remove = Vec::new();
 
-                                        for (ix, message) in thread.messages.iter().enumerate().rev() {
+                                        for (ix, message) in
+                                            thread.messages.iter().enumerate().rev()
+                                        {
                                             messages_to_remove.push(message.id);
 
                                             if message.role == Role::User {
@@ -1776,7 +1787,9 @@ impl Thread {
                                                     break;
                                                 }
 
-                                                if let Some(prev_message) = thread.messages.get(ix - 1) {
+                                                if let Some(prev_message) =
+                                                    thread.messages.get(ix - 1)
+                                                {
                                                     if prev_message.role == Role::Assistant {
                                                         break;
                                                     }
@@ -1791,14 +1804,16 @@ impl Thread {
 
                                     cx.emit(ThreadEvent::ShowError(ThreadError::Message {
                                         header: "Language model refusal".into(),
-                                        message: "Model refused to generate content for safety reasons.".into(),
+                                        message:
+                                            "Model refused to generate content for safety reasons."
+                                                .into(),
                                     }));
                                 }
                             }
 
                             // We successfully completed, so cancel any remaining retries.
                             thread.retry_state = None;
-                        },
+                        }
                         Err(error) => {
                             thread.project.update(cx, |project, cx| {
                                 project.set_agent_location(None, cx);
@@ -1828,10 +1843,13 @@ impl Thread {
                                 error.downcast_ref::<LanguageModelCompletionError>()
                             {
                                 match &completion_error {
-                                    LanguageModelCompletionError::PromptTooLarge { tokens, .. } => {
+                                    LanguageModelCompletionError::PromptTooLarge {
+                                        tokens, ..
+                                    } => {
                                         let tokens = tokens.unwrap_or_else(|| {
                                             // We didn't get an exact token count from the API, so fall back on our estimate.
-                                            thread.total_token_usage()
+                                            thread
+                                                .total_token_usage()
                                                 .map(|usage| usage.total)
                                                 .unwrap_or(0)
                                                 // We know the context window was exceeded in practice, so if our estimate was
@@ -1844,8 +1862,14 @@ impl Thread {
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelCompletionError::RateLimitExceeded { retry_after: Some(retry_after), .. } | LanguageModelCompletionError::ServerOverloaded { retry_after: Some(retry_after), .. }
-                                    => {
+                                    LanguageModelCompletionError::RateLimitExceeded {
+                                        retry_after: Some(retry_after),
+                                        ..
+                                    }
+                                    | LanguageModelCompletionError::ServerOverloaded {
+                                        retry_after: Some(retry_after),
+                                        ..
+                                    } => {
                                         thread.handle_rate_limit_error(
                                             &completion_error,
                                             *retry_after,
@@ -1856,8 +1880,8 @@ impl Thread {
                                         );
                                         retry_scheduled = true;
                                     }
-                                    LanguageModelCompletionError::RateLimitExceeded { .. } |
-                                    LanguageModelCompletionError::ServerOverloaded { .. } => {
+                                    LanguageModelCompletionError::RateLimitExceeded { .. }
+                                    | LanguageModelCompletionError::ServerOverloaded { .. } => {
                                         retry_scheduled = thread.handle_retryable_error(
                                             &completion_error,
                                             model.clone(),
@@ -1869,7 +1893,9 @@ impl Thread {
                                             emit_generic_error(error, cx);
                                         }
                                     }
-                                    LanguageModelCompletionError::ApiInternalServerError { .. } => {
+                                    LanguageModelCompletionError::ApiInternalServerError {
+                                        ..
+                                    } => {
                                         retry_scheduled = thread.handle_retryable_error(
                                             &completion_error,
                                             model.clone(),

@@ -9,7 +9,7 @@ mod telemetry;
 pub mod fake_provider;
 
 use anthropic::{AnthropicError, parse_prompt_too_long};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
@@ -35,6 +35,8 @@ pub use crate::role::*;
 pub use crate::telemetry::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
+pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Zed");
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
@@ -166,6 +168,59 @@ pub enum LanguageModelCompletionError {
     // todo! remove - having From<anyhow::Error> discourages using proper error values
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+impl LanguageModelCompletionError {
+    pub fn from_cloud_failure(
+        provider: LanguageModelProviderName,
+        code: String,
+        message: String,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        match code.as_str() {
+            "upstream_http_400" => Self::BadRequestFormat { provider, message },
+            "upstream_http_401" => Self::AuthenticationError { provider, message },
+            "upstream_http_403" => Self::PermissionError { provider, message },
+            "upstream_http_404" => Self::ApiEndpointNotFound { provider },
+            "upstream_http_413" => Self::PromptTooLarge {
+                tokens: parse_prompt_too_long(&message),
+            },
+            "upstream_http_429" => Self::RateLimitExceeded {
+                provider,
+                retry_after,
+            },
+            "upstream_http_500" => Self::ApiInternalServerError { provider, message },
+            "upstream_http_529" => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            _ => {
+                let provider = ZED_CLOUD_PROVIDER_NAME;
+                match code.as_str() {
+                    "http_400" => Self::BadRequestFormat { provider, message },
+                    "http_401" => Self::AuthenticationError { provider, message },
+                    "http_403" => Self::PermissionError { provider, message },
+                    "http_404" => Self::ApiEndpointNotFound { provider },
+                    "http_413" => Self::PromptTooLarge {
+                        tokens: parse_prompt_too_long(&message),
+                    },
+                    "http_429" => Self::RateLimitExceeded {
+                        provider,
+                        retry_after,
+                    },
+                    "http_500" => Self::ApiInternalServerError { provider, message },
+                    "http_529" => Self::ServerOverloaded {
+                        provider,
+                        retry_after,
+                    },
+                    "error" | "internal_queue_error" | "internal_server_error" | "unknown" | _ => {
+                        anyhow!("completion request failed, code: {code}, message: {message}")
+                            .into()
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl From<AnthropicError> for LanguageModelCompletionError {
@@ -354,10 +409,6 @@ pub trait LanguageModel: Send + Sync {
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
-
-    fn is_zed(&self) -> bool {
-        self.provider_id().is_zed()
-    }
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None
@@ -561,10 +612,6 @@ pub struct LanguageModelProviderName(pub SharedString);
 impl LanguageModelProviderId {
     pub const fn new(id: &'static str) -> Self {
         Self(SharedString::new_static(id))
-    }
-
-    pub fn is_zed(&self) -> bool {
-        self == &ZED_CLOUD_PROVIDER_ID
     }
 }
 
