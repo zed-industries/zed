@@ -22669,24 +22669,44 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                     lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
-                Ok(vec![lsp::ColorInformation {
-                    range: lsp::Range {
-                        start: lsp::Position {
-                            line: 0,
-                            character: 0,
+                Ok(vec![
+                    lsp::ColorInformation {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: lsp::Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
-                        end: lsp::Position {
-                            line: 0,
-                            character: 1,
+                        color: lsp::Color {
+                            red: 0.33,
+                            green: 0.33,
+                            blue: 0.33,
+                            alpha: 0.33,
                         },
                     },
-                    color: lsp::Color {
-                        red: 0.33,
-                        green: 0.33,
-                        blue: 0.33,
-                        alpha: 0.33,
+                    lsp::ColorInformation {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: lsp::Position {
+                                line: 0,
+                                character: 1,
+                            },
+                        },
+                        color: lsp::Color {
+                            red: 0.33,
+                            green: 0.33,
+                            blue: 0.33,
+                            alpha: 0.33,
+                        },
                     },
-                }])
+                ])
             }
         });
 
