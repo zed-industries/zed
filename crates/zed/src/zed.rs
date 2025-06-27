@@ -4323,6 +4323,7 @@ mod tests {
                 "search",
                 "snippets",
                 "supermaven",
+                "svg",
                 "tab_switcher",
                 "task",
                 "terminal",
