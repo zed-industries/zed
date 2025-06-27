@@ -263,16 +263,14 @@ impl OpenAiLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).openai;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::from(
-                    LanguageModelCompletionError::NoApiKey {
-                        provider: PROVIDER_NAME,
-                    },
-                ));
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
             };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;

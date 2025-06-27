@@ -406,8 +406,7 @@ impl AnthropicModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
-                }
-                .into());
+                });
             };
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);

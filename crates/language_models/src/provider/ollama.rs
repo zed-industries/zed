@@ -453,9 +453,7 @@ fn map_to_language_model_completion_events(
             let delta = match response {
                 Ok(delta) => delta,
                 Err(e) => {
-                    let event = Err(LanguageModelCompletionError::from(
-                        LanguageModelCompletionError::from(anyhow!(e)),
-                    ));
+                    let event = Err(LanguageModelCompletionError::from(anyhow!(e)));
                     return Some((vec![event], state));
                 }
             };

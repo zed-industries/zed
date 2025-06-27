@@ -595,9 +595,9 @@ impl MistralEventMapper {
         event: mistral::StreamResponse,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::from(
-                LanguageModelCompletionError::from(anyhow!("Response contained no choices")),
-            ))];
+            return vec![Err(LanguageModelCompletionError::from(anyhow!(
+                "Response contained no choices"
+            )))];
         };
 
         let mut events = Vec::new();
@@ -660,11 +660,9 @@ impl MistralEventMapper {
 
         for (_, tool_call) in self.tool_calls_by_index.drain() {
             if tool_call.id.is_empty() || tool_call.name.is_empty() {
-                results.push(Err(LanguageModelCompletionError::from(
-                    LanguageModelCompletionError::from(anyhow!(
-                        "Received incomplete tool call: missing id or name"
-                    )),
-                )));
+                results.push(Err(LanguageModelCompletionError::from(anyhow!(
+                    "Received incomplete tool call: missing id or name"
+                ))));
                 continue;
             }
 
