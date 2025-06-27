@@ -1688,57 +1688,49 @@ impl ZedAgent {
                                 LanguageModelCompletionEvent::RedactedThinking { data } => {
                                     assistant_message.push(MessageContent::RedactedThinking(data));
                                 }
-                                LanguageModelCompletionEvent::ToolUse(language_model_tool_use) => {
+                                LanguageModelCompletionEvent::ToolUse(tool_use) => {
                                     // todo!("update tool card")
-                                    if language_model_tool_use.is_input_complete {
+                                    if tool_use.is_input_complete {
                                         let mut pending_request = request.clone();
                                         pending_request.messages.push(assistant_message.clone());
-                                        let tool = this.update(cx, |this, cx| {
-                                            this.tool_for_name(&language_model_tool_use.name, cx)
-                                        })?;
 
-                                        match tool {
+                                        match this.read_with(cx, |this, cx| {
+                                            this.tool_for_name(&tool_use.name, cx)
+                                        })? {
                                             Ok(tool) => {
-                                                let confirmed = if tool.needs_confirmation(&tool_use.input, cx)
-                                                    && !AgentSettings::get_global(cx).always_allow_tool_actions
-                                                {
-                                                    thread.update(cx, |thread,cx| thread.gimme_confirmation()).await;
-                                                } else {
-                                                    true
-                                                };
-                                                
-                                                if confirmed {
-                                                    
-                                                } else {
-                                                    
-                                                }
-                                            },
-                                            Err(error) => {
-                                                // todo!("show error in thread")
-                                                pending_tool_uses.push(PendingToolUse {
-                                                    request: language_model_tool_use,
-                                                    output: Task::ready(Err(error)),
-                                                });
-                                            },
-                                        }
-
-                                        match tool_result {
-                                            Ok(tool_result) => {
                                                 // todo!("send the card to thread")
+                                                // todo!("handle confirmation")
+                                                // let confirmed = if tool.needs_confirmation(&tool_use.input, cx)
+                                                //     && !AgentSettings::get_global(cx).always_allow_tool_actions
+                                                // {
+                                                //     thread.update(cx, |thread,cx| thread.gimme_confirmation()).await;
+                                                // } else {
+                                                //     true
+                                                // };
+                                                let tool_result = this.update(cx, |this, cx| {
+                                                    tool.run(
+                                                        tool_use.input.clone(),
+                                                        Arc::new(pending_request),
+                                                        this.project.clone(),
+                                                        this.action_log(cx),
+                                                        model.clone(),
+                                                        window.clone(),
+                                                        cx,
+                                                    )
+                                                })?;
                                                 pending_tool_uses.push(PendingToolUse {
-                                                    request: language_model_tool_use,
                                                     output: tool_result.output,
+                                                    request: tool_use,
                                                 });
-                                            },
+                                            }
                                             Err(error) => {
                                                 // todo!("show error in thread")
                                                 pending_tool_uses.push(PendingToolUse {
-                                                    request: language_model_tool_use,
+                                                    request: tool_use,
                                                     output: Task::ready(Err(error)),
                                                 });
-                                            },
+                                            }
                                         }
-
                                     }
                                 }
                                 LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
@@ -1767,21 +1759,27 @@ impl ZedAgent {
                         while let Some(pending_tool_use) = pending_tool_uses.pop() {
                             let is_error;
                             let content;
-                            let debug_output;
+                            let output;
                             match pending_tool_use.output.await {
-                                Ok(output) => {
+                                Ok(tool_output) => {
                                     is_error = false;
-                                    content = match output.content {
-                                        ToolResultContent::Text(text) => LanguageModelToolResultContent::Text(text.into()),
-                                        ToolResultContent::Image(image) => LanguageModelToolResultContent::Image(image),
+                                    content = match tool_output.content {
+                                        ToolResultContent::Text(text) => {
+                                            LanguageModelToolResultContent::Text(text.into())
+                                        }
+                                        ToolResultContent::Image(image) => {
+                                            LanguageModelToolResultContent::Image(image)
+                                        }
                                     };
-                                    debug_output = output.output;
-                                },
+                                    output = tool_output.output;
+                                }
                                 Err(error) => {
                                     is_error = true;
-                                    content = LanguageModelToolResultContent::Text(error.to_string().into());
-                                    debug_output = None;
-                                },
+                                    content = LanguageModelToolResultContent::Text(
+                                        error.to_string().into(),
+                                    );
+                                    output = None;
+                                }
                             };
 
                             tool_results_message
@@ -1791,7 +1789,7 @@ impl ZedAgent {
                                     tool_name: pending_tool_use.request.name.clone(),
                                     is_error,
                                     content,
-                                    output: debug_output
+                                    output,
                                 }));
                             assistant_message
                                 .push(MessageContent::ToolUse(pending_tool_use.request));
@@ -1854,8 +1852,6 @@ impl ZedAgent {
                             }
                         }
                     }
-
-                    todo!();
                 }
 
                 Ok(())
