@@ -136,6 +136,7 @@ pub trait ToolCard: 'static + Sized {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq, Eq))]
 pub struct AnyToolCard {
     entity: gpui::AnyEntity,
     render: fn(

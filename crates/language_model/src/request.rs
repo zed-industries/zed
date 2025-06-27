@@ -330,6 +330,14 @@ impl MessageContent {
             | MessageContent::Image(_) => false,
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn as_tool_result(&self) -> Option<&LanguageModelToolResult> {
+        match self {
+            MessageContent::ToolResult(tool_result) => Some(tool_result),
+            _ => None,
+        }
+    }
 }
 
 impl From<String> for MessageContent {

@@ -308,6 +308,52 @@ pub enum MessageSegment {
         output: Option<Result<LanguageModelToolResultContent, Arc<anyhow::Error>>>,
     },
 }
+#[cfg(test)]
+impl PartialEq for MessageSegment {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Text(text_left), Self::Text(text_right)) => text_left == text_right,
+            (
+                Self::Thinking {
+                    text: text_left,
+                    signature: signature_left,
+                },
+                Self::Thinking {
+                    text: text_right,
+                    signature: signature_right,
+                },
+            ) => text_left == text_right && signature_left == signature_right,
+            (Self::RedactedThinking(data_left), Self::RedactedThinking(data_right)) => {
+                data_left == data_right
+            }
+            (
+                Self::ToolUse {
+                    name: name_left,
+                    input: input_left,
+                    card: card_left,
+                    output: output_left,
+                },
+                Self::ToolUse {
+                    name: name_right,
+                    input: input_right,
+                    card: card_right,
+                    output: output_right,
+                },
+            ) => {
+                name_left == name_right
+                    && input_left == input_right
+                    && card_left == card_right
+                    && output_left
+                        .as_ref()
+                        .map(|r| r.as_ref().map_err(|err| err.to_string()))
+                        == output_right
+                            .as_ref()
+                            .map(|r| r.as_ref().map_err(|err| err.to_string()))
+            }
+            _ => false,
+        }
+    }
+}
 
 impl MessageSegment {
     pub fn should_display(&self) -> bool {
@@ -1989,7 +2035,6 @@ impl ZedAgent {
                                     this.tool_for_name(&tool_use.name, cx)
                                 })? {
                                     Ok(tool) => {
-                                        // todo!("send the card to thread")
                                         // todo!("handle confirmation")
                                         // let confirmed = if tool.needs_confirmation(&tool_use.input, cx)
                                         //     && !AgentSettings::get_global(cx).always_allow_tool_actions
@@ -2056,9 +2101,7 @@ impl ZedAgent {
                         LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
                             todo!()
                         }
-                        LanguageModelCompletionEvent::Stop(StopReason::ToolUse) => {
-                            todo!()
-                        }
+                        LanguageModelCompletionEvent::Stop(StopReason::ToolUse) => {}
                     }
                 }
 
@@ -4640,7 +4683,7 @@ mod tests {
     // Test-specific constants
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
-    use assistant_tool::ToolRegistry;
+    use assistant_tool::{ToolRegistry, ToolSource};
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
@@ -4656,6 +4699,7 @@ mod tests {
     use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
+    use std::panic;
     use std::sync::Arc;
     use std::time::Duration;
     use theme::ThemeSettings;
@@ -4663,20 +4707,34 @@ mod tests {
     use workspace::Workspace;
 
     #[gpui::test]
-    async fn test_message_request(cx: &mut TestAppContext) {
+    async fn test_send_to_model_basic(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_workspace, _thread_store, agent, _thread, _context_store, model) =
+        let (_workspace, _thread_store, agent, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        let request = agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Hello", Default::default(), None, Vec::new(), cx);
-
-            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Hello".to_string(),
+                    context: Default::default(),
+                    checkpoint: None,
+                    creases: Vec::new(),
+                },
+                None,
+                cx,
+            );
         });
 
+        let fake_model = model.as_fake();
+        cx.run_until_parked();
+        let pending_completions = fake_model.pending_completions();
+
+        let request = pending_completions.last().unwrap();
         assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
         assert_eq!(request.messages[0].role, Role::System);
         assert_eq!(request.messages[1].role, Role::User);
@@ -4684,6 +4742,116 @@ mod tests {
             request.messages[1].content[0],
             MessageContent::Text("Hello".into()),
         );
+
+        simulate_successful_response(&fake_model, cx);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages[0].role, Role::User);
+            assert_eq!(
+                &thread.messages[0].segments[0],
+                &MessageSegment::Text("Hello".to_string())
+            );
+            assert_eq!(thread.messages[1].role, Role::Assistant);
+            assert_eq!(
+                &thread.messages[1].segments[0],
+                &MessageSegment::Text("Assistant response".to_string())
+            )
+        });
+    }
+
+    #[gpui::test]
+    async fn test_send_to_model_with_tools(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+
+        let (_workspace, thread_store, agent, thread, _context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        thread_store.update(cx, |thread_store, cx| {
+            thread_store.tools().update(cx, |tools, _| {
+                tools.insert(Arc::new(TestTool::new(
+                    "read_file",
+                    ToolSource::Native,
+                    Ok("the lazy dog...".to_string()),
+                )));
+            });
+        });
+
+        agent.update(cx, |agent, cx| {
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Read foo.txt".to_string(),
+                    context: Default::default(),
+                    checkpoint: None,
+                    creases: Vec::new(),
+                },
+                None,
+                cx,
+            );
+        });
+
+        let fake_model = model.as_fake();
+        cx.run_until_parked();
+
+        let pending_completions = fake_model.pending_completions();
+        let request = pending_completions.last().unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(request.messages[0].role, Role::System);
+        assert_eq!(request.messages[1].role, Role::User);
+        assert_eq!(
+            request.messages[1].content[0],
+            MessageContent::Text("Read foo.txt".into()),
+        );
+
+        fake_model.stream_last_completion_response("I'll do so");
+        fake_model.stream_last_completion_response(LanguageModelToolUse {
+            id: "id".into(),
+            name: "read_file".into(),
+            raw_input: "foo.txt".into(),
+            input: "foo.txt".into(),
+            is_input_complete: true,
+        });
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        let pending_completions = fake_model.pending_completions();
+        let request = pending_completions.last().unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
+        assert_eq!(request.messages.len(), 4);
+
+        let tool_result = &request.messages[3].content[0].as_tool_result().unwrap();
+        assert_eq!(tool_result.tool_name.as_ref(), "read_file");
+        assert_eq!(
+            tool_result.content,
+            LanguageModelToolResultContent::Text("the lazy dog...".into())
+        );
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages[0].role, Role::User);
+            assert_eq!(
+                &thread.messages[0].segments[0],
+                &MessageSegment::Text("Read foo.txt".to_string())
+            );
+            assert_eq!(thread.messages[1].role, Role::Assistant);
+            assert_eq!(
+                &thread.messages[1].segments[0],
+                &MessageSegment::Text("I'll do so".to_string())
+            );
+
+            let MessageSegment::ToolUse { name, output, .. } = &thread.messages[1].segments[1]
+            else {
+                panic!("Expected ToolUse segment")
+            };
+            assert_eq!(name.as_ref(), "read_file");
+            assert_eq!(
+                output.as_ref().unwrap().as_ref().unwrap(),
+                &LanguageModelToolResultContent::Text("the lazy dog...".into())
+            );
+        });
     }
 
     #[gpui::test]
@@ -5321,34 +5489,52 @@ fn main() {{
 
     #[gpui::test]
     fn test_resolve_tool_name_conflicts() {
-        use assistant_tool::{Tool, ToolSource};
-
         assert_resolve_tool_name_conflicts(
             vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
+                TestTool::new("tool1", ToolSource::Native, Ok("")),
+                TestTool::new("tool2", ToolSource::Native, Ok("")),
+                TestTool::new(
+                    "tool3",
+                    ToolSource::ContextServer { id: "mcp-1".into() },
+                    Ok(""),
+                ),
             ],
             vec!["tool1", "tool2", "tool3"],
         );
 
         assert_resolve_tool_name_conflicts(
             vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+                TestTool::new("tool1", ToolSource::Native, Ok("")),
+                TestTool::new("tool2", ToolSource::Native, Ok("")),
+                TestTool::new(
+                    "tool3",
+                    ToolSource::ContextServer { id: "mcp-1".into() },
+                    Ok(""),
+                ),
+                TestTool::new(
+                    "tool3",
+                    ToolSource::ContextServer { id: "mcp-2".into() },
+                    Ok(""),
+                ),
             ],
             vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
         );
 
         assert_resolve_tool_name_conflicts(
             vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
+                TestTool::new("tool1", ToolSource::Native, Ok("")),
+                TestTool::new("tool2", ToolSource::Native, Ok("")),
+                TestTool::new("tool3", ToolSource::Native, Ok("")),
+                TestTool::new(
+                    "tool3",
+                    ToolSource::ContextServer { id: "mcp-1".into() },
+                    Ok(""),
+                ),
+                TestTool::new(
+                    "tool3",
+                    ToolSource::ContextServer { id: "mcp-2".into() },
+                    Ok(""),
+                ),
             ],
             vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
         );
@@ -5358,6 +5544,7 @@ fn main() {{
             vec![TestTool::new(
                 "tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-blah-blah",
                 ToolSource::Native,
+                Ok(""),
             )],
             vec!["tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-"],
         );
@@ -5365,12 +5552,17 @@ fn main() {{
         // Test deduplication of tools with very long names, in this case the mcp server name should be truncated
         assert_resolve_tool_name_conflicts(
             vec![
-                TestTool::new("tool-with-very-very-very-long-name", ToolSource::Native),
+                TestTool::new(
+                    "tool-with-very-very-very-long-name",
+                    ToolSource::Native,
+                    Ok(""),
+                ),
                 TestTool::new(
                     "tool-with-very-very-very-long-name",
                     ToolSource::ContextServer {
                         id: "mcp-with-very-very-very-long-name".into(),
                     },
+                    Ok(""),
                 ),
             ],
             vec![
@@ -5399,64 +5591,76 @@ fn main() {{
                 );
             }
         }
+    }
 
-        struct TestTool {
-            name: String,
+    struct TestTool {
+        name: String,
+        source: ToolSource,
+        result: Result<String, String>,
+    }
+
+    impl TestTool {
+        fn new(
+            name: impl Into<String>,
             source: ToolSource,
-        }
-
-        impl TestTool {
-            fn new(name: impl Into<String>, source: ToolSource) -> Self {
-                Self {
-                    name: name.into(),
-                    source,
-                }
+            result: Result<impl Into<String>, String>,
+        ) -> Self {
+            Self {
+                name: name.into(),
+                result: result.map(|r| r.into()),
+                source,
             }
         }
+    }
 
-        impl Tool for TestTool {
-            fn name(&self) -> String {
-                self.name.clone()
-            }
+    impl Tool for TestTool {
+        fn name(&self) -> String {
+            self.name.clone()
+        }
 
-            fn icon(&self) -> IconName {
-                IconName::Ai
-            }
+        fn icon(&self) -> IconName {
+            IconName::Ai
+        }
 
-            fn may_perform_edits(&self) -> bool {
-                false
-            }
+        fn may_perform_edits(&self) -> bool {
+            false
+        }
 
-            fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
-                true
-            }
+        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+            true
+        }
 
-            fn source(&self) -> ToolSource {
-                self.source.clone()
-            }
+        fn source(&self) -> ToolSource {
+            self.source.clone()
+        }
 
-            fn description(&self) -> String {
-                "Test tool".to_string()
-            }
+        fn description(&self) -> String {
+            "Test tool".to_string()
+        }
 
-            fn ui_text(&self, _input: &serde_json::Value) -> String {
-                "Test tool".to_string()
-            }
+        fn ui_text(&self, _input: &serde_json::Value) -> String {
+            "Test tool".to_string()
+        }
 
-            fn run(
-                self: Arc<Self>,
-                _input: serde_json::Value,
-                _request: Arc<LanguageModelRequest>,
-                _project: Entity<Project>,
-                _action_log: Entity<ActionLog>,
-                _model: Arc<dyn LanguageModel>,
-                _window: Option<AnyWindowHandle>,
-                _cx: &mut App,
-            ) -> assistant_tool::ToolResult {
-                assistant_tool::ToolResult {
-                    output: Task::ready(Err(anyhow::anyhow!("No content"))),
-                    card: None,
-                }
+        fn run(
+            self: Arc<Self>,
+            _input: serde_json::Value,
+            _request: Arc<LanguageModelRequest>,
+            _project: Entity<Project>,
+            _action_log: Entity<ActionLog>,
+            _model: Arc<dyn LanguageModel>,
+            _window: Option<AnyWindowHandle>,
+            _cx: &mut App,
+        ) -> assistant_tool::ToolResult {
+            assistant_tool::ToolResult {
+                output: Task::ready(match self.result.clone() {
+                    Ok(content) => Ok(ToolResultOutput {
+                        content: ToolResultContent::Text(content),
+                        output: None,
+                    }),
+                    Err(e) => Err(anyhow!(e)),
+                }),
+                card: None,
             }
         }
     }
@@ -6675,7 +6879,8 @@ fn main() {{
 
     fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Assistant response");
+        fake_model.stream_last_completion_response("Assist");
+        fake_model.stream_last_completion_response("ant response");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
     }

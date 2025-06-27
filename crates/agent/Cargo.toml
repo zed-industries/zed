@@ -68,6 +68,7 @@ zstd.workspace = true
 
 [dev-dependencies]
 assistant_tools.workspace = true
+assistant_tool = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
