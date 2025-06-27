@@ -14554,12 +14554,12 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smallvec",
- "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -15525,6 +15525,18 @@ name = "svg_fmt"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0193cc4331cfd2f3d2011ef287590868599a2f33c3e69bc22c1a3d3acf9e02fb"
+
+[[package]]
+name = "svg_preview"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "file_icons",
+ "gpui",
+ "ui",
+ "workspace",
+ "workspace-hack",
+]
 
 [[package]]
 name = "svgtypes"
@@ -20021,6 +20033,7 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "supermaven",
+ "svg_preview",
  "sysinfo",
  "tab_switcher",
  "task",

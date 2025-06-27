@@ -1215,6 +1215,12 @@ impl GutterDimensions {
     }
 }
 
+struct CharacterDimensions {
+    em_width: Pixels,
+    em_advance: Pixels,
+    line_height: Pixels,
+}
+
 #[derive(Debug)]
 pub struct RemoteSelection {
     pub replica_id: ReplicaId,
@@ -1256,7 +1262,7 @@ impl Default for SelectionHistoryMode {
 
 #[derive(Debug)]
 pub struct SelectionEffects {
-    nav_history: bool,
+    nav_history: Option<bool>,
     completions: bool,
     scroll: Option<Autoscroll>,
 }
@@ -1264,7 +1270,7 @@ pub struct SelectionEffects {
 impl Default for SelectionEffects {
     fn default() -> Self {
         Self {
-            nav_history: true,
+            nav_history: None,
             completions: true,
             scroll: Some(Autoscroll::fit()),
         }
@@ -1294,7 +1300,7 @@ impl SelectionEffects {
 
     pub fn nav_history(self, nav_history: bool) -> Self {
         Self {
-            nav_history,
+            nav_history: Some(nav_history),
             ..self
         }
     }
@@ -2909,11 +2915,12 @@ impl Editor {
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
 
-        if effects.nav_history {
+        if effects.nav_history.is_none() || effects.nav_history == Some(true) {
             self.push_to_nav_history(
                 *old_cursor_position,
                 Some(new_cursor_position.to_point(buffer)),
                 false,
+                effects.nav_history == Some(true),
                 cx,
             );
         }
@@ -3164,7 +3171,7 @@ impl Editor {
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
             state.effects.completions = effects.completions;
-            state.effects.nav_history |= effects.nav_history;
+            state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
             let (changed, result) = self.selections.change_with(cx, change);
             state.changed |= changed;
             return result;
@@ -13097,7 +13104,13 @@ impl Editor {
     }
 
     pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
-        self.push_to_nav_history(self.selections.newest_anchor().head(), None, false, cx);
+        self.push_to_nav_history(
+            self.selections.newest_anchor().head(),
+            None,
+            false,
+            true,
+            cx,
+        );
     }
 
     fn push_to_nav_history(
@@ -13105,6 +13118,7 @@ impl Editor {
         cursor_anchor: Anchor,
         new_position: Option<Point>,
         is_deactivate: bool,
+        always: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(nav_history) = self.nav_history.as_mut() {
@@ -13116,7 +13130,7 @@ impl Editor {
 
             if let Some(new_position) = new_position {
                 let row_delta = (new_position.row as i64 - cursor_position.row as i64).abs();
-                if row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA {
+                if row_delta == 0 || (row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA && !always) {
                     return;
                 }
             }
@@ -14788,9 +14802,12 @@ impl Editor {
         let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
-        self.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-            s.select_anchor_ranges([start..end])
-        });
+        self.change_selections(
+            SelectionEffects::default().nav_history(true),
+            window,
+            cx,
+            |s| s.select_anchor_ranges([start..end]),
+        );
     }
 
     pub fn go_to_diagnostic(
@@ -20509,15 +20526,20 @@ impl Editor {
             .and_then(|item| item.to_any_mut()?.downcast_mut::<T>())
     }
 
-    fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
+    fn character_dimensions(&self, window: &mut Window) -> CharacterDimensions {
         let text_layout_details = self.text_layout_details(window);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+        let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
-        gpui::Size::new(em_width, line_height)
+        CharacterDimensions {
+            em_width,
+            em_advance,
+            line_height,
+        }
     }
 
     pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
@@ -22531,19 +22553,19 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
         let text_layout_details = self.text_layout_details(window);
-        let gpui::Size {
-            width: em_width,
-            height: line_height,
-        } = self.character_size(window);
+        let CharacterDimensions {
+            em_width,
+            em_advance,
+            line_height,
+        } = self.character_dimensions(window);
 
         let snapshot = self.snapshot(window, cx);
         let scroll_position = snapshot.scroll_position();
-        let scroll_left = scroll_position.x * em_width;
+        let scroll_left = scroll_position.x * em_advance;
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_dimensions.width
-            + self.gutter_dimensions.margin;
+            + self.gutter_dimensions.full_width();
         let y = line_height * (start.row().as_f32() - scroll_position.y);
 
         Some(Bounds {

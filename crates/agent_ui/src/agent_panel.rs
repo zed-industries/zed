@@ -2656,7 +2656,7 @@ impl AgentPanel {
                                 this.continue_conversation(window, cx);
                             })),
                     )
-                    .when(model.supports_max_mode(), |this| {
+                    .when(model.supports_burn_mode(), |this| {
                         this.child(
                             Button::new("continue-burn-mode", "Continue with Burn Mode")
                                 .style(ButtonStyle::Filled)
