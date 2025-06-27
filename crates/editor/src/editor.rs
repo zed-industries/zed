@@ -1215,6 +1215,12 @@ impl GutterDimensions {
     }
 }
 
+struct CharacterDimensions {
+    em_width: Pixels,
+    em_advance: Pixels,
+    line_height: Pixels,
+}
+
 #[derive(Debug)]
 pub struct RemoteSelection {
     pub replica_id: ReplicaId,
@@ -20520,15 +20526,20 @@ impl Editor {
             .and_then(|item| item.to_any_mut()?.downcast_mut::<T>())
     }
 
-    fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
+    fn character_dimensions(&self, window: &mut Window) -> CharacterDimensions {
         let text_layout_details = self.text_layout_details(window);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+        let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
-        gpui::Size::new(em_width, line_height)
+        CharacterDimensions {
+            em_width,
+            em_advance,
+            line_height,
+        }
     }
 
     pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
@@ -22542,19 +22553,19 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
         let text_layout_details = self.text_layout_details(window);
-        let gpui::Size {
-            width: em_width,
-            height: line_height,
-        } = self.character_size(window);
+        let CharacterDimensions {
+            em_width,
+            em_advance,
+            line_height,
+        } = self.character_dimensions(window);
 
         let snapshot = self.snapshot(window, cx);
         let scroll_position = snapshot.scroll_position();
-        let scroll_left = scroll_position.x * em_width;
+        let scroll_left = scroll_position.x * em_advance;
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_dimensions.width
-            + self.gutter_dimensions.margin;
+            + self.gutter_dimensions.full_width();
         let y = line_height * (start.row().as_f32() - scroll_position.y);
 
         Some(Bounds {
