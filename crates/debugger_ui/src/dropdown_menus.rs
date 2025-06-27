@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use collections::HashMap;
 use gpui::{Animation, AnimationExt as _, Entity, Transformation, percentage};
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
@@ -72,10 +73,21 @@ impl DebugPanel {
                     trigger,
                     ContextMenu::build(window, cx, move |mut this, _, cx| {
                         let context_menu = cx.weak_entity();
+                        let mut session_depths = HashMap::default();
                         for session in sessions.into_iter() {
                             let weak_session = session.downgrade();
                             let weak_session_id = weak_session.entity_id();
-
+                            let session_id = session.read(cx).session_id(cx);
+                            let parent_depth = session
+                                .read(cx)
+                                .session(cx)
+                                .read(cx)
+                                .parent_id(cx)
+                                .and_then(|parent_id| session_depths.get(&parent_id).cloned());
+                            let self_depth =
+                                *session_depths.entry(session_id).or_insert_with(|| {
+                                    parent_depth.map(|depth| depth + 1).unwrap_or(0usize)
+                                });
                             this = this.custom_entry(
                                 {
                                     let weak = weak.clone();
@@ -84,16 +96,16 @@ impl DebugPanel {
                                         weak_session
                                             .read_with(cx, |session, cx| {
                                                 let context_menu = context_menu.clone();
-                                                let id: SharedString = format!(
-                                                    "debug-session-{}",
-                                                    session.session_id(cx).0
-                                                )
-                                                .into();
+
+                                                let id: SharedString =
+                                                    format!("debug-session-{}", session_id.0)
+                                                        .into();
+
                                                 h_flex()
                                                     .w_full()
                                                     .group(id.clone())
                                                     .justify_between()
-                                                    .child(session.label_element(cx))
+                                                    .child(session.label_element(self_depth, cx))
                                                     .child(
                                                         IconButton::new(
                                                             "close-debug-session",

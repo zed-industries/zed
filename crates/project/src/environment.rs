@@ -274,7 +274,13 @@ async fn load_shell_environment(
         },
     };
     if let Some(direnv_environment) = direnv_environment {
-        envs.extend(direnv_environment);
+        for (key, value) in direnv_environment {
+            if let Some(value) = value {
+                envs.insert(key, value);
+            } else {
+                envs.remove(&key);
+            }
+        }
     }
 
     (Some(envs), direnv_error)

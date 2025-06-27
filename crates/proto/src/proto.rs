@@ -221,6 +221,10 @@ messages!(
     (ResolveCompletionDocumentationResponse, Background),
     (ResolveInlayHint, Background),
     (ResolveInlayHintResponse, Background),
+    (GetDocumentColor, Background),
+    (GetDocumentColorResponse, Background),
+    (GetColorPresentation, Background),
+    (GetColorPresentationResponse, Background),
     (RefreshCodeLens, Background),
     (GetCodeLens, Background),
     (GetCodeLensResponse, Background),
@@ -400,6 +404,8 @@ request_messages!(
         ResolveCompletionDocumentationResponse
     ),
     (ResolveInlayHint, ResolveInlayHintResponse),
+    (GetDocumentColor, GetDocumentColorResponse),
+    (GetColorPresentation, GetColorPresentationResponse),
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
@@ -487,9 +493,11 @@ entity_messages!(
     BufferSaved,
     CloseBuffer,
     Commit,
+    GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,
+    GetDocumentColor,
     DeleteProjectEntry,
     ExpandProjectEntry,
     ExpandAllForProjectEntry,
@@ -624,7 +632,7 @@ impl From<Timestamp> for SystemTime {
 
 impl From<SystemTime> for Timestamp {
     fn from(time: SystemTime) -> Self {
-        let duration = time.duration_since(UNIX_EPOCH).unwrap();
+        let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
         Self {
             seconds: duration.as_secs(),
             nanos: duration.subsec_nanos(),

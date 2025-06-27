@@ -12,7 +12,7 @@ use editor::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
-    scroll::{Autoscroll, ScrollbarAutoHide},
+    scroll::ScrollbarAutoHide,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
@@ -23,7 +23,7 @@ use gpui::{
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
     Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, impl_actions, point, px, size, transparent_white, uniform_list,
+    div, point, px, size, transparent_white, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -181,21 +181,21 @@ struct EntryDetails {
     canonical_path: Option<Arc<Path>>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -259,6 +259,14 @@ pub fn init(cx: &mut App) {
             update_settings_file::<ProjectPanelSettings>(fs, cx, move |setting, _| {
                 setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
             })
+        });
+
+        workspace.register_action(|workspace, action: &CollapseAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.collapse_all_entries(action, window, cx);
+                });
+            }
         });
     })
     .detach();
@@ -1581,7 +1589,7 @@ impl ProjectPanel {
                     });
                     self.filename_editor.update(cx, |editor, cx| {
                         editor.set_text(file_name, window, cx);
-                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
                             s.select_ranges([selection])
                         });
                         window.focus(&editor.focus_handle(cx));
@@ -4413,8 +4421,7 @@ impl ProjectPanel {
                                     )
                                 }
                             })
-                        }
-                        .ml_1(),
+                        },
                     )
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {

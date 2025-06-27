@@ -1072,7 +1072,7 @@ impl Element for TerminalElement {
                                 color: *color,
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };
-                            hr.paint(bounds, window);
+                            hr.paint(true, bounds, window);
                         }
                     }
 

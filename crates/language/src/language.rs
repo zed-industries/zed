@@ -32,7 +32,9 @@ use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-pub use language_registry::{LanguageName, LoadedLanguage};
+pub use language_registry::{
+    LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
@@ -694,10 +696,6 @@ pub struct LanguageConfig {
     #[serde(default)]
     #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
-    /// If set to true, indicates the language uses significant whitespace/indentation
-    /// for syntax structure (like Python) rather than brackets/braces for code blocks.
-    #[serde(default)]
-    pub significant_indentation: bool,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
@@ -715,6 +713,12 @@ pub struct LanguageConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
+    /// A list of rules for decreasing indentation. Each rule pairs a regex with a set of valid
+    /// "block-starting" tokens. When a line matches a pattern, its indentation is aligned with
+    /// the most recent line that began with a corresponding token. This enables context-aware
+    /// outdenting, like aligning an `else` with its `if`.
+    #[serde(default)]
+    pub decrease_indent_patterns: Vec<DecreaseIndentConfig>,
     /// A list of characters that trigger the automatic insertion of a closing
     /// bracket when they immediately precede the point where an opening
     /// bracket is inserted.
@@ -772,6 +776,15 @@ pub struct LanguageConfig {
     /// auto adding prefix on new line, adjusting the indenting , etc.
     #[serde(default)]
     pub documentation: Option<DocumentationConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
+pub struct DecreaseIndentConfig {
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[schemars(schema_with = "regex_json_schema")]
+    pub pattern: Option<Regex>,
+    #[serde(default)]
+    pub valid_after: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -897,6 +910,7 @@ impl Default for LanguageConfig {
             auto_indent_on_paste: None,
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
+            decrease_indent_patterns: Default::default(),
             autoclose_before: Default::default(),
             line_comments: Default::default(),
             block_comment: Default::default(),
@@ -912,7 +926,6 @@ impl Default for LanguageConfig {
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
-            significant_indentation: Default::default(),
             documentation: None,
         }
     }
@@ -1080,6 +1093,7 @@ pub struct Grammar {
     pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
+    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -1089,6 +1103,7 @@ struct IndentConfig {
     start_capture_ix: Option<u32>,
     end_capture_ix: Option<u32>,
     outdent_capture_ix: Option<u32>,
+    suffixed_start_captures: HashMap<u32, SharedString>,
 }
 
 pub struct OutlineConfig {
@@ -1100,6 +1115,22 @@ pub struct OutlineConfig {
     pub open_capture_ix: Option<u32>,
     pub close_capture_ix: Option<u32>,
     pub annotation_capture_ix: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DebuggerTextObject {
+    Variable,
+    Scope,
+}
+
+impl DebuggerTextObject {
+    pub fn from_capture_name(name: &str) -> Option<DebuggerTextObject> {
+        match name {
+            "debug-variable" => Some(DebuggerTextObject::Variable),
+            "debug-scope" => Some(DebuggerTextObject::Scope),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1204,6 +1235,11 @@ struct BracketsPatternConfig {
     newline_only: bool,
 }
 
+pub struct DebugVariablesConfig {
+    pub query: Query,
+    pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
+}
+
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
@@ -1235,6 +1271,7 @@ impl Language {
                     redactions_config: None,
                     runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
+                    debug_variables_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1304,6 +1341,11 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
+        }
+        if let Some(query) = queries.debugger {
+            self = self
+                .with_debug_variables_query(query.as_ref())
+                .context("Error loading debug variables query")?;
         }
         Ok(self)
     }
@@ -1423,6 +1465,24 @@ impl Language {
         Ok(self)
     }
 
+    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut objects_by_capture_ix = Vec::new();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(text_object) = DebuggerTextObject::from_capture_name(name) {
+                objects_by_capture_ix.push((ix as u32, text_object));
+            }
+        }
+
+        grammar.debug_variables_config = Some(DebugVariablesConfig {
+            query,
+            objects_by_capture_ix,
+        });
+        Ok(self)
+    }
+
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
@@ -1474,6 +1534,14 @@ impl Language {
                 ("outdent", &mut outdent_capture_ix),
             ],
         );
+
+        let mut suffixed_start_captures = HashMap::default();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(suffix) = name.strip_prefix("start.") {
+                suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+            }
+        }
+
         if let Some(indent_capture_ix) = indent_capture_ix {
             grammar.indents_config = Some(IndentConfig {
                 query,
@@ -1481,6 +1549,7 @@ impl Language {
                 start_capture_ix,
                 end_capture_ix,
                 outdent_capture_ix,
+                suffixed_start_captures,
             });
         }
         Ok(self)
@@ -1928,6 +1997,10 @@ impl Grammar {
             .capture_index_for_name(name)?;
         Some(self.highlight_map.lock().get(capture_id))
     }
+
+    pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
+        self.debug_variables_config.as_ref()
+    }
 }
 
 impl CodeLabel {
@@ -1980,25 +2053,27 @@ impl CodeLabel {
         } else {
             label.clone()
         };
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..label_length);
         Self {
             text,
             runs,
-            filter_range: 0..label_length,
+            filter_range,
         }
     }
 
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
-        let mut result = Self {
+        let filter_range = filter_text
+            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..text.len());
+        Self {
             runs: Vec::new(),
-            filter_range: 0..text.len(),
+            filter_range,
             text,
-        };
-        if let Some(filter_text) = filter_text {
-            if let Some(ix) = result.text.find(filter_text) {
-                result.filter_range = ix..ix + filter_text.len();
-            }
         }
-        result
     }
 
     pub fn push_str(&mut self, text: &str, highlight: Option<HighlightId>) {

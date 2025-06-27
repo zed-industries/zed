@@ -553,6 +553,8 @@ impl Database {
                             user_id: collaborator.user_id,
                             replica_id: collaborator.replica_id,
                             is_host: collaborator.is_host,
+                            committer_name: collaborator.committer_name.clone(),
+                            committer_email: collaborator.committer_email.clone(),
                         })
                         .collect(),
                     worktrees: reshared_project.worktrees.clone(),
@@ -857,6 +859,8 @@ impl Database {
                 user_id: collaborator.user_id,
                 replica_id: collaborator.replica_id,
                 is_host: collaborator.is_host,
+                committer_name: collaborator.committer_name,
+                committer_email: collaborator.committer_email,
             })
             .collect::<Vec<_>>();
 

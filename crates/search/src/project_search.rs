@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MAX_TAB_TITLE_LEN,
-    MultiBuffer, actions::SelectAll, items::active_match_index, scroll::Autoscroll,
+    MultiBuffer, SelectionEffects, actions::SelectAll, items::active_match_index,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -41,7 +41,7 @@ use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
 };
 
@@ -164,7 +164,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn is_contains_uppercase(str: &str) -> bool {
+fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
@@ -530,13 +530,13 @@ impl Item for ProjectSearchView {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(format, project, window, cx))
+            .update(cx, |editor, cx| editor.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -767,7 +767,7 @@ impl ProjectSearchView {
                         let query = this.search_query_text(cx);
                         if !query.is_empty()
                             && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                                != is_contains_uppercase(&query)
+                                != contains_uppercase(&query)
                         {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
@@ -1086,9 +1086,19 @@ impl ProjectSearchView {
                 let result = result_channel.await?;
                 let should_save = result == 0;
                 if should_save {
-                    this.update_in(cx, |this, window, cx| this.save(true, project, window, cx))?
-                        .await
-                        .log_err();
+                    this.update_in(cx, |this, window, cx| {
+                        this.save(
+                            SaveOptions {
+                                format: true,
+                                autosave: false,
+                            },
+                            project,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .log_err();
                 }
                 let should_search = result != 2;
                 should_search
@@ -1292,8 +1302,8 @@ impl ProjectSearchView {
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 let range_to_select = editor.range_for_match(&range_to_select);
-                editor.unfold_ranges(&[range_to_select.clone()], false, true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
             });
@@ -1313,7 +1323,7 @@ impl ProjectSearchView {
         if EditorSettings::get_global(cx).use_smartcase_search
             && !query.is_empty()
             && self.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                != is_contains_uppercase(query)
+                != contains_uppercase(query)
         {
             self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
         }
@@ -1340,7 +1350,9 @@ impl ProjectSearchView {
     fn focus_results_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(None, window, cx, |s| s.select_ranges([cursor..cursor]));
+            query_editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([cursor..cursor])
+            });
         });
         let results_handle = self.results_editor.focus_handle(cx);
         window.focus(&results_handle);
@@ -1360,14 +1372,14 @@ impl ProjectSearchView {
                     let range_to_select = match_ranges
                         .first()
                         .map(|range| editor.range_for_match(range));
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |theme| theme.search_match_background,
+                    |theme| theme.colors().search_match_background,
                     cx,
                 );
             });

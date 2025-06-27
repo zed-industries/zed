@@ -305,6 +305,7 @@ impl PickerDelegate for BranchListDelegate {
                     &candidates,
                     &query,
                     true,
+                    true,
                     10000,
                     &Default::default(),
                     cx.background_executor().clone(),
@@ -410,10 +411,6 @@ impl PickerDelegate for BranchListDelegate {
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         cx.emit(DismissEvent);
-    }
-
-    fn render_header(&self, _: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        None
     }
 
     fn render_match(

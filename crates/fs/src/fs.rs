@@ -272,7 +272,7 @@ impl FileHandle for std::fs::File {
         Ok(path)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         let fd = self.as_fd();
         let fd_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
@@ -285,6 +285,27 @@ impl FileHandle for std::fs::File {
         };
 
         Ok(new_path)
+    }
+
+    #[cfg(target_os = "freebsd")]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        use std::{
+            ffi::{CStr, OsStr},
+            os::unix::ffi::OsStrExt,
+        };
+
+        let fd = self.as_fd();
+        let mut kif: libc::kinfo_file = unsafe { std::mem::zeroed() };
+        kif.kf_structsize = libc::KINFO_FILE_SIZE;
+
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, &mut kif) };
+        if result == -1 {
+            anyhow::bail!("fcntl returned -1".to_string());
+        }
+
+        let c_str = unsafe { CStr::from_ptr(kif.kf_path.as_ptr()) };
+        let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
+        Ok(path)
     }
 
     #[cfg(target_os = "windows")]
@@ -528,14 +549,11 @@ impl Fs for RealFs {
     #[cfg(not(target_os = "windows"))]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                // Use the directory of the destination as temp dir to avoid
-                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-                // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else {
-                tempfile::NamedTempFile::new()
-            }?;
+            // Use the directory of the destination as temp dir to avoid
+            // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+            // See https://github.com/zed-industries/zed/pull/8437 for more details.
+            let mut tmp_file =
+                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             anyhow::Ok(())
@@ -897,6 +915,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     home_dir: Option<PathBuf>,
 }
@@ -1083,6 +1102,7 @@ impl FakeFs {
                 events_paused: false,
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
+                path_write_counts: Default::default(),
                 moves: Default::default(),
                 home_dir: None,
             })),
@@ -1173,6 +1193,8 @@ impl FakeFs {
         recreate_inode: bool,
     ) -> Result<()> {
         let mut state = self.state.lock();
+        let path_buf = path.as_ref().to_path_buf();
+        *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
         let new_inode = state.get_and_increment_inode();
         let new_mtime = state.get_and_increment_mtime();
         let new_len = new_content.len() as u64;
@@ -1725,6 +1747,17 @@ impl FakeFs {
     /// How many `metadata` calls have been issued.
     pub fn metadata_call_count(&self) -> usize {
         self.state.lock().metadata_call_count
+    }
+
+    /// How many write operations have been issued for a specific path.
+    pub fn write_count_for_path(&self, path: impl AsRef<Path>) -> usize {
+        let path = path.as_ref().to_path_buf();
+        self.state
+            .lock()
+            .path_write_counts
+            .get(&path)
+            .copied()
+            .unwrap_or(0)
     }
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {

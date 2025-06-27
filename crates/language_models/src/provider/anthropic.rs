@@ -16,10 +16,10 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent, MessageContent,
+    RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -41,7 +41,6 @@ pub struct AnthropicSettings {
     pub api_url: String,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -51,12 +50,12 @@ pub struct AvailableModel {
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
     /// The model's context window size.
-    pub max_tokens: usize,
+    pub max_tokens: u64,
     /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
     pub tool_override: Option<String>,
     /// Configuration of Anthropic's caching API.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u64>,
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
@@ -321,7 +320,7 @@ pub struct AnthropicModel {
 pub fn count_anthropic_tokens(
     request: LanguageModelRequest,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request.messages;
         let mut tokens_from_images = 0;
@@ -377,7 +376,7 @@ pub fn count_anthropic_tokens(
         // Tiktoken doesn't yet support these models, so we manually use the
         // same tokenizer as GPT-4.
         tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-            .map(|tokens| tokens + tokens_from_images)
+            .map(|tokens| (tokens + tokens_from_images) as u64)
     })
     .boxed()
 }
@@ -407,14 +406,7 @@ impl AnthropicModel {
             let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.map_err(|err| match err {
-                AnthropicError::RateLimit(duration) => {
-                    LanguageModelCompletionError::RateLimit(duration)
-                }
-                err @ (AnthropicError::ApiError(..) | AnthropicError::Other(..)) => {
-                    LanguageModelCompletionError::Other(anthropic_err_to_anyhow(err))
-                }
-            })
+            request.await.map_err(Into::into)
         }
         .boxed()
     }
@@ -461,11 +453,11 @@ impl LanguageModel for AnthropicModel {
         self.state.read(cx).api_key.clone()
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens())
     }
 
@@ -473,7 +465,7 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_anthropic_tokens(request, cx)
     }
 
@@ -518,7 +510,7 @@ pub fn into_anthropic(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u32,
+    max_output_tokens: u64,
     mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
@@ -561,9 +553,7 @@ pub fn into_anthropic(
                         }
                         MessageContent::RedactedThinking(data) => {
                             if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking {
-                                    data: String::from_utf8(data).ok()?,
-                                })
+                                Some(anthropic::RequestContent::RedactedThinking { data })
                             } else {
                                 None
                             }
@@ -714,7 +704,7 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -737,10 +727,8 @@ impl AnthropicEventMapper {
                         signature: None,
                     })]
                 }
-                ResponseContent::RedactedThinking { .. } => {
-                    // Redacted thinking is encrypted and not accessible to the user, see:
-                    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
-                    Vec::new()
+                ResponseContent::RedactedThinking { data } => {
+                    vec![Ok(LanguageModelCompletionEvent::RedactedThinking { data })]
                 }
                 ResponseContent::ToolUse { id, name, .. } => {
                     self.tool_uses_by_index.insert(
@@ -859,9 +847,7 @@ impl AnthropicEventMapper {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    AnthropicError::ApiError(error)
-                )))]
+                vec![Err(error.into())]
             }
             _ => Vec::new(),
         }
@@ -872,16 +858,6 @@ struct RawToolUse {
     id: String,
     name: String,
     input_json: String,
-}
-
-pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
-    if let AnthropicError::ApiError(api_err) = &err {
-        if let Some(tokens) = api_err.match_window_exceeded() {
-            return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });
-        }
-    }
-
-    anyhow!(err)
 }
 
 /// Updates usage data by preferring counts from `new`.

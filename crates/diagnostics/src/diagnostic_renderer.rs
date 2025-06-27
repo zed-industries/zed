@@ -4,7 +4,6 @@ use editor::{
     Anchor, Editor, EditorSnapshot, ToOffset,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle},
     hover_popover::diagnostics_markdown_style,
-    scroll::Autoscroll,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
 use language::{BufferId, Diagnostic, DiagnosticEntry};
@@ -311,7 +310,7 @@ impl DiagnosticBlock {
         let range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
 
         editor.unfold_ranges(&[range.start..range.end], true, false, cx);
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        editor.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range.start..range.start]);
         });
         window.focus(&editor.focus_handle(cx));

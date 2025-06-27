@@ -493,6 +493,7 @@ message GetDebugAdapterBinary {
     uint64 project_id = 1;
     uint64 session_id = 3;
     DebugTaskDefinition definition = 2;
+    uint64 worktree_id = 4;
 }
 
 message DebugAdapterBinary {

@@ -2,16 +2,25 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, hash_map::Entry};
+use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };
+use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use std::sync::{Arc, Weak};
+use std::{
+    str::FromStr as _,
+    sync::{Arc, Weak},
+};
 use text::ReplicaId;
 use util::{TryFutureExt as _, maybe};
+use zed_llm_client::{
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+};
 
 pub type UserId = u64;
 
@@ -49,7 +58,6 @@ pub struct User {
     pub github_login: String,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
-    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +66,8 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
     pub user_id: UserId,
     pub is_host: bool,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
 }
 
 impl PartialOrd for User {
@@ -103,10 +113,8 @@ pub struct UserStore {
     current_plan: Option<proto::Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     trial_started_at: Option<DateTime<Utc>>,
-    model_request_usage_amount: Option<u32>,
-    model_request_usage_limit: Option<proto::UsageLimit>,
-    edit_predictions_usage_amount: Option<u32>,
-    edit_predictions_usage_limit: Option<proto::UsageLimit>,
+    model_request_usage: Option<ModelRequestUsage>,
+    edit_prediction_usage: Option<EditPredictionUsage>,
     is_usage_based_billing_enabled: Option<bool>,
     account_too_young: Option<bool>,
     has_overdue_invoices: Option<bool>,
@@ -154,6 +162,18 @@ enum UpdateContacts {
     Clear(postage::barrier::Sender),
 }
 
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct ModelRequestUsage(pub RequestUsage);
+
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct EditPredictionUsage(pub RequestUsage);
+
+#[derive(Debug, Clone, Copy)]
+pub struct RequestUsage {
+    pub limit: UsageLimit,
+    pub amount: i32,
+}
+
 impl UserStore {
     pub fn new(client: Arc<Client>, cx: &Context<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
@@ -171,10 +191,8 @@ impl UserStore {
             current_plan: None,
             subscription_period: None,
             trial_started_at: None,
-            model_request_usage_amount: None,
-            model_request_usage_limit: None,
-            edit_predictions_usage_amount: None,
-            edit_predictions_usage_limit: None,
+            model_request_usage: None,
+            edit_prediction_usage: None,
             is_usage_based_billing_enabled: None,
             account_too_young: None,
             has_overdue_invoices: None,
@@ -355,15 +373,38 @@ impl UserStore {
             this.has_overdue_invoices = message.payload.has_overdue_invoices;
 
             if let Some(usage) = message.payload.usage {
-                this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
-                this.model_request_usage_limit = usage.model_requests_usage_limit;
-                this.edit_predictions_usage_amount = Some(usage.edit_predictions_usage_amount);
-                this.edit_predictions_usage_limit = usage.edit_predictions_usage_limit;
+                // limits are always present even though they are wrapped in Option
+                this.model_request_usage = usage
+                    .model_requests_usage_limit
+                    .and_then(|limit| {
+                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
+                    })
+                    .map(ModelRequestUsage);
+                this.edit_prediction_usage = usage
+                    .edit_predictions_usage_limit
+                    .and_then(|limit| {
+                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
+                    })
+                    .map(EditPredictionUsage);
             }
 
             cx.notify();
         })?;
         Ok(())
+    }
+
+    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
+        self.model_request_usage = Some(usage);
+        cx.notify();
+    }
+
+    pub fn update_edit_prediction_usage(
+        &mut self,
+        usage: EditPredictionUsage,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit_prediction_usage = Some(usage);
+        cx.notify();
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -738,20 +779,12 @@ impl UserStore {
         self.is_usage_based_billing_enabled
     }
 
-    pub fn model_request_usage_amount(&self) -> Option<u32> {
-        self.model_request_usage_amount
+    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        self.model_request_usage
     }
 
-    pub fn model_request_usage_limit(&self) -> Option<proto::UsageLimit> {
-        self.model_request_usage_limit.clone()
-    }
-
-    pub fn edit_predictions_usage_amount(&self) -> Option<u32> {
-        self.edit_predictions_usage_amount
-    }
-
-    pub fn edit_predictions_usage_limit(&self) -> Option<proto::UsageLimit> {
-        self.edit_predictions_usage_limit.clone()
+    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
+        self.edit_prediction_usage
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
@@ -881,7 +914,6 @@ impl User {
             github_login: message.github_login,
             avatar_uri: message.avatar_url.into(),
             name: message.name,
-            email: message.email,
         })
     }
 }
@@ -912,6 +944,68 @@ impl Collaborator {
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
             is_host: message.is_host,
+            committer_name: message.committer_name,
+            committer_email: message.committer_email,
         })
+    }
+}
+
+impl RequestUsage {
+    pub fn over_limit(&self) -> bool {
+        match self.limit {
+            UsageLimit::Limited(limit) => self.amount >= limit,
+            UsageLimit::Unlimited => false,
+        }
+    }
+
+    pub fn from_proto(amount: u32, limit: proto::UsageLimit) -> Option<Self> {
+        let limit = match limit.variant? {
+            proto::usage_limit::Variant::Limited(limited) => {
+                UsageLimit::Limited(limited.limit as i32)
+            }
+            proto::usage_limit::Variant::Unlimited(_) => UsageLimit::Unlimited,
+        };
+        Some(RequestUsage {
+            limit,
+            amount: amount as i32,
+        })
+    }
+
+    fn from_headers(
+        limit_name: &str,
+        amount_name: &str,
+        headers: &HeaderMap<HeaderValue>,
+    ) -> Result<Self> {
+        let limit = headers
+            .get(limit_name)
+            .with_context(|| format!("missing {limit_name:?} header"))?;
+        let limit = UsageLimit::from_str(limit.to_str()?)?;
+
+        let amount = headers
+            .get(amount_name)
+            .with_context(|| format!("missing {amount_name:?} header"))?;
+        let amount = amount.to_str()?.parse::<i32>()?;
+
+        Ok(Self { limit, amount })
+    }
+}
+
+impl ModelRequestUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self(RequestUsage::from_headers(
+            MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME,
+            MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
+            headers,
+        )?))
+    }
+}
+
+impl EditPredictionUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self(RequestUsage::from_headers(
+            EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+            EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
+            headers,
+        )?))
     }
 }

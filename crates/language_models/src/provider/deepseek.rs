@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,8 +49,8 @@ pub struct DeepSeekSettings {
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
 }
 
 pub struct DeepSeekLanguageModelProvider {
@@ -306,11 +306,11 @@ impl LanguageModel for DeepSeekLanguageModel {
         format!("deepseek/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -318,7 +318,7 @@ impl LanguageModel for DeepSeekLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         cx.background_spawn(async move {
             let messages = request
                 .messages
@@ -335,7 +335,7 @@ impl LanguageModel for DeepSeekLanguageModel {
                 })
                 .collect::<Vec<_>>();
 
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
         })
         .boxed()
     }
@@ -365,7 +365,7 @@ impl LanguageModel for DeepSeekLanguageModel {
 pub fn into_deepseek(
     request: LanguageModelRequest,
     model: &deepseek::Model,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> deepseek::Request {
     let is_reasoner = *model == deepseek::Model::Reasoner;
 
@@ -511,6 +511,15 @@ impl DeepSeekEventMapper {
                     }
                 }
             }
+        }
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
         }
 
         match choice.finish_reason.as_deref() {

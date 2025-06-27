@@ -3,6 +3,7 @@ pub mod wit;
 use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
@@ -18,7 +19,7 @@ use futures::{
     },
     future::BoxFuture,
 };
-use gpui::{App, AsyncApp, BackgroundExecutor, Task};
+use gpui::{App, AsyncApp, BackgroundExecutor, Task, Timer};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
@@ -27,11 +28,13 @@ use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use std::borrow::Cow;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
+use std::time::Duration;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -377,6 +380,7 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
     async fn get_dap_binary(
         &self,
         dap_name: Arc<str>,
@@ -398,14 +402,71 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+    async fn dap_request_kind(
+        &self,
+        dap_name: Arc<str>,
+        config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        self.call(|extension, store| {
+            async move {
+                let kind = extension
+                    .call_dap_request_kind(store, dap_name, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                Ok(kind.into())
+            }
+            .boxed()
+        })
+        .await
+    }
 
-    async fn get_dap_schema(&self) -> Result<serde_json::Value> {
+    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
+        self.call(|extension, store| {
+            async move {
+                let kind = extension
+                    .call_dap_config_to_scenario(store, config)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+                Ok(kind)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn dap_locator_create_scenario(
+        &self,
+        locator_name: String,
+        build_config_template: TaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>> {
         self.call(|extension, store| {
             async move {
                 extension
-                    .call_dap_schema(store)
+                    .call_dap_locator_create_scenario(
+                        store,
+                        locator_name,
+                        build_config_template,
+                        resolved_label,
+                        debug_adapter_name,
+                    )
                     .await
-                    .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
+            }
+            .boxed()
+        })
+        .await
+    }
+    async fn run_dap_locator(
+        &self,
+        locator_name: String,
+        config: SpawnInTerminal,
+    ) -> Result<DebugRequest> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_run_dap_locator(store, locator_name, config)
+                    .await?
                     .map_err(|err| store.data().extension_error(err))
             }
             .boxed()
@@ -427,18 +488,52 @@ type ExtensionCall = Box<
     dyn Send + for<'a> FnOnce(&'a mut Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
 >;
 
-fn wasm_engine() -> wasmtime::Engine {
-    static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true);
-        config.async_support(true);
-        config
-            .enable_incremental_compilation(cache_store())
-            .unwrap();
-        wasmtime::Engine::new(&config).unwrap()
-    });
+fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
+    static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+    WASM_ENGINE
+        .get_or_init(|| {
+            let mut config = wasmtime::Config::new();
+            config.wasm_component_model(true);
+            config.async_support(true);
+            config
+                .enable_incremental_compilation(cache_store())
+                .unwrap();
+            // Async support introduces the issue that extension execution happens during `Future::poll`,
+            // which could block an async thread.
+            // https://docs.rs/wasmtime/latest/wasmtime/struct.Config.html#execution-in-poll
+            //
+            // Epoch interruption is a lightweight mechanism to allow the extensions to yield control
+            // back to the executor at regular intervals.
+            config.epoch_interruption(true);
 
-    WASM_ENGINE.clone()
+            let engine = wasmtime::Engine::new(&config).unwrap();
+
+            // It might be safer to do this on a non-async thread to make sure it makes progress
+            // regardless of if extensions are blocking.
+            // However, due to our current setup, this isn't a likely occurrence and we'd rather
+            // not have a dedicated thread just for this. If it becomes an issue, we can consider
+            // creating a separate thread for epoch interruption.
+            let engine_ref = engine.weak();
+            executor
+                .spawn(async move {
+                    // Somewhat arbitrary interval, as it isn't a guaranteed interval.
+                    // But this is a rough upper bound for how long the extension execution can block on
+                    // `Future::poll`.
+                    const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
+                    let mut timer = Timer::interval(EPOCH_INTERVAL);
+                    while let Some(_) = timer.next().await {
+                        // Exit the loop and thread once the engine is dropped.
+                        let Some(engine) = engine_ref.upgrade() else {
+                            break;
+                        };
+                        engine.increment_epoch();
+                    }
+                })
+                .detach();
+
+            engine
+        })
+        .clone()
 }
 
 fn cache_store() -> Arc<IncrementalCompilationCache> {
@@ -463,7 +558,7 @@ impl WasmHost {
             }
         });
         Arc::new(Self {
-            engine: wasm_engine(),
+            engine: wasm_engine(cx.background_executor()),
             fs,
             work_dir,
             http_client,
@@ -498,8 +593,12 @@ impl WasmHost {
                     host: this.clone(),
                 },
             );
+            // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
+            store.set_epoch_deadline(1);
+            store.epoch_deadline_async_yield_and_update(1);
 
             let mut extension = Extension::instantiate_async(
+                &executor,
                 &mut store,
                 this.release_channel,
                 zed_api_version,

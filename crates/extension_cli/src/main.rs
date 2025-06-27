@@ -152,6 +152,10 @@ fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvide
         provides.insert(ExtensionProvides::Snippets);
     }
 
+    if !manifest.debug_adapters.is_empty() {
+        provides.insert(ExtensionProvides::DebugAdapters);
+    }
+
     provides
 }
 
@@ -251,6 +255,36 @@ async fn copy_extension_resources(
             .await
             .with_context(|| {
                 format!("failed to copy language dir '{}'", language_path.display())
+            })?;
+        }
+    }
+
+    if !manifest.debug_adapters.is_empty() {
+        for (debug_adapter, entry) in &manifest.debug_adapters {
+            let schema_path = entry.schema_path.clone().unwrap_or_else(|| {
+                PathBuf::from("debug_adapter_schemas".to_owned())
+                    .join(debug_adapter.as_ref())
+                    .with_extension("json")
+            });
+            let parent = schema_path
+                .parent()
+                .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
+            fs::create_dir_all(output_dir.join(parent))?;
+            copy_recursive(
+                fs.as_ref(),
+                &extension_path.join(&schema_path),
+                &output_dir.join(&schema_path),
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to copy debug adapter schema '{}'",
+                    schema_path.display()
+                )
             })?;
         }
     }

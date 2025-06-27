@@ -3,7 +3,7 @@ use crate::{
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
-    scroll::{Autoscroll, ScrollAmount},
+    scroll::ScrollAmount,
 };
 use anyhow::Context as _;
 use gpui::{
@@ -520,7 +520,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.element_hover, // todo update theme
+                        |theme| theme.colors().element_hover, // todo update theme
                         cx,
                     );
                 }
@@ -648,7 +648,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: { cx.theme().players().local().selection },
+        selection_background_color: cx.theme().colors().element_selection_background,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
@@ -697,7 +697,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: { cx.theme().players().local().selection },
+        selection_background_color: cx.theme().colors().element_selection_background,
         height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
@@ -746,7 +746,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         };
                         editor.update_in(cx, |editor, window, cx| {
                             editor.change_selections(
-                                Some(Autoscroll::fit()),
+                                Default::default(),
                                 window,
                                 cx,
                                 |selections| {

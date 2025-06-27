@@ -20,7 +20,7 @@ pub struct ModuleList {
     focus_handle: FocusHandle,
     scrollbar_state: ScrollbarState,
     entries: Vec<Module>,
-    _rebuild_task: Task<()>,
+    _rebuild_task: Option<Task<()>>,
     _subscription: Subscription,
 }
 
@@ -34,14 +34,16 @@ impl ModuleList {
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::Stopped(_) | SessionEvent::Modules => {
-                this.schedule_rebuild(cx);
+                if this._rebuild_task.is_some() {
+                    this.schedule_rebuild(cx);
+                }
             }
             _ => {}
         });
 
         let scroll_handle = UniformListScrollHandle::new();
 
-        let mut this = Self {
+        Self {
             scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
             scroll_handle,
             session,
@@ -50,14 +52,12 @@ impl ModuleList {
             entries: Vec::new(),
             selected_ix: None,
             _subscription,
-            _rebuild_task: Task::ready(()),
-        };
-        this.schedule_rebuild(cx);
-        this
+            _rebuild_task: None,
+        }
     }
 
     fn schedule_rebuild(&mut self, cx: &mut Context<Self>) {
-        self._rebuild_task = cx.spawn(async move |this, cx| {
+        self._rebuild_task = Some(cx.spawn(async move |this, cx| {
             this.update(cx, |this, cx| {
                 let modules = this
                     .session
@@ -66,7 +66,7 @@ impl ModuleList {
                 cx.notify();
             })
             .ok();
-        });
+        }));
     }
 
     fn open_module(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
@@ -300,6 +300,9 @@ impl Focusable for ModuleList {
 
 impl Render for ModuleList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self._rebuild_task.is_none() {
+            self.schedule_rebuild(cx);
+        }
         div()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_last))
