@@ -30,7 +30,7 @@ use editor::Editor;
 use editor::scroll::Autoscroll;
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window, actions};
-use language::{Point, SelectionGoal, ToPoint};
+use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
 
