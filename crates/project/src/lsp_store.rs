@@ -6297,42 +6297,20 @@ impl LspStore {
             let task_abs_path = abs_path.clone();
             let new_task = cx
                 .spawn(async move |lsp_store, cx| {
-                    cx.background_executor().timer(Duration::from_millis(50)).await;
-                    let fetched_colors = match lsp_store
-                        .update(cx, |lsp_store, cx| {
-                            lsp_store.fetch_document_colors(buffer, cx)
-                        }) {
-                            Ok(fetch_task) => fetch_task.await
-                            .with_context(|| {
-                                format!(
-                                    "Fetching document colors for buffer with path {task_abs_path:?}"
-                                )
-                            }),
-                            Err(e) => return Err(Arc::new(e)),
-                        };
-                    let fetched_colors = match fetched_colors {
-                        Ok(fetched_colors) => fetched_colors,
-                        Err(e) => return Err(Arc::new(e)),
-                    };
-
-                    let lsp_colors = lsp_store.update(cx, |lsp_store, _| {
-                        let lsp_data = lsp_store.lsp_data.as_mut().with_context(|| format!(
-                            "Document lsp data got updated between fetch and update for path {task_abs_path:?}"
-                        ))?;
-                        let mut lsp_colors = Vec::new();
-                        anyhow::ensure!(lsp_data.mtime == buffer_mtime, "Buffer lsp data got updated between fetch and update for path {task_abs_path:?}");
-                        for (server_id, colors) in fetched_colors {
-                            let colors_lsp_data = &mut lsp_data.buffer_lsp_data.entry(server_id).or_default().entry(task_abs_path.clone()).or_default().colors;
-                            *colors_lsp_data = Some(colors.clone());
-                            lsp_colors.extend(colors);
+                    match call_lsp_for_colors(lsp_store.clone(), buffer, task_abs_path.clone(), cx)
+                        .await
+                    {
+                        Ok(colors) => Ok(colors),
+                        Err(e) => {
+                            lsp_store
+                                .update(cx, |lsp_store, _| {
+                                    if let Some(lsp_data) = lsp_store.lsp_data.as_mut() {
+                                        lsp_data.colors_update.remove(&task_abs_path);
+                                    }
+                                })
+                                .ok();
+                            Err(Arc::new(e))
                         }
-                        Ok(lsp_colors)
-                    });
-
-                    match lsp_colors {
-                        Ok(Ok(lsp_colors)) => Ok(lsp_colors),
-                        Ok(Err(e)) => Err(Arc::new(e)),
-                        Err(e) => Err(Arc::new(e)),
                     }
                 })
                 .shared();
@@ -10689,6 +10667,53 @@ impl LspStore {
             }
         }
     }
+}
+
+async fn call_lsp_for_colors(
+    lsp_store: WeakEntity<LspStore>,
+    buffer: Entity<Buffer>,
+    task_abs_path: PathBuf,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<Vec<DocumentColor>> {
+    cx.background_executor()
+        .timer(Duration::from_millis(50))
+        .await;
+    let Some(buffer_mtime) = buffer.update(cx, |buffer, _| buffer.saved_mtime())? else {
+        return Ok(Vec::new());
+    };
+    let fetched_colors = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.fetch_document_colors(buffer, cx)
+        })?
+        .await
+        .with_context(|| {
+            format!("Fetching document colors for buffer with path {task_abs_path:?}")
+        })?;
+
+    lsp_store.update(cx, |lsp_store, _| {
+        let lsp_data = lsp_store.lsp_data.as_mut().with_context(|| {
+            format!(
+                "Document lsp data got updated between fetch and update for path {task_abs_path:?}"
+            )
+        })?;
+        let mut lsp_colors = Vec::new();
+        anyhow::ensure!(
+            lsp_data.mtime == buffer_mtime,
+            "Buffer lsp data got updated between fetch and update for path {task_abs_path:?}"
+        );
+        for (server_id, colors) in fetched_colors {
+            let colors_lsp_data = &mut lsp_data
+                .buffer_lsp_data
+                .entry(server_id)
+                .or_default()
+                .entry(task_abs_path.clone())
+                .or_default()
+                .colors;
+            *colors_lsp_data = Some(colors.clone());
+            lsp_colors.extend(colors);
+        }
+        Ok(lsp_colors)
+    })?
 }
 
 fn subscribe_to_binary_statuses(

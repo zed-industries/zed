@@ -4335,17 +4335,16 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(
-        indoc! {"
-            «
-            abc                 // No indentation
-               abc              // 1 tab
-                  abc          // 2 tabs
-                abc             // Tab followed by space
-               abc              // Space followed by tab (3 spaces should be the result)
-                           abc   // Mixed indentation (tab conversion depends on the column)
-               abc         // Already space indented
-               ·
+    cx.assert_editor_state(indoc! {"
+        «
+        abc                 // No indentation
+           abc              // 1 tab
+              abc          // 2 tabs
+            abc             // Tab followed by space
+           abc              // Space followed by tab (3 spaces should be the result)
+                       abc   // Mixed indentation (tab conversion depends on the column)
+           abc         // Already space indented
+·
                abc\tdef          // Only the leading tab is manipulatedˇ»
         "}
         .replace("·", "")
@@ -4354,9 +4353,8 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
 
     // Test on just a few lines, the others should remain unchanged
     // Only lines (3, 5, 10, 11) should change
-    cx.set_state(
-        indoc! {"
-            ·
+    cx.set_state(indoc! {"
+·
             abc                 // No indentation
             \tabcˇ               // 1 tab
             \t\tabc             // 2 tabs
@@ -4373,17 +4371,16 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(
-        indoc! {"
-            ·
-            abc                 // No indentation
-            «   abc               // 1 tabˇ»
-            \t\tabc             // 2 tabs
-            «    abc              // Tab followed by spaceˇ»
-             \tabc              // Space followed by tab (3 spaces should be the result)
-            \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
-               abc              // Already space indented
-            «   ·
+    cx.assert_editor_state(indoc! {"
+·
+        abc                 // No indentation
+        «   abc               // 1 tabˇ»
+        \t\tabc             // 2 tabs
+        «    abc              // Tab followed by spaceˇ»
+         \tabc              // Space followed by tab (3 spaces should be the result)
+        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+           abc              // Already space indented
+        «·
                abc\tdef          // Only the leading tab is manipulatedˇ»
         "}
         .replace("·", "")
@@ -4408,17 +4405,16 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(
-        indoc! {"
-            «
-            abc                 // No indentation
-               abc               // 1 tab
-                  abc             // 2 tabs
-                abc              // Tab followed by space
-               abc              // Space followed by tab (3 spaces should be the result)
-                           abc   // Mixed indentation (tab conversion depends on the column)
-               abc              // Already space indented
-               ·
+    cx.assert_editor_state(indoc! {"
+        «
+        abc                 // No indentation
+           abc               // 1 tab
+              abc             // 2 tabs
+            abc              // Tab followed by space
+           abc              // Space followed by tab (3 spaces should be the result)
+                       abc   // Mixed indentation (tab conversion depends on the column)
+           abc              // Already space indented
+·
                abc\tdef          // Only the leading tab is manipulatedˇ»
         "}
         .replace("·", "")
@@ -4471,9 +4467,8 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
 
     // Test on just a few lines, the other should remain unchanged
     // Only lines (4, 8, 11, 12) should change
-    cx.set_state(
-        indoc! {"
-            ·
+    cx.set_state(indoc! {"
+·
             abc                 // No indentation
              abc                // 1 space (< 3 so dont convert)
               abc               // 2 spaces (< 3 so dont convert)
@@ -4493,9 +4488,8 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
     });
-    cx.assert_editor_state(
-        indoc! {"
-            ·
+    cx.assert_editor_state(indoc! {"
+·
             abc                 // No indentation
              abc                // 1 space (< 3 so dont convert)
               abc               // 2 spaces (< 3 so dont convert)
@@ -22631,6 +22625,18 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                 color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
             },
+            name: "rust-analyzer",
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut fake_servers_without_capabilities = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(false)),
+                ..lsp::ServerCapabilities::default()
+            },
+            name: "not-rust-analyzer",
             ..FakeLspAdapter::default()
         },
     );
@@ -22650,6 +22656,8 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let fake_language_server = fake_servers.next().await.unwrap();
+    let fake_language_server_without_capabilities =
+        fake_servers_without_capabilities.next().await.unwrap();
     let requests_made = Arc::new(AtomicUsize::new(0));
     let closure_requests_made = Arc::clone(&requests_made);
     let mut color_request_handle = fake_language_server
@@ -22681,14 +22689,19 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                 }])
             }
         });
+
+    let _handle = fake_language_server_without_capabilities
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
+            panic!("Should not be called");
+        });
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        2,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per editor open and once after the language server startup"
+        "Should query for colors once per editor open (1) and once after the language server startup (2)"
     );
 
     cx.executor().advance_clock(Duration::from_millis(500));
@@ -22718,7 +22731,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        4,
+        5,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per save and once per formatting after save"
     );
@@ -22733,7 +22746,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .unwrap();
     close.await.unwrap();
     assert_eq!(
-        4,
+        5,
         requests_made.load(atomic::Ordering::Acquire),
         "After saving and closing the editor, no extra requests should be made"
     );
@@ -22745,10 +22758,11 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
             })
         })
         .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(100));
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        5,
+        6,
         requests_made.load(atomic::Ordering::Acquire),
         "After navigating back to an editor and reopening it, another color request should be made"
     );
