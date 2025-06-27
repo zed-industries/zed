@@ -272,19 +272,24 @@ pub enum TextSource {
     Clipboard(String),
 }
 
+// TODO - diff - where should this impl go? I don't see any other impl here.
 impl TextSource {
-    pub fn tab_content_text(&self, cx: &App) -> String {
+    fn clipboard_label() -> String {
+        "Clipboard".to_string()
+    }
+
+    pub fn label(&self, cx: &App) -> String {
         // TODO - diff - line location
         match self {
-            TextSource::Clipboard(_) => "Clipboard".to_string(),
+            TextSource::Clipboard(_) => Self::clipboard_label(),
             TextSource::Editor(editor) => editor.read(cx).buffer().read(cx).title(cx).to_string(),
         }
     }
 
-    pub fn tab_tooltip_text(&self, cx: &App) -> String {
+    pub fn path(&self, cx: &App) -> String {
         // TODO - diff - line location
         match self {
-            TextSource::Clipboard(_) => Some("Clipboard".to_string()),
+            TextSource::Clipboard(_) => Self::clipboard_label(),
             TextSource::Editor(editor) => editor
                 .read(cx)
                 .buffer()
@@ -295,9 +300,13 @@ impl TextSource {
                         .file()
                         .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
                 })
-                .flatten(),
+                .flatten()
+                .unwrap_or("untitled".into()),
         }
-        .unwrap_or("untitled".into())
+    }
+
+    fn selection_location(selection: Range<usize>) -> String {
+        todo!()
     }
 }
 

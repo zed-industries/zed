@@ -268,15 +268,15 @@ impl Item for TextDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        let old_name = self.old_text_source.tab_content_text(cx);
-        let new_name = self.new_text_source.tab_content_text(cx);
-        format!("{old_name} ↔ {new_name}").into()
+        let old_label = self.old_text_source.label(cx);
+        let new_label = self.new_text_source.label(cx);
+        format!("{old_label} ↔ {new_label}").into()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        let old_tooltip = self.old_text_source.tab_tooltip_text(cx);
-        let new_tooltip = self.new_text_source.tab_tooltip_text(cx);
-        Some(format!("{old_tooltip} ↔ {new_tooltip}").into())
+        let old_path = self.old_text_source.path(cx);
+        let new_path = self.new_text_source.path(cx);
+        Some(format!("{old_path} ↔ {new_path}").into())
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
