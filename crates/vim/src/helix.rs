@@ -1,4 +1,4 @@
-use editor::{DisplayPoint, Editor, movement, scroll::Autoscroll};
+use editor::{DisplayPoint, Editor, movement};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
@@ -47,7 +47,7 @@ impl Vim {
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
                     let new_goal = SelectionGoal::None;
@@ -100,7 +100,7 @@ impl Vim {
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
                     let new_goal = SelectionGoal::None;
@@ -161,7 +161,7 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let goal = selection.goal;
                     let cursor = if selection.is_empty() || selection.reversed {
@@ -239,7 +239,7 @@ impl Vim {
             Motion::FindForward { .. } => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             let goal = selection.goal;
                             let cursor = if selection.is_empty() || selection.reversed {
@@ -266,7 +266,7 @@ impl Vim {
             Motion::FindBackward { .. } => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             let goal = selection.goal;
                             let cursor = if selection.is_empty() || selection.reversed {

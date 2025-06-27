@@ -19,7 +19,7 @@ use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, SelectionEffects};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
@@ -689,9 +689,12 @@ fn open_markdown_link(
                             })
                             .context("Could not find matching symbol")?;
 
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_anchor_ranges([symbol_range.start..symbol_range.start])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_anchor_ranges([symbol_range.start..symbol_range.start]),
+                        );
                         anyhow::Ok(())
                     })
                 })
@@ -708,10 +711,15 @@ fn open_markdown_link(
                         .downcast::<Editor>()
                         .context("Item is not an editor")?;
                     active_editor.update_in(cx, |editor, window, cx| {
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_ranges([Point::new(line_range.start as u32, 0)
-                                ..Point::new(line_range.start as u32, 0)])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| {
+                                s.select_ranges([Point::new(line_range.start as u32, 0)
+                                    ..Point::new(line_range.start as u32, 0)])
+                            },
+                        );
                         anyhow::Ok(())
                     })
                 })

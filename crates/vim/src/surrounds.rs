@@ -4,7 +4,7 @@ use crate::{
     object::Object,
     state::Mode,
 };
-use editor::{Bias, movement, scroll::Autoscroll};
+use editor::{Bias, movement};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -109,7 +109,7 @@ impl Vim {
 
                 editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     if mode == Mode::VisualBlock {
                         s.select_anchor_ranges(anchors.into_iter().take(1))
                     } else {
@@ -207,7 +207,7 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
@@ -317,7 +317,7 @@ impl Vim {
                     edits.sort_by_key(|(range, _)| range.start);
                     editor.edit(edits, cx);
                     editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -375,7 +375,7 @@ impl Vim {
                             anchors.push(start..start)
                         }
                     }
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(anchors);
                     });
                     editor.set_clip_at_line_ends(true, cx);
