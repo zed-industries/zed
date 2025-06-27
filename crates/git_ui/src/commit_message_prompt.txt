@@ -12,9 +12,9 @@ Follow good Git style and conventional commit format:
 - Common types: feat, fix, docs, style, refactor, test, chore
 - Separate the subject from the body with a blank line
 - Try to limit the subject line to 50 characters
-- Capitalize the description part of the subject line
+- Capitalize the subject line
 - Do not end the subject line with any punctuation
-- Use the imperative mood in the description
+- Use the imperative mood in the subject line
 - Wrap the body at 72 characters
 - Keep the body short and concise (omit it entirely if not useful)
 - Include breaking changes in the footer if applicable
