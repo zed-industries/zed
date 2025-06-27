@@ -10,7 +10,7 @@ pub mod fake_provider;
 
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
-use client::Client;
+use client::{Client, ModelRequestUsage};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -613,6 +613,9 @@ pub trait LanguageModelProvider: 'static {
         None
     }
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+    fn usage(&self, _cx: &App) -> Option<ModelRequestUsage> {
+        None
+    }
 }
 
 #[derive(PartialEq, Eq)]
