@@ -479,7 +479,6 @@ pub fn append_top_level_array_value_in_json_text(
 
     let mut comma_range = None;
     let mut prev_item_range = None;
-    let mut bracket_range = None;
 
     if cursor.node().kind() == "," {
         comma_range = Some(cursor.node().byte_range());
@@ -493,23 +492,13 @@ pub fn append_top_level_array_value_in_json_text(
         {}
         if cursor.node().kind() != "[" {
             prev_item_range = Some(cursor.node().range());
-        } else {
-            bracket_range = Some(cursor.node().byte_range());
         }
     }
 
     let (mut replace_range, mut replace_value) =
         replace_value_in_json_text("", &[], tab_size, Some(new_value), None);
 
-    let offset = if let Some(comma_range) = &comma_range {
-        comma_range.end
-    } else if let Some(prev_item_range) = &prev_item_range {
-        prev_item_range.end_byte
-    } else {
-        bracket_range.unwrap().end
-    };
-
-    replace_range.start += offset;
+    replace_range.start = close_bracket_start;
     replace_range.end = close_bracket_start;
 
     let space = ' ';
@@ -536,13 +525,18 @@ pub fn append_top_level_array_value_in_json_text(
             replace_value.insert(0, ',');
         }
     } else {
+        if let Some(prev_newline) = text[..replace_range.start].rfind('\n') {
+            if text[prev_newline..replace_range.start].trim().is_empty() {
+                replace_range.start = prev_newline;
+            }
+        }
         let indent = format!("\n{space:width$}", width = tab_size);
         replace_value = replace_value.replace('\n', &indent);
         replace_value.insert_str(0, &indent);
         replace_value.push('\n');
     }
-
-    return Ok((replace_range, replace_value));
+    dbg!(text);
+    return Ok((replace_range, dbg!(replace_value)));
 }
 
 pub fn to_pretty_json(
@@ -1224,14 +1218,26 @@ mod tests {
         check_array_replace(
             r#"[
                 // Empty array with comment
-            ]"#,
+            ]"#
+            .unindent(),
+            0,
+            &[],
+            json!("first"),
+            r#"[
+                // Empty array with comment
+                "first"
+            ]"#
+            .unindent(),
+        );
+        check_array_replace(
+            r#"[]"#.unindent(),
             0,
             &[],
             json!("first"),
             r#"[
                 "first"
-                // Empty array with comment
-            ]"#,
+            ]"#
+            .unindent(),
         );
 
         // Test array with leading comments
@@ -1350,16 +1356,18 @@ mod tests {
                 // Comment 1
                 // Comment 2
                 // Comment 3
-            ]"#,
+            ]"#
+            .unindent(),
             10,
             &[],
             json!(123),
             r#"[
-                123
                 // Comment 1
                 // Comment 2
                 // Comment 3
-            ]"#,
+                123
+            ]"#
+            .unindent(),
         );
     }
 
