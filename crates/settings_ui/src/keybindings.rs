@@ -6,7 +6,8 @@ use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, ScrollStrategy, Subscription, WeakEntity, actions, div,
+    FontWeight, Global, KeyContext, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    ScrollStrategy, Subscription, WeakEntity, actions, div,
 };
 use util::ResultExt;
 
@@ -331,11 +332,10 @@ impl KeymapEditor {
         cx: &mut Context<Self>,
     ) {
         // todo! how to map keybinds to how to update/edit them
-        _ = keybind;
         self.workspace
             .update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let modal = KeybindingEditorModal::new(window, cx);
+                    let modal = KeybindingEditorModal::new(keybind, window, cx);
                     window.focus(&modal.focus_handle(cx));
                     modal
                 });
@@ -464,7 +464,8 @@ impl Render for KeymapEditor {
 }
 
 struct KeybindingEditorModal {
-    keybind_editor: Entity<Editor>,
+    editing_keybind: ProcessedKeybinding,
+    keybind_editor: Entity<KeybindInput>,
 }
 
 impl ModalView for KeybindingEditorModal {}
@@ -478,12 +479,18 @@ impl Focusable for KeybindingEditorModal {
 }
 
 impl KeybindingEditorModal {
-    pub fn new(window: &mut Window, cx: &mut App) -> Self {
-        let keybind_editor = cx.new(|cx| {
-            let editor = Editor::single_line(window, cx);
-            editor
-        });
-        Self { keybind_editor }
+    pub fn new(editing_keybind: ProcessedKeybinding, window: &mut Window, cx: &mut App) -> Self {
+        let keybind_editor = cx.new(|cx| KeybindInput::new(cx));
+        // todo!
+        // cx.subscribe(
+        //     &keybind_editor,
+        //     |editor, event: &editor::EditorEvent, cx| match event {
+        //     },
+        // );
+        Self {
+            editing_keybind,
+            keybind_editor,
+        }
     }
 }
 
@@ -506,13 +513,127 @@ impl Render for KeybindingEditorModal {
             .child(
                 h_flex()
                     .w_full()
-                    .h_12()
-                    .px_4()
-                    .my_4()
-                    .border_2()
-                    .border_color(theme.border)
+                    // .h_12()
+                    // .px_4()
+                    // .my_4()
+                    // .border_2()
+                    // .border_color(theme.border)
                     .child(self.keybind_editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_center()
+                    .child(Button::new("save-btn", "Save").label_size(LabelSize::Large)),
             );
+    }
+}
+
+struct KeybindInput {
+    keystrokes: Vec<Keystroke>,
+    focus_handle: FocusHandle,
+}
+
+impl KeybindInput {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        Self {
+            keystrokes: Vec::new(),
+            focus_handle,
+        }
+    }
+
+    fn on_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(last) = self.keystrokes.last_mut()
+            && last.key.is_empty()
+        {
+            if !event.modifiers.modified() {
+                self.keystrokes.pop();
+            } else {
+                last.modifiers = event.modifiers;
+            }
+        } else {
+            self.keystrokes.push(Keystroke {
+                modifiers: event.modifiers,
+                key: "".to_string(),
+                key_char: None,
+            });
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn on_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.is_held {
+            return;
+        }
+        if let Some(last) = self.keystrokes.last_mut()
+            && last.key.is_empty()
+        {
+            *last = event.keystroke.clone();
+        } else {
+            self.keystrokes.push(event.keystroke.clone());
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn on_key_up(&mut self, event: &gpui::KeyUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last) = self.keystrokes.last_mut()
+            && !last.key.is_empty()
+            && last.modifiers == event.keystroke.modifiers
+        {
+            self.keystrokes.push(Keystroke {
+                modifiers: event.keystroke.modifiers,
+                key: "".to_string(),
+                key_char: None,
+            });
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+}
+
+impl Focusable for KeybindInput {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for KeybindInput {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        return div()
+            .track_focus(&self.focus_handle)
+            .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
+            .on_key_down(cx.listener(Self::on_key_down))
+            .on_key_up(cx.listener(Self::on_key_up))
+            .focus(|mut style| {
+                style.border_color = Some(colors.border_focused);
+                style
+            })
+            .h_12()
+            .w_full()
+            .bg(colors.editor_background)
+            .border_2()
+            .border_color(colors.border)
+            .p_4()
+            .flex_row()
+            .text_center()
+            .justify_center()
+            // todo! how to make text be centered, but have overflow always be on the left side?
+            .child(ui::text_for_keystrokes(&self.keystrokes, cx));
     }
 }
 
