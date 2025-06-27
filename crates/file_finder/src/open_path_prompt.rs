@@ -418,6 +418,7 @@ impl PickerDelegate for OpenPathDelegate {
                 candidates.as_slice(),
                 &suffix,
                 false,
+                true,
                 100,
                 &cancel_flag,
                 cx.background_executor().clone(),

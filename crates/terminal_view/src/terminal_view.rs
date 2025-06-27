@@ -8,10 +8,10 @@ pub mod terminal_tab_tooltip;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
-    impl_actions,
+    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
+    deferred, div,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
@@ -70,15 +70,15 @@ const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct SendText(String);
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct SendKeystroke(String);
 
 actions!(terminal, [RerunTask]);
-
-impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);

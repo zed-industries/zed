@@ -209,7 +209,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         "bandana",
         "./bandana",
         ".\\bandana",
-        util::separator!("a/bandana"),
+        util::path!("a/bandana"),
         "b/bandana",
         "b\\bandana",
         " bandana",
@@ -230,7 +230,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             assert_eq!(
                 picker.delegate.matches.len(),
                 // existence of CreateNew option depends on whether path already exists
-                if bandana_query == util::separator!("a/bandana") {
+                if bandana_query == util::path!("a/bandana") {
                     1
                 } else {
                     2
@@ -879,6 +879,148 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |f, _| assert_eq!(f.delegate.matches.len(), 0));
+}
+
+#[gpui::test]
+async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/roota"),
+            json!({ "the-parent-dira": { "filea": "" } }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/rootb"),
+            json!({ "the-parent-dirb": { "fileb": "" } }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/roota").as_ref(), path!("/rootb").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (_worktree_id1, worktree_id2) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
+            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
+        )
+    });
+
+    let b_path = ProjectPath {
+        worktree_id: worktree_id2,
+        path: Arc::from(Path::new(path!("the-parent-dirb/fileb"))),
+    };
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(b_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate.spawn_search(
+                test_path_position(path!("the-parent-dirb/filec")),
+                window,
+                cx,
+            )
+        })
+        .await;
+    cx.run_until_parked();
+    finder.update_in(cx, |picker, window, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        picker.delegate.confirm(false, window, cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        let project_path = active_editor.read(cx).project_path(cx);
+        assert_eq!(
+            project_path,
+            Some(ProjectPath {
+                worktree_id: worktree_id2,
+                path: Arc::from(Path::new(path!("the-parent-dirb/filec")))
+            })
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/roota"),
+            json!({ "the-parent-dira": { "filea": "" } }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/rootb"),
+            json!({ "the-parent-dirb": { "fileb": "" } }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/roota").as_ref(), path!("/rootb").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (_worktree_id1, worktree_id2) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (
+            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
+            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
+        )
+    });
+
+    let finder = open_file_picker(&workspace, cx);
+
+    finder
+        .update_in(cx, |f, window, cx| {
+            f.delegate
+                .spawn_search(test_path_position(path!("rootb/filec")), window, cx)
+        })
+        .await;
+    cx.run_until_parked();
+    finder.update_in(cx, |picker, window, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        picker.delegate.confirm(false, window, cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        let project_path = active_editor.read(cx).project_path(cx);
+        assert_eq!(
+            project_path,
+            Some(ProjectPath {
+                worktree_id: worktree_id2,
+                path: Arc::from(Path::new("filec"))
+            })
+        );
+    });
 }
 
 #[gpui::test]

@@ -93,6 +93,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(feature = "x11")]
+    use anyhow::Context as _;
+
     if headless {
         return Rc::new(HeadlessClient::new());
     }
@@ -102,7 +105,11 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
         "Wayland" => Rc::new(WaylandClient::new()),
 
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(X11Client::new()),
+        "X11" => Rc::new(
+            X11Client::new()
+                .context("Failed to initialize X11 client.")
+                .unwrap(),
+        ),
 
         "Headless" => Rc::new(HeadlessClient::new()),
         _ => unreachable!(),
@@ -415,6 +422,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
+    fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(

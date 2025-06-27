@@ -1,10 +1,10 @@
-use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
+use fs::Fs;
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
@@ -93,7 +93,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TcpArguments {
     pub host: Ipv4Addr,
     pub port: u16,
@@ -179,7 +179,7 @@ impl DebugTaskDefinition {
 }
 
 /// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DebugAdapterBinary {
     pub command: Option<String>,
     pub arguments: Vec<String>,
@@ -337,13 +337,14 @@ pub async fn download_adapter_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario>;
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario>;
 
     async fn get_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -355,7 +356,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     /// Extracts the kind (attach/launch) of debug configuration from the given JSON config.
     /// This method should only return error when the kind cannot be determined for a given configuration;
     /// in particular, it *should not* validate whether the request as a whole is valid, because that's best left to the debug adapter itself to decide.
-    fn request_kind(
+    async fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -368,7 +369,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
     }
 
-    async fn dap_schema(&self) -> serde_json::Value;
+    fn dap_schema(&self) -> serde_json::Value;
 
     fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
         None
@@ -394,11 +395,11 @@ impl DebugAdapter for FakeAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
 
-    fn request_kind(
+    async fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -417,7 +418,7 @@ impl DebugAdapter for FakeAdapter {
         None
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let config = serde_json::to_value(zed_scenario.request).unwrap();
 
         Ok(DebugScenario {
@@ -434,6 +435,7 @@ impl DebugAdapter for FakeAdapter {
         _: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
+        _: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
@@ -443,7 +445,7 @@ impl DebugAdapter for FakeAdapter {
             envs: HashMap::default(),
             cwd: None,
             request_args: StartDebuggingRequestArguments {
-                request: self.request_kind(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config).await?,
                 configuration: task_definition.config.clone(),
             },
         })

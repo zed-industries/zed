@@ -8,13 +8,14 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    CreateCustomerParams, StripeBillingAddressCollection, StripeCheckoutSession,
+    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
-    StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripeMeterId,
-    StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem,
-    StripeSubscriptionItemId, UpdateSubscriptionParams,
+    StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeCustomerUpdate,
+    StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripeSubscription,
+    StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId, UpdateCustomerParams,
+    UpdateSubscriptionParams,
 };
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,8 @@ pub struct StripeCreateCheckoutSessionCall {
     pub payment_method_collection: Option<StripeCheckoutSessionPaymentMethodCollection>,
     pub subscription_data: Option<StripeCreateCheckoutSessionSubscriptionData>,
     pub success_url: Option<String>,
+    pub billing_address_collection: Option<StripeBillingAddressCollection>,
+    pub customer_update: Option<StripeCustomerUpdate>,
 }
 
 pub struct FakeStripeClient {
@@ -93,6 +96,22 @@ impl StripeClient for FakeStripeClient {
             .insert(customer.id.clone(), customer.clone());
 
         Ok(customer)
+    }
+
+    async fn update_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+        params: UpdateCustomerParams<'_>,
+    ) -> Result<StripeCustomer> {
+        let mut customers = self.customers.lock();
+        if let Some(customer) = customers.get_mut(customer_id) {
+            if let Some(email) = params.email {
+                customer.email = Some(email.to_string());
+            }
+            Ok(customer.clone())
+        } else {
+            Err(anyhow!("no customer found for {customer_id:?}"))
+        }
     }
 
     async fn list_subscriptions_for_customer(
@@ -215,6 +234,8 @@ impl StripeClient for FakeStripeClient {
                 payment_method_collection: params.payment_method_collection,
                 subscription_data: params.subscription_data,
                 success_url: params.success_url.map(|url| url.to_string()),
+                billing_address_collection: params.billing_address_collection,
+                customer_update: params.customer_update,
             });
 
         Ok(StripeCheckoutSession {

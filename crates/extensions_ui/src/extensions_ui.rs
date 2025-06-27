@@ -64,6 +64,7 @@ pub fn init(cx: &mut App) {
                             ExtensionProvides::IndexedDocsProviders
                         }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
+                        ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
                     });
 
                     let existing = workspace
@@ -175,6 +176,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::SlashCommands => "Slash Commands",
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
+        ExtensionProvides::DebugAdapters => "Debug Adapters",
     }
 }
 
@@ -472,6 +474,7 @@ impl ExtensionsPage {
                     &match_candidates,
                     &search,
                     false,
+                    true,
                     match_candidates.len(),
                     &Default::default(),
                     cx.background_executor().clone(),
@@ -580,7 +583,7 @@ impl ExtensionsPage {
                                         let extension_id = extension.id.clone();
                                         move |_, _, cx| {
                                             ExtensionStore::global(cx).update(cx, |store, cx| {
-                                                store.uninstall_extension(extension_id.clone(), cx)
+                                                store.uninstall_extension(extension_id.clone(), cx).detach_and_log_err(cx);
                                             });
                                         }
                                     }),
@@ -980,7 +983,9 @@ impl ExtensionsPage {
                     move |_, _, cx| {
                         telemetry::event!("Extension Uninstalled", extension_id);
                         ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.uninstall_extension(extension_id.clone(), cx)
+                            store
+                                .uninstall_extension(extension_id.clone(), cx)
+                                .detach_and_log_err(cx);
                         });
                     }
                 }),

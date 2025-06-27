@@ -5,9 +5,8 @@ use assistant_tool::{Tool, ToolSource, ToolWorkingSet};
 use collections::IndexMap;
 use convert_case::{Case, Casing};
 use fs::Fs;
-use gpui::{App, Entity};
+use gpui::{App, Entity, SharedString};
 use settings::{Settings, update_settings_file};
-use ui::SharedString;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,6 +85,14 @@ impl AgentProfile {
             .collect()
     }
 
+    pub fn is_tool_enabled(&self, source: ToolSource, tool_name: String, cx: &App) -> bool {
+        let Some(settings) = AgentSettings::get_global(cx).profiles.get(&self.id) else {
+            return false;
+        };
+
+        return Self::is_enabled(settings, source, tool_name);
+    }
+
     fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
         match source {
             ToolSource::Native => *settings.tools.get(name.as_str()).unwrap_or(&false),
@@ -108,11 +115,11 @@ mod tests {
     use agent_settings::ContextServerPreset;
     use assistant_tool::ToolRegistry;
     use collections::IndexMap;
+    use gpui::SharedString;
     use gpui::{AppContext, TestAppContext};
     use http_client::FakeHttpClient;
     use project::Project;
     use settings::{Settings, SettingsStore};
-    use ui::SharedString;
 
     use super::*;
 
@@ -302,7 +309,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn icon(&self) -> ui::IconName {
+        fn icon(&self) -> icons::IconName {
             unimplemented!()
         }
 

@@ -40,7 +40,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use settings::{Settings, WorktreeId};
+use settings::{Settings, SettingsLocation, WorktreeId};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -190,17 +190,23 @@ impl DapStore {
                     return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
                 };
 
-                let user_installed_path = ProjectSettings::get_global(cx)
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: Path::new(""),
+                };
+                let dap_settings = ProjectSettings::get(Some(settings_location), cx)
                     .dap
-                    .get(&adapter.name())
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                    .get(&adapter.name());
+                let user_installed_path =
+                    dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                let user_args = dap_settings.map(|s| s.args.clone());
 
                 let delegate = self.delegate(&worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
-                        .get_binary(&delegate, &definition, user_installed_path, cx)
+                        .get_binary(&delegate, &definition, user_installed_path, user_args, cx)
                         .await?;
 
                     let env = this
@@ -287,11 +293,17 @@ impl DapStore {
         adapter: DebugAdapterName,
         label: SharedString,
         cx: &mut App,
-    ) -> Option<DebugScenario> {
-        DapRegistry::global(cx)
-            .locators()
-            .values()
-            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
+    ) -> Task<Option<DebugScenario>> {
+        let locators = DapRegistry::global(cx).locators();
+
+        cx.background_spawn(async move {
+            for locator in locators.values() {
+                if let Some(scenario) = locator.create_scenario(&build, &label, &adapter).await {
+                    return Some(scenario);
+                }
+            }
+            None
+        })
     }
 
     pub fn run_debug_locator(
@@ -356,6 +368,7 @@ impl DapStore {
         &mut self,
         label: SharedString,
         adapter: DebugAdapterName,
+        task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
@@ -373,6 +386,7 @@ impl DapStore {
             parent_session,
             label,
             adapter,
+            task_context,
             cx,
         );
 
@@ -574,7 +588,14 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
-        let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
+        let local_variables =
+            session
+                .read(cx)
+                .variables_by_stack_frame_id(stack_frame_id, false, true);
+        let global_variables =
+            session
+                .read(cx)
+                .variables_by_stack_frame_id(stack_frame_id, true, false);
 
         fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
@@ -603,10 +624,20 @@ impl DapStore {
 
                 match inline_value_location.lookup {
                     VariableLookupKind::Variable => {
-                        let Some(variable) = all_variables
-                            .iter()
-                            .find(|variable| variable.name == inline_value_location.variable_name)
-                        else {
+                        let variable_search =
+                            if inline_value_location.scope
+                                == dap::inline_value::VariableScope::Local
+                            {
+                                local_variables.iter().chain(global_variables.iter()).find(
+                                    |variable| variable.name == inline_value_location.variable_name,
+                                )
+                            } else {
+                                global_variables.iter().find(|variable| {
+                                    variable.name == inline_value_location.variable_name
+                                })
+                            };
+
+                        let Some(variable) = variable_search else {
                             continue;
                         };
 
@@ -699,6 +730,8 @@ impl DapStore {
         };
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
+
+        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
 
         cx.background_spawn(async move {
             if shutdown_children.len() > 0 {
@@ -881,7 +914,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        which::which(command).ok()
+        let worktree_abs_path = self.worktree.abs_path();
+        let shell_path = self.shell_env().await.get("PATH").cloned();
+        which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

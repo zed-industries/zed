@@ -20,6 +20,7 @@ test-support = [
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-python",
+    "tree-sitter-rust",
     "tree-sitter-typescript",
     "settings/test-support",
     "util/test-support",

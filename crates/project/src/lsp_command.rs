@@ -1,11 +1,11 @@
 mod signature_help;
 
 use crate::{
-    CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentHighlight,
-    DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
-    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
-    LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectTransaction,
-    PulledDiagnostics, ResolveState,
+    CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
+    DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
+    InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
+    LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
+    ProjectTransaction, PulledDiagnostics, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
 use anyhow::{Context as _, Result};
@@ -107,9 +107,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     }
 
     /// When false, `to_lsp_params_or_response` default implementation will return the default response.
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
-        true
-    }
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool;
 
     fn to_lsp(
         &self,
@@ -244,6 +242,9 @@ pub(crate) struct InlayHints {
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetCodeLens;
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetDocumentColor;
+
 impl GetCodeLens {
     pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
         capabilities
@@ -272,6 +273,16 @@ impl LspCommand for PrepareRename {
 
     fn display_name(&self) -> &str {
         "Prepare rename"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .rename_provider
+            .is_some_and(|capability| match capability {
+                OneOf::Left(enabled) => enabled,
+                OneOf::Right(options) => options.prepare_provider.unwrap_or(false),
+            })
     }
 
     fn to_lsp_params_or_response(
@@ -456,6 +467,16 @@ impl LspCommand for PerformRename {
         "Rename"
     }
 
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .rename_provider
+            .is_some_and(|capability| match capability {
+                OneOf::Left(enabled) => enabled,
+                OneOf::Right(_options) => true,
+            })
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -580,7 +601,10 @@ impl LspCommand for GetDefinition {
         capabilities
             .server_capabilities
             .definition_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -679,7 +703,11 @@ impl LspCommand for GetDeclaration {
         capabilities
             .server_capabilities
             .declaration_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                lsp::DeclarationCapability::Simple(supported) => supported,
+                lsp::DeclarationCapability::RegistrationOptions(..) => true,
+                lsp::DeclarationCapability::Options(..) => true,
+            })
     }
 
     fn to_lsp(
@@ -772,6 +800,16 @@ impl LspCommand for GetImplementation {
 
     fn display_name(&self) -> &str {
         "Get implementation"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .implementation_provider
+            .is_some_and(|capability| match capability {
+                lsp::ImplementationProviderCapability::Simple(enabled) => enabled,
+                lsp::ImplementationProviderCapability::Options(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -1434,7 +1472,10 @@ impl LspCommand for GetDocumentHighlights {
         capabilities
             .server_capabilities
             .document_highlight_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -1587,7 +1628,10 @@ impl LspCommand for GetDocumentSymbols {
         capabilities
             .server_capabilities
             .document_symbol_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -2111,6 +2155,13 @@ impl LspCommand for GetCompletions {
 
     fn display_name(&self) -> &str {
         "Get completion"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .completion_provider
+            .is_some()
     }
 
     fn to_lsp(
@@ -3668,6 +3719,39 @@ impl LspCommand for LinkedEditingRange {
 }
 
 impl GetDocumentDiagnostics {
+    pub fn diagnostics_from_proto(
+        response: proto::GetDocumentDiagnosticsResponse,
+    ) -> Vec<LspPullDiagnostics> {
+        response
+            .pulled_diagnostics
+            .into_iter()
+            .filter_map(|diagnostics| {
+                Some(LspPullDiagnostics::Response {
+                    server_id: LanguageServerId::from_proto(diagnostics.server_id),
+                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
+                    diagnostics: if diagnostics.changed {
+                        PulledDiagnostics::Unchanged {
+                            result_id: diagnostics.result_id?,
+                        }
+                    } else {
+                        PulledDiagnostics::Changed {
+                            result_id: diagnostics.result_id,
+                            diagnostics: diagnostics
+                                .diagnostics
+                                .into_iter()
+                                .filter_map(|diagnostic| {
+                                    GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
+                                        .context("deserializing diagnostics")
+                                        .log_err()
+                                })
+                                .collect(),
+                        }
+                    },
+                })
+            })
+            .collect()
+    }
+
     fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
         let start = diagnostic.start.context("invalid start range")?;
         let end = diagnostic.end.context("invalid end range")?;
@@ -3866,6 +3950,7 @@ impl GetDocumentDiagnostics {
     }
 }
 
+#[derive(Debug)]
 pub struct WorkspaceLspPullDiagnostics {
     pub version: Option<i32>,
     pub diagnostics: LspPullDiagnostics,
@@ -4037,21 +4122,14 @@ impl LspCommand for GetDocumentDiagnostics {
     }
 
     async fn from_proto(
-        message: proto::GetDocumentDiagnostics,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: proto::GetDocumentDiagnostics,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
-        Ok(Self {
-            previous_result_id: lsp_store
-                .update(&mut cx, |lsp_store, cx| lsp_store.result_id(buffer_id, cx))?,
-        })
+        anyhow::bail!(
+            "proto::GetDocumentDiagnostics is not expected to be converted from proto directly, as it needs `previous_result_id` fetched first"
+        )
     }
 
     fn response_to_proto(
@@ -4109,39 +4187,152 @@ impl LspCommand for GetDocumentDiagnostics {
         _: Entity<Buffer>,
         _: AsyncApp,
     ) -> Result<Self::Response> {
-        let pulled_diagnostics = response
-            .pulled_diagnostics
-            .into_iter()
-            .filter_map(|diagnostics| {
-                Some(LspPullDiagnostics::Response {
-                    server_id: LanguageServerId::from_proto(diagnostics.server_id),
-                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
-                    diagnostics: if diagnostics.changed {
-                        PulledDiagnostics::Unchanged {
-                            result_id: diagnostics.result_id?,
-                        }
-                    } else {
-                        PulledDiagnostics::Changed {
-                            result_id: diagnostics.result_id,
-                            diagnostics: diagnostics
-                                .diagnostics
-                                .into_iter()
-                                .filter_map(|diagnostic| {
-                                    GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
-                                        .context("deserializing diagnostics")
-                                        .log_err()
-                                })
-                                .collect(),
-                        }
-                    },
-                })
-            })
-            .collect();
-
-        Ok(pulled_diagnostics)
+        Ok(Self::diagnostics_from_proto(response))
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetDocumentColor {
+    type Response = Vec<DocumentColor>;
+    type LspRequest = lsp::request::DocumentColor;
+    type ProtoRequest = proto::GetDocumentColor;
+
+    fn display_name(&self) -> &str {
+        "Document color"
+    }
+
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+        server_capabilities
+            .server_capabilities
+            .color_provider
+            .is_some_and(|capability| match capability {
+                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::ColorProvider(..) => true,
+                lsp::ColorProviderCapability::Options(..) => true,
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::DocumentColorParams> {
+        Ok(lsp::DocumentColorParams {
+            text_document: make_text_document_identifier(path)?,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Vec<lsp::ColorInformation>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> Result<Self::Response> {
+        Ok(message
+            .into_iter()
+            .map(|color| DocumentColor {
+                lsp_range: color.range,
+                color: color.color,
+                resolved: false,
+                color_presentations: Vec::new(),
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        proto::GetDocumentColor {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self> {
+        Ok(Self {})
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetDocumentColorResponse {
+        proto::GetDocumentColorResponse {
+            colors: response
+                .into_iter()
+                .map(|color| {
+                    let start = point_from_lsp(color.lsp_range.start).0;
+                    let end = point_from_lsp(color.lsp_range.end).0;
+                    proto::ColorInformation {
+                        red: color.color.red,
+                        green: color.color.green,
+                        blue: color.color.blue,
+                        alpha: color.color.alpha,
+                        lsp_range_start: Some(proto::PointUtf16 {
+                            row: start.row,
+                            column: start.column,
+                        }),
+                        lsp_range_end: Some(proto::PointUtf16 {
+                            row: end.row,
+                            column: end.column,
+                        }),
+                    }
+                })
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetDocumentColorResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self::Response> {
+        Ok(message
+            .colors
+            .into_iter()
+            .filter_map(|color| {
+                let start = color.lsp_range_start?;
+                let start = PointUtf16::new(start.row, start.column);
+                let end = color.lsp_range_end?;
+                let end = PointUtf16::new(end.row, end.column);
+                Some(DocumentColor {
+                    resolved: false,
+                    color_presentations: Vec::new(),
+                    lsp_range: lsp::Range {
+                        start: point_to_lsp(start),
+                        end: point_to_lsp(end),
+                    },
+                    color: lsp::Color {
+                        red: color.red,
+                        green: color.green,
+                        blue: color.blue,
+                        alpha: color.alpha,
+                    },
+                })
+            })
+            .collect())
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

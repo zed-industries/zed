@@ -19,6 +19,7 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
+- [Visual Customization](./visual-customization.md)
 - [Vim Mode](./vim.md)
 
 <!-- - [Globs](./globs.md) -->
@@ -32,7 +33,8 @@
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)
-- [Debugging (Beta)](./debugger.md)
+- [Debugger](./debugger.md)
+- [Diagnostics](./diagnostics.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)
@@ -63,6 +65,7 @@
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
+- [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)

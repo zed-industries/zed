@@ -313,7 +313,7 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_context_editor::init(client.clone(), cx);
+            assistant_context::init(client.clone(), cx);
             agent_settings::init(cx);
         });
 

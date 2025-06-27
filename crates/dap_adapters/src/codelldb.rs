@@ -19,7 +19,7 @@ pub(crate) struct CodeLldbDebugAdapter {
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
 
-    fn request_args(
+    async fn request_args(
         &self,
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
@@ -37,7 +37,7 @@ impl CodeLldbDebugAdapter {
         obj.entry("cwd")
             .or_insert(delegate.worktree_root_path().to_string_lossy().into());
 
-        let request = self.request_kind(&configuration)?;
+        let request = self.request_kind(&configuration).await?;
 
         Ok(dap::StartDebuggingRequestArguments {
             request,
@@ -89,7 +89,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut configuration = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",
@@ -133,7 +133,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
@@ -329,6 +329,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -364,11 +365,13 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            arguments: vec![
-                "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
-            ],
-            request_args: self.request_args(delegate, &config)?,
+            arguments: user_args.unwrap_or_else(|| {
+                vec![
+                    "--settings".into(),
+                    json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
+                ]
+            }),
+            request_args: self.request_args(delegate, &config).await?,
             envs: HashMap::default(),
             connection: None,
         })

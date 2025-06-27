@@ -52,6 +52,7 @@ impl PhpDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
@@ -77,6 +78,25 @@ impl PhpDebugAdapter {
                 .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
         }
 
+        let arguments = if let Some(mut args) = user_args {
+            args.insert(
+                0,
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            args
+        } else {
+            vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--server={}", port),
+            ]
+        };
+
         Ok(DebugAdapterBinary {
             command: Some(
                 delegate
@@ -86,13 +106,7 @@ impl PhpDebugAdapter {
                     .to_string_lossy()
                     .into_owned(),
             ),
-            arguments: vec![
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-                format!("--server={}", port),
-            ],
+            arguments,
             connection: Some(TcpArguments {
                 port,
                 host,
@@ -102,7 +116,8 @@ impl PhpDebugAdapter {
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
                 configuration,
-                request: <Self as DebugAdapter>::request_kind(self, &task_definition.config)?,
+                request: <Self as DebugAdapter>::request_kind(self, &task_definition.config)
+                    .await?,
             },
         })
     }
@@ -110,7 +125,7 @@ impl PhpDebugAdapter {
 
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
@@ -290,11 +305,14 @@ impl DebugAdapter for PhpDebugAdapter {
         Some(SharedString::new_static("PHP").into())
     }
 
-    fn request_kind(&self, _: &serde_json::Value) -> Result<StartDebuggingRequestArgumentsRequest> {
+    async fn request_kind(
+        &self,
+        _: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
         Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let obj = match &zed_scenario.request {
             dap::DebugRequest::Attach(_) => {
                 bail!("Php adapter doesn't support attaching")
@@ -322,6 +340,7 @@ impl DebugAdapter for PhpDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
@@ -337,7 +356,13 @@ impl DebugAdapter for PhpDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &task_definition, user_installed_path, cx)
-            .await
+        self.get_installed_binary(
+            delegate,
+            &task_definition,
+            user_installed_path,
+            user_args,
+            cx,
+        )
+        .await
     }
 }
