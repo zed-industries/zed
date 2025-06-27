@@ -3,7 +3,7 @@ mod agent_profile;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use collections::IndexMap;
+use collections::{IndexMap, IndexSet};
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, schema::Schema};
@@ -66,6 +66,7 @@ pub struct AgentSettings {
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
+    pub favorite_models: IndexSet<LanguageModelSelection>,
 }
 
 impl AgentSettings {
@@ -97,6 +98,28 @@ impl AgentSettings {
             provider: provider.into(),
             model,
         });
+    }
+
+    fn create_model_selection(provider: &str, model: &str) -> LanguageModelSelection {
+        LanguageModelSelection {
+            provider: provider.into(),
+            model: model.to_string(),
+        }
+    }
+
+    pub fn add_favorite_model(&mut self, provider: &str, model: &str) {
+        self.favorite_models
+            .insert(Self::create_model_selection(provider, model));
+    }
+
+    pub fn remove_favorite_model(&mut self, provider: &str, model: &str) {
+        self.favorite_models
+            .shift_remove(&Self::create_model_selection(provider, model));
+    }
+
+    pub fn is_favorite_model(&self, provider: &str, model: &str) -> bool {
+        self.favorite_models
+            .contains(&Self::create_model_selection(provider, model))
     }
 }
 
@@ -291,6 +314,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
+    /// List of favorite language models.
+    ///
+    /// Default: []
+    #[serde(default)]
+    favorite_models: IndexSet<LanguageModelSelection>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -311,13 +339,13 @@ impl From<CompletionMode> for zed_llm_client::CompletionMode {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
     pub model: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {
@@ -453,6 +481,10 @@ impl Settings for AgentSettings {
             settings
                 .model_parameters
                 .extend_from_slice(&value.model_parameters);
+
+            settings
+                .favorite_models
+                .extend(value.favorite_models.iter().cloned());
 
             if let Some(profiles) = value.profiles.as_ref() {
                 settings
