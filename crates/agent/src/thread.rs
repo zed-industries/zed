@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::{HashMap, HashSet};
 use feature_flags::{self, FeatureFlagAppExt};
-use futures::{FutureExt, StreamExt as _, future::Shared};
+use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use git::repository::DiffType;
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString,
@@ -32,7 +32,7 @@ use language_model::{
     ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
     TokenUsage,
 };
-use postage::stream::Stream as _;
+use postage::{barrier, stream::Stream as _};
 use project::{
     Project,
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
@@ -45,6 +45,7 @@ use settings::Settings;
 use std::{
     io::Write,
     ops::Range,
+    pin::pin,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -409,6 +410,11 @@ pub enum QueueState {
     Started,
 }
 
+struct PendingTurn {
+    task: Task<Result<()>>, // todo!("get rid of error")
+    _cancel_tx: oneshot::Sender<()>,
+}
+
 /// A thread of conversation with the LLM.
 pub struct ZedAgent {
     thread: Entity<Thread>,
@@ -425,6 +431,8 @@ pub struct ZedAgent {
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Entity<ToolWorkingSet>,
+    messages: Vec<LanguageModelRequestMessage>,
+    pending_turn: Option<PendingTurn>,
 
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     tool_use_metadata_by_id: HashMap<LanguageModelToolUseId, ToolUseMetadata>,
@@ -811,6 +819,8 @@ impl ZedAgent {
         Self {
             thread,
             _thread_subscription: thread_subscription,
+            pending_turn: None,
+            messages: Vec::new(),
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
@@ -988,6 +998,8 @@ impl ZedAgent {
         let mut this = Self {
             thread,
             _thread_subscription: subscription,
+            pending_turn: None,
+            messages: Vec::new(),
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
@@ -1617,6 +1629,252 @@ impl ZedAgent {
 
     pub fn set_remaining_turns(&mut self, remaining_turns: u32) {
         self.remaining_turns = remaining_turns;
+    }
+
+    pub fn cancel(&mut self) -> Option<Task<Result<()>>> {
+        self.pending_turn.take().map(|turn| turn.task)
+    }
+
+    pub fn send_to_model2(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        struct PendingToolUse {
+            request: LanguageModelToolUse,
+            result: Task<LanguageModelToolResult>,
+        }
+
+        let prev_turn = self.cancel();
+        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        self.pending_turn = Some(PendingTurn {
+            task: cx.spawn(async move |this, cx| {
+                if let Some(prev_turn) = prev_turn {
+                    prev_turn.await?;
+                }
+
+                loop {
+                    let mut assistant_message = LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content: Vec::new(),
+                        cache: false,
+                    };
+                    let mut tool_results_message = LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: Vec::new(),
+                        cache: false,
+                    };
+                    let mut pending_tool_uses = Vec::new();
+
+                    let mut send = async {
+                        let request =
+                            this.update(cx, |this, cx| this.build_request(&model, intent, cx))?;
+                        let mut events = model.stream_completion(request.clone(), cx).await?;
+
+                        while let Some(event) = events.next().await {
+                            let event = event?;
+                            match event {
+                                LanguageModelCompletionEvent::StartMessage { message_id } => {
+                                    todo!()
+                                }
+                                LanguageModelCompletionEvent::Text(chunk) => {
+                                    assistant_message.push(MessageContent::Text(chunk));
+                                }
+                                LanguageModelCompletionEvent::Thinking { text, signature } => {
+                                    assistant_message
+                                        .push(MessageContent::Thinking { text, signature });
+                                }
+                                LanguageModelCompletionEvent::RedactedThinking { data } => {
+                                    assistant_message.push(MessageContent::RedactedThinking(data));
+                                }
+                                LanguageModelCompletionEvent::ToolUse(language_model_tool_use) => {
+                                    // todo!("update tool card")
+                                    if language_model_tool_use.is_input_complete {
+                                        let mut pending_request = request.clone();
+                                        pending_request.messages.push(assistant_message.clone());
+                                        let tool_result = this.update(cx, |this, cx| {
+                                            this.run_tool2(
+                                                language_model_tool_use.clone(),
+                                                pending_request,
+                                                model.clone(),
+                                                window.clone(),
+                                                cx,
+                                            )
+                                        })?;
+                                        pending_tool_uses.push(PendingToolUse {
+                                            request: language_model_tool_use,
+                                            result: tool_result,
+                                        });
+                                    }
+                                }
+                                LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
+                                    todo!()
+                                }
+                                LanguageModelCompletionEvent::StatusUpdate(
+                                    completion_request_status,
+                                ) => {
+                                    todo!()
+                                }
+                                LanguageModelCompletionEvent::Stop(StopReason::EndTurn) => {
+                                    todo!()
+                                }
+                                LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
+                                    todo!()
+                                }
+                                LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
+                                    todo!()
+                                }
+                                LanguageModelCompletionEvent::Stop(StopReason::ToolUse) => {
+                                    todo!()
+                                }
+                            }
+                        }
+
+                        while let Some(pending_tool_use) = pending_tool_uses.pop() {
+                            let result = pending_tool_use.result.await;
+                            assistant_message
+                                .push(MessageContent::ToolUse(pending_tool_use.request));
+                            tool_results_message
+                                .content
+                                .push(MessageContent::ToolResult(result));
+                        }
+
+                        anyhow::Ok(())
+                    }
+                    .boxed_local()
+                    .fuse();
+
+                    futures::select_biased! {
+                        _ = cancel_rx => {
+                            drop(send);
+
+                            for pending_tool_use in pending_tool_uses {
+                                tool_results_message
+                                    .content
+                                    .push(MessageContent::ToolResult(LanguageModelToolResult {
+                                        tool_use_id: pending_tool_use.request.id.clone(),
+                                        tool_name: pending_tool_use.request.name.clone(),
+                                        is_error: true,
+                                        content: LanguageModelToolResultContent::Text("<User cancelled tool use>".into()),
+                                        output: None
+                                    }));
+                                assistant_message
+                                    .push(MessageContent::ToolUse(pending_tool_use.request));
+                            }
+
+                            this.update(cx, |this, cx| {
+                                if !assistant_message.content.is_empty() {
+                                    this.messages.push(assistant_message);
+                                }
+
+                                if !tool_results_message.content.is_empty() {
+                                    this.messages.push(tool_results_message);
+                                }
+                            })?;
+
+                            break;
+                        }
+                        result = send => {
+                            // todo!("decide what to do on error")
+                            drop(send);
+
+                            let done = this.update(cx, |this, _cx| {
+                                if !assistant_message.content.is_empty() {
+                                    this.messages.push(assistant_message);
+                                }
+
+                                if tool_results_message.content.is_empty() {
+                                    true
+                                } else {
+                                    this.messages.push(tool_results_message);
+                                    false
+                                }
+                            })?;
+
+                            if done {
+                                break;
+                            }
+                        }
+                    }
+
+                    todo!();
+                }
+
+                Ok(())
+            }),
+            _cancel_tx: cancel_tx,
+        });
+    }
+
+    fn build_request(
+        &mut self,
+        model: &Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        cx: &mut Context<Self>,
+    ) -> LanguageModelRequest {
+        let mode = if model.supports_max_mode() {
+            Some(self.completion_mode.into())
+        } else {
+            Some(CompletionMode::Normal.into())
+        };
+
+        let available_tools = self.available_tools(cx, model.clone());
+        let available_tool_names = available_tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect();
+
+        let mut request = LanguageModelRequest {
+            thread_id: Some(self.id(cx).to_string()),
+            prompt_id: Some(self.last_prompt_id.to_string()),
+            intent: Some(intent),
+            mode,
+            messages: vec![],
+            tools: available_tools,
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
+        };
+
+        let model_context = &ModelContext {
+            available_tools: available_tool_names,
+        };
+
+        // todo!("should we cache the system prompt and append a message when it changes, as opposed to replacing it?")
+        if let Some(project_context) = self.project_context.borrow().as_ref() {
+            match self
+                .prompt_builder
+                .generate_assistant_system_prompt(project_context, model_context)
+            {
+                Err(err) => {
+                    let message = format!("{err:?}").into();
+                    log::error!("{message}");
+                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                        header: "Error generating system prompt".into(),
+                        message,
+                    }));
+                }
+                Ok(system_prompt) => {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: Role::System,
+                        content: vec![MessageContent::Text(system_prompt)],
+                        cache: true,
+                    });
+                }
+            }
+        } else {
+            let message = "Context for system prompt unexpectedly not ready.".into();
+            log::error!("{message}");
+            cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                header: "Error generating system prompt".into(),
+                message,
+            }));
+        }
+
+        request.messages.extend(self.messages.iter().cloned());
+        request
     }
 
     pub fn send_to_model(
@@ -2971,6 +3229,17 @@ impl ZedAgent {
         });
 
         self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
+    }
+
+    pub fn run_tool2(
+        &mut self,
+        tool_use: LanguageModelToolUse,
+        request: LanguageModelRequest,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> Task<LanguageModelToolResult> {
+        todo!()
     }
 
     pub fn run_tool(

@@ -364,6 +364,40 @@ impl LanguageModelRequestMessage {
     pub fn contents_empty(&self) -> bool {
         self.content.iter().all(|content| content.is_empty())
     }
+
+    pub fn push(&mut self, content: MessageContent) {
+        if let Some(last_content) = self.content.last_mut() {
+            match (last_content, content) {
+                (MessageContent::Text(last_text), MessageContent::Text(new_text)) => {
+                    last_text.push_str(&new_text);
+                }
+                (
+                    MessageContent::Thinking {
+                        text: last_text,
+                        signature,
+                    },
+                    MessageContent::Thinking {
+                        text: new_text,
+                        signature: new_signature,
+                    },
+                ) => {
+                    last_text.push_str(&new_text);
+                    if signature.is_none() {
+                        *signature = new_signature;
+                    }
+                }
+                (
+                    MessageContent::RedactedThinking(last_text),
+                    MessageContent::RedactedThinking(new_text),
+                ) => {
+                    last_text.push_str(&new_text);
+                }
+                (_, content) => self.content.push(content),
+            }
+        } else {
+            self.content.push(content);
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
