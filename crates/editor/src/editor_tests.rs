@@ -22770,6 +22770,24 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_newline_replacement_in_single_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let (editor, cx) = cx.add_window_view(Editor::single_line);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("oops\n\nwow\n", window, cx)
+    });
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.display_text(cx), "oops⋯⋯wow⋯");
+    });
+    editor.update(cx, |editor, cx| editor.edit([(3..5, "")], cx));
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.display_text(cx), "oop⋯wow⋯");
+    });
+}
+
 #[track_caller]
 fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
     editor

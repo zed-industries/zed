@@ -1143,6 +1143,7 @@ pub struct Editor {
     drag_and_drop_selection_enabled: bool,
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
+    folding_newlines: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2159,6 +2160,7 @@ impl Editor {
             mode,
             selection_drag_state: SelectionDragState::None,
             drag_and_drop_selection_enabled: EditorSettings::get_global(cx).drag_and_drop_selection,
+            folding_newlines: Task::ready(()),
         };
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -6715,6 +6717,77 @@ impl Editor {
                 })
                 .log_err();
         })
+    }
+
+    fn refresh_single_line_folds(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        struct NewlineFold;
+        let type_id = std::any::TypeId::of::<NewlineFold>();
+        if !self.mode.is_single_line() {
+            return;
+        }
+        let snapshot = self.snapshot(window, cx);
+        if snapshot.buffer_snapshot.max_point().row == 0 {
+            return;
+        }
+        let task = cx.background_spawn(async move {
+            let new_newlines = snapshot
+                .buffer_chars_at(0)
+                .filter_map(|(c, i)| {
+                    if c == '\n' {
+                        Some(
+                            snapshot.buffer_snapshot.anchor_after(i)
+                                ..snapshot.buffer_snapshot.anchor_before(i + 1),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let existing_newlines = snapshot
+                .folds_in_range(0..snapshot.buffer_snapshot.len())
+                .filter_map(|fold| {
+                    if fold.placeholder.type_tag == Some(type_id) {
+                        Some(fold.range.start..fold.range.end)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            (new_newlines, existing_newlines)
+        });
+        self.folding_newlines = cx.spawn(async move |this, cx| {
+            let (new_newlines, existing_newlines) = task.await;
+            if new_newlines == existing_newlines {
+                return;
+            }
+            let placeholder = FoldPlaceholder {
+                render: Arc::new(move |_, _, cx| {
+                    div()
+                        .bg(cx.theme().status().hint_background)
+                        .border_b_1()
+                        .size_full()
+                        .font(ThemeSettings::get_global(cx).buffer_font.clone())
+                        .border_color(cx.theme().status().hint)
+                        .child("\\n")
+                        .into_any()
+                }),
+                constrain_width: false,
+                merge_adjacent: false,
+                type_tag: Some(type_id),
+            };
+            let creases = new_newlines
+                .into_iter()
+                .map(|range| Crease::simple(range, placeholder.clone()))
+                .collect();
+            this.update(cx, |this, cx| {
+                this.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_folds_with_type(existing_newlines, type_id, cx);
+                    display_map.fold(creases, cx);
+                });
+            })
+            .ok();
+        });
     }
 
     fn refresh_selected_text_highlights(
@@ -17100,16 +17173,6 @@ impl Editor {
             return;
         }
 
-        let mut buffers_affected = HashSet::default();
-        let multi_buffer = self.buffer().read(cx);
-        for crease in &creases {
-            if let Some((_, buffer, _)) =
-                multi_buffer.excerpt_containing(crease.range().start.clone(), cx)
-            {
-                buffers_affected.insert(buffer.read(cx).remote_id());
-            };
-        }
-
         self.display_map.update(cx, |map, cx| map.fold(creases, cx));
 
         if auto_scroll {
@@ -19435,6 +19498,7 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
+                self.refresh_single_line_folds(window, cx);
                 refresh_matching_bracket_highlights(self, window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
