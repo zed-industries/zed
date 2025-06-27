@@ -30,7 +30,7 @@ use gpui::{
     px, retain_all,
 };
 use image_viewer::ImageInfo;
-use language_tools::lsp_tool::LspTool;
+use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
@@ -294,20 +294,18 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let popover_menu_handle = PopoverMenuHandle::default();
-
+        let inline_completion_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                popover_menu_handle.clone(),
+                inline_completion_menu_handle.clone(),
                 cx,
             )
         });
-
         workspace.register_action({
             move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
-                popover_menu_handle.toggle(window, cx);
+                inline_completion_menu_handle.toggle(window, cx);
             }
         });
 
@@ -326,7 +324,15 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
-        let lsp_tool = cx.new(|cx| LspTool::new(workspace, window, cx));
+
+        let lsp_tool_menu_handle = PopoverMenuHandle::default();
+        let lsp_tool =
+            cx.new(|cx| LspTool::new(workspace, lsp_tool_menu_handle.clone(), window, cx));
+        workspace.register_action({
+            move |_, _: &lsp_tool::ToggleMenu, window, cx| {
+                lsp_tool_menu_handle.toggle(window, cx);
+            }
+        });
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));

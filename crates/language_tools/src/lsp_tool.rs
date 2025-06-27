@@ -10,7 +10,7 @@ use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
-use ui::{Context, Indicator, Tooltip, Window, prelude::*};
+use ui::{Context, Indicator, PopoverMenuHandle, Tooltip, Window, prelude::*};
 
 use workspace::{StatusItemView, Workspace};
 
@@ -20,6 +20,7 @@ actions!(lsp_tool, [ToggleMenu]);
 
 pub struct LspTool {
     state: Entity<PickerState>,
+    popover_menu_handle: PopoverMenuHandle<Picker<LspPickerDelegate>>,
     lsp_picker: Option<Entity<Picker<LspPickerDelegate>>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -32,7 +33,7 @@ struct PickerState {
 }
 
 #[derive(Debug)]
-struct LspPickerDelegate {
+pub struct LspPickerDelegate {
     state: Entity<PickerState>,
     selected_index: usize,
     items: Vec<LspItem>,
@@ -614,7 +615,12 @@ impl PickerDelegate for LspPickerDelegate {
 
 // TODO kb keyboard story
 impl LspTool {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace: &Workspace,
+        popover_menu_handle: PopoverMenuHandle<Picker<LspPickerDelegate>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |lsp_tool, window, cx| {
                 if ProjectSettings::get_global(cx).global_lsp_settings.button {
@@ -644,6 +650,7 @@ impl LspTool {
 
         Self {
             state,
+            popover_menu_handle,
             lsp_picker: None,
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
         }
@@ -908,10 +915,11 @@ impl Render for LspTool {
                     .when_some(indicator, IconButton::indicator)
                     .icon_size(IconSize::Small)
                     .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
-                move |_, cx| Tooltip::simple("Language Servers", cx),
+                move |window, cx| Tooltip::for_action("Language Servers", &ToggleMenu, window, cx),
                 Corner::BottomLeft,
                 cx,
             )
+            .with_handle(self.popover_menu_handle.clone())
             .render(window, cx),
         )
     }
