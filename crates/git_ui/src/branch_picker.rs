@@ -451,6 +451,7 @@ impl PickerDelegate for BranchListDelegate {
                 .child(
                     v_flex()
                         .w_full()
+                        .overflow_hidden()
                         .child(
                             h_flex()
                                 .w_full()
@@ -458,21 +459,25 @@ impl PickerDelegate for BranchListDelegate {
                                 .overflow_x_hidden()
                                 .gap_2()
                                 .justify_between()
-                                .child(div().flex_shrink().overflow_x_hidden().child(
+                                .child(div().flex_1().min_w_0().overflow_x_hidden().child(
                                     if entry.is_new {
-                                        Label::new(format!(
-                                            "Create branch \"{}\"…",
-                                            entry.branch.name()
-                                        ))
-                                        .single_line()
-                                        .into_any_element()
+                                        let truncated_name =
+                                            util::truncate_and_trailoff(entry.branch.name(), 32);
+                                        Label::new(format!("Create branch \"{}\"…", truncated_name))
+                                            .single_line()
+                                            .into_any_element()
                                     } else {
-                                        HighlightedLabel::new(
-                                            entry.branch.name().to_owned(),
-                                            entry.positions.clone(),
-                                        )
-                                        .truncate()
-                                        .into_any_element()
+                                        let truncated_name =
+                                            util::truncate_and_trailoff(entry.branch.name(), 32);
+                                        let adjusted_positions: Vec<usize> = entry
+                                            .positions
+                                            .iter()
+                                            .filter(|&&pos| pos < truncated_name.len())
+                                            .copied()
+                                            .collect();
+                                        HighlightedLabel::new(truncated_name, adjusted_positions)
+                                            .single_line()
+                                            .into_any_element()
                                     },
                                 ))
                                 .when_some(commit_time, |el, commit_time| {
