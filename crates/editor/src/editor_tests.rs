@@ -22749,7 +22749,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_newline_replacement_in_single_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let (editor, cx) = cx.add_window_view(|window, cx| Editor::single_line(window, cx));
+    let (editor, cx) = cx.add_window_view(Editor::single_line);
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("oops\n\nwow\n", window, cx)
     });
