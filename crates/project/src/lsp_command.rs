@@ -583,7 +583,10 @@ impl LspCommand for GetDefinition {
         capabilities
             .server_capabilities
             .definition_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -682,7 +685,11 @@ impl LspCommand for GetDeclaration {
         capabilities
             .server_capabilities
             .declaration_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                lsp::DeclarationCapability::Simple(supported) => supported,
+                lsp::DeclarationCapability::RegistrationOptions(..) => true,
+                lsp::DeclarationCapability::Options(..) => true,
+            })
     }
 
     fn to_lsp(
@@ -1437,7 +1444,10 @@ impl LspCommand for GetDocumentHighlights {
         capabilities
             .server_capabilities
             .document_highlight_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -1590,7 +1600,10 @@ impl LspCommand for GetDocumentSymbols {
         capabilities
             .server_capabilities
             .document_symbol_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -4161,7 +4174,11 @@ impl LspCommand for GetDocumentColor {
         server_capabilities
             .server_capabilities
             .color_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::ColorProvider(..) => true,
+                lsp::ColorProviderCapability::Options(..) => true,
+            })
     }
 
     fn to_lsp(
