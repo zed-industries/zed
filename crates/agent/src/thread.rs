@@ -2048,6 +2048,10 @@ impl Thread {
     ) {
         // For rate limit errors, we only retry once with the specified duration
         let retry_message = format!("{error}. Retrying in {} seconds…", retry_after.as_secs());
+        log::warn!(
+            "Retrying completion request in {} seconds: {error:?}",
+            retry_after.as_secs(),
+        );
 
         // Add a UI-only message instead of a regular message
         let id = self.next_message_id.post_inc();
@@ -2120,8 +2124,12 @@ impl Thread {
             // Add a transient message to inform the user
             let delay_secs = delay.as_secs();
             let retry_message = format!(
-                "{}. Retrying (attempt {} of {}) in {} seconds...",
-                error, attempt, max_attempts, delay_secs
+                "{error}. Retrying (attempt {attempt} of {max_attempts}) \
+                in {delay_secs} seconds..."
+            );
+            log::warn!(
+                "Retrying completion request (attempt {attempt} of {max_attempts}) \
+                in {delay_secs} seconds: {error:?}",
             );
 
             // Add a UI-only message instead of a regular message
