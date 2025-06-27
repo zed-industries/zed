@@ -3,7 +3,7 @@ use super::*;
 use gpui::{Action, actions};
 use project::project_settings::GoToDiagnosticSeverityFilter;
 use schemars::JsonSchema;
-use util::serde::default_true;
+use util::{paths::PathExt, serde::default_true};
 
 /// Selects the next occurrence of the current selection.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
@@ -268,8 +268,37 @@ pub struct DiffText {
 
 #[derive(Clone, PartialEq)]
 pub enum TextSource {
-    MultiBuffer(Entity<MultiBuffer>),
+    Editor(Entity<Editor>),
     Clipboard(String),
+}
+
+impl TextSource {
+    pub fn tab_content_text(&self, cx: &App) -> String {
+        // TODO - diff - line location
+        match self {
+            TextSource::Clipboard(_) => "Clipboard".to_string(),
+            TextSource::Editor(editor) => editor.read(cx).buffer().read(cx).title(cx).to_string(),
+        }
+    }
+
+    pub fn tab_tooltip_text(&self, cx: &App) -> String {
+        // TODO - diff - line location
+        match self {
+            TextSource::Clipboard(_) => Some("Clipboard".to_string()),
+            TextSource::Editor(editor) => editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .map(|b| {
+                    b.read(cx)
+                        .file()
+                        .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                })
+                .flatten(),
+        }
+        .unwrap_or("untitled".into())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]

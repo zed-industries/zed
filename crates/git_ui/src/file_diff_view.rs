@@ -500,14 +500,16 @@ mod tests {
             ),
         );
 
-        // TODO - diff
-        // diff_view.read_with(cx, |diff_view, _| {
-        //     assert_eq!(diff_view.tab_content_text, "old_file.txt ↔ new_file.txt");
-        //     assert_eq!(
-        //         diff_view.tab_tooltip_text,
-        //         path!("test/old_file.txt ↔ test/new_file.txt")
-        //     );
-        // })
+        diff_view.read_with(cx, |diff_view, cx| {
+            assert_eq!(
+                diff_view.tab_content_text(0, cx),
+                "old_file.txt ↔ new_file.txt"
+            );
+            assert_eq!(
+                diff_view.tab_tooltip_text(cx).unwrap(),
+                path!("test/old_file.txt ↔ test/new_file.txt")
+            );
+        })
     }
 
     #[gpui::test]

@@ -1,9 +1,9 @@
 //! TextDiffView provides a UI for displaying differences between two buffers.
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{
-    Editor, EditorEvent, MultiBuffer, ToPoint,
+    Editor, EditorEvent, MultiBuffer,
     actions::{DiffText, TextSource},
 };
 use futures::{FutureExt, select_biased};
@@ -26,7 +26,6 @@ use workspace::{
     item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
-use zed_actions;
 
 pub struct TextDiffView {
     editor: Entity<Editor>,
@@ -49,24 +48,38 @@ impl TextDiffView {
         let old_text_source = diff_text_data.old_text_source.clone();
         let new_text_source = diff_text_data.new_text_source.clone();
 
-        let mut buffer = |text_source: &TextSource| match text_source {
+        let buffer = |text_source: &TextSource, cx: &mut App| match text_source {
             TextSource::Clipboard(text) => Some(cx.new(|cx| language::Buffer::local(text, cx))),
-            TextSource::MultiBuffer(multibuffer) => {
-                multibuffer.read_with(cx, |mb, _| mb.as_singleton())
-            }
+            TextSource::Editor(editor) => editor.update(cx, |editor, cx| {
+                let selections = editor.selections.all::<usize>(cx);
+                let buffer = editor.buffer().read(cx).as_singleton()?.read(cx);
+                let language = buffer.language().cloned();
+
+                let selection_range = selections
+                    .first()
+                    .map(|s| s.range())
+                    .unwrap_or_else(|| 0..buffer.len());
+
+                let text = buffer.text_for_range(selection_range).collect::<String>();
+
+                let new_buffer = cx.new(|cx| language::Buffer::local(text, cx));
+                new_buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
+
+                Some(new_buffer)
+            }),
         };
-        let old_buffer = buffer(&old_text_source)?;
-        let new_buffer = buffer(&new_text_source)?;
+        let old_buffer = buffer(&old_text_source, cx)?;
+        let new_buffer = buffer(&new_text_source, cx)?;
 
         let mut old_language = old_buffer.read_with(cx, |buffer, _| buffer.language().cloned());
         let mut new_language = new_buffer.read_with(cx, |buffer, _| buffer.language().cloned());
 
-        if old_language.is_none() {
-            old_language = new_language.clone();
-        }
-
-        if new_language.is_none() {
-            new_language = old_language.clone();
+        // If one buffer has a language and the other doesn't, assume source
+        // text came from the same language.
+        match (old_language.as_ref(), new_language.as_ref()) {
+            (None, Some(_)) => old_language = new_language.clone(),
+            (Some(_), None) => new_language = old_language.clone(),
+            _ => {}
         }
 
         old_buffer.update(cx, |buffer, cx| {
@@ -107,56 +120,13 @@ impl TextDiffView {
         Some(task)
     }
 
-    // TODO - diff
-    // pub fn text(text_source: TextSource, cx: &mut App) -> Option<String> {
-    //     match text_source {
-    //         Clipboard(text) => Some(text),
-    //         Editor(editor) => editor.read_with(cx, |editor, mut cx| {
-    //             let selections = editor.selections.all::<usize>(cx);
-
-    //             let Some(first_selection) = selections.first() else {
-    //                 return None;
-    //             };
-
-    //             let buffer = editor.buffer().read(cx).snapshot(cx);
-
-    //             let selection_range = if first_selection.is_empty() {
-    //                 0..buffer.len()
-    //             } else {
-    //                 first_selection.range()
-    //             };
-
-    //             let mut selected_text = String::new();
-
-    //             for chunk in buffer.text_for_range(selection_range.clone()) {
-    //                 selected_text.push_str(chunk);
-    //             }
-
-    //             let (full_path, language_name) =
-    //                 buffer
-    //                     .as_singleton()
-    //                     .map_or((None, None), |(_, _, buffer)| {
-    //                         let file = buffer.file();
-    //                         let full_path = file.map(|f| f.full_path(cx).to_path_buf());
-    //                         let language_name = buffer
-    //                             .language()
-    //                             .map(|language| language.name().to_string());
-    //                         (full_path, language_name)
-    //                     });
-
-    //             let selection_start = selection_range.start.to_point(&buffer);
-    //             let selection_end = selection_range.end.to_point(&buffer);
-
-    //             Some(selected_text)
-    //         }),
-    //     }
-    // }
-
     // TODO - diff - match selections
     // TODO - diff - allow to be bidirectionally edited
     // TODO - diff - no selection = full buffer, or take first
+    // TODO - diff - make sure breadcrumbs work
+    // TODO - diff - make sure tabs have dynamic titles
+    // TODO - diff - allow to be saved?
 
-    // TODO - diff - passing in both of these things feels bad
     pub fn new(
         old_text_source: TextSource,
         new_text_source: TextSource,
@@ -298,35 +268,14 @@ impl Item for TextDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        // TODO - diff - line location
-        let title_text = |text_source: &TextSource| match text_source {
-            TextSource::Clipboard(_) => "Clipboard".to_string(),
-            TextSource::MultiBuffer(multibuffer) => multibuffer.read(cx).title(cx).to_string(),
-        };
-        let old_name = title_text(&self.old_text_source);
-        let new_name = title_text(&self.new_text_source);
-
+        let old_name = self.old_text_source.tab_content_text(cx);
+        let new_name = self.new_text_source.tab_content_text(cx);
         format!("{old_name} ↔ {new_name}").into()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        // TODO - diff - line location
-        let tooltip_text = |text_source: &TextSource| match text_source {
-            TextSource::Clipboard(_) => "Clipboard".to_string(),
-            TextSource::MultiBuffer(multibuffer) => multibuffer
-                .read(cx)
-                .as_singleton()
-                .map(|b| {
-                    b.read(cx)
-                        .file()
-                        .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
-                })
-                .flatten()
-                .unwrap_or("untitled".into()),
-        };
-        let old_tooltip = tooltip_text(&self.old_text_source);
-        let new_tooltip = tooltip_text(&self.new_text_source);
-
+        let old_tooltip = self.old_text_source.tab_tooltip_text(cx);
+        let new_tooltip = self.new_text_source.tab_tooltip_text(cx);
         Some(format!("{old_tooltip} ↔ {new_tooltip}").into())
     }
 
@@ -441,13 +390,10 @@ impl Render for TextDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::test::editor_test_context::assert_state_with_diff;
+
     use gpui::TestAppContext;
-    use project::{FakeFs, Project};
+    use project::Project;
     use settings::{Settings, SettingsStore};
-    use std::path::PathBuf;
-    use unindent::unindent;
-    use workspace::Workspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -461,7 +407,8 @@ mod tests {
         });
     }
 
-    // TODO - diff
+    // TODO - diff - fix tests
+    // TODO - diff - test languages are correct set in all 4 cases
     // #[gpui::test]
     // async fn test_selection_against_selection_text_diff_view(cx: &mut TestAppContext) {
     //     init_test(cx);
