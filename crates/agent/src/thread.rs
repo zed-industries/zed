@@ -32,7 +32,7 @@ use language_model::{
     ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
     TokenUsage,
 };
-use postage::{barrier, stream::Stream as _};
+use postage::stream::Stream as _;
 use project::{
     Project,
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
@@ -45,7 +45,6 @@ use settings::Settings;
 use std::{
     io::Write,
     ops::Range,
-    pin::pin,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -1644,7 +1643,7 @@ impl ZedAgent {
     ) {
         struct PendingToolUse {
             request: LanguageModelToolUse,
-            result: Task<LanguageModelToolResult>,
+            output: Task<Result<ToolResultOutput>>,
         }
 
         let prev_turn = self.cancel();
@@ -1697,16 +1696,30 @@ impl ZedAgent {
                                         let tool_result = this.update(cx, |this, cx| {
                                             this.run_tool2(
                                                 language_model_tool_use.clone(),
-                                                pending_request,
+                                                Arc::new(pending_request),
                                                 model.clone(),
                                                 window.clone(),
                                                 cx,
                                             )
                                         })?;
-                                        pending_tool_uses.push(PendingToolUse {
-                                            request: language_model_tool_use,
-                                            result: tool_result,
-                                        });
+
+                                        match tool_result {
+                                            Ok(tool_result) => {
+                                                // todo!("send the card to thread")
+                                                pending_tool_uses.push(PendingToolUse {
+                                                    request: language_model_tool_use,
+                                                    output: tool_result.output,
+                                                });
+                                            },
+                                            Err(error) => {
+                                                // todo!("show error in thread")
+                                                pending_tool_uses.push(PendingToolUse {
+                                                    request: language_model_tool_use,
+                                                    output: Task::ready(Err(error)),
+                                                });
+                                            },
+                                        }
+
                                     }
                                 }
                                 LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
@@ -1733,12 +1746,36 @@ impl ZedAgent {
                         }
 
                         while let Some(pending_tool_use) = pending_tool_uses.pop() {
-                            let result = pending_tool_use.result.await;
-                            assistant_message
-                                .push(MessageContent::ToolUse(pending_tool_use.request));
+                            let is_error;
+                            let content;
+                            let debug_output;
+                            match pending_tool_use.output.await {
+                                Ok(output) => {
+                                    is_error = false;
+                                    content = match output.content {
+                                        ToolResultContent::Text(text) => LanguageModelToolResultContent::Text(text.into()),
+                                        ToolResultContent::Image(image) => LanguageModelToolResultContent::Image(image),
+                                    };
+                                    debug_output = output.output;
+                                },
+                                Err(error) => {
+                                    is_error = true;
+                                    content = LanguageModelToolResultContent::Text(error.to_string().into());
+                                    debug_output = None;
+                                },
+                            };
+
                             tool_results_message
                                 .content
-                                .push(MessageContent::ToolResult(result));
+                                .push(MessageContent::ToolResult(LanguageModelToolResult {
+                                    tool_use_id: pending_tool_use.request.id.clone(),
+                                    tool_name: pending_tool_use.request.name.clone(),
+                                    is_error,
+                                    content,
+                                    output: debug_output
+                                }));
+                            assistant_message
+                                .push(MessageContent::ToolUse(pending_tool_use.request));
                         }
 
                         anyhow::Ok(())
@@ -3234,12 +3271,49 @@ impl ZedAgent {
     pub fn run_tool2(
         &mut self,
         tool_use: LanguageModelToolUse,
-        request: LanguageModelRequest,
+        request: Arc<LanguageModelRequest>, // todo!("do we actually need an arc?")
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
-    ) -> Task<LanguageModelToolResult> {
-        todo!()
+    ) -> Result<assistant_tool::ToolResult> {
+        if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx)
+            && self.profile.is_tool_enabled(tool.source(), tool.name(), cx)
+        {
+            if tool.needs_confirmation(&tool_use.input, cx)
+                && !AgentSettings::get_global(cx).always_allow_tool_actions
+            {
+                todo!()
+                // self.confirm_tool_use(tool_use.id, tool_use.ui_text, tool_use.input, request, tool);
+                // cx.emit(ThreadEvent::ToolConfirmationNeeded);
+            } else {
+                Ok(tool.run(
+                    tool_use.input,
+                    request,
+                    self.project.clone(),
+                    self.action_log(cx),
+                    model,
+                    window,
+                    cx,
+                ))
+            }
+        } else {
+            let available_tools = self.profile.enabled_tools(cx);
+            let tool_list = available_tools
+                .iter()
+                .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let error_message = format!(
+                "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
+                tool_use.name, tool_list
+            );
+            Err(anyhow!(error_message))
+            // todo!("what do we wanna do here?")
+            // cx.emit(ThreadEvent::MissingToolUse {
+            //     tool_use_id: tool_use_id.clone(),
+            //     ui_text: error_message.into(),
+            // });
+        }
     }
 
     pub fn run_tool(
