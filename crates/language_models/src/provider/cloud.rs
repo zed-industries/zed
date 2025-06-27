@@ -697,6 +697,47 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
+impl From<ApiError> for LanguageModelCompletionError {
+    fn from(error: ApiError) -> Self {
+        let provider = PROVIDER_NAME;
+        match error.status {
+            StatusCode::BAD_REQUEST => Self::BadRequestFormat {
+                provider,
+                message: error.body,
+            },
+            StatusCode::UNAUTHORIZED => Self::AuthenticationError {
+                provider,
+                message: error.body,
+            },
+            StatusCode::FORBIDDEN => Self::PermissionError {
+                provider,
+                message: error.body,
+            },
+            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
+            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
+                tokens: parse_prompt_too_long(&error.body),
+            },
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
+                provider,
+                retry_after: parse_retry_after(&error.headers),
+            },
+            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError {
+                provider,
+                message: error.body,
+            },
+            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
+                provider,
+                retry_after: parse_retry_after(&error.headers),
+            },
+            _ => Self::HttpResponseError {
+                provider,
+                status: error.status.as_u16(),
+                body: error.body,
+            },
+        }
+    }
+}
+
 impl LanguageModel for CloudLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -892,39 +933,7 @@ impl LanguageModel for CloudLanguageModel {
                     )
                     .await
                     .map_err(|err| match err.downcast::<ApiError>() {
-                        Ok(api_err) => {
-                            if api_err.status == StatusCode::BAD_REQUEST {
-                                if let Some(tokens) = parse_prompt_too_long(&api_err.body) {
-                                    return LanguageModelCompletionError::PromptTooLarge {
-                                        tokens: Some(tokens),
-                                    }
-                                    .into();
-                                }
-                            }
-                            // todo! Server should distinguish user-facing messages and details to log.
-                            let status = api_err.status.as_u16();
-                            let retry_after = parse_retry_after(&api_err.headers);
-                            if let Some(retry_after) = retry_after {
-                                anyhow!(LanguageModelCompletionError::RetriableZedCloudError {
-                                    error: api_err.body.clone(),
-                                    retry_after: Some(retry_after),
-                                })
-                            } else if (status >= 500 && status < 600) || status == 429 {
-                                // Errors in the 500 range should be retried as they may be temporary.
-                                // We've seen at least these in the wild from API providers:
-                                // * 500 Internal Server Error
-                                // * 502 Bad Gateway
-                                // * 529 Service Overloaded
-                                anyhow!(LanguageModelCompletionError::RetriableZedCloudError {
-                                    error: api_err.body.clone(),
-                                    retry_after: parse_retry_after(&api_err.headers),
-                                })
-                            } else {
-                                anyhow!(LanguageModelCompletionError::ZedCloudError {
-                                    error: api_err.body.clone()
-                                })
-                            }
-                        }
+                        Ok(api_err) => anyhow!(LanguageModelCompletionError::from(api_err)),
                         Err(err) => anyhow!(err),
                     })?;
 

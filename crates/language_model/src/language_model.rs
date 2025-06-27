@@ -86,17 +86,10 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
-    // Generic completion handling errors
-    #[error("JSON parse error in tool use input")]
-    ToolUseJsonParseError,
-
-    // User errors
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
     #[error("missing {provider} API key")]
     NoApiKey { provider: LanguageModelProviderName },
-
-    // Provider errors
     #[error("{provider}'s API rate limit exceeded")]
     RateLimitExceeded {
         provider: LanguageModelProviderName,
@@ -107,9 +100,11 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         retry_after: Option<Duration>,
     },
-    #[error("{provider}'s API server reported an internal server error")]
-    ApiInternalServerError { provider: LanguageModelProviderName },
-    // todo!
+    #[error("{provider}'s API server reported an internal server error: {message}")]
+    ApiInternalServerError {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
     #[error("HTTP response error from {provider}'s API: status {status} - {body:?}")]
     HttpResponseError {
         provider: LanguageModelProviderName,
@@ -120,12 +115,21 @@ pub enum LanguageModelCompletionError {
     // Client errors
     //
     // todo! which of these should be retriable?
-    #[error("invalid request format to {provider}'s API")]
-    BadRequestFormat { provider: LanguageModelProviderName },
-    #[error("authentication error with {provider}'s API")]
-    AuthenticationError { provider: LanguageModelProviderName },
-    #[error("permission error with {provider}'s API")]
-    PermissionError { provider: LanguageModelProviderName },
+    #[error("invalid request format to {provider}'s API: {message}")]
+    BadRequestFormat {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("authentication error with {provider}'s API: {message}")]
+    AuthenticationError {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("permission error with {provider}'s API: {message}")]
+    PermissionError {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
     #[error("language model provider API endpoint not found")]
     ApiEndpointNotFound { provider: LanguageModelProviderName },
     #[error("I/O error reading response from {provider}'s API")]
@@ -157,16 +161,6 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         #[source]
         error: serde_json::Error,
-    },
-
-    /// Error from cloud provider - message is used directly rather than converting it to one of the
-    /// above types.
-    #[error("{error}")]
-    ZedCloudError { error: String },
-    #[error("{error}")]
-    RetriableZedCloudError {
-        error: String,
-        retry_after: Option<Duration>,
     },
 
     // todo! remove - having From<anyhow::Error> discourages using proper error values
@@ -209,9 +203,18 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
         let provider = ANTHROPIC_PROVIDER_NAME;
         match error.code() {
             Some(code) => match code {
-                InvalidRequestError => Self::BadRequestFormat { provider },
-                AuthenticationError => Self::AuthenticationError { provider },
-                PermissionError => Self::PermissionError { provider },
+                InvalidRequestError => Self::BadRequestFormat {
+                    provider,
+                    message: error.message,
+                },
+                AuthenticationError => Self::AuthenticationError {
+                    provider,
+                    message: error.message,
+                },
+                PermissionError => Self::PermissionError {
+                    provider,
+                    message: error.message,
+                },
                 NotFoundError => Self::ApiEndpointNotFound { provider },
                 RequestTooLarge => Self::PromptTooLarge {
                     tokens: parse_prompt_too_long(&error.message),
@@ -220,7 +223,10 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
                     provider,
                     retry_after: None,
                 },
-                ApiError => Self::ApiInternalServerError { provider },
+                ApiError => Self::ApiInternalServerError {
+                    provider,
+                    message: error.message,
+                },
                 OverloadedError => Self::ServerOverloaded {
                     provider,
                     retry_after: None,
