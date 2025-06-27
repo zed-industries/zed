@@ -5224,7 +5224,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that cursors that expand to the same region are collapsed.
+    // Test that cursors that expand to the same region are not collapsed.
     assert_rewrap(
         indoc! {"
             // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit.
@@ -5408,6 +5408,28 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 }
 
             }
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    // Test range boundary when there isn't any blank line in between
+    assert_rewrap(
+        indoc! {"
+            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.
+            do_something();
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            // Praesent semper egestas tellus id dignissim.ˇ»
+        "},
+        indoc! {"
+            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
+            // dignissim.
+            do_something();
+            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
+            // dignissim.ˇ»
         "},
         language_with_doc_comments.clone(),
         &mut cx,
