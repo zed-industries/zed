@@ -37,8 +37,8 @@ use util::ResultExt;
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 
-const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("google");
-const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Google AI");
+const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct GoogleSettings {

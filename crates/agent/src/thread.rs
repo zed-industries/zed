@@ -1694,7 +1694,7 @@ impl Thread {
                                         } => {
                                             return Err(
                                                 LanguageModelCompletionError::from_cloud_failure(
-                                                    model.provider_name(),
+                                                    model.upstream_provider_name(),
                                                     code,
                                                     message,
                                                     retry_after.map(Duration::from_secs_f64),

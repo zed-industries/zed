@@ -1,4 +1,4 @@
-use anthropic::{AnthropicModelMode, parse_prompt_too_long};
+use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use futures::{
@@ -12,14 +12,11 @@ use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelName, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelProviderTosView,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    ModelRequestLimitReachedError, RateLimiter, ZED_CLOUD_PROVIDER_ID,
-};
-use language_model::{
-    LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken, PaymentRequiredError,
-    RefreshLlmTokenListener,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken,
+    ModelRequestLimitReachedError, PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use proto::Plan;
 use release_channel::AppVersion;
@@ -46,7 +43,8 @@ use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, i
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
-pub const PROVIDER_NAME: LanguageModelProviderName = language_model::ZED_CLOUD_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = language_model::ZED_CLOUD_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::ZED_CLOUD_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -350,7 +348,7 @@ impl LanguageModelProviderState for CloudLanguageModelProvider {
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        ZED_CLOUD_PROVIDER_ID
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
@@ -650,42 +648,13 @@ struct ApiError {
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        let provider = PROVIDER_NAME;
-        match error.status {
-            StatusCode::BAD_REQUEST => Self::BadRequestFormat {
-                provider,
-                message: error.body,
-            },
-            StatusCode::UNAUTHORIZED => Self::AuthenticationError {
-                provider,
-                message: error.body,
-            },
-            StatusCode::FORBIDDEN => Self::PermissionError {
-                provider,
-                message: error.body,
-            },
-            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
-            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
-                tokens: parse_prompt_too_long(&error.body),
-            },
-            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError {
-                provider,
-                message: error.body,
-            },
-            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
-            _ => Self::HttpResponseError {
-                provider,
-                status: error.status.as_u16(),
-                body: error.body,
-            },
-        }
+        let retry_after = None;
+        LanguageModelCompletionError::from_http_status(
+            PROVIDER_NAME,
+            error.status,
+            error.body,
+            retry_after,
+        )
     }
 }
 
@@ -699,11 +668,29 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        ZED_CLOUD_PROVIDER_ID
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
         PROVIDER_NAME
+    }
+
+    fn upstream_provider_id(&self) -> LanguageModelProviderId {
+        use zed_llm_client::LanguageModelProvider::*;
+        match self.model.provider {
+            Anthropic => language_model::ANTHROPIC_PROVIDER_ID,
+            OpenAi => language_model::OPEN_AI_PROVIDER_ID,
+            Google => language_model::GOOGLE_PROVIDER_ID,
+        }
+    }
+
+    fn upstream_provider_name(&self) -> LanguageModelProviderName {
+        use zed_llm_client::LanguageModelProvider::*;
+        match self.model.provider {
+            Anthropic => language_model::ANTHROPIC_PROVIDER_NAME,
+            OpenAi => language_model::OPEN_AI_PROVIDER_NAME,
+            Google => language_model::GOOGLE_PROVIDER_NAME,
+        }
     }
 
     fn supports_tools(&self) -> bool {

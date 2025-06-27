@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
@@ -356,7 +356,7 @@ pub async fn complete(
         .send(request)
         .await
         .map_err(AnthropicError::HttpSend)?;
-    let status = response.status();
+    let status_code = response.status();
     let mut body = String::new();
     response
         .body_mut()
@@ -364,12 +364,12 @@ pub async fn complete(
         .await
         .map_err(AnthropicError::ReadResponse)?;
 
-    if status.is_success() {
+    if status_code.is_success() {
         Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
     } else {
         Err(AnthropicError::HttpResponseError {
-            status: status.as_u16(),
-            body,
+            status_code,
+            message: body,
         })
     }
 }
@@ -544,8 +544,8 @@ pub async fn stream_completion_with_rate_limit_info(
         match serde_json::from_str::<Event>(&body) {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
             Ok(_) | Err(_) => Err(AnthropicError::HttpResponseError {
-                status: response.status().as_u16(),
-                body: body,
+                status_code: response.status(),
+                message: body,
             }),
         }
     }
@@ -811,7 +811,10 @@ pub enum AnthropicError {
     ReadResponse(io::Error),
 
     /// HTTP error response from the API
-    HttpResponseError { status: u16, body: String },
+    HttpResponseError {
+        status_code: StatusCode,
+        message: String,
+    },
 
     /// Rate limit exceeded
     RateLimit { retry_after: Duration },

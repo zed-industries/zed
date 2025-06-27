@@ -14,12 +14,13 @@ use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-use http_client::http;
+use http_client::{StatusCode, http};
 use icons::IconName;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::ops::{Add, Sub};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fmt, io};
@@ -34,14 +35,22 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 
-pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
-pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("Zed");
-
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
 pub const ANTHROPIC_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Anthropic");
+
+pub const GOOGLE_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("google");
+pub const GOOGLE_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Google AI");
+
+pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
+pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("OpenAI");
+
+pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
+pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Zed");
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
@@ -107,11 +116,11 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         message: String,
     },
-    #[error("HTTP response error from {provider}'s API: status {status} - {body:?}")]
+    #[error("HTTP response error from {provider}'s API: status {status_code} - {message:?}")]
     HttpResponseError {
         provider: LanguageModelProviderName,
-        status: u16,
-        body: String,
+        status_code: StatusCode,
+        message: String,
     },
 
     // Client errors
@@ -172,53 +181,54 @@ pub enum LanguageModelCompletionError {
 
 impl LanguageModelCompletionError {
     pub fn from_cloud_failure(
-        provider: LanguageModelProviderName,
+        upstream_provider: LanguageModelProviderName,
         code: String,
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
-        match code.as_str() {
-            "upstream_http_400" => Self::BadRequestFormat { provider, message },
-            "upstream_http_401" => Self::AuthenticationError { provider, message },
-            "upstream_http_403" => Self::PermissionError { provider, message },
-            "upstream_http_404" => Self::ApiEndpointNotFound { provider },
-            "upstream_http_413" => Self::PromptTooLarge {
+        if let Some(status_code) = code
+            .strip_prefix("upstream_http_")
+            .and_then(|code| StatusCode::from_str(code).ok())
+        {
+            Self::from_http_status(upstream_provider, status_code, message, retry_after)
+        } else if let Some(status_code) = code
+            .strip_prefix("upstream_http_")
+            .and_then(|code| StatusCode::from_str(code).ok())
+        {
+            Self::from_http_status(ZED_CLOUD_PROVIDER_NAME, status_code, message, retry_after)
+        } else {
+            anyhow!("completion request failed, code: {code}, message: {message}").into()
+        }
+    }
+
+    pub fn from_http_status(
+        provider: LanguageModelProviderName,
+        status_code: StatusCode,
+        message: String,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        match status_code {
+            StatusCode::BAD_REQUEST => Self::BadRequestFormat { provider, message },
+            StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
+            StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
+            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
+            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(&message),
             },
-            "upstream_http_429" => Self::RateLimitExceeded {
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
                 provider,
                 retry_after,
             },
-            "upstream_http_500" => Self::ApiInternalServerError { provider, message },
-            "upstream_http_529" => Self::ServerOverloaded {
+            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
+            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
                 provider,
                 retry_after,
             },
-            _ => {
-                let provider = ZED_CLOUD_PROVIDER_NAME;
-                match code.as_str() {
-                    "http_400" => Self::BadRequestFormat { provider, message },
-                    "http_401" => Self::AuthenticationError { provider, message },
-                    "http_403" => Self::PermissionError { provider, message },
-                    "http_404" => Self::ApiEndpointNotFound { provider },
-                    "http_413" => Self::PromptTooLarge {
-                        tokens: parse_prompt_too_long(&message),
-                    },
-                    "http_429" => Self::RateLimitExceeded {
-                        provider,
-                        retry_after,
-                    },
-                    "http_500" => Self::ApiInternalServerError { provider, message },
-                    "http_529" => Self::ServerOverloaded {
-                        provider,
-                        retry_after,
-                    },
-                    "error" | "internal_queue_error" | "internal_server_error" | "unknown" | _ => {
-                        anyhow!("completion request failed, code: {code}, message: {message}")
-                            .into()
-                    }
-                }
-            }
+            _ => Self::HttpResponseError {
+                provider,
+                status_code,
+                message,
+            },
         }
     }
 }
@@ -234,10 +244,13 @@ impl From<AnthropicError> for LanguageModelCompletionError {
                 Self::DeserializeResponse { provider, error }
             }
             AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            AnthropicError::HttpResponseError { status, body } => Self::HttpResponseError {
+            AnthropicError::HttpResponseError {
+                status_code,
+                message,
+            } => Self::HttpResponseError {
                 provider,
-                status,
-                body,
+                status_code,
+                message,
             },
             AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
                 provider,
@@ -408,6 +421,13 @@ pub trait LanguageModel: Send + Sync {
     fn name(&self) -> LanguageModelName;
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
+    fn upstream_provider_id(&self) -> LanguageModelProviderId {
+        self.provider_id()
+    }
+    fn upstream_provider_name(&self) -> LanguageModelProviderName {
+        self.provider_name()
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {

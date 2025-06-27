@@ -31,8 +31,8 @@ use util::ResultExt;
 use crate::OpenAiSettingsContent;
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
-const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenAI");
+const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
