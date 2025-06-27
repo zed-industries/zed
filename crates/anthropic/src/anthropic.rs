@@ -536,8 +536,7 @@ pub async fn stream_completion_with_rate_limit_info(
 
         match serde_json::from_str::<Event>(&body) {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) => Err(AnthropicError::UnexpectedResponseFormat(body)),
-            Err(_) => Err(AnthropicError::HttpResponseError {
+            Ok(_) | Err(_) => Err(AnthropicError::HttpResponseError {
                 status: response.status().as_u16(),
                 body: body,
             }),
@@ -815,9 +814,6 @@ pub enum AnthropicError {
 
     /// API returned an error response
     ApiError(ApiError),
-
-    /// Unexpected response format
-    UnexpectedResponseFormat(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]

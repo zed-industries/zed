@@ -128,35 +128,35 @@ pub enum LanguageModelCompletionError {
     PermissionError { provider: LanguageModelProviderName },
     #[error("language model provider API endpoint not found")]
     ApiEndpointNotFound { provider: LanguageModelProviderName },
-    #[error("I/O error reading response from {provider}'s API: {error:?}")]
+    #[error("I/O error reading response from {provider}'s API")]
     ApiReadResponseError {
         provider: LanguageModelProviderName,
+        #[source]
         error: io::Error,
     },
-    #[error("error serializing request to {provider} API: {error}")]
+    #[error("error serializing request to {provider} API")]
     SerializeRequest {
         provider: LanguageModelProviderName,
+        #[source]
         error: serde_json::Error,
     },
-    #[error("error building request body to {provider} API: {error}")]
+    #[error("error building request body to {provider} API")]
     BuildRequestBody {
         provider: LanguageModelProviderName,
+        #[source]
         error: http::Error,
     },
-    #[error("error sending HTTP request to {provider} API: {error}")]
+    #[error("error sending HTTP request to {provider} API")]
     HttpSend {
         provider: LanguageModelProviderName,
+        #[source]
         error: anyhow::Error,
     },
-    #[error("error deserializing {provider} API response: {error}")]
+    #[error("error deserializing {provider} API response")]
     DeserializeResponse {
         provider: LanguageModelProviderName,
+        #[source]
         error: serde_json::Error,
-    },
-    #[error("unexpected {provider} API response format: {error}")]
-    UnknownResponseFormat {
-        provider: LanguageModelProviderName,
-        error: String,
     },
 
     /// Error from cloud provider - message is used directly rather than converting it to one of the
@@ -199,9 +199,6 @@ impl From<AnthropicError> for LanguageModelCompletionError {
                 retry_after: retry_after,
             },
             AnthropicError::ApiError(api_error) => api_error.into(),
-            AnthropicError::UnexpectedResponseFormat(error) => {
-                Self::UnknownResponseFormat { provider, error }
-            }
         }
     }
 }
