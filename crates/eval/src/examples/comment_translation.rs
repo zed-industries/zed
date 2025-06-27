@@ -32,9 +32,9 @@ impl Example for CommentTranslation {
         cx.run_to_end().await?;
 
         let mut create_or_overwrite_count = 0;
-        cx.agent_thread().read_with(cx, |thread, cx| {
-            for message in thread.messages(cx) {
-                for tool_use in thread.tool_uses_for_message(message.id, cx) {
+        cx.agent_thread().read_with(cx, |agent, cx| {
+            for message in agent.thread().read(cx).messages() {
+                for tool_use in agent.tool_uses_for_message(message.id, cx) {
                     if tool_use.name == "edit_file" {
                         let input: EditFileToolInput = serde_json::from_value(tool_use.input)?;
                         if !matches!(input.mode, EditFileMode::Edit) {

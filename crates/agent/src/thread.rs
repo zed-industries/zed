@@ -1175,22 +1175,6 @@ impl ZedAgent {
         self.thread.read(cx).message(id)
     }
 
-    pub fn context_for_message<'a>(
-        &'a self,
-        id: MessageId,
-        cx: &'a App,
-    ) -> impl Iterator<Item = &'a AgentContext> {
-        self.thread.read(cx).context_for_message(id)
-    }
-
-    // todo! remove and call via Thread handle
-    pub fn messages<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl ExactSizeIterator<Item = &'a Message> + DoubleEndedIterator {
-        self.thread.read(cx).messages()
-    }
-
     pub fn is_generating(&self) -> bool {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
@@ -1542,84 +1526,87 @@ impl ZedAgent {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
-            this.read_with(cx, |this, cx| SerializedThread {
-                version: SerializedThread::VERSION.to_string(),
-                summary: this.summary(cx).or_default(),
-                updated_at: this.thread.read(cx).updated_at,
-                messages: this
-                    .messages(cx)
-                    .filter(|message| !message.ui_only)
-                    .map(|message| SerializedMessage {
-                        id: message.id,
-                        role: message.role,
-                        segments: message
-                            .segments
-                            .iter()
-                            .map(|segment| match segment {
-                                MessageSegment::Text(text) => {
-                                    SerializedMessageSegment::Text { text: text.clone() }
-                                }
-                                MessageSegment::Thinking { text, signature } => {
-                                    SerializedMessageSegment::Thinking {
-                                        text: text.clone(),
-                                        signature: signature.clone(),
+            this.read_with(cx, |this, cx| {
+                let thread = this.thread.read(cx);
+                SerializedThread {
+                    version: SerializedThread::VERSION.to_string(),
+                    summary: this.summary(cx).or_default(),
+                    updated_at: thread.updated_at,
+                    messages: thread
+                        .messages()
+                        .filter(|message| !message.ui_only)
+                        .map(|message| SerializedMessage {
+                            id: message.id,
+                            role: message.role,
+                            segments: message
+                                .segments
+                                .iter()
+                                .map(|segment| match segment {
+                                    MessageSegment::Text(text) => {
+                                        SerializedMessageSegment::Text { text: text.clone() }
                                     }
-                                }
-                                MessageSegment::RedactedThinking(data) => {
-                                    SerializedMessageSegment::RedactedThinking {
-                                        data: data.clone(),
+                                    MessageSegment::Thinking { text, signature } => {
+                                        SerializedMessageSegment::Thinking {
+                                            text: text.clone(),
+                                            signature: signature.clone(),
+                                        }
                                     }
-                                }
-                            })
-                            .collect(),
-                        tool_uses: this
-                            .tool_uses_for_message(message.id, cx)
-                            .into_iter()
-                            .map(|tool_use| SerializedToolUse {
-                                id: tool_use.id,
-                                name: tool_use.name,
-                                input: tool_use.input,
-                            })
-                            .collect(),
-                        tool_results: this
-                            .tool_results_for_message(message.id)
-                            .into_iter()
-                            .map(|tool_result| SerializedToolResult {
-                                tool_use_id: tool_result.tool_use_id.clone(),
-                                is_error: tool_result.is_error,
-                                content: tool_result.content.clone(),
-                                output: tool_result.output.clone(),
-                            })
-                            .collect(),
-                        context: message.loaded_context.text.clone(),
-                        creases: message
-                            .creases
-                            .iter()
-                            .map(|crease| SerializedCrease {
-                                start: crease.range.start,
-                                end: crease.range.end,
-                                icon_path: crease.icon_path.clone(),
-                                label: crease.label.clone(),
-                            })
-                            .collect(),
-                        is_hidden: message.is_hidden,
-                    })
-                    .collect(),
-                initial_project_snapshot,
-                cumulative_token_usage: this.cumulative_token_usage,
-                request_token_usage: this.request_token_usage.clone(),
-                detailed_summary_state: this.detailed_summary_rx.borrow().clone(),
-                exceeded_window_error: this.exceeded_window_error.clone(),
-                model: this
-                    .configured_model
-                    .as_ref()
-                    .map(|model| SerializedLanguageModel {
-                        provider: model.provider.id().0.to_string(),
-                        model: model.model.id().0.to_string(),
-                    }),
-                completion_mode: Some(this.completion_mode),
-                tool_use_limit_reached: this.tool_use_limit_reached,
-                profile: Some(this.profile.id().clone()),
+                                    MessageSegment::RedactedThinking(data) => {
+                                        SerializedMessageSegment::RedactedThinking {
+                                            data: data.clone(),
+                                        }
+                                    }
+                                })
+                                .collect(),
+                            tool_uses: this
+                                .tool_uses_for_message(message.id, cx)
+                                .into_iter()
+                                .map(|tool_use| SerializedToolUse {
+                                    id: tool_use.id,
+                                    name: tool_use.name,
+                                    input: tool_use.input,
+                                })
+                                .collect(),
+                            tool_results: this
+                                .tool_results_for_message(message.id)
+                                .into_iter()
+                                .map(|tool_result| SerializedToolResult {
+                                    tool_use_id: tool_result.tool_use_id.clone(),
+                                    is_error: tool_result.is_error,
+                                    content: tool_result.content.clone(),
+                                    output: tool_result.output.clone(),
+                                })
+                                .collect(),
+                            context: message.loaded_context.text.clone(),
+                            creases: message
+                                .creases
+                                .iter()
+                                .map(|crease| SerializedCrease {
+                                    start: crease.range.start,
+                                    end: crease.range.end,
+                                    icon_path: crease.icon_path.clone(),
+                                    label: crease.label.clone(),
+                                })
+                                .collect(),
+                            is_hidden: message.is_hidden,
+                        })
+                        .collect(),
+                    initial_project_snapshot,
+                    cumulative_token_usage: this.cumulative_token_usage,
+                    request_token_usage: this.request_token_usage.clone(),
+                    detailed_summary_state: this.detailed_summary_rx.borrow().clone(),
+                    exceeded_window_error: this.exceeded_window_error.clone(),
+                    model: this
+                        .configured_model
+                        .as_ref()
+                        .map(|model| SerializedLanguageModel {
+                            provider: model.provider.id().0.to_string(),
+                            model: model.model.id().0.to_string(),
+                        }),
+                    completion_mode: Some(this.completion_mode),
+                    tool_use_limit_reached: this.tool_use_limit_reached,
+                    profile: Some(this.profile.id().clone()),
+                }
             })
         })
     }
@@ -1651,7 +1638,7 @@ impl ZedAgent {
     }
 
     pub fn used_tools_since_last_user_message(&self, cx: &App) -> bool {
-        for message in self.messages(cx).rev() {
+        for message in self.thread().read(cx).messages().rev() {
             let message_has_tool_results = self
                 .tool_uses_by_assistant_message
                 .get(&message.id)
@@ -1725,7 +1712,7 @@ impl ZedAgent {
         }
 
         let mut message_ix_to_cache = None;
-        for message in self.messages(cx) {
+        for message in self.thread().read(cx).messages() {
             // ui_only messages are for the UI only, not for the model
             if message.ui_only {
                 continue;
@@ -1848,7 +1835,7 @@ impl ZedAgent {
             temperature: AgentSettings::temperature_for_model(model, cx),
         };
 
-        for message in self.messages(cx) {
+        for message in self.thread.read(cx).messages() {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -2193,11 +2180,11 @@ impl ZedAgent {
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
 
-                    // If there is a response without tool use, summarize the message. Otherwise,
-                    // allow two tool uses before summarizing.
-                    if matches!(this.thread.read(cx).summary, ThreadSummary::Pending)
-                        && this.messages(cx).len() >= 2
-                        && (!this.has_pending_tool_uses() || this.messages(cx).len() >= 6)
+
+                    let thread = this.thread.read(cx);
+                    if matches!(thread.summary, ThreadSummary::Pending)
+                        && thread.messages().len() >= 2
+                        && (!this.has_pending_tool_uses() || thread.messages().len() >= 6)
                     {
                         this.summarize(cx);
                     }
@@ -2235,7 +2222,7 @@ impl ZedAgent {
                                     {
                                         let mut messages_to_remove = Vec::new();
 
-                                        for (ix, message) in this.messages(cx).enumerate().rev() {
+                                        for (ix, message) in this.thread.read(cx).messages().enumerate().rev() {
                                             messages_to_remove.push(message.id);
 
                                             if message.role == Role::User {
@@ -3180,8 +3167,9 @@ impl ZedAgent {
 
         cx.notify();
 
-        let message_content = self
-            .message(message_id, cx)
+        let thread = self.thread.read(cx);
+        let message_content = thread
+            .message(message_id)
             .map(|msg| msg.to_string())
             .unwrap_or_default();
 
@@ -3216,8 +3204,9 @@ impl ZedAgent {
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let last_assistant_message_id = self
-            .messages(cx)
+        let thread = self.thread.read(cx);
+        let last_assistant_message_id = thread
+            .messages()
             .rev()
             .find(|msg| msg.role == Role::Assistant)
             .map(|msg| msg.id);
@@ -3378,7 +3367,7 @@ impl ZedAgent {
         let summary = self.summary(cx).or_default();
         writeln!(markdown, "# {summary}\n")?;
 
-        for message in self.messages(cx) {
+        for message in self.thread.read(cx).messages() {
             writeln!(
                 markdown,
                 "## {role}\n",
@@ -3514,8 +3503,9 @@ impl ZedAgent {
 
         let max = model.model.max_token_count();
 
-        let index = self
-            .messages(cx)
+        let thread = self.thread.read(cx);
+        let index = thread
+            .messages()
             .position(|msg| msg.id == message_id)
             .unwrap_or(0);
 
@@ -3559,14 +3549,14 @@ impl ZedAgent {
 
     fn token_usage_at_last_message(&self, cx: &App) -> Option<TokenUsage> {
         self.request_token_usage
-            .get(self.messages(cx).len().saturating_sub(1))
+            .get(self.thread.read(cx).messages().len().saturating_sub(1))
             .or_else(|| self.request_token_usage.last())
             .cloned()
     }
 
     fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage, cx: &App) {
         let placeholder = self.token_usage_at_last_message(cx).unwrap_or_default();
-        let len = self.messages(cx).len();
+        let len = self.thread.read(cx).messages().len();
         self.request_token_usage.resize(len, placeholder);
 
         if let Some(last) = self.request_token_usage.last_mut() {

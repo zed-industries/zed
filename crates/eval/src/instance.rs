@@ -307,7 +307,7 @@ impl ExampleInstance {
             let thread_store = thread_store.await?;
 
 
-            let thread =
+            let agent =
                 thread_store.update(cx, |thread_store, cx| {
                     let thread = if let Some(json) = &meta.existing_thread_json {
                         let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
@@ -322,7 +322,7 @@ impl ExampleInstance {
                 })?;
 
 
-            thread.update(cx, |thread, _cx| {
+            agent.update(cx, |thread, _cx| {
                 let mut request_count = 0;
                 let previous_diff = Rc::new(RefCell::new("".to_string()));
                 let example_output_dir = this.run_directory.clone();
@@ -370,7 +370,7 @@ impl ExampleInstance {
             let mut example_cx = ExampleContext::new(
                 meta.clone(),
                 this.log_prefix.clone(),
-                thread.clone(),
+                agent.clone(),
                 model.clone(),
                 cx.clone(),
             );
@@ -419,11 +419,13 @@ impl ExampleInstance {
                 fs::write(this.run_directory.join("diagnostics_after.txt"), diagnostics_after)?;
             }
 
-            thread.update(cx, |thread, cx| {
+            agent.update(cx, |agent, cx| {
+                let thread = agent.thread().read(cx);
                 let response_count = thread
-                    .messages(cx)
+                    .messages()
                     .filter(|message| message.role == language_model::Role::Assistant)
                     .count();
+                let all_messages = messages_to_markdown(thread.messages());
                 RunOutput {
                     repository_diff,
                     diagnostic_summary_before,
@@ -431,9 +433,9 @@ impl ExampleInstance {
                     diagnostics_before,
                     diagnostics_after,
                     response_count,
-                    token_usage: thread.cumulative_token_usage(),
+                    token_usage: agent.cumulative_token_usage(),
                     tool_metrics: example_cx.tool_metrics.lock().unwrap().clone(),
-                    all_messages: messages_to_markdown(thread.messages(cx)),
+                    all_messages,
                     programmatic_assertions: example_cx.assertions,
                 }
             })

@@ -1836,8 +1836,8 @@ impl ActiveThread {
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
         let configured_model = agent.configured_model().map(|m| m.model);
-        let added_context = agent
-            .context_for_message(message_id, cx)
+        let added_context = thread
+            .context_for_message(message_id)
             .map(|context| AddedContext::new_attached(context, configured_model.as_ref(), cx))
             .collect::<Vec<_>>();
 
@@ -2404,9 +2404,9 @@ impl ActiveThread {
         };
 
         let message_role = self
-            .agent
+            .thread
             .read(cx)
-            .message(message_id, cx)
+            .message(message_id)
             .map(|m| m.role)
             .unwrap_or(Role::User);
 
@@ -3875,15 +3875,20 @@ mod tests {
             context: None,
         }];
 
-        let message = thread.update(cx, |thread, cx| {
-            let message_id = thread.insert_user_message(
+        let message = thread.update(cx, |agent, cx| {
+            let message_id = agent.insert_user_message(
                 "Tell me about @foo.txt",
                 ContextLoadResult::default(),
                 None,
                 creases,
                 cx,
             );
-            thread.message(message_id, cx).cloned().unwrap()
+            agent
+                .thread()
+                .read(cx)
+                .message(message_id)
+                .cloned()
+                .unwrap()
         });
 
         active_thread.update_in(cx, |active_thread, window, cx| {

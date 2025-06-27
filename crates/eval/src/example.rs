@@ -312,10 +312,10 @@ impl ExampleContext {
 
         let model = self.model.clone();
 
-        let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
-            thread.set_remaining_turns(iterations);
-            thread.send_to_model(model, CompletionIntent::UserPrompt, None, cx);
-            thread.messages(cx).len()
+        let message_count_before = self.app.update_entity(&self.agent_thread, |agent, cx| {
+            agent.set_remaining_turns(iterations);
+            agent.send_to_model(model, CompletionIntent::UserPrompt, None, cx);
+            agent.thread().read(cx).messages().len()
         })?;
 
         loop {
@@ -333,13 +333,18 @@ impl ExampleContext {
             }
         }
 
-        let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
+        let messages = self.app.read_entity(&self.agent_thread, |agent, cx| {
             let mut messages = Vec::new();
-            for message in thread.messages(cx).skip(message_count_before) {
+            for message in agent
+                .thread()
+                .read(cx)
+                .messages()
+                .skip(message_count_before)
+            {
                 messages.push(Message {
                     _role: message.role,
                     text: message.to_string(),
-                    tool_use: thread
+                    tool_use: agent
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()
                         .map(|tool_use| ToolUse {
