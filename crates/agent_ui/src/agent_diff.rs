@@ -1610,17 +1610,17 @@ impl AgentDiff {
             return;
         };
 
-        let Some(WorkspaceThread { agent: thread, .. }) =
+        let Some(WorkspaceThread { agent, .. }) =
             self.workspace_threads.get(&workspace.downgrade())
         else {
             return;
         };
 
-        let Some(thread) = thread.upgrade() else {
+        let Some(agent) = agent.upgrade() else {
             return;
         };
 
-        AgentDiffPane::deploy(thread, workspace.downgrade(), window, cx).log_err();
+        AgentDiffPane::deploy(agent, workspace.downgrade(), window, cx).log_err();
     }
 
     fn keep_all(
