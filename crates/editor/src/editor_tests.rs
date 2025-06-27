@@ -4337,15 +4337,15 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(
         indoc! {"
-        «
-        abc                 // No indentation
-           abc              // 1 tab
-              abc          // 2 tabs
-            abc             // Tab followed by space
-           abc              // Space followed by tab (3 spaces should be the result)
-                       abc   // Mixed indentation (tab conversion depends on the column)
-           abc         // Already space indented
-·
+            «
+            abc                 // No indentation
+               abc              // 1 tab
+                  abc          // 2 tabs
+                abc             // Tab followed by space
+               abc              // Space followed by tab (3 spaces should be the result)
+                           abc   // Mixed indentation (tab conversion depends on the column)
+               abc         // Already space indented
+               ·
                abc\tdef          // Only the leading tab is manipulatedˇ»
         "}
         .replace("·", "")
@@ -4356,7 +4356,7 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     // Only lines (3, 5, 10, 11) should change
     cx.set_state(
         indoc! {"
-·
+            ·
             abc                 // No indentation
             \tabcˇ               // 1 tab
             \t\tabc             // 2 tabs
@@ -4375,15 +4375,15 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(
         indoc! {"
-·
-        abc                 // No indentation
-        «   abc               // 1 tabˇ»
-        \t\tabc             // 2 tabs
-        «    abc              // Tab followed by spaceˇ»
-         \tabc              // Space followed by tab (3 spaces should be the result)
-        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
-           abc              // Already space indented
-        «·
+            ·
+            abc                 // No indentation
+            «   abc               // 1 tabˇ»
+            \t\tabc             // 2 tabs
+            «    abc              // Tab followed by spaceˇ»
+             \tabc              // Space followed by tab (3 spaces should be the result)
+            \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+               abc              // Already space indented
+            «   ·
                abc\tdef          // Only the leading tab is manipulatedˇ»
         "}
         .replace("·", "")
@@ -4410,15 +4410,15 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(
         indoc! {"
-        «
-        abc                 // No indentation
-           abc               // 1 tab
-              abc             // 2 tabs
-            abc              // Tab followed by space
-           abc              // Space followed by tab (3 spaces should be the result)
-                       abc   // Mixed indentation (tab conversion depends on the column)
-           abc              // Already space indented
-·
+            «
+            abc                 // No indentation
+               abc               // 1 tab
+                  abc             // 2 tabs
+                abc              // Tab followed by space
+               abc              // Space followed by tab (3 spaces should be the result)
+                           abc   // Mixed indentation (tab conversion depends on the column)
+               abc              // Already space indented
+               ·
                abc\tdef          // Only the leading tab is manipulatedˇ»
         "}
         .replace("·", "")
@@ -4473,7 +4473,7 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
     // Only lines (4, 8, 11, 12) should change
     cx.set_state(
         indoc! {"
-·
+            ·
             abc                 // No indentation
              abc                // 1 space (< 3 so dont convert)
               abc               // 2 spaces (< 3 so dont convert)
@@ -4495,7 +4495,7 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state(
         indoc! {"
-·
+            ·
             abc                 // No indentation
              abc                // 1 space (< 3 so dont convert)
               abc               // 2 spaces (< 3 so dont convert)
