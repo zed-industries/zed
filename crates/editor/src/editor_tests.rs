@@ -22631,6 +22631,18 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                 color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
                 ..lsp::ServerCapabilities::default()
             },
+            name: "rust-analyzer",
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut fake_servers_without_capabilities = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(false)),
+                ..lsp::ServerCapabilities::default()
+            },
+            name: "not-rust-analyzer",
             ..FakeLspAdapter::default()
         },
     );
@@ -22650,6 +22662,8 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .downcast::<Editor>()
         .unwrap();
     let fake_language_server = fake_servers.next().await.unwrap();
+    let fake_language_server_without_capabilities =
+        fake_servers_without_capabilities.next().await.unwrap();
     let requests_made = Arc::new(AtomicUsize::new(0));
     let closure_requests_made = Arc::clone(&requests_made);
     let mut color_request_handle = fake_language_server
@@ -22661,34 +22675,59 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                     lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
-                Ok(vec![lsp::ColorInformation {
-                    range: lsp::Range {
-                        start: lsp::Position {
-                            line: 0,
-                            character: 0,
+                Ok(vec![
+                    lsp::ColorInformation {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: lsp::Position {
+                                line: 0,
+                                character: 1,
+                            },
                         },
-                        end: lsp::Position {
-                            line: 0,
-                            character: 1,
+                        color: lsp::Color {
+                            red: 0.33,
+                            green: 0.33,
+                            blue: 0.33,
+                            alpha: 0.33,
                         },
                     },
-                    color: lsp::Color {
-                        red: 0.33,
-                        green: 0.33,
-                        blue: 0.33,
-                        alpha: 0.33,
+                    lsp::ColorInformation {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: lsp::Position {
+                                line: 0,
+                                character: 1,
+                            },
+                        },
+                        color: lsp::Color {
+                            red: 0.33,
+                            green: 0.33,
+                            blue: 0.33,
+                            alpha: 0.33,
+                        },
                     },
-                }])
+                ])
             }
+        });
+
+    let _handle = fake_language_server_without_capabilities
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
+            panic!("Should not be called");
         });
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        2,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per editor open and once after the language server startup"
+        "Should query for colors once per editor open (1) and once after the language server startup (2)"
     );
 
     cx.executor().advance_clock(Duration::from_millis(500));
@@ -22718,7 +22757,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        4,
+        5,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per save and once per formatting after save"
     );
@@ -22733,7 +22772,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .unwrap();
     close.await.unwrap();
     assert_eq!(
-        4,
+        5,
         requests_made.load(atomic::Ordering::Acquire),
         "After saving and closing the editor, no extra requests should be made"
     );
@@ -22745,10 +22784,11 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
             })
         })
         .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(100));
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        5,
+        6,
         requests_made.load(atomic::Ordering::Acquire),
         "After navigating back to an editor and reopening it, another color request should be made"
     );
