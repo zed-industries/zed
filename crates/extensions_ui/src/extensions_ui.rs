@@ -356,17 +356,20 @@ impl ExtensionsPage {
             .map(|name| name.to_string())
             .collect::<Vec<_>>();
         if !themes.is_empty() {
-            workspace
-                .update(cx, |_workspace, cx| {
-                    window.dispatch_action(
-                        zed_actions::theme_selector::Toggle {
-                            themes_filter: Some(themes),
-                        }
-                        .boxed_clone(),
-                        cx,
-                    );
-                })
-                .ok();
+            // Defer the modal opening to ensure focus is properly handled
+            cx.defer_in(window, move |_, window, cx| {
+                workspace
+                    .update(cx, |_workspace, cx| {
+                        window.dispatch_action(
+                            zed_actions::theme_selector::Toggle {
+                                themes_filter: Some(themes),
+                            }
+                            .boxed_clone(),
+                            cx,
+                        );
+                    })
+                    .ok();
+            });
             return;
         }
 
@@ -375,17 +378,20 @@ impl ExtensionsPage {
             .map(|name| name.to_string())
             .collect::<Vec<_>>();
         if !icon_themes.is_empty() {
-            workspace
-                .update(cx, |_workspace, cx| {
-                    window.dispatch_action(
-                        zed_actions::icon_theme_selector::Toggle {
-                            themes_filter: Some(icon_themes),
-                        }
-                        .boxed_clone(),
-                        cx,
-                    );
-                })
-                .ok();
+            // Defer the modal opening to ensure focus is properly handled
+            cx.defer_in(window, move |_, window, cx| {
+                workspace
+                    .update(cx, |_workspace, cx| {
+                        window.dispatch_action(
+                            zed_actions::icon_theme_selector::Toggle {
+                                themes_filter: Some(icon_themes),
+                            }
+                            .boxed_clone(),
+                            cx,
+                        );
+                    })
+                    .ok();
+            });
         }
     }
 
@@ -1345,6 +1351,7 @@ impl Render for ExtensionsPage {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .track_focus(&self.focus_handle(cx))
             .child(
                 v_flex()
                     .gap_4()
