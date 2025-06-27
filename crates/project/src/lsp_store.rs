@@ -3542,23 +3542,17 @@ pub struct LspStore {
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    lsp_data: Option<LspData>,
+    lsp_data: HashMap<BufferId, DocumentColorData>,
 }
 
 type DocumentColorTask =
     Shared<Task<std::result::Result<HashSet<DocumentColor>, Arc<anyhow::Error>>>>;
 
-#[derive(Debug)]
-struct LspData {
-    mtime: MTime,
-    buffer_lsp_data: HashMap<LanguageServerId, HashMap<PathBuf, BufferLspData>>,
-    colors_update: HashMap<PathBuf, DocumentColorTask>,
-    last_version_queried: HashMap<PathBuf, Global>,
-}
-
 #[derive(Debug, Default)]
-struct BufferLspData {
-    colors: Option<HashSet<DocumentColor>>,
+struct DocumentColorData {
+    colors_for_version: Global,
+    colors: HashMap<LanguageServerId, HashSet<DocumentColor>>,
+    colors_update: Option<(Global, DocumentColorTask)>,
 }
 
 #[derive(Debug)]
@@ -3792,7 +3786,7 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
-            lsp_data: None,
+            lsp_data: HashMap::default(),
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
@@ -3849,7 +3843,7 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
-            lsp_data: None,
+            lsp_data: HashMap::default(),
             active_entry: None,
             toolchain_store,
             _maintain_workspace_config,
@@ -4138,15 +4132,20 @@ impl LspStore {
                 local.register_buffer_with_language_servers(buffer, only_register_servers, cx);
             }
             if !ignore_refcounts {
-                cx.observe_release(&handle, move |this, buffer, cx| {
-                    let local = this.as_local_mut().unwrap();
-                    let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
-                        debug_panic!("bad refcounting");
-                        return;
-                    };
+                cx.observe_release(&handle, move |lsp_store, buffer, cx| {
+                    let refcount = {
+                        let local = lsp_store.as_local_mut().unwrap();
+                        let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
+                            debug_panic!("bad refcounting");
+                            return;
+                        };
 
-                    *refcount -= 1;
-                    if *refcount == 0 {
+                        *refcount -= 1;
+                        *refcount
+                    };
+                    if refcount == 0 {
+                        lsp_store.lsp_data.remove(&buffer_id);
+                        let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
                         if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
                             local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
@@ -5012,7 +5011,7 @@ impl LspStore {
                     .presentations
                     .into_iter()
                     .map(|presentation| ColorPresentation {
-                        label: presentation.label,
+                        label: SharedString::from(presentation.label),
                         text_edit: presentation.text_edit.and_then(deserialize_lsp_edit),
                         additional_text_edits: presentation
                             .additional_text_edits
@@ -5055,7 +5054,7 @@ impl LspStore {
                     .context("color presentation resolve LSP request")?
                     .into_iter()
                     .map(|presentation| ColorPresentation {
-                        label: presentation.label,
+                        label: SharedString::from(presentation.label),
                         text_edit: presentation.text_edit,
                         additional_text_edits: presentation
                             .additional_text_edits
@@ -6214,131 +6213,86 @@ impl LspStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
-        let buffer_mtime = buffer.read(cx).saved_mtime()?;
-        let buffer_version = buffer.read(cx).version();
-        let abs_path = File::from_dyn(buffer.read(cx).file())?.abs_path(cx);
-
-        let mut received_colors_data = false;
-        let buffer_lsp_data = self
-            .lsp_data
-            .as_ref()
-            .into_iter()
-            .filter(|lsp_data| {
-                if buffer_mtime == lsp_data.mtime {
-                    lsp_data
-                        .last_version_queried
-                        .get(&abs_path)
-                        .is_none_or(|version_queried| {
-                            !buffer_version.changed_since(version_queried)
-                        })
-                } else {
-                    !buffer_mtime.bad_is_greater_than(lsp_data.mtime)
+        let version_queried_for = buffer.read(cx).version();
+        let buffer_id = buffer.read(cx).remote_id();
+        let lsp_data = self.lsp_data.entry(buffer_id).or_default();
+        if !version_queried_for.changed_since(&lsp_data.colors_for_version) {
+            match for_server_id {
+                Some(for_server_id) => {
+                    if let Some(cached_colors) = lsp_data.colors.get(&for_server_id) {
+                        return Some(Task::ready(Ok(cached_colors.clone())).shared());
+                    }
                 }
-            })
-            .flat_map(|lsp_data| lsp_data.buffer_lsp_data.values())
-            .filter_map(|buffer_data| buffer_data.get(&abs_path))
-            .filter_map(|buffer_data| {
-                let colors = buffer_data.colors.as_ref()?;
-                received_colors_data = true;
-                Some(colors)
-            })
-            .flatten()
-            .cloned()
-            .collect::<HashSet<_>>();
-
-        if buffer_lsp_data.is_empty() || for_server_id.is_some() {
-            if received_colors_data && for_server_id.is_none() {
-                return None;
-            }
-
-            let mut outdated_lsp_data = false;
-            if self.lsp_data.is_none()
-                || self.lsp_data.as_ref().is_some_and(|lsp_data| {
-                    if buffer_mtime == lsp_data.mtime {
-                        lsp_data
-                            .last_version_queried
-                            .get(&abs_path)
-                            .is_none_or(|version_queried| {
-                                buffer_version.changed_since(version_queried)
-                            })
-                    } else {
-                        buffer_mtime.bad_is_greater_than(lsp_data.mtime)
+                None => {
+                    if !lsp_data.colors.is_empty() {
+                        return Some(
+                            Task::ready(Ok(lsp_data.colors.values().flatten().cloned().collect()))
+                                .shared(),
+                        );
                     }
-                })
-            {
-                self.lsp_data = Some(LspData {
-                    mtime: buffer_mtime,
-                    buffer_lsp_data: HashMap::default(),
-                    colors_update: HashMap::default(),
-                    last_version_queried: HashMap::default(),
-                });
-                outdated_lsp_data = true;
+                }
             }
+        }
 
-            {
-                let lsp_data = self.lsp_data.as_mut()?;
-                match for_server_id {
-                    Some(for_server_id) if !outdated_lsp_data => {
-                        lsp_data.buffer_lsp_data.remove(&for_server_id);
-                    }
-                    None | Some(_) => {
-                        let existing_task = lsp_data.colors_update.get(&abs_path).cloned();
-                        if !outdated_lsp_data && existing_task.is_some() {
-                            return existing_task;
-                        }
-                        for buffer_data in lsp_data.buffer_lsp_data.values_mut() {
-                            if let Some(buffer_data) = buffer_data.get_mut(&abs_path) {
-                                buffer_data.colors = None;
+        let query_version_queried_for = version_queried_for.clone();
+        let new_task = cx
+            .spawn(async move |lsp_store, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                if Some(true)
+                    != buffer
+                        .update(cx, |buffer, _| {
+                            buffer.version() != query_version_queried_for
+                        })
+                        .ok()
+                {
+                    return Ok(HashSet::default());
+                }
+                let fetched_colors = lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.fetch_document_colors_for_buffer(buffer, cx)
+                    })?
+                    .await
+                    .context("fetching document colors")
+                    .map_err(Arc::new);
+                match lsp_store
+                    .update(cx, |lsp_store, _| {
+                        let lsp_data = lsp_store.lsp_data.entry(buffer_id).or_default();
+                        if !lsp_data
+                            .colors_for_version
+                            .changed_since(&query_version_queried_for)
+                        {
+                            if let Ok(fetched_colors) = &fetched_colors {
+                                lsp_data.colors_for_version = query_version_queried_for;
+                                lsp_data.colors = fetched_colors.clone();
                             }
                         }
-                    }
+                        lsp_data.colors_update = None;
+                        fetched_colors.map(|fetched_colors| {
+                            fetched_colors
+                                .into_values()
+                                .flatten()
+                                .collect::<HashSet<_>>()
+                        })
+                    })
+                    .map_err(Arc::new)
+                {
+                    Ok(Ok(new_matches)) => Ok(new_matches),
+                    Ok(Err(e)) => Err(e),
+                    Err(e) => Err(e),
                 }
-            }
-
-            let task_abs_path = abs_path.clone();
-            let new_task = cx
-                .spawn(async move |lsp_store, cx| {
-                    match fetch_document_colors(
-                        lsp_store.clone(),
-                        buffer,
-                        task_abs_path.clone(),
-                        cx,
-                    )
-                    .await
-                    {
-                        Ok(colors) => Ok(colors),
-                        Err(e) => {
-                            lsp_store
-                                .update(cx, |lsp_store, _| {
-                                    if let Some(lsp_data) = lsp_store.lsp_data.as_mut() {
-                                        lsp_data.colors_update.remove(&task_abs_path);
-                                    }
-                                })
-                                .ok();
-                            Err(Arc::new(e))
-                        }
-                    }
-                })
-                .shared();
-            let lsp_data = self.lsp_data.as_mut()?;
-            lsp_data
-                .colors_update
-                .insert(abs_path.clone(), new_task.clone());
-            lsp_data
-                .last_version_queried
-                .insert(abs_path, buffer_version);
-            lsp_data.mtime = buffer_mtime;
-            Some(new_task)
-        } else {
-            Some(Task::ready(Ok(buffer_lsp_data)).shared())
-        }
+            })
+            .shared();
+        lsp_data.colors_update = Some((version_queried_for, new_task.clone()));
+        Some(new_task)
     }
 
     fn fetch_document_colors_for_buffer(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<(LanguageServerId, HashSet<DocumentColor>)>>> {
+    ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
                 project_id,
@@ -6353,7 +6307,7 @@ impl LspStore {
             });
             cx.spawn(async move |project, cx| {
                 let Some(project) = project.upgrade() else {
-                    return Ok(Vec::new());
+                    return Ok(HashMap::default());
                 };
                 let colors = join_all(
                     request_task
@@ -6391,9 +6345,7 @@ impl LspStore {
                         .or_insert_with(HashSet::default)
                         .extend(colors);
                     acc
-                })
-                .into_iter()
-                .collect();
+                });
                 Ok(colors)
             })
         } else {
@@ -8942,7 +8894,7 @@ impl LspStore {
                 .color_presentations
                 .into_iter()
                 .map(|presentation| proto::ColorPresentation {
-                    label: presentation.label,
+                    label: presentation.label.to_string(),
                     text_edit: presentation.text_edit.map(serialize_lsp_edit),
                     additional_text_edits: presentation
                         .additional_text_edits
@@ -10605,8 +10557,8 @@ impl LspStore {
     }
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
-        if let Some(lsp_data) = &mut self.lsp_data {
-            lsp_data.buffer_lsp_data.remove(&for_server);
+        for buffer_lsp_data in self.lsp_data.values_mut() {
+            buffer_lsp_data.colors.remove(&for_server);
         }
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
@@ -10677,53 +10629,6 @@ impl LspStore {
             }
         }
     }
-}
-
-async fn fetch_document_colors(
-    lsp_store: WeakEntity<LspStore>,
-    buffer: Entity<Buffer>,
-    task_abs_path: PathBuf,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<HashSet<DocumentColor>> {
-    cx.background_executor()
-        .timer(Duration::from_millis(50))
-        .await;
-    let Some(buffer_mtime) = buffer.update(cx, |buffer, _| buffer.saved_mtime())? else {
-        return Ok(HashSet::default());
-    };
-    let fetched_colors = lsp_store
-        .update(cx, |lsp_store, cx| {
-            lsp_store.fetch_document_colors_for_buffer(buffer, cx)
-        })?
-        .await
-        .with_context(|| {
-            format!("Fetching document colors for buffer with path {task_abs_path:?}")
-        })?;
-
-    lsp_store.update(cx, |lsp_store, _| {
-        let lsp_data = lsp_store.lsp_data.as_mut().with_context(|| {
-            format!(
-                "Document lsp data got updated between fetch and update for path {task_abs_path:?}"
-            )
-        })?;
-        let mut lsp_colors = HashSet::default();
-        anyhow::ensure!(
-            lsp_data.mtime == buffer_mtime,
-            "Buffer lsp data got updated between fetch and update for path {task_abs_path:?}"
-        );
-        for (server_id, colors) in fetched_colors {
-            let colors_lsp_data = &mut lsp_data
-                .buffer_lsp_data
-                .entry(server_id)
-                .or_default()
-                .entry(task_abs_path.clone())
-                .or_default()
-                .colors;
-            *colors_lsp_data = Some(colors.clone());
-            lsp_colors.extend(colors);
-        }
-        Ok(lsp_colors)
-    })?
 }
 
 fn subscribe_to_binary_statuses(

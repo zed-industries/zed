@@ -795,7 +795,7 @@ impl std::hash::Hash for DocumentColor {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColorPresentation {
-    pub label: String,
+    pub label: SharedString,
     pub text_edit: Option<lsp::TextEdit>,
     pub additional_text_edits: Vec<lsp::TextEdit>,
 }
