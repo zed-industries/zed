@@ -58,7 +58,9 @@ use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 const MAX_RETRY_ATTEMPTS: u8 = 3;
+// todo! remove
 const BASE_RETRY_DELAY_SECS: u64 = 5;
+const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -1711,11 +1713,11 @@ impl ZedAgent {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         struct RetryState {
-            remaining: u8,
-            delay: Duration,
+            attempts: u8,
+            custom_delay: Option<Duration>,
         }
-
         let mut retry_state: Option<RetryState> = None;
+
         loop {
             let mut assistant_message = LanguageModelRequestMessage {
                 role: Role::Assistant,
@@ -1731,7 +1733,10 @@ impl ZedAgent {
 
             let send = async {
                 if let Some(retry_state) = retry_state.as_ref() {
-                    cx.background_executor().timer(retry_state.delay).await;
+                    let delay = retry_state.custom_delay.unwrap_or_else(|| {
+                        BASE_RETRY_DELAY * 2_u32.pow((retry_state.attempts - 1) as u32)
+                    });
+                    cx.background_executor().timer(delay).await;
                 }
 
                 let request = this.update(cx, |this, cx| this.build_request(&model, intent, cx))?;
@@ -1870,8 +1875,6 @@ impl ZedAgent {
                     break;
                 }
                 SendStatus::Finished(result) => {
-                    // todo!("decide what to do on error")
-
                     for mut pending_tool_use in pending_tool_uses {
                         let tool_result = pending_tool_use.result().await;
                         assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
@@ -1885,6 +1888,15 @@ impl ZedAgent {
                             retry_state = None;
                         }
                         Err(error) => {
+                            let mut retry = |custom_delay: Option<Duration>| -> bool {
+                                let retry_state = retry_state.get_or_insert_with(|| RetryState {
+                                    attempts: 0,
+                                    custom_delay,
+                                });
+                                retry_state.attempts += 1;
+                                retry_state.attempts <= MAX_RETRY_ATTEMPTS
+                            };
+
                             if error.is::<PaymentRequiredError>() {
                                 // todo!
                                 // cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
@@ -1912,24 +1924,14 @@ impl ZedAgent {
                                         break;
                                     }
                                     LanguageModelKnownError::RateLimitExceeded { retry_after } => {
-                                        // todo!()
                                         // let provider_name = model.provider_name();
                                         // let error_message = format!(
                                         //     "{}'s API rate limit exceeded",
                                         //     provider_name.0.as_ref()
                                         // );
-                                        if let Some(retry_state) = retry_state.as_mut() {
-                                            if retry_state.remaining > 0 {
-                                                retry_state.remaining -= 1;
-                                            } else {
-                                                // todo!("show in the UI?")
-                                                break;
-                                            }
-                                        } else {
-                                            retry_state = Some(RetryState {
-                                                delay: *retry_after,
-                                                remaining: MAX_RETRY_ATTEMPTS,
-                                            });
+                                        if !retry(Some(*retry_after)) {
+                                            // todo! show err
+                                            break;
                                         }
                                     }
                                     LanguageModelKnownError::Overloaded => {
@@ -1940,16 +1942,10 @@ impl ZedAgent {
                                         //     provider_name.0.as_ref()
                                         // );
 
-                                        // retry_scheduled = this.handle_retryable_error(
-                                        //     &error_message,
-                                        //     model.clone(),
-                                        //     intent,
-                                        //     window,
-                                        //     cx,
-                                        // );
-                                        // if !retry_scheduled {
-                                        //     emit_generic_error(error, cx);
-                                        // }
+                                        if !retry(None) {
+                                            // todo! show err
+                                            break;
+                                        }
                                     }
                                     LanguageModelKnownError::ApiInternalServerError => {
                                         // let provider_name = model.provider_name();
@@ -1958,32 +1954,23 @@ impl ZedAgent {
                                         //     provider_name.0.as_ref()
                                         // );
 
-                                        // retry_scheduled = this.handle_retryable_error(
-                                        //     &error_message,
-                                        //     model.clone(),
-                                        //     intent,
-                                        //     window,
-                                        //     cx,
-                                        // );
-                                        // if !retry_scheduled {
-                                        //     // todo!("emit_generic_error(error, cx)");
-                                        // }
+                                        if !retry(None) {
+                                            // todo! show err
+                                            break;
+                                        }
                                     }
                                     LanguageModelKnownError::ReadResponseError(_)
                                     | LanguageModelKnownError::DeserializeResponse(_)
                                     | LanguageModelKnownError::UnknownResponseFormat(_) => {
                                         // In the future we will attempt to re-roll response, but only once
                                         // todo!(emit_generic_error(error, cx);)
+                                        break;
                                     }
                                 }
                             } else {
                                 // todo!(emit_generic_error(error, cx));
+                                break;
                             }
-
-                            // if !retry_scheduled {
-                            //     // todo!
-                            //     // this.cancel_last_completion(window, cx);
-                            // }
                         }
                     }
 
