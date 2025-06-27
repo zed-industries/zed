@@ -966,10 +966,22 @@ impl DisplaySnapshot {
                 .and_then(|id| id.style(&editor_style.syntax));
 
             if let Some(chunk_highlight) = chunk.highlight_style {
+                // For color inlays, blend the color with the editor background
+                let mut processed_highlight = chunk_highlight;
+                if chunk.is_inlay {
+                    if let Some(inlay_color) = chunk_highlight.color {
+                        // Only blend if the color has transparency (alpha < 1.0)
+                        if inlay_color.a < 1.0 {
+                            let blended_color = editor_style.background.blend(inlay_color);
+                            processed_highlight.color = Some(blended_color);
+                        }
+                    }
+                }
+
                 if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(chunk_highlight);
+                    highlight_style.highlight(processed_highlight);
                 } else {
-                    highlight_style = Some(chunk_highlight);
+                    highlight_style = Some(processed_highlight);
                 }
             }
 
