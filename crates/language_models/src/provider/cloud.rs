@@ -26,7 +26,6 @@ use release_channel::AppVersion;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::SettingsStore;
-use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
 use std::str::FromStr as _;
@@ -536,8 +535,6 @@ struct PerformLlmCompletionResponse {
 }
 
 impl CloudLanguageModel {
-    const MAX_RETRIES: usize = 3;
-
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
@@ -547,8 +544,7 @@ impl CloudLanguageModel {
         let http_client = &client.http_client();
 
         let mut token = llm_api_token.acquire(&client).await?;
-        let mut retries_remaining = Self::MAX_RETRIES;
-        let mut retry_delay = Duration::from_secs(1);
+        let mut refreshed_token = false;
 
         loop {
             let request_builder = http_client::Request::builder()
@@ -590,14 +586,20 @@ impl CloudLanguageModel {
                     includes_status_messages,
                     tool_use_limit_reached,
                 });
-            } else if response
-                .headers()
-                .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
-                .is_some()
+            }
+
+            if !refreshed_token
+                && response
+                    .headers()
+                    .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
+                    .is_some()
             {
-                retries_remaining -= 1;
                 token = llm_api_token.refresh(&client).await?;
-            } else if status == StatusCode::FORBIDDEN
+                refreshed_token = true;
+                continue;
+            }
+
+            if status == StatusCode::FORBIDDEN
                 && response
                     .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
@@ -622,48 +624,18 @@ impl CloudLanguageModel {
                         return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                     }
                 }
-
-                anyhow::bail!("Forbidden");
-            } else if status.as_u16() >= 500 && status.as_u16() < 600 {
-                // If we encounter an error in the 500 range, retry after a delay.
-                // We've seen at least these in the wild from API providers:
-                // * 500 Internal Server Error
-                // * 502 Bad Gateway
-                // * 529 Service Overloaded
-
-                if retries_remaining == 0 {
-                    let mut body = String::new();
-                    response.body_mut().read_to_string(&mut body).await?;
-                    anyhow::bail!(
-                        "cloud language model completion failed after {} retries with status {status}: {body}",
-                        Self::MAX_RETRIES
-                    );
-                }
-
-                // todo!
-                match parse_retry_after(response.headers()) {
-                    Some(retry_after) => {
-                        Timer::after(retry_after).await;
-                    }
-                    None => {
-                        Timer::after(retry_delay).await;
-                        retry_delay *= 2; // If it fails again, wait longer.
-                    }
-                }
-
-                retries_remaining -= 1;
             } else if status == StatusCode::PAYMENT_REQUIRED {
                 return Err(anyhow!(PaymentRequiredError));
-            } else {
-                let mut body = String::new();
-                let headers = response.headers().clone();
-                response.body_mut().read_to_string(&mut body).await?;
-                return Err(anyhow!(ApiError {
-                    status,
-                    body,
-                    headers
-                }));
             }
+
+            let mut body = String::new();
+            let headers = response.headers().clone();
+            response.body_mut().read_to_string(&mut body).await?;
+            return Err(anyhow!(ApiError {
+                status,
+                body,
+                headers
+            }));
         }
     }
 }
@@ -929,15 +901,28 @@ impl LanguageModel for CloudLanguageModel {
                                     .into();
                                 }
                             }
-                            match api_err.status.as_u16() {
-                                429 | 503 | 529 => {
-                                    LanguageModelCompletionError::RetriableZedCloudError {
-                                        error: anyhow!(api_err.body.clone()),
-                                        retry_after: parse_retry_after(&api_err.headers),
-                                    }
-                                    .into()
-                                }
-                                _ => anyhow!(api_err),
+                            // todo! Server should distinguish user-facing messages and details to log.
+                            let status = api_err.status.as_u16();
+                            let retry_after = parse_retry_after(&api_err.headers);
+                            if let Some(retry_after) = retry_after {
+                                anyhow!(LanguageModelCompletionError::RetriableZedCloudError {
+                                    error: api_err.body.clone(),
+                                    retry_after: Some(retry_after),
+                                })
+                            } else if (status >= 500 && status < 600) || status == 429 {
+                                // Errors in the 500 range should be retried as they may be temporary.
+                                // We've seen at least these in the wild from API providers:
+                                // * 500 Internal Server Error
+                                // * 502 Bad Gateway
+                                // * 529 Service Overloaded
+                                anyhow!(LanguageModelCompletionError::RetriableZedCloudError {
+                                    error: api_err.body.clone(),
+                                    retry_after: parse_retry_after(&api_err.headers),
+                                })
+                            } else {
+                                anyhow!(LanguageModelCompletionError::ZedCloudError {
+                                    error: api_err.body.clone()
+                                })
                             }
                         }
                         Err(err) => anyhow!(err),
