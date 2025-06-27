@@ -444,17 +444,24 @@ impl RateLimitInfo {
         }
 
         Self {
-            retry_after: headers
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .map(Duration::from_secs),
+            retry_after: parse_retry_after(headers),
             requests: RateLimit::from_headers("requests", headers).ok(),
             tokens: RateLimit::from_headers("tokens", headers).ok(),
             input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
             output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
         }
     }
+}
+
+/// Parses the Retry-After header value as an integer number of seconds (anthropic always uses
+/// seconds). Note that other services might specify an HTTP date or some other format for this
+/// header. Returns `None` if the header is not present or cannot be parsed.
+pub fn parse_retry_after(headers: &HeaderMap<HeaderValue>) -> Option<Duration> {
+    headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
 }
 
 fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
