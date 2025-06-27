@@ -17,7 +17,11 @@ use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::{HashMap, HashSet};
 use feature_flags::{self, FeatureFlagAppExt};
-use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
+use futures::{
+    FutureExt, StreamExt as _,
+    channel::oneshot,
+    future::{Either, Shared},
+};
 use git::repository::DiffType;
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString,
@@ -411,7 +415,7 @@ pub enum QueueState {
 
 struct PendingTurn {
     task: Task<Result<()>>, // todo!("get rid of error")
-    _cancel_tx: oneshot::Sender<()>,
+    cancel_tx: oneshot::Sender<()>,
 }
 
 struct PendingToolUse2 {
@@ -1669,7 +1673,10 @@ impl ZedAgent {
     }
 
     pub fn cancel(&mut self) -> Option<Task<Result<()>>> {
-        self.pending_turn.take().map(|turn| turn.task)
+        self.pending_turn.take().map(|turn| {
+            turn.cancel_tx.send(()).ok();
+            turn.task
+        })
     }
 
     pub fn send_to_model2(
@@ -1680,289 +1687,330 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) {
         let prev_turn = self.cancel();
-        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let (cancel_tx, cancel_rx) = oneshot::channel();
         self.pending_turn = Some(PendingTurn {
             task: cx.spawn(async move |this, cx| {
                 if let Some(prev_turn) = prev_turn {
                     prev_turn.await?;
                 }
 
-                let mut intent = intent;
-                loop {
-                    let mut assistant_message = LanguageModelRequestMessage {
-                        role: Role::Assistant,
-                        content: Vec::new(),
-                        cache: false,
-                    };
-                    let mut tool_results_message = LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: Vec::new(),
-                        cache: false,
-                    };
-                    let mut pending_tool_uses = Vec::new();
+                Self::run_turn(&this, model, intent, cancel_rx, window, cx).await?;
 
-                    let mut send = async {
-                        let request =
-                            this.update(cx, |this, cx| this.build_request(&model, intent, cx))?;
-                        let mut events = model.stream_completion(request.clone(), cx).await?;
+                Ok(())
+            }),
+            cancel_tx,
+        });
+    }
 
-                        while let Some(event) = events.next().await {
-                            let event = event?;
-                            match event {
-                                LanguageModelCompletionEvent::StartMessage { message_id } => {
-                                    todo!()
-                                }
-                                LanguageModelCompletionEvent::Text(chunk) => {
-                                    assistant_message.push(MessageContent::Text(chunk));
-                                }
-                                LanguageModelCompletionEvent::Thinking { text, signature } => {
-                                    assistant_message
-                                        .push(MessageContent::Thinking { text, signature });
-                                }
-                                LanguageModelCompletionEvent::RedactedThinking { data } => {
-                                    assistant_message.push(MessageContent::RedactedThinking(data));
-                                }
-                                LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                    // todo!("update tool card")
-                                    if tool_use.is_input_complete {
-                                        let mut pending_request = request.clone();
-                                        pending_request.messages.push(assistant_message.clone());
+    async fn run_turn(
+        this: &WeakEntity<Self>,
+        model: Arc<dyn LanguageModel>,
+        mut intent: CompletionIntent,
+        mut cancel_rx: oneshot::Receiver<()>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        struct RetryState {
+            remaining: u8,
+            delay: Duration,
+        }
 
-                                        match this.read_with(cx, |this, cx| {
-                                            this.tool_for_name(&tool_use.name, cx)
-                                        })? {
-                                            Ok(tool) => {
-                                                // todo!("send the card to thread")
-                                                // todo!("handle confirmation")
-                                                // let confirmed = if tool.needs_confirmation(&tool_use.input, cx)
-                                                //     && !AgentSettings::get_global(cx).always_allow_tool_actions
-                                                // {
-                                                //     thread.update(cx, |thread,cx| thread.gimme_confirmation()).await;
-                                                // } else {
-                                                //     true
-                                                // };
-                                                let tool_result = this.update(cx, |this, cx| {
-                                                    tool.run(
-                                                        tool_use.input.clone(),
-                                                        Arc::new(pending_request),
-                                                        this.project.clone(),
-                                                        this.action_log(cx),
-                                                        model.clone(),
-                                                        window.clone(),
-                                                        cx,
-                                                    )
-                                                })?;
-                                                pending_tool_uses.push(PendingToolUse2 {
-                                                    output: Some(tool_result.output),
-                                                    request: tool_use,
-                                                });
-                                            }
-                                            Err(error) => {
-                                                // todo!("show error in thread")
-                                                pending_tool_uses.push(PendingToolUse2 {
-                                                    request: tool_use,
-                                                    output: Some(Task::ready(Err(error))),
-                                                });
-                                            }
-                                        }
+        let mut retry_state: Option<RetryState> = None;
+        loop {
+            let mut assistant_message = LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: Vec::new(),
+                cache: false,
+            };
+            let mut tool_results_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+            };
+            let mut pending_tool_uses = Vec::new();
+
+            let send = async {
+                if let Some(retry_state) = retry_state.as_ref() {
+                    cx.background_executor().timer(retry_state.delay).await;
+                }
+
+                let request = this.update(cx, |this, cx| this.build_request(&model, intent, cx))?;
+                let mut events = model.stream_completion(request.clone(), cx).await?;
+
+                while let Some(event) = events.next().await {
+                    let event = event?;
+                    match event {
+                        LanguageModelCompletionEvent::StartMessage { message_id } => {
+                            todo!()
+                        }
+                        LanguageModelCompletionEvent::Text(chunk) => {
+                            assistant_message.push(MessageContent::Text(chunk));
+                        }
+                        LanguageModelCompletionEvent::Thinking { text, signature } => {
+                            assistant_message.push(MessageContent::Thinking { text, signature });
+                        }
+                        LanguageModelCompletionEvent::RedactedThinking { data } => {
+                            assistant_message.push(MessageContent::RedactedThinking(data));
+                        }
+                        LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                            // todo!("update tool card")
+                            if tool_use.is_input_complete {
+                                let mut pending_request = request.clone();
+                                pending_request.messages.push(assistant_message.clone());
+
+                                match this.read_with(cx, |this, cx| {
+                                    this.tool_for_name(&tool_use.name, cx)
+                                })? {
+                                    Ok(tool) => {
+                                        // todo!("send the card to thread")
+                                        // todo!("handle confirmation")
+                                        // let confirmed = if tool.needs_confirmation(&tool_use.input, cx)
+                                        //     && !AgentSettings::get_global(cx).always_allow_tool_actions
+                                        // {
+                                        //     thread.update(cx, |thread,cx| thread.gimme_confirmation()).await;
+                                        // } else {
+                                        //     true
+                                        // };
+                                        let tool_result = this.update(cx, |this, cx| {
+                                            tool.run(
+                                                tool_use.input.clone(),
+                                                Arc::new(pending_request),
+                                                this.project.clone(),
+                                                this.action_log(cx),
+                                                model.clone(),
+                                                window.clone(),
+                                                cx,
+                                            )
+                                        })?;
+                                        pending_tool_uses.push(PendingToolUse2 {
+                                            output: Some(tool_result.output),
+                                            request: tool_use,
+                                        });
+                                    }
+                                    Err(error) => {
+                                        // todo!("show error in thread")
+                                        pending_tool_uses.push(PendingToolUse2 {
+                                            request: tool_use,
+                                            output: Some(Task::ready(Err(error))),
+                                        });
                                     }
                                 }
-                                LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
-                                    todo!()
-                                }
-                                LanguageModelCompletionEvent::StatusUpdate(
-                                    completion_request_status,
-                                ) => {
-                                    todo!()
-                                }
-                                LanguageModelCompletionEvent::Stop(StopReason::EndTurn) => {
-                                    todo!()
-                                }
-                                LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
-                                    todo!()
-                                }
-                                LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
-                                    todo!()
-                                }
-                                LanguageModelCompletionEvent::Stop(StopReason::ToolUse) => {
-                                    todo!()
-                                }
                             }
                         }
-
-                        while let Some(mut pending_tool_use) = pending_tool_uses.pop() {
-                            let tool_result = pending_tool_use.result().await;
-                            assistant_message
-                                .push(MessageContent::ToolUse(pending_tool_use.request));
-                            tool_results_message
-                                .content
-                                .push(MessageContent::ToolResult(tool_result));
+                        LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
+                            todo!()
                         }
-
-                        anyhow::Ok(())
-                    }
-                    .boxed_local()
-                    .fuse();
-
-                    futures::select_biased! {
-                        _ = cancel_rx => {
-                            drop(send);
-
-                            for pending_tool_use in pending_tool_uses {
-                                tool_results_message
-                                    .content
-                                    .push(MessageContent::ToolResult(LanguageModelToolResult {
-                                        tool_use_id: pending_tool_use.request.id.clone(),
-                                        tool_name: pending_tool_use.request.name.clone(),
-                                        is_error: true,
-                                        content: LanguageModelToolResultContent::Text("<User cancelled tool use>".into()),
-                                        output: None
-                                    }));
-                                assistant_message
-                                    .push(MessageContent::ToolUse(pending_tool_use.request));
-                            }
-
-                            this.update(cx, |this, cx| {
-                                if !assistant_message.content.is_empty() {
-                                    this.messages.push(assistant_message);
-                                }
-
-                                if !tool_results_message.content.is_empty() {
-                                    this.messages.push(tool_results_message);
-                                }
-                            })?;
-
-                            break;
+                        LanguageModelCompletionEvent::StatusUpdate(completion_request_status) => {
+                            todo!()
                         }
-                        result = send => {
-                            // todo!("decide what to do on error")
-                            drop(send);
-
-                            for mut pending_tool_use in pending_tool_uses {
-                                let tool_result = pending_tool_use.result().await;
-                                assistant_message
-                                    .push(MessageContent::ToolUse(pending_tool_use.request));
-                                tool_results_message
-                                    .content
-                                    .push(MessageContent::ToolResult(tool_result));
-                            }
-
-                            // if let Err(error) = result {
-                            //     if error.is::<PaymentRequiredError>() {
-                            //         cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
-                            //     } else if let Some(error) =
-                            //         error.downcast_ref::<ModelRequestLimitReachedError>()
-                            //     {
-                            //         cx.emit(ThreadEvent::ShowError(
-                            //             ThreadError::ModelRequestLimitReached { plan: error.plan },
-                            //         ));
-                            //     } else if let Some(known_error) =
-                            //         error.downcast_ref::<LanguageModelKnownError>()
-                            //     {
-                            //         match known_error {
-                            //             LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
-                            //                 this.exceeded_window_error = Some(ExceededWindowError {
-                            //                     model_id: model.id(),
-                            //                     token_count: *tokens,
-                            //                 });
-                            //                 cx.notify();
-                            //             }
-                            //             LanguageModelKnownError::RateLimitExceeded { retry_after } => {
-                            //                 let provider_name = model.provider_name();
-                            //                 let error_message = format!(
-                            //                     "{}'s API rate limit exceeded",
-                            //                     provider_name.0.as_ref()
-                            //                 );
-
-                            //                 this.handle_rate_limit_error(
-                            //                     &error_message,
-                            //                     *retry_after,
-                            //                     model.clone(),
-                            //                     intent,
-                            //                     window,
-                            //                     cx,
-                            //                 );
-                            //                 retry_scheduled = true;
-                            //             }
-                            //             LanguageModelKnownError::Overloaded => {
-                            //                 let provider_name = model.provider_name();
-                            //                 let error_message = format!(
-                            //                     "{}'s API servers are overloaded right now",
-                            //                     provider_name.0.as_ref()
-                            //                 );
-
-                            //                 retry_scheduled = this.handle_retryable_error(
-                            //                     &error_message,
-                            //                     model.clone(),
-                            //                     intent,
-                            //                     window,
-                            //                     cx,
-                            //                 );
-                            //                 if !retry_scheduled {
-                            //                     emit_generic_error(error, cx);
-                            //                 }
-                            //             }
-                            //             LanguageModelKnownError::ApiInternalServerError => {
-                            //                 let provider_name = model.provider_name();
-                            //                 let error_message = format!(
-                            //                     "{}'s API server reported an internal server error",
-                            //                     provider_name.0.as_ref()
-                            //                 );
-
-                            //                 retry_scheduled = this.handle_retryable_error(
-                            //                     &error_message,
-                            //                     model.clone(),
-                            //                     intent,
-                            //                     window,
-                            //                     cx,
-                            //                 );
-                            //                 if !retry_scheduled {
-                            //                     // todo!("emit_generic_error(error, cx)");
-                            //                 }
-                            //             }
-                            //             LanguageModelKnownError::ReadResponseError(_) |
-                            //             LanguageModelKnownError::DeserializeResponse(_) |
-                            //             LanguageModelKnownError::UnknownResponseFormat(_) => {
-                            //                 // In the future we will attempt to re-roll response, but only once
-                            //                 // todo!(emit_generic_error(error, cx);)
-                            //             }
-                            //         }
-                            //     } else {
-                            //         // todo!(emit_generic_error(error, cx));
-                            //     }
-
-                            //     if !retry_scheduled {
-                            //         this.cancel_last_completion(window, cx);
-                            //     }
-                            // }
-
-                            let done = this.update(cx, |this, _cx| {
-                                if assistant_message.content.is_empty() {
-                                    true
-                                } else {
-                                    this.messages.push(assistant_message);
-                                    if tool_results_message.content.is_empty() {
-                                        true
-                                    } else {
-                                        this.messages.push(tool_results_message);
-                                        false
-                                    }
-                                }
-                            })?;
-
-                            if done {
-                                break;
-                            } else {
-                                intent = CompletionIntent::ToolResults;
-                            }
+                        LanguageModelCompletionEvent::Stop(StopReason::EndTurn) => {
+                            todo!()
+                        }
+                        LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
+                            todo!()
+                        }
+                        LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
+                            todo!()
+                        }
+                        LanguageModelCompletionEvent::Stop(StopReason::ToolUse) => {
+                            todo!()
                         }
                     }
                 }
 
-                Ok(())
-            }),
-            _cancel_tx: cancel_tx,
-        });
+                while let Some(mut pending_tool_use) = pending_tool_uses.pop() {
+                    let tool_result = pending_tool_use.result().await;
+                    assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
+                    tool_results_message
+                        .content
+                        .push(MessageContent::ToolResult(tool_result));
+                }
+
+                anyhow::Ok(())
+            }
+            .boxed_local();
+
+            enum SendStatus {
+                Canceled,
+                Finished(Result<()>),
+            }
+
+            let status = match futures::future::select(&mut cancel_rx, send).await {
+                Either::Left(_) => SendStatus::Canceled,
+                Either::Right((result, _)) => SendStatus::Finished(result),
+            };
+
+            match status {
+                SendStatus::Canceled => {
+                    for pending_tool_use in pending_tool_uses {
+                        tool_results_message
+                            .content
+                            .push(MessageContent::ToolResult(LanguageModelToolResult {
+                                tool_use_id: pending_tool_use.request.id.clone(),
+                                tool_name: pending_tool_use.request.name.clone(),
+                                is_error: true,
+                                content: LanguageModelToolResultContent::Text(
+                                    "<User cancelled tool use>".into(),
+                                ),
+                                output: None,
+                            }));
+                        assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
+                    }
+
+                    this.update(cx, |this, cx| {
+                        if !assistant_message.content.is_empty() {
+                            this.messages.push(assistant_message);
+                        }
+
+                        if !tool_results_message.content.is_empty() {
+                            this.messages.push(tool_results_message);
+                        }
+                    })?;
+
+                    break;
+                }
+                SendStatus::Finished(result) => {
+                    // todo!("decide what to do on error")
+
+                    for mut pending_tool_use in pending_tool_uses {
+                        let tool_result = pending_tool_use.result().await;
+                        assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
+                        tool_results_message
+                            .content
+                            .push(MessageContent::ToolResult(tool_result));
+                    }
+
+                    match result {
+                        Ok(_) => {
+                            retry_state = None;
+                        }
+                        Err(error) => {
+                            if error.is::<PaymentRequiredError>() {
+                                // todo!
+                                // cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
+                            } else if let Some(error) =
+                                error.downcast_ref::<ModelRequestLimitReachedError>()
+                            {
+                                // todo!
+                                // cx.emit(ThreadEvent::ShowError(
+                                //     ThreadError::ModelRequestLimitReached { plan: error.plan },
+                                // ));
+                            } else if let Some(known_error) =
+                                error.downcast_ref::<LanguageModelKnownError>()
+                            {
+                                match known_error {
+                                    LanguageModelKnownError::ContextWindowLimitExceeded {
+                                        tokens,
+                                    } => {
+                                        // todo!
+                                        // this.exceeded_window_error =
+                                        //     Some(ExceededWindowError {
+                                        //         model_id: model.id(),
+                                        //         token_count: *tokens,
+                                        //     });
+                                        // cx.notify();
+                                        break;
+                                    }
+                                    LanguageModelKnownError::RateLimitExceeded { retry_after } => {
+                                        // todo!()
+                                        // let provider_name = model.provider_name();
+                                        // let error_message = format!(
+                                        //     "{}'s API rate limit exceeded",
+                                        //     provider_name.0.as_ref()
+                                        // );
+                                        if let Some(retry_state) = retry_state.as_mut() {
+                                            if retry_state.remaining > 0 {
+                                                retry_state.remaining -= 1;
+                                            } else {
+                                                // todo!("show in the UI?")
+                                                break;
+                                            }
+                                        } else {
+                                            retry_state = Some(RetryState {
+                                                delay: *retry_after,
+                                                remaining: MAX_RETRY_ATTEMPTS,
+                                            });
+                                        }
+                                    }
+                                    LanguageModelKnownError::Overloaded => {
+                                        //todo!
+                                        // let provider_name = model.provider_name();
+                                        // let error_message = format!(
+                                        //     "{}'s API servers are overloaded right now",
+                                        //     provider_name.0.as_ref()
+                                        // );
+
+                                        // retry_scheduled = this.handle_retryable_error(
+                                        //     &error_message,
+                                        //     model.clone(),
+                                        //     intent,
+                                        //     window,
+                                        //     cx,
+                                        // );
+                                        // if !retry_scheduled {
+                                        //     emit_generic_error(error, cx);
+                                        // }
+                                    }
+                                    LanguageModelKnownError::ApiInternalServerError => {
+                                        // let provider_name = model.provider_name();
+                                        // let error_message = format!(
+                                        //     "{}'s API server reported an internal server error",
+                                        //     provider_name.0.as_ref()
+                                        // );
+
+                                        // retry_scheduled = this.handle_retryable_error(
+                                        //     &error_message,
+                                        //     model.clone(),
+                                        //     intent,
+                                        //     window,
+                                        //     cx,
+                                        // );
+                                        // if !retry_scheduled {
+                                        //     // todo!("emit_generic_error(error, cx)");
+                                        // }
+                                    }
+                                    LanguageModelKnownError::ReadResponseError(_)
+                                    | LanguageModelKnownError::DeserializeResponse(_)
+                                    | LanguageModelKnownError::UnknownResponseFormat(_) => {
+                                        // In the future we will attempt to re-roll response, but only once
+                                        // todo!(emit_generic_error(error, cx);)
+                                    }
+                                }
+                            } else {
+                                // todo!(emit_generic_error(error, cx));
+                            }
+
+                            // if !retry_scheduled {
+                            //     // todo!
+                            //     // this.cancel_last_completion(window, cx);
+                            // }
+                        }
+                    }
+
+                    let done = this.update(cx, |this, _cx| {
+                        if assistant_message.content.is_empty() {
+                            true
+                        } else {
+                            this.messages.push(assistant_message);
+                            if tool_results_message.content.is_empty() {
+                                true
+                            } else {
+                                this.messages.push(tool_results_message);
+                                false
+                            }
+                        }
+                    })?;
+
+                    if done {
+                        break;
+                    } else {
+                        intent = CompletionIntent::ToolResults;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn build_request(
