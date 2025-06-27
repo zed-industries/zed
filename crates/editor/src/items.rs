@@ -1219,6 +1219,25 @@ impl SerializableItem for Editor {
                 }
             }
             SerializedEditor {
+                pinned: Some(true), ..
+            } => window.spawn(cx, {
+                let project = project.clone();
+                async move |cx| {
+                    let buffer = project
+                        .update(cx, |project, cx| project.create_buffer(cx))?
+                        .await?;
+
+                    cx.update(|window, cx| {
+                        cx.new(|cx| {
+                            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+
+                            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                            editor
+                        })
+                    })
+                }
+            }),
+            SerializedEditor {
                 abs_path: None,
                 contents: None,
                 ..
@@ -1246,16 +1265,19 @@ impl SerializableItem for Editor {
             serialize_dirty_buffers = false;
         }
 
-        if closing && !serialize_dirty_buffers {
+        let pane = workspace.pane_for(&cx.entity())?;
+
+        let pane_ref = pane.read(cx);
+        let is_pinned = pane_ref
+            .index_for_item(&cx.entity())
+            .map(|index| pane_ref.is_tab_pinned(index))
+            .unwrap_or(false);
+
+        if closing && !serialize_dirty_buffers && !is_pinned {
             return None;
         }
 
         let workspace_id = workspace.database_id()?;
-        let pane = workspace.pane_for(&cx.entity())?;
-        let pinned = item_id
-            .try_into()
-            .ok()
-            .map(|id| pane.read(cx).is_tab_pinned(id));
 
         let buffer = self.buffer().read(cx).as_singleton()?;
 
@@ -1292,7 +1314,7 @@ impl SerializableItem for Editor {
                     contents,
                     language,
                     mtime,
-                    pinned,
+                    pinned: Some(is_pinned),
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 DB.save_serialized_editor(item_id, workspace_id, editor)
