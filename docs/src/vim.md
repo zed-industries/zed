@@ -288,6 +288,7 @@ These ex commands open Zed's various panels and windows.
 | Open the chat panel          | `:Ch[at]`        |
 | Open the AI panel            | `:A[I]`          |
 | Open the git panel           | `:G[it]`         |
+| Open the debug panel         | `:D[ebug]`       |
 | Open the notifications panel | `:No[tif]`       |
 | Open the feedback window     | `:fe[edback]`    |
 | Open the diagnostics window  | `:cl[ist]`       |
