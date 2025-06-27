@@ -9,6 +9,7 @@ use crate::ui::{
     MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use agent::thread::UserMessageParams;
 use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
@@ -390,23 +391,17 @@ impl MessageEditor {
             let loaded_context = loaded_context.unwrap_or_default();
 
             agent
-                .update(cx, |agent, cx| {
-                    agent.insert_user_message(
-                        user_message,
-                        loaded_context,
-                        checkpoint.ok(),
-                        user_message_creases,
-                        cx,
-                    );
-                })
-                .log_err();
-
-            agent
                 .update(cx, |thread, cx| {
-                    thread.advance_prompt_id();
-                    thread.send_to_model(
+                    // thread.advance_prompt_id();
+                    thread.send_to_model2(
                         model,
                         CompletionIntent::UserPrompt,
+                        UserMessageParams {
+                            text: user_message,
+                            creases: user_message_creases,
+                            checkpoint: checkpoint.ok(),
+                            context: loaded_context,
+                        },
                         Some(window_handle),
                         cx,
                     );

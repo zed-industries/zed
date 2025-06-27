@@ -96,7 +96,7 @@ struct RenderedMessage {
     segments: Vec<RenderedMessageSegment>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RenderedToolUse {
     label: Entity<Markdown>,
     input: Entity<Markdown>,
@@ -188,7 +188,7 @@ impl RenderedMessage {
             }
             return;
         }
-        if self.segments.len() < segment_index {
+        if self.segments.len() <= segment_index {
             self.segments
                 .push(RenderedMessageSegment::ToolUseMarkdown(RenderedToolUse {
                     label: cx.new(|cx| {
@@ -202,6 +202,8 @@ impl RenderedMessage {
                     }),
                 }))
         }
+
+        dbg!(&self.segments);
 
         let RenderedMessageSegment::ToolUseMarkdown(rendered) = &self.segments[segment_index]
         else {
@@ -236,20 +238,23 @@ impl RenderedMessage {
         rendered.output.update(cx, |this, cx| {
             match &segment.output {
                 Some(Ok(LanguageModelToolResultContent::Text(text))) => {
-                    //
+                    // todo!
                 }
                 Some(Ok(LanguageModelToolResultContent::Image(image))) => {
-                    //
+                    // todo!
                 }
                 Some(Err(error)) => {
-                    //
+                    // todo!
                 }
-                None => todo!(),
+                None => {
+                    // todo!
+                }
             }
         });
     }
 }
 
+#[derive(Debug)]
 enum RenderedMessageSegment {
     Thinking {
         content: Entity<Markdown>,

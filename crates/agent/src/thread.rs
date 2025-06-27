@@ -667,9 +667,29 @@ impl Thread {
 
         if let Some(last_message) = self.messages.last_mut() {
             if last_message.role == Role::Assistant {
+                match &segment {
+                    MessageSegment::Text(chunk) => {
+                        cx.emit(ThreadEvent::ReceivedTextChunk);
+                        cx.emit(ThreadEvent::StreamedAssistantText(
+                            last_message.id,
+                            chunk.clone(),
+                        ));
+                    }
+                    MessageSegment::Thinking { text, .. } => {
+                        cx.emit(ThreadEvent::StreamedAssistantThinking(
+                            last_message.id,
+                            text.clone(),
+                        ));
+                    }
+                    MessageSegment::ToolUse(_) => {
+                        cx.emit(dbg!(ThreadEvent::StreamedToolUse2 {
+                            message_id: last_message.id,
+                            segment_index: last_message.segments.len(),
+                        }));
+                    }
+                }
                 last_message.push(segment);
                 // todo! emit a new streamed segment event
-                cx.emit(ThreadEvent::ReceivedTextChunk);
                 return last_message.segments.len() - 1;
             }
         }
@@ -712,6 +732,7 @@ impl Thread {
     ) {
         if let Some(last_message) = self.messages.last_mut() {
             if last_message.role == Role::Assistant {
+                dbg!(&last_message.segments);
                 if let Some(MessageSegment::ToolUse(ToolUseSegment { output, status, .. })) =
                     last_message.segments.get_mut(segment_index)
                 {
@@ -1748,18 +1769,19 @@ impl ZedAgent {
                             segments: message
                                 .segments
                                 .iter()
-                                .map(|segment| match segment {
+                                .filter_map(|segment| match segment {
                                     MessageSegment::Text(text) => {
-                                        SerializedMessageSegment::Text { text: text.clone() }
+                                        Some(SerializedMessageSegment::Text { text: text.clone() })
                                     }
                                     MessageSegment::Thinking { text, signature } => {
-                                        SerializedMessageSegment::Thinking {
+                                        Some(SerializedMessageSegment::Thinking {
                                             text: text.clone(),
                                             signature: signature.clone(),
-                                        }
+                                        })
                                     }
                                     MessageSegment::ToolUse { .. } => {
-                                        todo!("change serialization to use the agent's LanguageModelRequestMessages")
+                                        // todo!("change serialization to use the agent's LanguageModelRequestMessages")
+                                        None
                                     }
                                 })
                                 .collect(),
@@ -1960,7 +1982,11 @@ impl ZedAgent {
                 while let Some(event) = events.next().await {
                     let event = event?;
                     match event {
-                        LanguageModelCompletionEvent::StartMessage { .. } => {}
+                        LanguageModelCompletionEvent::StartMessage { .. } => {
+                            thread.update(cx, |thread, cx| {
+                                thread.insert_assistant_message(vec![], cx)
+                            })?;
+                        }
                         LanguageModelCompletionEvent::Text(chunk) => {
                             thread.update(cx, |thread, cx| {
                                 thread.push_assistant_message_segment(
@@ -2048,19 +2074,19 @@ impl ZedAgent {
                             }
                         }
                         LanguageModelCompletionEvent::UsageUpdate(_token_usage) => {
-                            todo!()
+                            // todo!
                         }
                         LanguageModelCompletionEvent::StatusUpdate(_completion_request_status) => {
-                            todo!()
+                            // todo!
                         }
                         LanguageModelCompletionEvent::Stop(StopReason::EndTurn) => {
-                            todo!()
+                            // todo!
                         }
                         LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
-                            todo!()
+                            // todo!
                         }
                         LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
-                            todo!()
+                            // todo!
                         }
                         LanguageModelCompletionEvent::Stop(StopReason::ToolUse) => {}
                     }
