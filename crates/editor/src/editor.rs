@@ -111,8 +111,8 @@ use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, LanguageScope, OffsetRangeExt,
-    Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -11436,7 +11436,7 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
 
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
-        let ranges = selections.into_iter().flat_map(|selection| {
+        let wrap_ranges = selections.into_iter().flat_map(|selection| {
             let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
                 .filter(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
                 .peekable();
@@ -11452,18 +11452,37 @@ impl Editor {
 
             let mut ranges = Vec::new();
             let mut current_range_start = first_row;
+            let from_empty_selection = selection.is_empty();
 
             let mut prev_row = first_row;
             let mut prev_indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
-            let mut prev_comment_prefix =
-                Self::get_comment_prefix_for_line(&buffer, first_row, &language_scope);
+            let mut prev_comment_prefix = if let Some(language_scope) = &language_scope {
+                let indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
+                let indent_end = Point::new(first_row, indent.len);
+                language_scope
+                    .line_comment_prefixes()
+                    .iter()
+                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                    .cloned()
+            } else {
+                None
+            };
 
             for row in non_blank_rows_iter.skip(1) {
                 let has_paragraph_break = row > prev_row + 1;
 
                 let row_indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                let row_comment_prefix =
-                    Self::get_comment_prefix_for_line(&buffer, row, &language_scope);
+                let row_comment_prefix = if let Some(language_scope) = &language_scope {
+                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                    let indent_end = Point::new(row, indent.len);
+                    language_scope
+                        .line_comment_prefixes()
+                        .iter()
+                        .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                        .cloned()
+                } else {
+                    None
+                };
 
                 let has_boundary_change =
                     row_indent != prev_indent || row_comment_prefix != prev_comment_prefix;
@@ -11471,9 +11490,11 @@ impl Editor {
                 if has_paragraph_break || has_boundary_change {
                     ranges.push((
                         language_settings.clone(),
-                        language_scope.clone(),
                         Point::new(current_range_start, 0)
                             ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
+                        prev_indent,
+                        prev_comment_prefix.clone(),
+                        from_empty_selection,
                     ));
                     current_range_start = row;
                 }
@@ -11485,9 +11506,11 @@ impl Editor {
 
             ranges.push((
                 language_settings.clone(),
-                language_scope.clone(),
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
+                prev_indent,
+                prev_comment_prefix,
+                from_empty_selection,
             ));
 
             ranges
@@ -11496,9 +11519,11 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        for (language_settings, language_scope, range) in ranges {
-            let mut start_row = range.start.row;
-            let mut end_row = range.end.row;
+        for (language_settings, wrap_range, indent_size, comment_prefix, from_empty_selection) in
+            wrap_ranges
+        {
+            let mut start_row = wrap_range.start.row;
+            let mut end_row = wrap_range.end.row;
 
             // Skip selections that overlap with a range that has already been rewrapped.
             let selection_range = start_row..end_row;
@@ -11511,22 +11536,16 @@ impl Editor {
 
             let tab_size = language_settings.tab_size;
 
-            // Since we've already split by indent boundaries, all lines in this range
-            // should have the same indent. Use the first line's indent.
-            let indent_size = buffer.indent_size_for_line(MultiBufferRow(start_row));
             let mut line_prefix = indent_size.chars().collect::<String>();
-
             let mut inside_comment = false;
-            if let Some(comment_prefix) =
-                Self::get_comment_prefix_for_line(&buffer, start_row, &language_scope)
-            {
-                line_prefix.push_str(&comment_prefix);
+            if let Some(prefix) = &comment_prefix {
+                line_prefix.push_str(prefix);
                 inside_comment = true;
             }
 
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
                 RewrapBehavior::InComments => inside_comment,
-                RewrapBehavior::InSelections => !range.is_empty(),
+                RewrapBehavior::InSelections => !wrap_range.is_empty(),
                 RewrapBehavior::Anywhere => true,
             };
 
@@ -11537,7 +11556,7 @@ impl Editor {
                 continue;
             }
 
-            if range.is_empty() {
+            if from_empty_selection {
                 'expand_upwards: while start_row > 0 {
                     let prev_row = start_row - 1;
                     if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
@@ -11619,25 +11638,6 @@ impl Editor {
 
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-    }
-
-    fn get_comment_prefix_for_line(
-        buffer: &MultiBufferSnapshot,
-        row: u32,
-        language_scope: &Option<LanguageScope>,
-    ) -> Option<Arc<str>> {
-        if let Some(language_scope) = language_scope {
-            let indent = buffer.indent_size_for_line(MultiBufferRow(row));
-            let indent_end = Point::new(row, indent.len);
-
-            language_scope
-                .line_comment_prefixes()
-                .iter()
-                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                .cloned()
-        } else {
-            None
-        }
     }
 
     pub fn cut_common(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ClipboardItem {
