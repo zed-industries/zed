@@ -1,8 +1,8 @@
 use crate::{
+    burn_mode_tooltip::MaxModeTooltip,
     language_model_selector::{
         LanguageModelSelector, ToggleModelSelector, language_model_selector,
     },
-    max_mode_tooltip::MaxModeTooltip,
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
@@ -2075,12 +2075,12 @@ impl TextThreadEditor {
         )
     }
 
-    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let context = self.context().read(cx);
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.model)?;
-        if !active_model.supports_max_mode() {
+        if !active_model.supports_burn_mode() {
             return None;
         }
 
@@ -2575,7 +2575,7 @@ impl Render for TextThreadEditor {
         };
 
         let language_model_selector = self.language_model_selector_menu_handle.clone();
-        let max_mode_toggle = self.render_max_mode_toggle(cx);
+        let burn_mode_toggle = self.render_burn_mode_toggle(cx);
 
         v_flex()
             .key_context("ContextEditor")
@@ -2630,7 +2630,7 @@ impl Render for TextThreadEditor {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_inject_context_menu(cx))
-                            .when_some(max_mode_toggle, |this, element| this.child(element)),
+                            .when_some(burn_mode_toggle, |this, element| this.child(element)),
                     )
                     .child(
                         h_flex()
