@@ -5370,89 +5370,61 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test rewrapping preserves separation between comment blocks separated by code
+    // Test that non-commented code acts as a paragraph boundary within a selection
     assert_rewrap(
         indoc! {"
-            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
-            // Praesent semper egestas tellus id dignissim.
-            do_something();
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
-            // Praesent semper egestas tellus id dignissim.ˇ»
-        "},
+               «// This is the first long comment block to be wrapped.
+               fn my_func(a: u32);
+               // This is the second long comment block to be wrapped.ˇ»
+           "},
         indoc! {"
-            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            // purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
-            // dignissim.
-            do_something();
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            // purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
-            // dignissim.ˇ»
-        "},
+               «// This is the first long comment block
+               // to be wrapped.
+               fn my_func(a: u32);
+               // This is the second long comment block
+               // to be wrapped.ˇ»
+           "},
         rust_language.clone(),
         &mut cx,
     );
 
-    // Test rewrapping multiple selections in plain text with blank lines and tabs
+    // Test rewrapping multiple selections, including ones with blank lines or tabs
     assert_rewrap(
         indoc! {"
-            «ˇone one one one one one one one one one one one one one one one one one one one one one one one one
+            «ˇThis is a very long line that will be wrapped.
 
-            two»
+            This is another paragraph in the same selection.»
 
-            three
-
-            «ˇ\t
-
-            four four four four four four four four four four four four four four four four four four four four»
-
-            «ˇfive five five five five five five five five five five five five five five five five five five five
-            \t»
-            six six six six six six six six six six six six six six six six six six six six six six six six six
-        "},
+            «\tThis is a very long indented line that will be wrapped.ˇ»
+         "},
         indoc! {"
-            «ˇone one one one one one one one one one one one one one one one one one one one
-            one one one one one
+            «ˇThis is a very long line that will be
+            wrapped.
 
-            two»
+            This is another paragraph in the same
+            selection.»
 
-            three
-
-            «ˇ\t
-
-            four four four four four four four four four four four four four four four four
-            four four four four»
-
-            «ˇfive five five five five five five five five five five five five five five five
-            five five five five
-            \t»
-            six six six six six six six six six six six six six six six six six six six six six six six six six
-        "},
+            «\tThis is a very long indented line
+            \tthat will be wrapped.ˇ»
+         "},
         plaintext_language.clone(),
         &mut cx,
     );
 
-    // Test rewrapping multiple cursors on different comment lines including empty comment lines
+    // Test that an empty comment line acts as a paragraph boundary
     assert_rewrap(
         indoc! {"
-            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
-            //ˇ
-            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
-            //ˇ short short short
-            int main(void) {
-                return 17;
-            }
-        "},
+            // ˇThis is a long comment that will be wrapped.
+            //
+            // And this is another long comment that will also be wrapped.ˇ
+         "},
         indoc! {"
-            //ˇ long long long long long long long long long long long long long long long
-            // long long long long long long long long long long long long long
-            //ˇ
-            //ˇ long long long long long long long long long long long long long long long
-            //ˇ long long long long long long long long long long long long long short short
-            // short
-            int main(void) {
-                return 17;
-            }
-        "},
+            // ˇThis is a long comment that will be
+            // wrapped.
+            //
+            // And this is another long comment that
+            // will also be wrapped.ˇ
+         "},
         cpp_language,
         &mut cx,
     );
