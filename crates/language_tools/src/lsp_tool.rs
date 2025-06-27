@@ -79,7 +79,7 @@ struct ServerInfo {
 }
 
 impl ServerInfo {
-    fn selector(&self) -> LanguageServerSelector {
+    fn server_selector(&self) -> LanguageServerSelector {
         self.id
             .map(LanguageServerSelector::Id)
             .unwrap_or_else(|| LanguageServerSelector::Name(self.name.clone()))
@@ -180,23 +180,57 @@ impl LspPickerDelegate {
                 }
             }
 
+            let mut can_stop_all = false;
+            let mut can_restart_all = true;
+
             for (server_name, status) in state
                 .language_servers
                 .binary_statuses
                 .iter()
                 .filter(|(name, _)| !servers_with_health_checks.contains(name))
             {
-                let has_matching_server = state
+                match status.status {
+                    BinaryStatus::None => {
+                        can_restart_all = false;
+                        can_stop_all = true;
+                    }
+                    BinaryStatus::CheckingForUpdate => {
+                        can_restart_all = false;
+                    }
+                    BinaryStatus::Downloading => {
+                        can_restart_all = false;
+                    }
+                    BinaryStatus::Starting => {
+                        can_restart_all = false;
+                    }
+                    BinaryStatus::Stopping => {
+                        can_restart_all = false;
+                    }
+                    BinaryStatus::Stopped => {}
+                    BinaryStatus::Failed { .. } => {}
+                }
+
+                let matching_server_id = state
                     .language_servers
                     .servers_per_buffer_abs_path
                     .iter()
                     .filter(|(path, _)| editor_buffer_paths.contains(path))
                     .flat_map(|(_, server_associations)| server_associations.iter())
-                    .any(|(_, name)| name.as_ref() == Some(server_name));
-                if has_matching_server {
-                    buffer_servers.push(ServerData::WithBinaryStatus(server_name, status));
+                    .find_map(|(id, name)| {
+                        if name.as_ref() == Some(server_name) {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(server_id) = matching_server_id {
+                    buffer_servers.push(ServerData::WithBinaryStatus(
+                        Some(server_id),
+                        server_name,
+                        status,
+                    ));
                 } else {
-                    other_servers.push(ServerData::WithBinaryStatus(server_name, status));
+                    other_servers.push(ServerData::WithBinaryStatus(None, server_name, status));
                 }
             }
 
@@ -212,7 +246,11 @@ impl LspPickerDelegate {
             }
             new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
             if !new_lsp_items.is_empty() {
-                new_lsp_items.push(LspItem::StopAllButton);
+                if can_stop_all {
+                    new_lsp_items.push(LspItem::ToggleServersButton { restart: false });
+                } else if can_restart_all {
+                    new_lsp_items.push(LspItem::ToggleServersButton { restart: true });
+                }
             }
 
             self.items = new_lsp_items;
@@ -222,7 +260,7 @@ impl LspPickerDelegate {
 
     fn server_info(&self, ix: usize) -> Option<ServerInfo> {
         match self.items.get(ix)? {
-            LspItem::StopAllButton => None,
+            LspItem::ToggleServersButton { .. } => None,
             LspItem::WithHealthCheck(
                 language_server_id,
                 language_server_health_status,
@@ -234,15 +272,17 @@ impl LspPickerDelegate {
                 binary_status: language_server_binary_status.clone(),
                 message: language_server_health_status.message(),
             }),
-            LspItem::WithBinaryStatus(language_server_name, language_server_binary_status) => {
-                Some(ServerInfo {
-                    name: language_server_name.clone(),
-                    id: None,
-                    health: None,
-                    binary_status: Some(language_server_binary_status.clone()),
-                    message: language_server_binary_status.message.clone(),
-                })
-            }
+            LspItem::WithBinaryStatus(
+                server_id,
+                language_server_name,
+                language_server_binary_status,
+            ) => Some(ServerInfo {
+                name: language_server_name.clone(),
+                id: *server_id,
+                health: None,
+                binary_status: Some(language_server_binary_status.clone()),
+                message: language_server_binary_status.message.clone(),
+            }),
         }
     }
 }
@@ -305,7 +345,11 @@ enum ServerData<'a> {
         &'a LanguageServerHealthStatus,
         Option<&'a LanguageServerBinaryStatus>,
     ),
-    WithBinaryStatus(&'a LanguageServerName, &'a LanguageServerBinaryStatus),
+    WithBinaryStatus(
+        Option<LanguageServerId>,
+        &'a LanguageServerName,
+        &'a LanguageServerBinaryStatus,
+    ),
 }
 
 #[derive(Debug)]
@@ -315,15 +359,21 @@ enum LspItem {
         LanguageServerHealthStatus,
         Option<LanguageServerBinaryStatus>,
     ),
-    WithBinaryStatus(LanguageServerName, LanguageServerBinaryStatus),
-    StopAllButton,
+    WithBinaryStatus(
+        Option<LanguageServerId>,
+        LanguageServerName,
+        LanguageServerBinaryStatus,
+    ),
+    ToggleServersButton {
+        restart: bool,
+    },
 }
 
 impl ServerData<'_> {
     fn name(&self) -> &LanguageServerName {
         match self {
             Self::WithHealthCheck(_, state, _) => &state.name,
-            Self::WithBinaryStatus(name, ..) => name,
+            Self::WithBinaryStatus(_, name, ..) => name,
         }
     }
 
@@ -332,8 +382,8 @@ impl ServerData<'_> {
             Self::WithHealthCheck(id, name, status) => {
                 LspItem::WithHealthCheck(id, name.clone(), status.cloned())
             }
-            Self::WithBinaryStatus(name, status) => {
-                LspItem::WithBinaryStatus(name.clone(), status.clone())
+            Self::WithBinaryStatus(server_id, name, status) => {
+                LspItem::WithBinaryStatus(server_id, name.clone(), status.clone())
             }
         }
     }
@@ -378,9 +428,61 @@ impl PickerDelegate for LspPickerDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(LspItem::ToggleServersButton { restart }) = self.items.get(self.selected_index)
+        {
+            let lsp_store = self.state.read(cx).lsp_store.clone();
+            lsp_store
+                .update(cx, |lsp_store, cx| {
+                    if *restart {
+                        let Some(workspace) = self.state.read(cx).workspace.upgrade() else {
+                            return;
+                        };
+                        let project = workspace.read(cx).project().clone();
+                        let buffer_store = project.read(cx).buffer_store().clone();
+                        let worktree_store = project.read(cx).worktree_store();
+
+                        let buffers = self
+                            .state
+                            .read(cx)
+                            .language_servers
+                            .servers_per_buffer_abs_path
+                            .keys()
+                            .filter_map(|abs_path| {
+                                worktree_store.read(cx).find_worktree(abs_path, cx)
+                            })
+                            .filter_map(|(worktree, relative_path)| {
+                                let entry = worktree.read(cx).entry_for_path(&relative_path)?;
+                                project.read(cx).path_for_entry(entry.id, cx)
+                            })
+                            .filter_map(|project_path| {
+                                buffer_store.read(cx).get_by_path(&project_path)
+                            })
+                            .collect();
+                        let selectors = self
+                            .items
+                            .iter()
+                            // Do not try to use IDs as we have stopped all servers already, when allowing to restart them all
+                            .flat_map(|item| match item {
+                                LspItem::ToggleServersButton { .. } => None,
+                                LspItem::WithHealthCheck(_, status, ..) => {
+                                    Some(LanguageServerSelector::Name(status.name.clone()))
+                                }
+                                LspItem::WithBinaryStatus(_, server_name, ..) => {
+                                    Some(LanguageServerSelector::Name(server_name.clone()))
+                                }
+                            })
+                            .collect();
+                        lsp_store.restart_language_servers_for_buffers(buffers, selectors, cx);
+                    } else {
+                        lsp_store.stop_all_language_servers(cx);
+                    }
+                })
+                .ok();
+        }
+
         let Some(server_selector) = self
             .server_info(self.selected_index)
-            .map(|info| info.selector())
+            .map(|info| info.server_selector())
         else {
             return;
         };
@@ -423,25 +525,15 @@ impl PickerDelegate for LspPickerDelegate {
             })
             .hover(|s| s.bg(cx.theme().colors().element_hover));
 
-        if let Some(LspItem::StopAllButton) = self.items.get(ix) {
-            let lsp_store = self.state.read(cx).lsp_store.clone();
+        if let Some(LspItem::ToggleServersButton { restart }) = self.items.get(ix) {
+            let label = Label::new(if *restart {
+                "Restart All Servers"
+            } else {
+                "Stop All Servers"
+            });
             return Some(
                 rendered_match
-                    .child(
-                        rendered_match_contents.child(
-                            Button::new("stop-all-servers", "Stop All Servers")
-                                .disabled(self.items.is_empty())
-                                .on_click({
-                                    move |_, _, cx| {
-                                        lsp_store
-                                            .update(cx, |lsp_store, cx| {
-                                                lsp_store.stop_all_language_servers(cx);
-                                            })
-                                            .ok();
-                                    }
-                                }),
-                        ),
-                    )
+                    .child(rendered_match_contents.child(label))
                     .into_any_element(),
             );
         }
@@ -450,7 +542,7 @@ impl PickerDelegate for LspPickerDelegate {
         let workspace = self.state.read(cx).workspace.clone();
         let lsp_logs = cx.global::<GlobalLogStore>().0.upgrade()?;
         let lsp_store = self.state.read(cx).lsp_store.upgrade()?;
-        let server_selector = server_info.selector();
+        let server_selector = server_info.server_selector();
 
         // TODO currently, Zed remote does not work well with the LSP logs
         // https://github.com/zed-industries/zed/issues/28557
