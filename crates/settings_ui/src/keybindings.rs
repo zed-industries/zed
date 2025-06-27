@@ -513,12 +513,25 @@ impl Render for KeybindingEditorModal {
             .child(
                 h_flex()
                     .w_full()
-                    // .h_12()
-                    // .px_4()
-                    // .my_4()
-                    // .border_2()
-                    // .border_color(theme.border)
-                    .child(self.keybind_editor.clone()),
+                    .child(self.keybind_editor.clone())
+                    .child(
+                        IconButton::new("backspace-btn", ui::IconName::Backspace).on_click(
+                            cx.listener(|this, _event, _window, cx| {
+                                this.keybind_editor.update(cx, |editor, cx| {
+                                    editor.keystrokes.pop();
+                                    cx.notify();
+                                })
+                            }),
+                        ),
+                    )
+                    .child(IconButton::new("clear-btn", ui::IconName::Eraser).on_click(
+                        cx.listener(|this, _event, _window, cx| {
+                            this.keybind_editor.update(cx, |editor, cx| {
+                                editor.keystrokes.clear();
+                                cx.notify();
+                            })
+                        }),
+                    )),
             )
             .child(
                 h_flex()
