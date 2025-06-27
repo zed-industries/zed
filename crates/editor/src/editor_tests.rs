@@ -5146,7 +5146,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             (
                 "C++".into(),
                 LanguageSettingsContent {
-                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
                     preferred_line_length: Some(40),
                     ..Default::default()
                 },
@@ -5154,7 +5154,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             (
                 "Python".into(),
                 LanguageSettingsContent {
-                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
                     preferred_line_length: Some(40),
                     ..Default::default()
                 },
@@ -5162,7 +5162,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             (
                 "Rust".into(),
                 LanguageSettingsContent {
-                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
                     preferred_line_length: Some(40),
                     ..Default::default()
                 },
@@ -5172,7 +5172,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let language_with_c_comments = Arc::new(Language::new(
+    let cpp_language = Arc::new(Language::new(
         LanguageConfig {
             name: "C++".into(),
             line_comments: vec!["// ".into()],
@@ -5180,7 +5180,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         },
         None,
     ));
-    let language_with_pound_comments = Arc::new(Language::new(
+    let python_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Python".into(),
             line_comments: vec!["# ".into()],
@@ -5195,7 +5195,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         },
         None,
     ));
-    let language_with_doc_comments = Arc::new(Language::new(
+    let rust_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
             line_comments: vec!["// ".into(), "/// ".into()],
@@ -5221,7 +5221,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // ˇThis is a long comment that needs to
             // be wrapped.
         "},
-        language_with_c_comments.clone(),
+        cpp_language.clone(),
         &mut cx,
     );
 
@@ -5234,7 +5234,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             «// This selected long comment needs to
             // be wrapped.ˇ»"
         },
-        language_with_c_comments.clone(),
+        cpp_language.clone(),
         &mut cx,
     );
 
@@ -5250,7 +5250,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // second line. This is the thirdˇ line,
             // all part of one paragraph.
          "},
-        language_with_c_comments.clone(),
+        cpp_language.clone(),
         &mut cx,
     );
 
@@ -5272,7 +5272,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // line. ˇThis is the second paragraph,
             // second line.
         "},
-        language_with_c_comments.clone(),
+        cpp_language.clone(),
         &mut cx,
     );
 
@@ -5288,7 +5288,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             /// A documentation long comment to be
             /// wrapped.ˇ»
           "},
-        language_with_doc_comments.clone(),
+        rust_language.clone(),
         &mut cx,
     );
 
@@ -5308,7 +5308,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                     // next indent.ˇ»
             }
         "},
-        language_with_doc_comments.clone(),
+        rust_language.clone(),
         &mut cx,
     );
 
@@ -5321,7 +5321,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             # ˇThis is a long comment using a pound
             # sign.
         "},
-        language_with_pound_comments.clone(),
+        python_language.clone(),
         &mut cx,
     );
 
@@ -5329,14 +5329,14 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             «/// This doc comment is long and should be wrapped.
-            fn my_func(a: u32, b: u32, c: u32, d: u32) {}ˇ»
+            fn my_func(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32) {}ˇ»
         "},
         indoc! {"
-            «/// This doc comment is long and
-            /// should be wrapped.
-            fn my_func(a: u32, b: u32, c: u32, d: u32) {}ˇ»
+            «/// This doc comment is long and should
+            /// be wrapped.
+            fn my_func(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32) {}ˇ»
         "},
-        language_with_doc_comments.clone(),
+        rust_language.clone(),
         &mut cx,
     );
 
@@ -5344,12 +5344,14 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             # Header
-            A long line of markdown text to wrap.ˇ
+
+            A long long long line of markdown text to wrap.ˇ
          "},
         indoc! {"
             # Header
-            A long line of markdown text to
-            wrap.ˇ
+
+            A long long long line of markdown text
+            to wrap.ˇ
          "},
         markdown_language,
         &mut cx,
@@ -5358,11 +5360,11 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     // Test that rewrapping works in plain text where `allow_rewrap` is `Anywhere`
     assert_rewrap(
         indoc! {"
-            ˇThis is a very long line of plain text that will be wrapped.,
+            ˇThis is a very long line of plain text that will be wrapped.
         "},
         indoc! {"
-            ˇThis is a very long line of plain
-            text that will be wrapped.
+            ˇThis is a very long line of plain text
+            that will be wrapped.
         "},
         plaintext_language.clone(),
         &mut cx,
@@ -5386,7 +5388,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
             // dignissim.ˇ»
         "},
-        language_with_doc_comments.clone(),
+        rust_language.clone(),
         &mut cx,
     );
 
@@ -5451,7 +5453,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                 return 17;
             }
         "},
-        language_with_c_comments,
+        cpp_language,
         &mut cx,
     );
 
