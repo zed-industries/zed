@@ -46,14 +46,14 @@ use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::fmt::Write;
 use std::{
-    io::Write,
     ops::Range,
     sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, post_inc, truncate_lines_to_byte_limit};
+use util::{ResultExt as _, debug_panic, post_inc, truncate_lines_to_byte_limit};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
@@ -201,6 +201,13 @@ pub struct Message {
     pub ui_only: bool,
 }
 
+pub struct UserMessageParams {
+    pub text: String,
+    pub creases: Vec<MessageCrease>,
+    pub checkpoint: Option<GitStoreCheckpoint>,
+    pub context: ContextLoadResult,
+}
+
 impl Message {
     /// Returns whether the message contains any meaningful text that should be displayed
     /// The model sometimes runs tool without producing any text or just a marker ([`USING_TOOL_MARKER`])
@@ -208,7 +215,26 @@ impl Message {
         self.segments.iter().all(|segment| segment.should_display())
     }
 
-    pub fn push_thinking(&mut self, text: &str, signature: Option<String>) {
+    pub fn push(&mut self, segment: MessageSegment) {
+        match segment {
+            MessageSegment::Text(text) => self.push_text(text),
+            MessageSegment::Thinking { text, signature } => self.push_thinking(text, signature),
+            MessageSegment::RedactedThinking(data) => self.push_redacted_thinking(data),
+            MessageSegment::ToolUse {
+                name,
+                input,
+                card,
+                output,
+            } => self.segments.push(MessageSegment::ToolUse {
+                name,
+                input,
+                card,
+                output,
+            }),
+        }
+    }
+
+    pub fn push_thinking(&mut self, text: String, signature: Option<String>) {
         if let Some(MessageSegment::Thinking {
             text: segment,
             signature: current_signature,
@@ -217,12 +243,10 @@ impl Message {
             if let Some(signature) = signature {
                 *current_signature = Some(signature);
             }
-            segment.push_str(text);
+            segment.push_str(&text);
         } else {
-            self.segments.push(MessageSegment::Thinking {
-                text: text.to_string(),
-                signature,
-            });
+            self.segments
+                .push(MessageSegment::Thinking { text, signature });
         }
     }
 
@@ -230,11 +254,11 @@ impl Message {
         self.segments.push(MessageSegment::RedactedThinking(data));
     }
 
-    pub fn push_text(&mut self, text: &str) {
+    pub fn push_text(&mut self, text: String) {
         if let Some(MessageSegment::Text(segment)) = self.segments.last_mut() {
-            segment.push_str(text);
+            segment.push_str(&text);
         } else {
-            self.segments.push(MessageSegment::Text(text.to_string()));
+            self.segments.push(MessageSegment::Text(text));
         }
     }
 
@@ -254,6 +278,14 @@ impl Message {
                     result.push_str("\n</think>");
                 }
                 MessageSegment::RedactedThinking(_) => {}
+                MessageSegment::ToolUse { name, input, .. } => {
+                    writeln!(&mut result, "<tool_use name=\"{}\">\n", name).ok();
+                    result.push_str(
+                        &serde_json::to_string_pretty(input)
+                            .unwrap_or("<failed to serialize input>".into()),
+                    );
+                    result.push_str("\n</tool_use>");
+                }
             }
         }
 
@@ -261,7 +293,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum MessageSegment {
     Text(String),
     Thinking {
@@ -269,6 +301,12 @@ pub enum MessageSegment {
         signature: Option<String>,
     },
     RedactedThinking(String),
+    ToolUse {
+        name: Arc<str>,
+        input: serde_json::Value,
+        card: Option<AnyToolCard>,
+        output: Option<Result<LanguageModelToolResultContent, Arc<anyhow::Error>>>,
+    },
 }
 
 impl MessageSegment {
@@ -277,6 +315,7 @@ impl MessageSegment {
             Self::Text(text) => text.is_empty(),
             Self::Thinking { text, .. } => text.is_empty(),
             Self::RedactedThinking(_) => false,
+            Self::ToolUse { .. } => true,
         }
     }
 
@@ -421,40 +460,49 @@ struct PendingTurn {
 }
 
 struct PendingToolUse2 {
+    index_in_message: usize,
     request: LanguageModelToolUse,
     output: Option<Task<Result<ToolResultOutput>>>,
 }
 
 impl PendingToolUse2 {
-    async fn result(&mut self) -> LanguageModelToolResult {
-        let is_error;
+    async fn result(
+        &mut self,
+    ) -> (
+        LanguageModelToolResult,
+        Result<LanguageModelToolResultContent>,
+    ) {
         let content;
         let output;
+        let thread_result;
         match self.output.take().unwrap().await {
             Ok(tool_output) => {
-                is_error = false;
                 content = match tool_output.content {
                     ToolResultContent::Text(text) => {
                         LanguageModelToolResultContent::Text(text.into())
                     }
                     ToolResultContent::Image(image) => LanguageModelToolResultContent::Image(image),
                 };
+                thread_result = Ok(content.clone());
                 output = tool_output.output;
             }
             Err(error) => {
-                is_error = true;
                 content = LanguageModelToolResultContent::Text(error.to_string().into());
+                thread_result = Err(error);
                 output = None;
             }
         };
 
-        LanguageModelToolResult {
-            tool_use_id: self.request.id.clone(),
-            tool_name: self.request.name.clone(),
-            is_error,
-            content,
-            output,
-        }
+        (
+            LanguageModelToolResult {
+                tool_use_id: self.request.id.clone(),
+                tool_name: self.request.name.clone(),
+                is_error: thread_result.is_err(),
+                content,
+                output,
+            },
+            thread_result,
+        )
     }
 }
 
@@ -475,6 +523,7 @@ pub struct ZedAgent {
     prompt_builder: Arc<PromptBuilder>,
     tools: Entity<ToolWorkingSet>,
     messages: Vec<LanguageModelRequestMessage>,
+    thread_user_messages: HashMap<MessageId, usize>,
     pending_turn: Option<PendingTurn>,
 
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
@@ -492,7 +541,6 @@ pub struct ZedAgent {
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
-    last_received_chunk_at: Option<Instant>,
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
@@ -512,6 +560,7 @@ pub struct Thread {
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     updated_at: DateTime<Utc>,
+    last_received_chunk_at: Option<Instant>,
 }
 
 impl Thread {
@@ -593,6 +642,8 @@ impl Thread {
         segments: Vec<MessageSegment>,
         cx: &mut Context<Self>,
     ) -> MessageId {
+        self.received_chunk();
+
         self.insert_message(
             Role::Assistant,
             segments,
@@ -601,6 +652,74 @@ impl Thread {
             false,
             cx,
         )
+    }
+
+    pub fn push_assistant_message_segment(
+        &mut self,
+        segment: MessageSegment,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        self.received_chunk();
+
+        if let Some(last_message) = self.messages.last_mut() {
+            if last_message.role == Role::Assistant {
+                last_message.push(segment);
+                // todo! emit a new streamed segment event
+                cx.emit(ThreadEvent::ReceivedTextChunk);
+                return last_message.segments.len() - 1;
+            }
+        }
+
+        self.insert_message(
+            Role::Assistant,
+            vec![segment],
+            LoadedContext::default(),
+            Vec::new(),
+            false,
+            cx,
+        );
+        0
+    }
+
+    pub fn push_tool_call(
+        &mut self,
+        name: Arc<str>,
+        input: serde_json::Value,
+        card: Option<AnyToolCard>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        self.push_assistant_message_segment(
+            MessageSegment::ToolUse {
+                name,
+                input,
+                card,
+                output: None,
+            },
+            cx,
+        )
+    }
+
+    pub fn set_tool_call_result(
+        &mut self,
+        segment_index: usize,
+        result: Result<LanguageModelToolResultContent>,
+        _cx: &mut Context<Self>,
+    ) {
+        if let Some(last_message) = self.messages.last_mut() {
+            if last_message.role == Role::Assistant {
+                if let Some(MessageSegment::ToolUse { output, .. }) =
+                    last_message.segments.get_mut(segment_index)
+                {
+                    *output = Some(result.map_err(Arc::new));
+                    return;
+                } else {
+                    debug_panic!("invalid segment index");
+                }
+            }
+        };
+        // todo! emit segment update event
+
+        debug_panic!("Expected last message's role assistant")
     }
 
     pub fn insert_retry_message(&mut self, retry_message: String, cx: &mut Context<Self>) {
@@ -683,6 +802,7 @@ impl Thread {
                         text.push_str(&format!("<think>{}</think>", content))
                     }
                     MessageSegment::RedactedThinking(_) => {}
+                    MessageSegment::ToolUse { .. } => {}
                 }
             }
             text.push('\n');
@@ -784,6 +904,18 @@ impl Thread {
 
         self.messages.get(index)
     }
+
+    /// Indicates whether streaming of language model events is stale.
+    pub fn is_generation_stale(&self) -> Option<bool> {
+        const STALE_THRESHOLD: u128 = 250;
+
+        self.last_received_chunk_at
+            .map(|instant| instant.elapsed().as_millis() > STALE_THRESHOLD)
+    }
+
+    fn received_chunk(&mut self) {
+        self.last_received_chunk_at = Some(Instant::now());
+    }
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -852,6 +984,7 @@ impl ZedAgent {
             updated_at: Utc::now(),
             action_log: cx.new(|_| ActionLog::new(project.clone())),
             project: project.clone(),
+            last_received_chunk_at: None,
         });
 
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
@@ -881,6 +1014,7 @@ impl ZedAgent {
             pending_tool_uses_by_id: HashMap::default(),
             tool_result_cards: HashMap::default(),
             tool_use_metadata_by_id: HashMap::default(),
+            thread_user_messages: Default::default(),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
                 cx.foreground_executor()
@@ -895,7 +1029,6 @@ impl ZedAgent {
             retry_state: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
-            last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
@@ -1031,6 +1164,7 @@ impl ZedAgent {
             updated_at: serialized.updated_at,
             action_log: cx.new(|_| ActionLog::new(project.clone())),
             summary: ThreadSummary::Ready(serialized.summary),
+            last_received_chunk_at: None,
         });
 
         let subscription = cx.subscribe(&thread, |_, _, event, cx| {
@@ -1058,13 +1192,13 @@ impl ZedAgent {
             tools: tools.clone(),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             request_token_usage: serialized.request_token_usage,
+            thread_user_messages: Default::default(),
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
-            last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
@@ -1232,19 +1366,6 @@ impl ZedAgent {
 
     pub fn is_generating(&self) -> bool {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
-    }
-
-    /// Indicates whether streaming of language model events is stale.
-    /// When `is_generating()` is false, this method returns `None`.
-    pub fn is_generation_stale(&self) -> Option<bool> {
-        const STALE_THRESHOLD: u128 = 250;
-
-        self.last_received_chunk_at
-            .map(|instant| instant.elapsed().as_millis() > STALE_THRESHOLD)
-    }
-
-    fn received_chunk(&mut self) {
-        self.last_received_chunk_at = Some(Instant::now());
     }
 
     pub fn queue_state(&self) -> Option<QueueState> {
@@ -1482,7 +1603,6 @@ impl ZedAgent {
         }
     }
 
-    // todo! move to thread
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
@@ -1626,6 +1746,9 @@ impl ZedAgent {
                                             data: data.clone(),
                                         }
                                     }
+                                    MessageSegment::ToolUse { .. } => {
+                                        todo!("change serialization to use the agent's LanguageModelRequestMessages")
+                                    }
                                 })
                                 .collect(),
                             tool_uses: this
@@ -1700,9 +1823,12 @@ impl ZedAgent {
         &mut self,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
+        params: UserMessageParams,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> MessageId {
+        let message_id = self.insert_user_message2(params, cx);
+
         let prev_turn = self.cancel();
         let (cancel_tx, cancel_rx) = oneshot::channel();
         self.pending_turn = Some(PendingTurn {
@@ -1717,6 +1843,67 @@ impl ZedAgent {
             }),
             cancel_tx,
         });
+
+        message_id
+    }
+
+    fn insert_user_message2(
+        &mut self,
+        params: UserMessageParams,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        if !params.context.referenced_buffers.is_empty() {
+            self.thread
+                .read(cx)
+                .action_log
+                .clone()
+                .update(cx, |log, cx| {
+                    for buffer in params.context.referenced_buffers {
+                        log.buffer_read(buffer, cx);
+                    }
+                });
+        }
+
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+        params
+            .context
+            .loaded_context
+            .add_to_request_message(&mut request_message);
+        request_message
+            .content
+            .push(MessageContent::Text(params.text.clone()));
+
+        let message_id = self.thread.update(cx, |thread, cx| {
+            thread.insert_message(
+                Role::User,
+                vec![MessageSegment::Text(params.text)],
+                params.context.loaded_context,
+                params.creases,
+                false,
+                cx,
+            )
+        });
+        self.thread_user_messages
+            .insert(message_id, self.messages.len());
+
+        if let Some(git_checkpoint) = params.checkpoint {
+            self.thread.update(cx, |thread, _cx| {
+                thread.pending_checkpoint = Some(ThreadCheckpoint {
+                    message_id,
+                    git_checkpoint,
+                })
+            });
+        }
+
+        self.messages.push(request_message);
+
+        self.auto_capture_telemetry(cx);
+
+        message_id
     }
 
     async fn run_turn(
@@ -1732,6 +1919,7 @@ impl ZedAgent {
             custom_delay: Option<Duration>,
         }
         let mut retry_state: Option<RetryState> = None;
+        let thread = this.update(cx, |this, _| this.thread.clone())?;
 
         loop {
             let mut assistant_message = LanguageModelRequestMessage {
@@ -1760,16 +1948,35 @@ impl ZedAgent {
                 while let Some(event) = events.next().await {
                     let event = event?;
                     match event {
-                        LanguageModelCompletionEvent::StartMessage { message_id } => {
-                            todo!()
-                        }
+                        LanguageModelCompletionEvent::StartMessage { .. } => {}
                         LanguageModelCompletionEvent::Text(chunk) => {
+                            thread.update(cx, |thread, cx| {
+                                thread.push_assistant_message_segment(
+                                    MessageSegment::Text(chunk.clone()),
+                                    cx,
+                                );
+                            })?;
                             assistant_message.push(MessageContent::Text(chunk));
                         }
                         LanguageModelCompletionEvent::Thinking { text, signature } => {
+                            thread.update(cx, |thread, cx| {
+                                thread.push_assistant_message_segment(
+                                    MessageSegment::Thinking {
+                                        text: text.clone(),
+                                        signature: signature.clone(),
+                                    },
+                                    cx,
+                                );
+                            })?;
                             assistant_message.push(MessageContent::Thinking { text, signature });
                         }
                         LanguageModelCompletionEvent::RedactedThinking { data } => {
+                            thread.update(cx, |thread, cx| {
+                                thread.push_assistant_message_segment(
+                                    MessageSegment::RedactedThinking(data.clone()),
+                                    cx,
+                                );
+                            })?;
                             assistant_message.push(MessageContent::RedactedThinking(data));
                         }
                         LanguageModelCompletionEvent::ToolUse(tool_use) => {
@@ -1802,14 +2009,31 @@ impl ZedAgent {
                                                 cx,
                                             )
                                         })?;
+                                        let index = thread.update(cx, |thread, cx| {
+                                            thread.push_tool_call(
+                                                tool_use.name.clone(),
+                                                tool_use.input.clone(),
+                                                tool_result.card,
+                                                cx,
+                                            )
+                                        })?;
                                         pending_tool_uses.push(PendingToolUse2 {
+                                            index_in_message: index,
                                             output: Some(tool_result.output),
                                             request: tool_use,
                                         });
                                     }
                                     Err(error) => {
-                                        // todo!("show error in thread")
+                                        let index = thread.update(cx, |thread, cx| {
+                                            thread.push_tool_call(
+                                                tool_use.name.clone(),
+                                                tool_use.input.clone(),
+                                                None,
+                                                cx,
+                                            )
+                                        })?;
                                         pending_tool_uses.push(PendingToolUse2 {
+                                            index_in_message: index,
                                             request: tool_use,
                                             output: Some(Task::ready(Err(error))),
                                         });
@@ -1817,10 +2041,10 @@ impl ZedAgent {
                                 }
                             }
                         }
-                        LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
+                        LanguageModelCompletionEvent::UsageUpdate(_token_usage) => {
                             todo!()
                         }
-                        LanguageModelCompletionEvent::StatusUpdate(completion_request_status) => {
+                        LanguageModelCompletionEvent::StatusUpdate(_completion_request_status) => {
                             todo!()
                         }
                         LanguageModelCompletionEvent::Stop(StopReason::EndTurn) => {
@@ -1839,7 +2063,14 @@ impl ZedAgent {
                 }
 
                 while let Some(mut pending_tool_use) = pending_tool_uses.pop() {
-                    let tool_result = pending_tool_use.result().await;
+                    let (tool_result, thread_result) = pending_tool_use.result().await;
+                    thread.update(cx, |thread, cx| {
+                        thread.set_tool_call_result(
+                            pending_tool_use.index_in_message,
+                            thread_result,
+                            cx,
+                        )
+                    })?;
                     assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
                     tool_results_message
                         .content
@@ -1877,7 +2108,7 @@ impl ZedAgent {
                         assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
                     }
 
-                    this.update(cx, |this, cx| {
+                    this.update(cx, |this, _cx| {
                         if !assistant_message.content.is_empty() {
                             this.messages.push(assistant_message);
                         }
@@ -1891,7 +2122,14 @@ impl ZedAgent {
                 }
                 SendStatus::Finished(result) => {
                     for mut pending_tool_use in pending_tool_uses {
-                        let tool_result = pending_tool_use.result().await;
+                        let (tool_result, thread_result) = pending_tool_use.result().await;
+                        thread.update(cx, |thread, cx| {
+                            thread.set_tool_call_result(
+                                pending_tool_use.index_in_message,
+                                thread_result,
+                                cx,
+                            )
+                        })?;
                         assistant_message.push(MessageContent::ToolUse(pending_tool_use.request));
                         tool_results_message
                             .content
@@ -1915,7 +2153,7 @@ impl ZedAgent {
                             if error.is::<PaymentRequiredError>() {
                                 // todo!
                                 // cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
-                            } else if let Some(error) =
+                            } else if let Some(_error) =
                                 error.downcast_ref::<ModelRequestLimitReachedError>()
                             {
                                 // todo!
@@ -2215,6 +2453,9 @@ impl ZedAgent {
                             .content
                             .push(MessageContent::RedactedThinking(data.clone()));
                     }
+                    MessageSegment::ToolUse { .. } => {
+                        todo!("remove this whole method")
+                    }
                 };
             }
 
@@ -2314,6 +2555,7 @@ impl ZedAgent {
                         .push(MessageContent::Text(text.clone())),
                     MessageSegment::Thinking { .. } => {}
                     MessageSegment::RedactedThinking(_) => {}
+                    MessageSegment::ToolUse { .. } => {}
                 }
             }
 
@@ -2356,7 +2598,9 @@ impl ZedAgent {
             prompt_id: prompt_id.clone(),
         };
 
-        self.last_received_chunk_at = Some(Instant::now());
+        self.thread.update(cx, |thread, _| {
+            thread.last_received_chunk_at = Some(Instant::now())
+        });
 
         let task = cx.spawn(async move |this, cx| {
             let stream_completion_future = model.stream_completion(request, &cx);
@@ -2477,7 +2721,7 @@ impl ZedAgent {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
-                                this.received_chunk();
+                                this.thread.update(cx, |thread, _| thread.received_chunk());
 
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
                                 this.thread.update(cx, |thread, cx| {
@@ -2485,7 +2729,7 @@ impl ZedAgent {
                                         if last_message.role == Role::Assistant
                                             && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
                                         {
-                                            last_message.push_text(&chunk);
+                                            last_message.push_text(chunk.clone());
                                             cx.emit(ThreadEvent::StreamedAssistantText(
                                                 last_message.id,
                                                 chunk,
@@ -2509,57 +2753,55 @@ impl ZedAgent {
                                 text: chunk,
                                 signature,
                             } => {
-                                this.received_chunk();
-
                                 this.thread.update(cx, |thread, cx| {
-                                if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant
-                                        && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
-                                    {
-                                        last_message.push_thinking(&chunk, signature);
-                                        cx.emit(ThreadEvent::StreamedAssistantThinking(
-                                            last_message.id,
-                                            chunk,
-                                        ));
-                                    } else {
-                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
-                                        // of a new Assistant response.
-                                        //
-                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
-                                        // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        request_assistant_message_id =
-                                            Some(thread.insert_assistant_message(
-                                                vec![MessageSegment::Thinking {
-                                                    text: chunk.to_string(),
-                                                    signature,
-                                                }],
-                                                cx,
+                                    thread.received_chunk();
+                                    if let Some(last_message) = thread.messages.last_mut() {
+                                        if last_message.role == Role::Assistant
+                                            && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
+                                        {
+                                            last_message.push_thinking(chunk.clone(), signature);
+                                            cx.emit(ThreadEvent::StreamedAssistantThinking(
+                                                last_message.id,
+                                                chunk,
                                             ));
-                                    };
-                                }
+                                        } else {
+                                            // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                            // of a new Assistant response.
+                                            //
+                                            // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                            // will result in duplicating the text of the chunk in the rendered Markdown.
+                                            request_assistant_message_id =
+                                                Some(thread.insert_assistant_message(
+                                                    vec![MessageSegment::Thinking {
+                                                        text: chunk.to_string(),
+                                                        signature,
+                                                    }],
+                                                    cx,
+                                                ));
+                                        };
+                                    }
                                 })
                             }
                             LanguageModelCompletionEvent::RedactedThinking {
                                 data
                             } => {
-                                this.received_chunk();
                                 this.thread.update(cx, |thread, cx| {
+                                    thread.received_chunk();
+                                    if let Some(last_message) = thread.messages.last_mut() {
+                                        if last_message.role == Role::Assistant
 
-                                if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant
-
-                                    && !this.tool_uses_by_assistant_message
-                                            .contains_key(&last_message.id)
-                                    {
-                                        last_message.push_redacted_thinking(data);
-                                    } else {
-                                        request_assistant_message_id =
-                                            Some(thread.insert_assistant_message(
-                                                vec![MessageSegment::RedactedThinking(data)],
-                                                cx,
-                                            ));
-                                    };
-                                }
+                                        && !this.tool_uses_by_assistant_message
+                                                .contains_key(&last_message.id)
+                                        {
+                                            last_message.push_redacted_thinking(data);
+                                        } else {
+                                            request_assistant_message_id =
+                                                Some(thread.insert_assistant_message(
+                                                    vec![MessageSegment::RedactedThinking(data)],
+                                                    cx,
+                                                ));
+                                        };
+                                    }
                                 })
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
@@ -2640,7 +2882,9 @@ impl ZedAgent {
                 }
 
                 this.update(cx, |this, cx| {
-                    this.last_received_chunk_at = None;
+                    this.thread.update(cx, |thread, _| {
+                        thread.last_received_chunk_at.take();
+                    });
                     this
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
@@ -3900,6 +4144,7 @@ impl ZedAgent {
     }
 
     pub fn to_markdown(&self, cx: &App) -> Result<String> {
+        use std::io::Write;
         let mut markdown = Vec::new();
 
         let summary = self.summary(cx).or_default();
@@ -3935,6 +4180,7 @@ impl ZedAgent {
                         writeln!(markdown, "<think>\n{}\n</think>\n", text)?
                     }
                     MessageSegment::RedactedThinking(_) => {}
+                    MessageSegment::ToolUse { .. } => {}
                 }
             }
 
@@ -4503,10 +4749,10 @@ fn main() {{
 
         assert_eq!(message.role, Role::User);
         assert_eq!(message.segments.len(), 1);
-        assert_eq!(
-            message.segments[0],
-            MessageSegment::Text("Please explain this code".to_string())
-        );
+        assert!(matches!(
+            &message.segments[0],
+            MessageSegment::Text(txt) if txt == "Please explain this code",
+        ));
         assert_eq!(message.loaded_context.text, expected_context);
 
         // Check message in request
@@ -4707,10 +4953,10 @@ fn main() {{
         // Context should be empty when no files are included
         assert_eq!(message.role, Role::User);
         assert_eq!(message.segments.len(), 1);
-        assert_eq!(
-            message.segments[0],
-            MessageSegment::Text("What is the best way to learn Rust?".to_string())
-        );
+        assert!(matches!(
+            &message.segments[0],
+            MessageSegment::Text(txt) if txt == "What is the best way to learn Rust?",
+        ));
         assert_eq!(message.loaded_context.text, "");
 
         // Check message in request

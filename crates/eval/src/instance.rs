@@ -856,6 +856,10 @@ fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>)
                         items.len()
                     ));
                 }
+                MessageSegment::ToolUse { name, input, .. } => {
+                    messages.push_str(&format!("**Tool Use**: {}\n\n", name));
+                    messages.push_str(&format!("Input: {:?}\n\n", input));
+                }
             }
         }
     }

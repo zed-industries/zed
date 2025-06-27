@@ -70,7 +70,7 @@ pub struct ToolResultOutput {
     pub output: Option<serde_json::Value>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolResultContent {
     Text(String),
     Image(LanguageModelImage),
@@ -135,7 +135,7 @@ pub trait ToolCard: 'static + Sized {
     ) -> impl IntoElement;
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AnyToolCard {
     entity: gpui::AnyEntity,
     render: fn(

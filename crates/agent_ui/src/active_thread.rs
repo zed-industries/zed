@@ -166,6 +166,9 @@ impl RenderedMessage {
                     )))
             }
             MessageSegment::RedactedThinking(_) => {}
+            MessageSegment::ToolUse { .. } => {
+                todo!()
+            }
         };
     }
 }
@@ -1813,7 +1816,7 @@ impl ActiveThread {
         };
 
         let is_generating = agent.is_generating();
-        let is_generating_stale = agent.is_generation_stale().unwrap_or(false);
+        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
 
         let loading_dots = (is_generating && is_last_message).then(|| {
             h_flex()
