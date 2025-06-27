@@ -4606,7 +4606,7 @@ fn main() {{
 
         // Check entire request to make sure all contexts are properly included
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
 
         // The request should contain all 3 messages
@@ -4715,7 +4715,7 @@ fn main() {{
 
         // Check message in request
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -4742,7 +4742,7 @@ fn main() {{
 
         // Check that both messages appear in the request
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 3);
@@ -4850,7 +4850,7 @@ fn main() {{
         });
 
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -4870,7 +4870,7 @@ fn main() {{
         });
 
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -4890,7 +4890,7 @@ fn main() {{
         });
 
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -4910,7 +4910,7 @@ fn main() {{
         });
 
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, None);
     }
@@ -6269,7 +6269,7 @@ fn main() {{
 
         // Generate the completion request
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
 
         // Verify that the request only contains non-UI-only messages
