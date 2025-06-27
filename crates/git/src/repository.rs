@@ -1052,7 +1052,7 @@ impl GitRepository for RealGitRepository {
 
             Ok(branch
                 .name()?
-                .context("cannot checkout anonymouse branch")?
+                .context("cannot checkout anonymous branch")?
                 .to_string())
         });
 
