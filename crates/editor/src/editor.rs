@@ -11440,37 +11440,37 @@ impl Editor {
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
-            let Some(start_row) = (selection.start.row..=selection.end.row)
+            let Some(non_blank_start_row) = (selection.start.row..=selection.end.row)
                 .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
             else {
                 return vec![];
             };
-            let Some(end_row) = (selection.start.row..=selection.end.row)
+            let Some(non_blank_end_row) = (selection.start.row..=selection.end.row)
                 .rev()
                 .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
             else {
                 return vec![];
             };
 
-            let mut row = start_row;
+            let mut current_non_blank_row = non_blank_start_row;
             let mut ranges = Vec::new();
-            while let Some(blank_row) =
-                (row..end_row).find(|row| buffer.is_line_blank(MultiBufferRow(*row)))
+            while let Some(blank_row) = (current_non_blank_row..non_blank_end_row)
+                .find(|row| buffer.is_line_blank(MultiBufferRow(*row)))
             {
-                let next_paragraph_start = (blank_row + 1..=end_row)
+                let next_paragraph_start = (blank_row + 1..=non_blank_end_row)
                     .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
                     .unwrap();
                 ranges.push((
                     language_settings.clone(),
                     language_scope.clone(),
-                    Point::new(row, 0)..Point::new(blank_row - 1, 0),
+                    Point::new(current_non_blank_row, 0)..Point::new(blank_row - 1, 0),
                 ));
-                row = next_paragraph_start;
+                current_non_blank_row = next_paragraph_start;
             }
             ranges.push((
                 language_settings.clone(),
                 language_scope.clone(),
-                Point::new(row, 0)..Point::new(end_row, 0),
+                Point::new(current_non_blank_row, 0)..Point::new(non_blank_end_row, 0),
             ));
 
             ranges
