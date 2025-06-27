@@ -108,13 +108,14 @@ impl Render for AgentModelSelector {
             ButtonLike::new("active-model")
                 .child(
                     Icon::new(provider_icon)
-                        .color(Color::Accent)
-                        .size(IconSize::Small),
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
                 )
                 .child(
                     Label::new(model_name)
                         .color(Color::Muted)
-                        .size(LabelSize::Small),
+                        .size(LabelSize::Small)
+                        .ml_0p5(),
                 )
                 .child(
                     Icon::new(IconName::ChevronDown)

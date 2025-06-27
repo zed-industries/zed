@@ -2114,6 +2114,7 @@ impl ContextEditor {
             Some(model) => model.name().0,
             None => SharedString::from("No model selected"),
         };
+
         let active_provider = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.provider);
@@ -2121,6 +2122,7 @@ impl ContextEditor {
             Some(provider) => provider.icon(),
             None => IconName::Ai,
         };
+
         let focus_handle = self.editor().focus_handle(cx).clone();
 
         PickerPopoverMenu::new(
@@ -2132,13 +2134,14 @@ impl ContextEditor {
                         .gap_0p5()
                         .child(
                             Icon::new(provider_icon)
-                                .color(Color::Accent)
-                                .size(IconSize::Small),
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
                         )
                         .child(
                             Label::new(model_name)
                                 .color(Color::Muted)
-                                .size(LabelSize::Small),
+                                .size(LabelSize::Small)
+                                .ml_0p5(),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)
