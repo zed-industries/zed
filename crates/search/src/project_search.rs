@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MAX_TAB_TITLE_LEN,
-    MultiBuffer, actions::SelectAll, items::active_match_index, scroll::Autoscroll,
+    MultiBuffer, SelectionEffects, actions::SelectAll, items::active_match_index,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -1303,7 +1303,7 @@ impl ProjectSearchView {
             self.results_editor.update(cx, |editor, cx| {
                 let range_to_select = editor.range_for_match(&range_to_select);
                 editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
             });
@@ -1350,7 +1350,9 @@ impl ProjectSearchView {
     fn focus_results_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
-            query_editor.change_selections(None, window, cx, |s| s.select_ranges([cursor..cursor]));
+            query_editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([cursor..cursor])
+            });
         });
         let results_handle = self.results_editor.focus_handle(cx);
         window.focus(&results_handle);
@@ -1370,7 +1372,7 @@ impl ProjectSearchView {
                     let range_to_select = match_ranges
                         .first()
                         .map(|range| editor.range_for_match(range));
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);

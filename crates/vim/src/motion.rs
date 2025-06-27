@@ -4,7 +4,6 @@ use editor::{
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
-    scroll::Autoscroll,
 };
 use gpui::{Action, Context, Window, actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
@@ -626,7 +625,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
                         self.update_editor(window, cx, |_, editor, window, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });

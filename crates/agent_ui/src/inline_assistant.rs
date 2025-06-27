@@ -18,6 +18,7 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::SelectionEffects;
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
     MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
@@ -1159,7 +1160,7 @@ impl InlineAssistant {
 
         let position = assist.range.start;
         editor.update(cx, |editor, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_anchor_ranges([position..position])
             });
 

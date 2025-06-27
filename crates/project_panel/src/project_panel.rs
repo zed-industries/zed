@@ -12,7 +12,7 @@ use editor::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
-    scroll::{Autoscroll, ScrollbarAutoHide},
+    scroll::ScrollbarAutoHide,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
@@ -1589,7 +1589,7 @@ impl ProjectPanel {
                     });
                     self.filename_editor.update(cx, |editor, cx| {
                         editor.set_text(file_name, window, cx);
-                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
                             s.select_ranges([selection])
                         });
                         window.focus(&editor.focus_handle(cx));

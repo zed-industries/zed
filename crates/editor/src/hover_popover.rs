@@ -3,7 +3,7 @@ use crate::{
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
-    scroll::{Autoscroll, ScrollAmount},
+    scroll::ScrollAmount,
 };
 use anyhow::Context as _;
 use gpui::{
@@ -746,7 +746,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         };
                         editor.update_in(cx, |editor, window, cx| {
                             editor.change_selections(
-                                Some(Autoscroll::fit()),
+                                Default::default(),
                                 window,
                                 cx,
                                 |selections| {

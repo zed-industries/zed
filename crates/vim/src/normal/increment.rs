@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint, scroll::Autoscroll};
+use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint};
 use gpui::{Action, Context, Window};
 use language::{Bias, Point};
 use schemars::JsonSchema;
@@ -97,7 +97,7 @@ impl Vim {
                 editor.edit(edits, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     let mut new_ranges = Vec::new();
                     for (visual, anchor) in new_anchors.iter() {
                         let mut point = anchor.to_point(&snapshot);
