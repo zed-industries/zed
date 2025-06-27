@@ -2537,7 +2537,18 @@ impl OutlinePanel {
                         return;
                     }
                     let change_focus = event.down.click_count > 1;
-                    outline_panel.toggle_expanded(&clicked_entry, window, cx);
+
+                    // Check if this entry is already selected
+                    let is_already_selected = outline_panel
+                        .selected_entry()
+                        .map(|selected| selected == &clicked_entry)
+                        .unwrap_or(false);
+
+                    // Only toggle expansion if already selected and the item is expandable
+                    if is_already_selected && outline_panel.is_expandable(&clicked_entry, cx) {
+                        outline_panel.toggle_expanded(&clicked_entry, window, cx);
+                    }
+
                     outline_panel.scroll_editor_to_entry(
                         &clicked_entry,
                         true,
@@ -4854,6 +4865,22 @@ impl OutlinePanel {
             }
         }
         false
+    }
+
+    fn is_expandable(&self, entry: &PanelEntry, cx: &App) -> bool {
+        match entry {
+            PanelEntry::FoldedDirs(_) => true,
+            PanelEntry::Fs(FsEntry::Directory(_)) => true,
+            PanelEntry::Fs(FsEntry::File(file)) => self.excerpts.contains_key(&file.buffer_id),
+            PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
+                self.excerpts.contains_key(&external_file.buffer_id)
+            }
+            PanelEntry::Outline(OutlineEntry::Excerpt(_)) => true,
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                self.has_outline_children(outline, cx)
+            }
+            PanelEntry::Search(_) => false,
+        }
     }
 }
 
