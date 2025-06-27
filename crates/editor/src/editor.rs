@@ -11435,108 +11435,62 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
 
-        // Shrink and split selections to respect paragraph, indent, and comment prefix boundaries.
+        // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let ranges = selections.into_iter().flat_map(|selection| {
+            let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
+                .filter(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
+                .peekable();
+
+            let first_row = if let Some(&row) = non_blank_rows_iter.peek() {
+                row
+            } else {
+                return Vec::new();
+            };
+
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
-            // Split by paragraph boundaries
-            let paragraph_ranges = {
-                let Some(non_blank_start_row) = (selection.start.row..=selection.end.row)
-                    .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
-                else {
-                    return vec![];
-                };
-                let Some(non_blank_end_row) = (selection.start.row..=selection.end.row)
-                    .rev()
-                    .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
-                else {
-                    return vec![];
-                };
+            let mut ranges = Vec::new();
+            let mut current_range_start = first_row;
 
-                let mut current_non_blank_row = non_blank_start_row;
-                let mut ranges = Vec::new();
+            let mut prev_row = first_row;
+            let mut prev_indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
+            let mut prev_comment_prefix =
+                Self::get_comment_prefix_for_line(&buffer, first_row, &language_scope);
 
-                while let Some(blank_row) = (current_non_blank_row..non_blank_end_row)
-                    .find(|row| buffer.is_line_blank(MultiBufferRow(*row)))
-                {
-                    let next_paragraph_start = (blank_row + 1..=non_blank_end_row)
-                        .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
-                        .unwrap();
-                    ranges.push(Point::new(current_non_blank_row, 0)..Point::new(blank_row - 1, 0));
-                    current_non_blank_row = next_paragraph_start;
+            for row in non_blank_rows_iter.skip(1) {
+                let has_paragraph_break = row > prev_row + 1;
+
+                let row_indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                let row_comment_prefix =
+                    Self::get_comment_prefix_for_line(&buffer, row, &language_scope);
+
+                let has_boundary_change =
+                    row_indent != prev_indent || row_comment_prefix != prev_comment_prefix;
+
+                if has_paragraph_break || has_boundary_change {
+                    ranges.push((
+                        language_settings.clone(),
+                        language_scope.clone(),
+                        Point::new(current_range_start, 0)
+                            ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
+                    ));
+                    current_range_start = row;
                 }
-                ranges.push(Point::new(current_non_blank_row, 0)..Point::new(non_blank_end_row, 0));
 
-                ranges
-            };
-            let mut final_ranges = Vec::new();
-            for paragraph_range in paragraph_ranges {
-                // Split each paragraph by indent boundaries
-                let indent_ranges = {
-                    if paragraph_range.start.row >= paragraph_range.end.row {
-                        vec![paragraph_range.clone()]
-                    } else {
-                        let mut ranges = Vec::new();
-                        let mut current_start_row = paragraph_range.start.row;
-                        let mut current_indent =
-                            buffer.indent_size_for_line(MultiBufferRow(current_start_row));
-                        for row in (paragraph_range.start.row + 1)..=paragraph_range.end.row {
-                            let row_indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                            if row_indent != current_indent {
-                                ranges
-                                    .push(Point::new(current_start_row, 0)..Point::new(row - 1, 0));
-                                current_start_row = row;
-                                current_indent = row_indent;
-                            }
-                        }
-                        ranges.push(Point::new(current_start_row, 0)..paragraph_range.end);
-                        ranges
-                    }
-                };
-
-                // Split each indent range by comment prefix boundaries
-                for indent_range in indent_ranges {
-                    let comment_ranges = {
-                        if indent_range.start.row >= indent_range.end.row {
-                            vec![indent_range.clone()]
-                        } else {
-                            let mut ranges = Vec::new();
-                            let mut current_start_row = indent_range.start.row;
-                            let mut current_comment_prefix = Self::get_comment_prefix_for_line(
-                                &buffer,
-                                current_start_row,
-                                &language_scope,
-                            );
-                            for row in (indent_range.start.row + 1)..=indent_range.end.row {
-                                let row_comment_prefix = Self::get_comment_prefix_for_line(
-                                    &buffer,
-                                    row,
-                                    &language_scope,
-                                );
-                                if row_comment_prefix != current_comment_prefix {
-                                    ranges.push(
-                                        Point::new(current_start_row, 0)..Point::new(row - 1, 0),
-                                    );
-                                    current_start_row = row;
-                                    current_comment_prefix = row_comment_prefix;
-                                }
-                            }
-                            ranges.push(Point::new(current_start_row, 0)..indent_range.end);
-                            ranges
-                        }
-                    };
-                    for comment_range in comment_ranges {
-                        final_ranges.push((
-                            language_settings.clone(),
-                            language_scope.clone(),
-                            comment_range,
-                        ));
-                    }
-                }
+                prev_row = row;
+                prev_indent = row_indent;
+                prev_comment_prefix = row_comment_prefix;
             }
 
-            final_ranges
+            ranges.push((
+                language_settings.clone(),
+                language_scope.clone(),
+                Point::new(current_range_start, 0)
+                    ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
+            ));
+
+            ranges
         });
 
         let mut edits = Vec::new();
