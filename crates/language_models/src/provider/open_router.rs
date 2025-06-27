@@ -607,9 +607,7 @@ impl OpenRouterEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(
-                    LanguageModelCompletionError::Other(anyhow!(error)),
-                ))],
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
             })
         })
     }
@@ -619,9 +617,9 @@ impl OpenRouterEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::from(
-                LanguageModelCompletionError::Other(anyhow!("Response contained no choices")),
-            ))];
+            return vec![Err(LanguageModelCompletionError::from(anyhow!(
+                "Response contained no choices"
+            )))];
         };
 
         let mut events = Vec::new();

@@ -124,8 +124,6 @@ pub enum LanguageModelCompletionError {
     },
 
     // Client errors
-    //
-    // todo! which of these should be retriable?
     #[error("invalid request format to {provider}'s API: {message}")]
     BadRequestFormat {
         provider: LanguageModelProviderName,
@@ -174,7 +172,7 @@ pub enum LanguageModelCompletionError {
         error: serde_json::Error,
     },
 
-    // todo! remove - having From<anyhow::Error> discourages using proper error values
+    // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }

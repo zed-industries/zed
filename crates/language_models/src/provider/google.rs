@@ -425,7 +425,7 @@ impl LanguageModel for GoogleLanguageModel {
         let future = self.request_limiter.stream(async move {
             let response = request
                 .await
-                .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
+                .map_err(|err| LanguageModelCompletionError::from(err))?;
             Ok(GoogleEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -622,7 +622,7 @@ impl GoogleEventMapper {
                 futures::stream::iter(match event {
                     Some(Ok(event)) => self.map_event(event),
                     Some(Err(error)) => {
-                        vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))]
+                        vec![Err(LanguageModelCompletionError::from(error))]
                     }
                     None => vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))],
                 })

@@ -1000,9 +1000,7 @@ where
         .flat_map(move |event| {
             futures::stream::iter(match event {
                 Err(error) => {
-                    vec![Err(LanguageModelCompletionError::from(
-                        LanguageModelCompletionError::Other(error),
-                    ))]
+                    vec![Err(LanguageModelCompletionError::from(error))]
                 }
                 Ok(CloudCompletionEvent::Status(event)) => {
                     vec![Ok(LanguageModelCompletionEvent::StatusUpdate(event))]
