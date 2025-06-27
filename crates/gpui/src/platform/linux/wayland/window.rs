@@ -252,11 +252,11 @@ impl Drop for WaylandWindow {
 }
 
 impl WaylandWindow {
-    fn borrow(&self) -> Ref<WaylandWindowState> {
+    fn borrow(&self) -> Ref<'_, WaylandWindowState> {
         self.0.state.borrow()
     }
 
-    fn borrow_mut(&self) -> RefMut<WaylandWindowState> {
+    fn borrow_mut(&self) -> RefMut<'_, WaylandWindowState> {
         self.0.state.borrow_mut()
     }
 

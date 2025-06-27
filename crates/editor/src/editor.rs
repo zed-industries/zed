@@ -1256,7 +1256,7 @@ impl Default for SelectionHistoryMode {
 
 #[derive(Debug)]
 pub struct SelectionEffects {
-    nav_history: bool,
+    nav_history: Option<bool>,
     completions: bool,
     scroll: Option<Autoscroll>,
 }
@@ -1264,7 +1264,7 @@ pub struct SelectionEffects {
 impl Default for SelectionEffects {
     fn default() -> Self {
         Self {
-            nav_history: true,
+            nav_history: None,
             completions: true,
             scroll: Some(Autoscroll::fit()),
         }
@@ -1294,7 +1294,7 @@ impl SelectionEffects {
 
     pub fn nav_history(self, nav_history: bool) -> Self {
         Self {
-            nav_history,
+            nav_history: Some(nav_history),
             ..self
         }
     }
@@ -2909,11 +2909,12 @@ impl Editor {
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
 
-        if effects.nav_history {
+        if effects.nav_history.is_none() || effects.nav_history == Some(true) {
             self.push_to_nav_history(
                 *old_cursor_position,
                 Some(new_cursor_position.to_point(buffer)),
                 false,
+                effects.nav_history == Some(true),
                 cx,
             );
         }
@@ -3164,7 +3165,7 @@ impl Editor {
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
             state.effects.completions = effects.completions;
-            state.effects.nav_history |= effects.nav_history;
+            state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
             let (changed, result) = self.selections.change_with(cx, change);
             state.changed |= changed;
             return result;
@@ -3897,8 +3898,10 @@ impl Editor {
                             bracket_pair_matching_end = Some(pair.clone());
                         }
                     }
-                    if bracket_pair.is_none() && bracket_pair_matching_end.is_some() {
-                        bracket_pair = Some(bracket_pair_matching_end.unwrap());
+                    if let Some(end) = bracket_pair_matching_end
+                        && bracket_pair.is_none()
+                    {
+                        bracket_pair = Some(end);
                         is_bracket_pair_end = true;
                     }
                 }
@@ -13095,7 +13098,13 @@ impl Editor {
     }
 
     pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
-        self.push_to_nav_history(self.selections.newest_anchor().head(), None, false, cx);
+        self.push_to_nav_history(
+            self.selections.newest_anchor().head(),
+            None,
+            false,
+            true,
+            cx,
+        );
     }
 
     fn push_to_nav_history(
@@ -13103,6 +13112,7 @@ impl Editor {
         cursor_anchor: Anchor,
         new_position: Option<Point>,
         is_deactivate: bool,
+        always: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(nav_history) = self.nav_history.as_mut() {
@@ -13114,7 +13124,7 @@ impl Editor {
 
             if let Some(new_position) = new_position {
                 let row_delta = (new_position.row as i64 - cursor_position.row as i64).abs();
-                if row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA {
+                if row_delta == 0 || (row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA && !always) {
                     return;
                 }
             }
@@ -13381,7 +13391,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        self.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
+        self.unfold_ranges(
+            std::slice::from_ref(&range),
+            false,
+            auto_scroll.is_some(),
+            cx,
+        );
         self.change_selections(auto_scroll, window, cx, |s| {
             if replace_newest {
                 s.delete(s.newest_anchor().id);
@@ -14781,9 +14796,12 @@ impl Editor {
         let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
-        self.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-            s.select_anchor_ranges([start..end])
-        });
+        self.change_selections(
+            SelectionEffects::default().nav_history(true),
+            window,
+            cx,
+            |s| s.select_anchor_ranges([start..end]),
+        );
     }
 
     pub fn go_to_diagnostic(

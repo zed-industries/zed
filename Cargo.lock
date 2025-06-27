@@ -4156,6 +4156,7 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
+ "shlex",
  "task",
  "util",
  "workspace-hack",
@@ -14553,12 +14554,12 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smallvec",
- "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -16036,7 +16037,6 @@ dependencies = [
  "indexmap",
  "log",
  "palette",
- "rust-embed",
  "serde",
  "serde_json",
  "serde_json_lenient",

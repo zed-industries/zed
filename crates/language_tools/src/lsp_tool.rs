@@ -10,7 +10,7 @@ use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
-use ui::{Context, IconButtonShape, Indicator, Tooltip, Window, prelude::*};
+use ui::{Context, Indicator, Tooltip, Window, prelude::*};
 
 use workspace::{StatusItemView, Workspace};
 
@@ -181,16 +181,19 @@ impl LspPickerDelegate {
 
             buffer_servers.sort_by_key(|data| data.name().clone());
             other_servers.sort_by_key(|data| data.name().clone());
+
             let mut other_servers_start_index = None;
             let mut new_lsp_items =
                 Vec::with_capacity(buffer_servers.len() + other_servers.len() + 2);
+
             if !buffer_servers.is_empty() {
-                new_lsp_items.push(LspItem::Header(SharedString::new("Current Buffer")));
+                new_lsp_items.push(LspItem::Header(SharedString::new("This Buffer")));
                 new_lsp_items.extend(buffer_servers.into_iter().map(ServerData::into_lsp_item));
             }
+
             if !other_servers.is_empty() {
                 other_servers_start_index = Some(new_lsp_items.len());
-                new_lsp_items.push(LspItem::Header(SharedString::new("Other Active Servers")));
+                new_lsp_items.push(LspItem::Header(SharedString::new("Other Servers")));
                 new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
             }
 
@@ -346,11 +349,13 @@ impl PickerDelegate for LspPickerDelegate {
         let is_other_server = self
             .other_servers_start_index
             .map_or(false, |start| ix >= start);
+
         let server_binary_status;
         let server_health;
         let server_message;
         let server_id;
         let server_name;
+
         match self.items.get(ix)? {
             LspItem::WithHealthCheck(
                 language_server_id,
@@ -372,9 +377,14 @@ impl PickerDelegate for LspPickerDelegate {
             }
             LspItem::Header(header) => {
                 return Some(
-                    h_flex()
-                        .justify_center()
-                        .child(Label::new(header.clone()))
+                    div()
+                        .px_2p5()
+                        .mb_1()
+                        .child(
+                            Label::new(header.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
                         .into_any_element(),
                 );
             }
@@ -389,10 +399,12 @@ impl PickerDelegate for LspPickerDelegate {
         let can_stop = server_binary_status.is_none_or(|status| {
             matches!(status.status, BinaryStatus::None | BinaryStatus::Starting)
         });
+
         // TODO currently, Zed remote does not work well with the LSP logs
         // https://github.com/zed-industries/zed/issues/28557
         let has_logs = lsp_store.read(cx).as_local().is_some()
             && lsp_logs.read(cx).has_server_logs(&server_selector);
+
         let status_color = server_binary_status
             .and_then(|binary_status| match binary_status.status {
                 BinaryStatus::None => None,
@@ -414,27 +426,28 @@ impl PickerDelegate for LspPickerDelegate {
 
         Some(
             h_flex()
-                .w_full()
+                .px_1()
+                .gap_1()
                 .justify_between()
-                .gap_2()
                 .child(
                     h_flex()
                         .id("server-status-indicator")
+                        .px_2()
                         .gap_2()
                         .child(Indicator::dot().color(status_color))
                         .child(Label::new(server_name.0.clone()))
                         .when_some(server_message.clone(), |div, server_message| {
-                            div.tooltip(move |_, cx| Tooltip::simple(server_message.clone(), cx))
+                            div.tooltip(Tooltip::text(server_message.clone()))
                         }),
                 )
                 .child(
                     h_flex()
-                        .gap_1()
-                        .when(has_logs, |div| {
-                            div.child(
-                                IconButton::new("debug-language-server", IconName::MessageBubbles)
-                                    .icon_size(IconSize::XSmall)
-                                    .tooltip(|_, cx| Tooltip::simple("Debug Language Server", cx))
+                        .when(has_logs, |button_list| {
+                            button_list.child(
+                                IconButton::new("debug-language-server", IconName::LspDebug)
+                                    .icon_size(IconSize::Small)
+                                    .alpha(0.8)
+                                    .tooltip(Tooltip::text("Debug Language Server"))
                                     .on_click({
                                         let workspace = workspace.clone();
                                         let lsp_logs = lsp_logs.downgrade();
@@ -454,11 +467,12 @@ impl PickerDelegate for LspPickerDelegate {
                                     }),
                             )
                         })
-                        .when(can_stop, |div| {
-                            div.child(
-                                IconButton::new("stop-server", IconName::Stop)
+                        .when(can_stop, |button_list| {
+                            button_list.child(
+                                IconButton::new("stop-server", IconName::LspStop)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|_, cx| Tooltip::simple("Stop server", cx))
+                                    .alpha(0.8)
+                                    .tooltip(Tooltip::text("Stop Server"))
                                     .on_click({
                                         let lsp_store = lsp_store.downgrade();
                                         let server_selector = server_selector.clone();
@@ -479,9 +493,10 @@ impl PickerDelegate for LspPickerDelegate {
                             )
                         })
                         .child(
-                            IconButton::new("restart-server", IconName::Rerun)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(|_, cx| Tooltip::simple("Restart server", cx))
+                            IconButton::new("restart-server", IconName::LspRestart)
+                                .icon_size(IconSize::Small)
+                                .alpha(0.8)
+                                .tooltip(Tooltip::text("Restart Server"))
                                 .on_click({
                                     let state = self.state.clone();
                                     let workspace = workspace.clone();
@@ -558,7 +573,6 @@ impl PickerDelegate for LspPickerDelegate {
                                 }),
                         ),
                 )
-                .cursor_default()
                 .into_any_element(),
         )
     }
@@ -573,49 +587,28 @@ impl PickerDelegate for LspPickerDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        if self.items.is_empty() {
-            Some(
-                h_flex()
-                    .w_full()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        Button::new("stop-all-servers", "Stop all servers")
-                            .disabled(true)
-                            .on_click(move |_, _, _| {})
-                            .full_width(),
-                    )
-                    .into_any_element(),
-            )
-        } else {
-            let lsp_store = self.state.read(cx).lsp_store.clone();
-            Some(
-                h_flex()
-                    .w_full()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        Button::new("stop-all-servers", "Stop all servers")
-                            .on_click({
-                                move |_, _, cx| {
-                                    lsp_store
-                                        .update(cx, |lsp_store, cx| {
-                                            lsp_store.stop_all_language_servers(cx);
-                                        })
-                                        .ok();
-                                }
-                            })
-                            .full_width(),
-                    )
-                    .into_any_element(),
-            )
-        }
-    }
+        let lsp_store = self.state.read(cx).lsp_store.clone();
 
-    fn separators_after_indices(&self) -> Vec<usize> {
-        if self.items.is_empty() {
-            Vec::new()
-        } else {
-            vec![self.items.len() - 1]
-        }
+        Some(
+            div()
+                .p_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("stop-all-servers", "Stop All Servers")
+                        .disabled(self.items.is_empty())
+                        .on_click({
+                            move |_, _, cx| {
+                                lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.stop_all_language_servers(cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
+                )
+                .into_any_element(),
+        )
     }
 }
 
@@ -911,13 +904,12 @@ impl Render for LspTool {
         div().child(
             PickerPopoverMenu::new(
                 lsp_picker.clone(),
-                IconButton::new("zed-lsp-tool-button", IconName::Bolt)
+                IconButton::new("zed-lsp-tool-button", IconName::BoltFilledAlt)
                     .when_some(indicator, IconButton::indicator)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
-                move |_, cx| Tooltip::simple("Language servers", cx),
-                Corner::BottomRight,
+                move |_, cx| Tooltip::simple("Language Servers", cx),
+                Corner::BottomLeft,
                 cx,
             )
             .render(window, cx),

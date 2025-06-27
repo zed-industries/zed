@@ -7502,13 +7502,13 @@ async fn test_staging_random_hunks(
         if hunk.status().has_secondary_hunk() {
             log::info!("staging hunk at {row}");
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(true, &[hunk.clone()], &snapshot, true, cx);
+                diff.stage_or_unstage_hunks(true, std::slice::from_ref(hunk), &snapshot, true, cx);
             });
             hunk.secondary_status = SecondaryHunkRemovalPending;
         } else {
             log::info!("unstaging hunk at {row}");
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(false, &[hunk.clone()], &snapshot, true, cx);
+                diff.stage_or_unstage_hunks(false, std::slice::from_ref(hunk), &snapshot, true, cx);
             });
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }

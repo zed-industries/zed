@@ -52,7 +52,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
 ) -> Option<(String, bool, Match)> {
     let grid = term.grid();
     let link = grid.index(point).hyperlink();
-    let found_word = if link.is_some() {
+    let found_word = if let Some(ref url) = link {
         let mut min_index = point;
         loop {
             let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
@@ -73,7 +73,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             }
         }
 
-        let url = link.unwrap().uri().to_owned();
+        let url = url.uri().to_owned();
         let url_match = min_index..=max_index;
 
         Some((url, true, url_match))
