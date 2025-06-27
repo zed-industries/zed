@@ -217,7 +217,6 @@ impl Message {
         match segment {
             MessageSegment::Text(text) => self.push_text(text),
             MessageSegment::Thinking { text, signature } => self.push_thinking(text, signature),
-            MessageSegment::RedactedThinking(data) => self.push_redacted_thinking(data),
             MessageSegment::ToolUse {
                 name,
                 input,
@@ -248,10 +247,6 @@ impl Message {
         }
     }
 
-    pub fn push_redacted_thinking(&mut self, data: String) {
-        self.segments.push(MessageSegment::RedactedThinking(data));
-    }
-
     pub fn push_text(&mut self, text: String) {
         if let Some(MessageSegment::Text(segment)) = self.segments.last_mut() {
             segment.push_str(&text);
@@ -275,7 +270,6 @@ impl Message {
                     result.push_str(text);
                     result.push_str("\n</think>");
                 }
-                MessageSegment::RedactedThinking(_) => {}
                 MessageSegment::ToolUse { name, input, .. } => {
                     writeln!(&mut result, "<tool_use name=\"{}\">\n", name).ok();
                     result.push_str(
@@ -298,7 +292,6 @@ pub enum MessageSegment {
         text: String,
         signature: Option<String>,
     },
-    RedactedThinking(String),
     ToolUse {
         name: Arc<str>,
         input: serde_json::Value,
@@ -322,9 +315,6 @@ impl PartialEq for MessageSegment {
                     signature: signature_right,
                 },
             ) => text_left == text_right && signature_left == signature_right,
-            (Self::RedactedThinking(data_left), Self::RedactedThinking(data_right)) => {
-                data_left == data_right
-            }
             (
                 Self::ToolUse {
                     name: name_left,
@@ -359,7 +349,6 @@ impl MessageSegment {
         match self {
             Self::Text(text) => text.is_empty(),
             Self::Thinking { text, .. } => text.is_empty(),
-            Self::RedactedThinking(_) => false,
             Self::ToolUse { .. } => true,
         }
     }
@@ -846,7 +835,6 @@ impl Thread {
                     MessageSegment::Thinking { text: content, .. } => {
                         text.push_str(&format!("<think>{}</think>", content))
                     }
-                    MessageSegment::RedactedThinking(_) => {}
                     MessageSegment::ToolUse { .. } => {}
                 }
             }
@@ -1168,13 +1156,14 @@ impl ZedAgent {
                 segments: message
                     .segments
                     .into_iter()
-                    .map(|segment| match segment {
-                        SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
+                    .filter_map(|segment| match segment {
+                        SerializedMessageSegment::Text { text } => Some(MessageSegment::Text(text)),
                         SerializedMessageSegment::Thinking { text, signature } => {
-                            MessageSegment::Thinking { text, signature }
+                            Some(MessageSegment::Thinking { text, signature })
                         }
-                        SerializedMessageSegment::RedactedThinking { data } => {
-                            MessageSegment::RedactedThinking(data)
+                        SerializedMessageSegment::RedactedThinking { .. } => {
+                            // todo! migrate
+                            None
                         }
                     })
                     .collect(),
@@ -1786,11 +1775,6 @@ impl ZedAgent {
                                             signature: signature.clone(),
                                         }
                                     }
-                                    MessageSegment::RedactedThinking(data) => {
-                                        SerializedMessageSegment::RedactedThinking {
-                                            data: data.clone(),
-                                        }
-                                    }
                                     MessageSegment::ToolUse { .. } => {
                                         todo!("change serialization to use the agent's LanguageModelRequestMessages")
                                     }
@@ -2016,12 +2000,6 @@ impl ZedAgent {
                             assistant_message.push(MessageContent::Thinking { text, signature });
                         }
                         LanguageModelCompletionEvent::RedactedThinking { data } => {
-                            thread.update(cx, |thread, cx| {
-                                thread.push_assistant_message_segment(
-                                    MessageSegment::RedactedThinking(data.clone()),
-                                    cx,
-                                );
-                            })?;
                             assistant_message.push(MessageContent::RedactedThinking(data));
                         }
                         LanguageModelCompletionEvent::ToolUse(tool_use) => {
@@ -2490,11 +2468,6 @@ impl ZedAgent {
                             });
                         }
                     }
-                    MessageSegment::RedactedThinking(data) => {
-                        request_message
-                            .content
-                            .push(MessageContent::RedactedThinking(data.clone()));
-                    }
                     MessageSegment::ToolUse { .. } => {
                         todo!("remove this whole method")
                     }
@@ -2596,7 +2569,6 @@ impl ZedAgent {
                         .content
                         .push(MessageContent::Text(text.clone())),
                     MessageSegment::Thinking { .. } => {}
-                    MessageSegment::RedactedThinking(_) => {}
                     MessageSegment::ToolUse { .. } => {}
                 }
             }
@@ -2825,26 +2797,9 @@ impl ZedAgent {
                                 })
                             }
                             LanguageModelCompletionEvent::RedactedThinking {
-                                data
+                                ..
                             } => {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread.received_chunk();
-                                    if let Some(last_message) = thread.messages.last_mut() {
-                                        if last_message.role == Role::Assistant
-
-                                        && !this.tool_uses_by_assistant_message
-                                                .contains_key(&last_message.id)
-                                        {
-                                            last_message.push_redacted_thinking(data);
-                                        } else {
-                                            request_assistant_message_id =
-                                                Some(thread.insert_assistant_message(
-                                                    vec![MessageSegment::RedactedThinking(data)],
-                                                    cx,
-                                                ));
-                                        };
-                                    }
-                                })
+                                // no more readacted thinking, think in the open
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
                                 let last_assistant_message_id = request_assistant_message_id
@@ -4172,7 +4127,6 @@ impl ZedAgent {
                     MessageSegment::Thinking { text, .. } => {
                         writeln!(markdown, "<think>\n{}\n</think>\n", text)?
                     }
-                    MessageSegment::RedactedThinking(_) => {}
                     MessageSegment::ToolUse { .. } => {}
                 }
             }

@@ -165,7 +165,6 @@ impl RenderedMessage {
                         cx,
                     )))
             }
-            MessageSegment::RedactedThinking(_) => {}
             MessageSegment::ToolUse { .. } => {
                 todo!()
             }
