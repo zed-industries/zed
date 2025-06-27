@@ -217,17 +217,9 @@ impl Message {
         match segment {
             MessageSegment::Text(text) => self.push_text(text),
             MessageSegment::Thinking { text, signature } => self.push_thinking(text, signature),
-            MessageSegment::ToolUse {
-                name,
-                input,
-                card,
-                output,
-            } => self.segments.push(MessageSegment::ToolUse {
-                name,
-                input,
-                card,
-                output,
-            }),
+            MessageSegment::ToolUse(segment) => {
+                self.segments.push(MessageSegment::ToolUse(segment))
+            }
         }
     }
 
@@ -270,7 +262,7 @@ impl Message {
                     result.push_str(text);
                     result.push_str("\n</think>");
                 }
-                MessageSegment::ToolUse { name, input, .. } => {
+                MessageSegment::ToolUse(ToolUseSegment { name, input, .. }) => {
                     writeln!(&mut result, "<tool_use name=\"{}\">\n", name).ok();
                     result.push_str(
                         &serde_json::to_string_pretty(input)
@@ -286,61 +278,39 @@ impl Message {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum MessageSegment {
     Text(String),
     Thinking {
         text: String,
         signature: Option<String>,
     },
-    ToolUse {
-        name: Arc<str>,
-        input: serde_json::Value,
-        card: Option<AnyToolCard>,
-        output: Option<Result<LanguageModelToolResultContent, Arc<anyhow::Error>>>,
-    },
+    ToolUse(ToolUseSegment),
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolUseSegment {
+    pub name: Arc<str>,
+    pub input: serde_json::Value,
+    pub card: Option<AnyToolCard>,
+    pub output: Option<Result<LanguageModelToolResultContent, Arc<anyhow::Error>>>,
+    pub status: ToolUseStatus,
 }
 
 #[cfg(test)]
-impl PartialEq for MessageSegment {
+impl PartialEq for ToolUseSegment {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Text(text_left), Self::Text(text_right)) => text_left == text_right,
-            (
-                Self::Thinking {
-                    text: text_left,
-                    signature: signature_left,
-                },
-                Self::Thinking {
-                    text: text_right,
-                    signature: signature_right,
-                },
-            ) => text_left == text_right && signature_left == signature_right,
-            (
-                Self::ToolUse {
-                    name: name_left,
-                    input: input_left,
-                    card: card_left,
-                    output: output_left,
-                },
-                Self::ToolUse {
-                    name: name_right,
-                    input: input_right,
-                    card: card_right,
-                    output: output_right,
-                },
-            ) => {
-                name_left == name_right
-                    && input_left == input_right
-                    && card_left == card_right
-                    && output_left
-                        .as_ref()
-                        .map(|r| r.as_ref().map_err(|err| err.to_string()))
-                        == output_right
-                            .as_ref()
-                            .map(|r| r.as_ref().map_err(|err| err.to_string()))
-            }
-            _ => false,
-        }
+        self.name == other.name
+            && self.input == other.input
+            && self.card == other.card
+            && self
+                .output
+                .as_ref()
+                .map(|r| r.as_ref().map_err(|err| err.to_string()))
+                == other
+                    .output
+                    .as_ref()
+                    .map(|r| r.as_ref().map_err(|err| err.to_string()))
     }
 }
 
@@ -723,12 +693,13 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> usize {
         self.push_assistant_message_segment(
-            MessageSegment::ToolUse {
+            MessageSegment::ToolUse(ToolUseSegment {
                 name,
                 input,
                 card,
                 output: None,
-            },
+                status: ToolUseStatus::Pending,
+            }),
             cx,
         )
     }
@@ -737,13 +708,25 @@ impl Thread {
         &mut self,
         segment_index: usize,
         result: Result<LanguageModelToolResultContent>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(last_message) = self.messages.last_mut() {
             if last_message.role == Role::Assistant {
-                if let Some(MessageSegment::ToolUse { output, .. }) =
+                if let Some(MessageSegment::ToolUse(ToolUseSegment { output, status, .. })) =
                     last_message.segments.get_mut(segment_index)
                 {
+                    cx.emit(ThreadEvent::StreamedToolUse2 {
+                        message_id: last_message.id,
+                        segment_index,
+                    });
+
+                    *status = match &result {
+                        Ok(content) => {
+                            // todo!
+                            ToolUseStatus::Finished("".into())
+                        }
+                        Err(err) => ToolUseStatus::Error(err.to_string().into()),
+                    };
                     *output = Some(result.map_err(Arc::new));
                     return;
                 } else {
@@ -2004,6 +1987,7 @@ impl ZedAgent {
                         }
                         LanguageModelCompletionEvent::ToolUse(tool_use) => {
                             // todo!("update tool card")
+                            // todo! tool input streaming
                             if tool_use.is_input_complete {
                                 let mut pending_request = request.clone();
                                 pending_request.messages.push(assistant_message.clone());
@@ -4455,6 +4439,10 @@ pub enum ThreadEvent {
         ui_text: Arc<str>,
         input: serde_json::Value,
     },
+    StreamedToolUse2 {
+        message_id: MessageId,
+        segment_index: usize,
+    },
     MissingToolUse {
         tool_use_id: LanguageModelToolUseId,
         ui_text: Arc<str>,
@@ -4746,7 +4734,8 @@ mod tests {
                 &MessageSegment::Text("I'll do so".to_string())
             );
 
-            let MessageSegment::ToolUse { name, output, .. } = &thread.messages[1].segments[1]
+            let MessageSegment::ToolUse(ToolUseSegment { name, output, .. }) =
+                &thread.messages[1].segments[1]
             else {
                 panic!("Expected ToolUse segment")
             };

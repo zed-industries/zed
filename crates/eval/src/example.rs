@@ -250,6 +250,7 @@ impl ExampleContext {
                 | ThreadEvent::UsePendingTools { .. }
                 | ThreadEvent::CompletionCanceled => {}
                 ThreadEvent::ToolUseLimitReached => {}
+                ThreadEvent::StreamedToolUse2 { .. } => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,

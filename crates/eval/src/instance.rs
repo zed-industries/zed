@@ -1,3 +1,4 @@
+use agent::thread::ToolUseSegment;
 use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
@@ -850,13 +851,7 @@ fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>)
                     messages.push_str(&text);
                     messages.push_str("\n");
                 }
-                MessageSegment::RedactedThinking(items) => {
-                    messages.push_str(&format!(
-                        "**Redacted Thinking**: {} item(s)\n\n",
-                        items.len()
-                    ));
-                }
-                MessageSegment::ToolUse { name, input, .. } => {
+                MessageSegment::ToolUse(ToolUseSegment { name, input, .. }) => {
                     messages.push_str(&format!("**Tool Use**: {}\n\n", name));
                     messages.push_str(&format!("Input: {:?}\n\n", input));
                 }

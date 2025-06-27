@@ -5,7 +5,7 @@ use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
 use crate::{AgentPanel, ModelUsageContext};
-use agent::thread::Thread;
+use agent::thread::{Thread, ToolUseSegment};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
     ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary, ZedAgent,
@@ -15,7 +15,7 @@ use agent::{
 };
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
-use assistant_tool::ToolUseStatus;
+use assistant_tool::{AnyToolCard, ToolUseStatus, ToolWorkingSet};
 use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
@@ -31,7 +31,8 @@ use gpui::{
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelToolResultContent, LanguageModelToolUseId,
+    MessageContent, Role, StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{
@@ -51,8 +52,8 @@ use ui::{
     Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
     prelude::*,
 };
-use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
+use util::{ResultExt as _, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
 use zed_llm_client::CompletionIntent;
@@ -170,6 +171,83 @@ impl RenderedMessage {
             }
         };
     }
+
+    fn update_tool_call(
+        &mut self,
+        segment_index: usize,
+        segment: &ToolUseSegment,
+        tools: &Entity<ToolWorkingSet>,
+        cx: &mut App,
+    ) {
+        if let Some(card) = segment.card.clone() {
+            if self.segments.len() < segment_index {
+                self.segments.push(RenderedMessageSegment::ToolUseCard(
+                    segment.status.clone(),
+                    card,
+                ))
+            }
+            return;
+        }
+        if self.segments.len() < segment_index {
+            self.segments
+                .push(RenderedMessageSegment::ToolUseMarkdown(RenderedToolUse {
+                    label: cx.new(|cx| {
+                        Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                    }),
+                    input: cx.new(|cx| {
+                        Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                    }),
+                    output: cx.new(|cx| {
+                        Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+                    }),
+                }))
+        }
+
+        let RenderedMessageSegment::ToolUseMarkdown(rendered) = &self.segments[segment_index]
+        else {
+            panic!()
+        };
+
+        // todo!()
+        // let ui_label = if let Some(tool) = tools.read(cx).tool(segment.name, cx) {
+        //     if segment.is_input_complete {
+        //         tool.ui_text(segment.input).into()
+        //     } else {
+        //         tool.still_streaming_ui_text(segment.input).into()
+        //     }
+        // } else {
+        //     format!("Unknown tool {:?}", segment.name).into()
+        // };
+
+        rendered.label.update(cx, |this, cx| {
+            this.replace(segment.name.clone(), cx);
+        });
+        rendered.input.update(cx, |this, cx| {
+            this.replace(
+                MarkdownCodeBlock {
+                    tag: "json",
+                    text: &serde_json::to_string_pretty(&segment.input).unwrap_or_default(),
+                }
+                .to_string(),
+                cx,
+            );
+        });
+
+        rendered.output.update(cx, |this, cx| {
+            match &segment.output {
+                Some(Ok(LanguageModelToolResultContent::Text(text))) => {
+                    //
+                }
+                Some(Ok(LanguageModelToolResultContent::Image(image))) => {
+                    //
+                }
+                Some(Err(error)) => {
+                    //
+                }
+                None => todo!(),
+            }
+        });
+    }
 }
 
 enum RenderedMessageSegment {
@@ -178,6 +256,8 @@ enum RenderedMessageSegment {
         scroll_handle: ScrollHandle,
     },
     Text(Entity<Markdown>),
+    ToolUseCard(ToolUseStatus, AnyToolCard),
+    ToolUseMarkdown(RenderedToolUse),
 }
 
 fn parse_markdown(
@@ -1028,6 +1108,25 @@ impl ActiveThread {
                     rendered_message.append_thinking(text, cx);
                 }
             }
+            ThreadEvent::StreamedToolUse2 {
+                message_id,
+                segment_index,
+            } => {
+                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
+                    self.thread.update(cx, |thread, cx| {
+                        if let Some(message) = thread.message(*message_id) {
+                            let MessageSegment::ToolUse(tool_use) =
+                                &message.segments[*segment_index]
+                            else {
+                                debug_panic!("segment index mismatch");
+                                return;
+                            };
+                            let tools = self.agent.read(cx).tools().clone();
+                            rendered_message.update_tool_call(*segment_index, tool_use, &tools, cx);
+                        }
+                    })
+                }
+            }
             ThreadEvent::MessageAdded(message_id) => {
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                     thread.message(*message_id).map(|message| {
@@ -1843,6 +1942,7 @@ impl ActiveThread {
             .map(|context| AddedContext::new_attached(context, configured_model.as_ref(), cx))
             .collect::<Vec<_>>();
 
+        // let tool_uses = message.segments
         let tool_uses = agent.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
 
@@ -2001,6 +2101,9 @@ impl ActiveThread {
         };
 
         let message_is_empty = message.should_display_content();
+        let message_is_ui_only = message.ui_only;
+        let message_creases = message.creases.clone();
+        let role = message.role;
         let has_content = !message_is_empty || !added_context.is_empty();
 
         let message_content = has_content.then(|| {
@@ -2043,10 +2146,10 @@ impl ActiveThread {
             }
         });
 
-        let styled_message = if message.ui_only {
+        let styled_message = if message_is_ui_only {
             self.render_ui_notification(message_content, ix, cx)
         } else {
-            match message.role {
+            match role {
                 Role::User => {
                     let colors = cx.theme().colors();
                     v_flex()
@@ -2151,7 +2254,6 @@ impl ActiveThread {
                                         }),
                                 )
                                 .on_click(cx.listener({
-                                    let message_creases = message.creases.clone();
                                     move |this, _, window, cx| {
                                         if let Some(message_text) =
                                             this.agent.read(cx).message(message_id, cx).and_then(|message| {
@@ -2388,8 +2490,8 @@ impl ActiveThread {
         rendered_message: &RenderedMessage,
         has_tool_uses: bool,
         workspace: WeakEntity<Workspace>,
-        window: &Window,
-        cx: &Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_last_message = self.messages.last() == Some(&message_id);
         let is_generating = self.agent.read(cx).is_generating();
@@ -2521,6 +2623,23 @@ impl ActiveThread {
                                 }))
                                 .into_any_element()
                         }
+                        RenderedMessageSegment::ToolUseCard(status, card) => {
+                            card.render(status, window, workspace.clone(), cx)
+                        }
+                        RenderedMessageSegment::ToolUseMarkdown(rendered) => v_flex()
+                            .child(MarkdownElement::new(
+                                rendered.label.clone(),
+                                default_markdown_style(window, cx),
+                            ))
+                            .child(MarkdownElement::new(
+                                rendered.input.clone(),
+                                default_markdown_style(window, cx),
+                            ))
+                            .child(MarkdownElement::new(
+                                rendered.output.clone(),
+                                default_markdown_style(window, cx),
+                            ))
+                            .into_any(), // todo!()
                     },
                 ),
             )
