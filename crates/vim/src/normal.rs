@@ -24,10 +24,10 @@ use crate::{
 };
 use collections::BTreeSet;
 use convert::ConvertTarget;
-use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use editor::scroll::Autoscroll;
+use editor::{Anchor, SelectionEffects};
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal, ToPoint};
@@ -358,13 +358,18 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
-                    motion
-                        .move_point(map, cursor, goal, times, &text_layout_details)
-                        .unwrap_or((cursor, goal))
-                })
-            })
+            editor.change_selections(
+                SelectionEffects::default().nav_history(motion.push_to_jump_list()),
+                window,
+                cx,
+                |s| {
+                    s.move_cursors_with(|map, cursor, goal| {
+                        motion
+                            .move_point(map, cursor, goal, times, &text_layout_details)
+                            .unwrap_or((cursor, goal))
+                    })
+                },
+            )
         });
     }
 
@@ -1798,5 +1803,36 @@ mod test {
             The quick brown
             fox jˇumps over
             the lazy dog"});
+    }
+
+    #[gpui::test]
+    async fn test_jump_list(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇfn a() { }
+
+
+
+
+
+            fn b() { }
+
+
+
+
+
+            fn b() { }"})
+            .await;
+        cx.simulate_shared_keystrokes("3 }").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-o").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-i").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("1 1 k").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("ctrl-o").await;
+        cx.shared_state().await.assert_matches();
     }
 }
