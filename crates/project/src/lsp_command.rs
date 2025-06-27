@@ -107,9 +107,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     }
 
     /// When false, `to_lsp_params_or_response` default implementation will return the default response.
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
-        true
-    }
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool;
 
     fn to_lsp(
         &self,
@@ -275,6 +273,16 @@ impl LspCommand for PrepareRename {
 
     fn display_name(&self) -> &str {
         "Prepare rename"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .rename_provider
+            .is_some_and(|capability| match capability {
+                OneOf::Left(enabled) => enabled,
+                OneOf::Right(options) => options.prepare_provider.unwrap_or(false),
+            })
     }
 
     fn to_lsp_params_or_response(
@@ -457,6 +465,16 @@ impl LspCommand for PerformRename {
 
     fn display_name(&self) -> &str {
         "Rename"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .rename_provider
+            .is_some_and(|capability| match capability {
+                OneOf::Left(enabled) => enabled,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -782,6 +800,16 @@ impl LspCommand for GetImplementation {
 
     fn display_name(&self) -> &str {
         "Get implementation"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .implementation_provider
+            .is_some_and(|capability| match capability {
+                lsp::ImplementationProviderCapability::Simple(enabled) => enabled,
+                lsp::ImplementationProviderCapability::Options(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -2127,6 +2155,13 @@ impl LspCommand for GetCompletions {
 
     fn display_name(&self) -> &str {
         "Get completion"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .completion_provider
+            .is_some()
     }
 
     fn to_lsp(
