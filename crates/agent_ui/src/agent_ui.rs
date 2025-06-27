@@ -26,7 +26,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use agent::{ZedAgent, ThreadId};
+use agent::{ThreadId, ZedAgent};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;

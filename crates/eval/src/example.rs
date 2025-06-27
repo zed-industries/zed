@@ -360,7 +360,7 @@ impl ExampleContext {
     pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
         self.agent_thread
             .read_with(&self.app, |thread, cx| {
-                let action_log = thread.action_log().read(cx);
+                let action_log = thread.action_log(cx).read(cx);
                 HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
                     |(buffer, diff)| {
                         let snapshot = buffer.read(cx).snapshot();

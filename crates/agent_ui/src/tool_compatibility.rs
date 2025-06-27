@@ -1,4 +1,4 @@
-use agent::{ZedAgent, ThreadEvent};
+use agent::{ThreadEvent, ZedAgent};
 use assistant_tool::{Tool, ToolSource};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};

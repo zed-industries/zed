@@ -791,7 +791,7 @@ impl ActiveThread {
             text_thread_store,
             context_store,
             agent: agent.clone(),
-            thread,
+            thread: thread.clone(),
             project,
             workspace,
             save_thread_task: None,
@@ -816,7 +816,7 @@ impl ActiveThread {
         };
 
         // todo! hold on to thread entity and get messages directly
-        for message in agent.read(cx).messages(cx).cloned().collect::<Vec<_>>() {
+        for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
             let rendered_message = RenderedMessage::from_segments(
                 &message.segments,
                 this.language_registry.clone(),

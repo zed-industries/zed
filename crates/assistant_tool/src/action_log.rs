@@ -495,6 +495,10 @@ impl ActionLog {
         cx.notify();
     }
 
+    pub fn keep_buffer_edits(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.keep_edits_in_range(buffer, Anchor::MIN..Anchor::MAX, cx);
+    }
+
     pub fn keep_edits_in_range(
         &mut self,
         buffer: Entity<Buffer>,
@@ -553,6 +557,19 @@ impl ActionLog {
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
         }
+    }
+
+    pub fn reject_all_edits(&mut self, cx: &mut Context<Self>) {
+        let changed_buffers = self.changed_buffers(cx);
+        for (buffer, _) in changed_buffers {
+            self.reject_edits_in_ranges(buffer, vec![Anchor::MIN..Anchor::MAX], cx)
+                .detach();
+        }
+    }
+
+    pub fn reject_buffer_edits(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.reject_edits_in_ranges(buffer, vec![Anchor::MIN..Anchor::MAX], cx)
+            .detach()
     }
 
     pub fn reject_edits_in_ranges(

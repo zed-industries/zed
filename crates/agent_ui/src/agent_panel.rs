@@ -524,7 +524,8 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
+        let agent = thread_store.update(cx, |this, cx| this.create_thread(cx));
+        let thread = agent.read(cx).thread().clone();
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
@@ -546,13 +547,13 @@ impl AgentPanel {
                 prompt_store.clone(),
                 thread_store.downgrade(),
                 context_store.downgrade(),
-                thread.clone(),
+                agent.clone(),
                 window,
                 cx,
             )
         });
 
-        let thread_id = thread.read(cx).id(cx).clone();
+        let thread_id = thread.read(cx).id().clone();
         let history_store = cx.new(|cx| {
             HistoryStore::new(
                 thread_store.clone(),
@@ -566,7 +567,7 @@ impl AgentPanel {
 
         let active_thread = cx.new(|cx| {
             ActiveThread::new(
-                thread.clone(),
+                agent.clone(),
                 thread_store.clone(),
                 context_store.clone(),
                 message_editor_context_store.clone(),
@@ -607,7 +608,7 @@ impl AgentPanel {
             }
         };
 
-        AgentDiff::set_active_thread(&workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&workspace, &agent, window, cx);
 
         let weak_panel = weak_self.clone();
 
@@ -753,7 +754,7 @@ impl AgentPanel {
             None
         };
 
-        let thread = self
+        let agent = self
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
 
@@ -786,7 +787,7 @@ impl AgentPanel {
 
         let active_thread = cx.new(|cx| {
             ActiveThread::new(
-                thread.clone(),
+                agent.clone(),
                 self.thread_store.clone(),
                 self.context_store.clone(),
                 context_store.clone(),
@@ -806,7 +807,7 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
-                thread.clone(),
+                agent.clone(),
                 window,
                 cx,
             )
@@ -823,7 +824,7 @@ impl AgentPanel {
         let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
 
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, &agent, window, cx);
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -971,7 +972,7 @@ impl AgentPanel {
 
     pub(crate) fn open_thread(
         &mut self,
-        thread: Entity<ZedAgent>,
+        agent: Entity<ZedAgent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -984,7 +985,7 @@ impl AgentPanel {
 
         let active_thread = cx.new(|cx| {
             ActiveThread::new(
-                thread.clone(),
+                agent.clone(),
                 self.thread_store.clone(),
                 self.context_store.clone(),
                 context_store.clone(),
@@ -1003,7 +1004,7 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
-                thread.clone(),
+                agent.clone(),
                 window,
                 cx,
             )
@@ -1012,7 +1013,7 @@ impl AgentPanel {
 
         let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, &agent, window, cx);
     }
 
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {

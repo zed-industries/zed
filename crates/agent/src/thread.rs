@@ -432,7 +432,6 @@ pub struct ZedAgent {
     tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
 
-    action_log: Entity<ActionLog>,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
@@ -460,6 +459,7 @@ pub struct Thread {
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     project: Entity<Project>,
+    action_log: Entity<ActionLog>,
     updated_at: DateTime<Utc>,
 }
 
@@ -710,6 +710,14 @@ impl Thread {
         })
     }
 
+    pub fn action_log(&self) -> Entity<ActionLog> {
+        self.action_log.clone()
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
     fn insert_checkpoint(&mut self, checkpoint: ThreadCheckpoint, cx: &mut Context<Self>) {
         self.checkpoints_by_message
             .insert(checkpoint.message_id, checkpoint);
@@ -782,7 +790,7 @@ impl ZedAgent {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
-        let thread = cx.new(|_| Thread {
+        let thread = cx.new(|cx| Thread {
             summary: ThreadSummary::Pending,
             pending_checkpoint: None,
             next_message_id: MessageId(0),
@@ -791,6 +799,7 @@ impl ZedAgent {
             checkpoints_by_message: HashMap::default(),
             last_restore_checkpoint: None,
             updated_at: Utc::now(),
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
             project: project.clone(),
         });
 
@@ -819,7 +828,6 @@ impl ZedAgent {
             pending_tool_uses_by_id: HashMap::default(),
             tool_result_cards: HashMap::default(),
             tool_use_metadata_by_id: HashMap::default(),
-            action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
                 cx.foreground_executor()
@@ -840,6 +848,10 @@ impl ZedAgent {
             configured_model,
             profile: AgentProfile::new(profile_id, tools),
         }
+    }
+
+    pub fn action_log(&self, cx: &App) -> Entity<ActionLog> {
+        self.thread().read(cx).action_log().clone()
     }
 
     pub fn thread(&self) -> &Entity<Thread> {
@@ -955,7 +967,7 @@ impl ZedAgent {
             })
             .collect();
 
-        let thread = cx.new(|_| Thread {
+        let thread = cx.new(|cx| Thread {
             id,
             next_message_id,
             messages,
@@ -964,6 +976,7 @@ impl ZedAgent {
             last_restore_checkpoint: None,
             project: project.clone(),
             updated_at: serialized.updated_at,
+            action_log: cx.new(|_| ActionLog::new(project.clone())),
             summary: ThreadSummary::Ready(serialized.summary),
         });
 
@@ -988,7 +1001,6 @@ impl ZedAgent {
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
-            action_log: cx.new(|_| ActionLog::new(project.clone())),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
@@ -1441,11 +1453,15 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) -> MessageId {
         if !loaded_context.referenced_buffers.is_empty() {
-            self.action_log.update(cx, |log, cx| {
-                for buffer in loaded_context.referenced_buffers {
-                    log.buffer_read(buffer, cx);
-                }
-            });
+            self.thread
+                .read(cx)
+                .action_log
+                .clone()
+                .update(cx, |log, cx| {
+                    for buffer in loaded_context.referenced_buffers {
+                        log.buffer_read(buffer, cx);
+                    }
+                });
         }
 
         let message_id = self.thread.update(cx, |thread, cx| {
@@ -3007,7 +3023,7 @@ impl ZedAgent {
             input,
             request,
             self.project.clone(),
-            self.action_log.clone(),
+            self.thread.read(cx).action_log(),
             model,
             window,
             cx,
@@ -3437,37 +3453,6 @@ impl ZedAgent {
         }
 
         Ok(String::from_utf8_lossy(&markdown).to_string())
-    }
-
-    pub fn keep_edits_in_range(
-        &mut self,
-        buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
-        cx: &mut Context<Self>,
-    ) {
-        self.action_log.update(cx, |action_log, cx| {
-            action_log.keep_edits_in_range(buffer, buffer_range, cx)
-        });
-    }
-
-    pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
-        self.action_log
-            .update(cx, |action_log, cx| action_log.keep_all_edits(cx));
-    }
-
-    pub fn reject_edits_in_ranges(
-        &mut self,
-        buffer: Entity<language::Buffer>,
-        buffer_ranges: Vec<Range<language::Anchor>>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        self.action_log.update(cx, |action_log, cx| {
-            action_log.reject_edits_in_ranges(buffer, buffer_ranges, cx)
-        })
-    }
-
-    pub fn action_log(&self) -> &Entity<ActionLog> {
-        &self.action_log
     }
 
     pub fn project(&self) -> &Entity<Project> {
