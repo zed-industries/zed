@@ -1720,6 +1720,11 @@
     //     }
     // }
   },
+  // Common language server settings.
+  "global_lsp_settings": {
+    // Whether to show the LSP servers button in the status bar.
+    "button": true
+  },
   // Jupyter settings
   "jupyter": {
     "enabled": true
@@ -1734,7 +1739,6 @@
     "default_mode": "normal",
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
-    "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},

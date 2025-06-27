@@ -364,9 +364,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

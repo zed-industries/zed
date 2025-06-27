@@ -12,7 +12,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
 use menu;
 use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
@@ -28,6 +28,7 @@ use ui::{ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
 
+use crate::OpenAiSettingsContent;
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "openai";
@@ -37,7 +38,6 @@ const PROVIDER_NAME: &str = "OpenAI";
 pub struct OpenAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -344,7 +344,12 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.max_output_tokens(),
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
@@ -356,10 +361,11 @@ impl LanguageModel for OpenAiLanguageModel {
 
 pub fn into_open_ai(
     request: LanguageModelRequest,
-    model: &Model,
+    model_id: &str,
+    supports_parallel_tool_calls: bool,
     max_output_tokens: Option<u64>,
 ) -> open_ai::Request {
-    let stream = !model.id().starts_with("o1-");
+    let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
     for message in request.messages {
@@ -435,13 +441,13 @@ pub fn into_open_ai(
     }
 
     open_ai::Request {
-        model: model.id().into(),
+        model: model_id.into(),
         messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_completion_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+        parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
         } else {
@@ -528,11 +534,20 @@ impl OpenAiEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
         let Some(choice) = event.choices.first() else {
-            return Vec::new();
+            return events;
         };
 
-        let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
@@ -788,30 +803,13 @@ impl ConfigurationView {
         if !api_url.is_empty() && api_url != effective_current_url {
             let fs = <dyn Fs>::global(cx);
             update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
-                use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
-
-                if settings.openai.is_none() {
-                    settings.openai = Some(OpenAiSettingsContent::Versioned(
-                        VersionedOpenAiSettingsContent::V1(
-                            crate::settings::OpenAiSettingsContentV1 {
-                                api_url: Some(api_url.clone()),
-                                available_models: None,
-                            },
-                        ),
-                    ));
+                if let Some(settings) = settings.openai.as_mut() {
+                    settings.api_url = Some(api_url.clone());
                 } else {
-                    if let Some(openai) = settings.openai.as_mut() {
-                        match openai {
-                            OpenAiSettingsContent::Versioned(versioned) => match versioned {
-                                VersionedOpenAiSettingsContent::V1(v1) => {
-                                    v1.api_url = Some(api_url.clone());
-                                }
-                            },
-                            OpenAiSettingsContent::Legacy(legacy) => {
-                                legacy.api_url = Some(api_url.clone());
-                            }
-                        }
-                    }
+                    settings.openai = Some(OpenAiSettingsContent {
+                        api_url: Some(api_url.clone()),
+                        available_models: None,
+                    });
                 }
             });
         }
@@ -825,19 +823,8 @@ impl ConfigurationView {
         });
         let fs = <dyn Fs>::global(cx);
         update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-            use crate::settings::{OpenAiSettingsContent, VersionedOpenAiSettingsContent};
-
-            if let Some(openai) = settings.openai.as_mut() {
-                match openai {
-                    OpenAiSettingsContent::Versioned(versioned) => match versioned {
-                        VersionedOpenAiSettingsContent::V1(v1) => {
-                            v1.api_url = None;
-                        }
-                    },
-                    OpenAiSettingsContent::Legacy(legacy) => {
-                        legacy.api_url = None;
-                    }
-                }
+            if let Some(settings) = settings.openai.as_mut() {
+                settings.api_url = None;
             }
         });
         cx.notify();

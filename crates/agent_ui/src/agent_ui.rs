@@ -4,6 +4,7 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -11,7 +12,6 @@ mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod max_mode_tooltip;
 mod message_editor;
 mod profile_selector;
 mod slash_command;
@@ -48,7 +48,7 @@ pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub use text_thread_editor::AgentPanelDelegate;
+pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
@@ -157,6 +157,7 @@ pub fn init(
     agent::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
+    TextThreadEditor::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

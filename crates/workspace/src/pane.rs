@@ -2784,6 +2784,16 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
+        if self.pinned_tab_count > tab_count {
+            log::warn!(
+                "Pinned tab count ({}) exceeds actual tab count ({}). \
+                This should not happen. If possible, add reproduction steps, \
+                in a comment, to https://github.com/zed-industries/zed/issues/33342",
+                self.pinned_tab_count,
+                tab_count
+            );
+            self.pinned_tab_count = tab_count;
+        }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
         TabBar::new("tab_bar")

@@ -534,12 +534,15 @@ message DiagnosticSummary {
 message UpdateLanguageServer {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    optional string server_name = 8;
     oneof variant {
         LspWorkStart work_start = 3;
         LspWorkProgress work_progress = 4;
         LspWorkEnd work_end = 5;
         LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
+        StatusUpdate status_update = 9;
+        RegisteredForBuffer registered_for_buffer = 10;
     }
 }
 
@@ -565,6 +568,34 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message StatusUpdate {
+    optional string message = 1;
+    oneof status {
+        ServerBinaryStatus binary = 2;
+        ServerHealth health = 3;
+    }
+}
+
+enum ServerHealth {
+    OK = 0;
+    WARNING = 1;
+    ERROR = 2;
+}
+
+enum ServerBinaryStatus {
+    NONE = 0;
+    CHECKING_FOR_UPDATE = 1;
+    DOWNLOADING = 2;
+    STARTING = 3;
+    STOPPING = 4;
+    STOPPED = 5;
+    FAILED = 6;
+}
+
+message RegisteredForBuffer {
+    string buffer_abs_path = 1;
+}
 
 message LanguageServerLog {
     uint64 project_id = 1;
@@ -593,6 +624,7 @@ message ApplyCodeActionKindResponse {
 message RegisterBufferWithLanguageServers {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+    repeated LanguageServerSelector only_servers = 3;
 }
 
 enum FormatTrigger {
@@ -730,14 +762,25 @@ message MultiLspQuery {
 
 message AllLanguageServers {}
 
+message LanguageServerSelector {
+    oneof selector {
+        uint64 server_id = 1;
+        string name = 2;
+    }
+}
+
 message RestartLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
+    repeated LanguageServerSelector only_servers = 3;
+    bool all = 4;
 }
 
 message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
+    repeated LanguageServerSelector also_servers = 3;
+    bool all = 4;
 }
 
 message MultiLspQueryResponse {

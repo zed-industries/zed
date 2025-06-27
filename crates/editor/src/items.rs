@@ -778,7 +778,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, true, cx);
+        self.push_to_nav_history(selection.head(), None, true, false, cx);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
