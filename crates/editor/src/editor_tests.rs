@@ -4335,48 +4335,60 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
-        «
-        abc                 // No indentation
-           abc              // 1 tab
-              abc          // 2 tabs
-            abc             // Tab followed by space
-           abc              // Space followed by tab (3 spaces should be the result)
-                       abc   // Mixed indentation (tab conversion depends on the column)
-           abc         // Already space indented
-           
-           abc\tdef          // Only the leading tab is manipulatedˇ»
-    "});
+    cx.assert_editor_state(
+        indoc! {"
+            «
+            abc                 // No indentation
+               abc              // 1 tab
+                  abc          // 2 tabs
+                abc             // Tab followed by space
+               abc              // Space followed by tab (3 spaces should be the result)
+                           abc   // Mixed indentation (tab conversion depends on the column)
+               abc         // Already space indented
+               ·
+               abc\tdef          // Only the leading tab is manipulatedˇ»
+        "}
+        .replace("·", "")
+        .as_str(), // · used as placeholder to prevent format-on-save from removing whitespace
+    );
 
     // Test on just a few lines, the others should remain unchanged
     // Only lines (3, 5, 10, 11) should change
-    cx.set_state(indoc! {"
-        
-        abc                 // No indentation
-        \tabcˇ               // 1 tab
-        \t\tabc             // 2 tabs
-        \t abcˇ              // Tab followed by space
-         \tabc              // Space followed by tab (3 spaces should be the result)
-        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
-           abc              // Already space indented
-        «\t
-        \tabc\tdef          // Only the leading tab is manipulatedˇ»
-    "});
+    cx.set_state(
+        indoc! {"
+            ·
+            abc                 // No indentation
+            \tabcˇ               // 1 tab
+            \t\tabc             // 2 tabs
+            \t abcˇ              // Tab followed by space
+             \tabc              // Space followed by tab (3 spaces should be the result)
+            \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+               abc              // Already space indented
+            «\t
+            \tabc\tdef          // Only the leading tab is manipulatedˇ»
+        "}
+        .replace("·", "")
+        .as_str(), // · used as placeholder to prevent format-on-save from removing whitespace
+    );
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
-        
-        abc                 // No indentation
-        «   abc               // 1 tabˇ»
-        \t\tabc             // 2 tabs
-        «    abc              // Tab followed by spaceˇ»
-         \tabc              // Space followed by tab (3 spaces should be the result)
-        \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
-           abc              // Already space indented
-        «   
-           abc\tdef          // Only the leading tab is manipulatedˇ»
-    "});
+    cx.assert_editor_state(
+        indoc! {"
+            ·
+            abc                 // No indentation
+            «   abc               // 1 tabˇ»
+            \t\tabc             // 2 tabs
+            «    abc              // Tab followed by spaceˇ»
+             \tabc              // Space followed by tab (3 spaces should be the result)
+            \t \t  \t   \tabc   // Mixed indentation (tab conversion depends on the column)
+               abc              // Already space indented
+            «   ·
+               abc\tdef          // Only the leading tab is manipulatedˇ»
+        "}
+        .replace("·", "")
+        .as_str(), // · used as placeholder to prevent format-on-save from removing whitespace
+    );
 
     // SINGLE SELECTION
     // Ln.1 "«" tests empty lines
@@ -4396,18 +4408,22 @@ async fn test_convert_indentation_to_spaces(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
-        «
-        abc                 // No indentation
-           abc               // 1 tab
-              abc             // 2 tabs
-            abc              // Tab followed by space
-           abc              // Space followed by tab (3 spaces should be the result)
-                       abc   // Mixed indentation (tab conversion depends on the column)
-           abc              // Already space indented
-           
-           abc\tdef          // Only the leading tab is manipulatedˇ»
-    "});
+    cx.assert_editor_state(
+        indoc! {"
+            «
+            abc                 // No indentation
+               abc               // 1 tab
+                  abc             // 2 tabs
+                abc              // Tab followed by space
+               abc              // Space followed by tab (3 spaces should be the result)
+                           abc   // Mixed indentation (tab conversion depends on the column)
+               abc              // Already space indented
+               ·
+               abc\tdef          // Only the leading tab is manipulatedˇ»
+        "}
+        .replace("·", "")
+        .as_str(), // · used as placeholder to prevent format-on-save from removing whitespace
+    );
 }
 
 #[gpui::test]
@@ -4455,39 +4471,47 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
 
     // Test on just a few lines, the other should remain unchanged
     // Only lines (4, 8, 11, 12) should change
-    cx.set_state(indoc! {"
-        
-        abc                 // No indentation
-         abc                // 1 space (< 3 so dont convert)
-          abc               // 2 spaces (< 3 so dont convert)
-        «   abc              // 3 spaces (convert)ˇ»
-             abc            // 5 spaces (1 tab + 2 spaces)
-        \t\t\tabc           // Already tab indented
-        \t abc              // Tab followed by space
-         \tabc      ˇ        // Space followed by tab (should be consumed due to tab)
-           \t\t  \tabc      // Mixed indentation
-        \t \t  \t   \tabc   // Mixed indentation
-           \t  \tˇ
-        «   abc   \t         // Only the leading spaces should be convertedˇ»
-    "});
+    cx.set_state(
+        indoc! {"
+            ·
+            abc                 // No indentation
+             abc                // 1 space (< 3 so dont convert)
+              abc               // 2 spaces (< 3 so dont convert)
+            «   abc              // 3 spaces (convert)ˇ»
+                 abc            // 5 spaces (1 tab + 2 spaces)
+            \t\t\tabc           // Already tab indented
+            \t abc              // Tab followed by space
+             \tabc      ˇ        // Space followed by tab (should be consumed due to tab)
+               \t\t  \tabc      // Mixed indentation
+            \t \t  \t   \tabc   // Mixed indentation
+               \t  \tˇ
+            «   abc   \t         // Only the leading spaces should be convertedˇ»
+        "}
+        .replace("·", "")
+        .as_str(), // · used as placeholder to prevent format-on-save from removing whitespace
+    );
     cx.update_editor(|e, window, cx| {
         e.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
     });
-    cx.assert_editor_state(indoc! {"
-        
-        abc                 // No indentation
-         abc                // 1 space (< 3 so dont convert)
-          abc               // 2 spaces (< 3 so dont convert)
-        «\tabc              // 3 spaces (convert)ˇ»
-             abc            // 5 spaces (1 tab + 2 spaces)
-        \t\t\tabc           // Already tab indented
-        \t abc              // Tab followed by space
-        «\tabc              // Space followed by tab (should be consumed due to tab)ˇ»
-           \t\t  \tabc      // Mixed indentation
-        \t \t  \t   \tabc   // Mixed indentation
-        «\t\t\t
-        \tabc   \t         // Only the leading spaces should be convertedˇ»
-    "});
+    cx.assert_editor_state(
+        indoc! {"
+            ·
+            abc                 // No indentation
+             abc                // 1 space (< 3 so dont convert)
+              abc               // 2 spaces (< 3 so dont convert)
+            «\tabc              // 3 spaces (convert)ˇ»
+                 abc            // 5 spaces (1 tab + 2 spaces)
+            \t\t\tabc           // Already tab indented
+            \t abc              // Tab followed by space
+            «\tabc              // Space followed by tab (should be consumed due to tab)ˇ»
+               \t\t  \tabc      // Mixed indentation
+            \t \t  \t   \tabc   // Mixed indentation
+            «\t\t\t
+            \tabc   \t         // Only the leading spaces should be convertedˇ»
+        "}
+        .replace("·", "")
+        .as_str(), // · used as placeholder to prevent format-on-save from removing whitespace
+    );
 
     // SINGLE SELECTION
     // Ln.1 "«" tests empty lines
