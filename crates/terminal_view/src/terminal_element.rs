@@ -341,7 +341,23 @@ impl TerminalElement {
                 batched_runs.push(batch);
             }
 
+            let mut previous_cell_had_extras = false;
+
             for cell in line {
+                // Skip wide character spacers - they're just placeholders for the second cell of wide characters
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+
+                // Skip spaces that follow cells with extras (emoji variation sequences)
+                if cell.c == ' ' && previous_cell_had_extras {
+                    previous_cell_had_extras = false;
+                    continue;
+                }
+
+                // Update tracking for next iteration
+                previous_cell_had_extras = cell.extra.is_some();
+
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
                 if cell.flags.contains(Flags::INVERSE) {
