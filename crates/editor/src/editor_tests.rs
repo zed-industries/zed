@@ -5183,6 +5183,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         None,
     ));
 
+    // Test basic rewrapping of a single long comment line into multiple properly wrapped lines
     assert_rewrap(
         indoc! {"
             // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
@@ -5295,7 +5296,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that rewrapping is ignored outside of comments in most languages.
+    // Test that rewrapping only affects comments and not regular code, even if code is very long
     assert_rewrap(
         indoc! {"
             /// Adds two numbers.
@@ -5315,7 +5316,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that rewrapping works in Markdown and Plain Text languages.
+    // Test that rewrapping works in Markdown documents (languages with allow_rewrap=Anywhere)
     assert_rewrap(
         indoc! {"
             # Hello
@@ -5337,6 +5338,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // Test that rewrapping works in Plain Text documents (languages with allow_rewrap=Anywhere)
     assert_rewrap(
         indoc! {"
             Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
@@ -5354,7 +5356,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test rewrapping unaligned comments in a selection.
+    // Test rewrapping comments that have different indentation levels within a selection
     assert_rewrap(
         indoc! {"
             fn foo() {
@@ -5383,6 +5385,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // Test rewrapping indented comments with selection starting at beginning of line
     assert_rewrap(
         indoc! {"
             fn foo() {
@@ -5413,7 +5416,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test range boundary when there isn't any blank line in between
+    // Test rewrapping preserves separation between comment blocks separated by code
     assert_rewrap(
         indoc! {"
             «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
@@ -5435,6 +5438,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // Test rewrapping multiple selections in plain text with blank lines and tabs
     assert_rewrap(
         indoc! {"
             «ˇone one one one one one one one one one one one one one one one one one one one one one one one one
@@ -5473,6 +5477,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // Test rewrapping multiple cursors on different comment lines including empty comment lines
     assert_rewrap(
         indoc! {"
             //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
