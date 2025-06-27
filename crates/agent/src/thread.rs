@@ -1486,28 +1486,43 @@ impl ZedAgent {
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        loaded_context: ContextLoadResult,
+        context_load_result: ContextLoadResult,
         git_checkpoint: Option<GitStoreCheckpoint>,
         creases: Vec<MessageCrease>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        if !loaded_context.referenced_buffers.is_empty() {
+        if !context_load_result.referenced_buffers.is_empty() {
             self.thread
                 .read(cx)
                 .action_log
                 .clone()
                 .update(cx, |log, cx| {
-                    for buffer in loaded_context.referenced_buffers {
+                    for buffer in context_load_result.referenced_buffers {
                         log.buffer_read(buffer, cx);
                     }
                 });
         }
 
+        let text = text.into();
+
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+        context_load_result
+            .loaded_context
+            .add_to_request_message(&mut request_message);
+        request_message
+            .content
+            .push(MessageContent::Text(text.clone()));
+        self.messages.push(request_message);
+
         let message_id = self.thread.update(cx, |thread, cx| {
             thread.insert_message(
                 Role::User,
-                vec![MessageSegment::Text(text.into())],
-                loaded_context.loaded_context,
+                vec![MessageSegment::Text(text)],
+                context_load_result.loaded_context,
                 creases,
                 false,
                 cx,
@@ -4402,6 +4417,30 @@ mod tests {
     use workspace::Workspace;
 
     #[gpui::test]
+    async fn test_message_request(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+
+        let (_workspace, _thread_store, agent, _thread, _context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        let request = agent.update(cx, |agent, cx| {
+            agent.insert_user_message("Hello", Default::default(), None, Vec::new(), cx);
+
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
+        });
+
+        assert_eq!(request.intent, Some(CompletionIntent::UserPrompt));
+        assert_eq!(request.messages[0].role, Role::System);
+        assert_eq!(request.messages[1].role, Role::User);
+        assert_eq!(
+            request.messages[1].content[0],
+            MessageContent::Text("Hello".into()),
+        );
+    }
+
+    #[gpui::test]
     async fn test_message_with_context(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
@@ -4472,7 +4511,7 @@ fn main() {{
 
         // Check message in request
         let request = agent.update(cx, |agent, cx| {
-            agent.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+            agent.build_request(&model, CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
