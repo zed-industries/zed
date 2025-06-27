@@ -4,7 +4,7 @@ use std::{ops::Range, path::PathBuf};
 
 use anyhow::Result;
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, SelectionEffects};
+use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
@@ -468,12 +468,9 @@ impl MarkdownPreviewView {
     ) {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
-                editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::center()),
-                    window,
-                    cx,
-                    |selections| selections.select_ranges(vec![selection]),
-                );
+                editor.change_selections(Some(Autoscroll::center()), window, cx, |selections| {
+                    selections.select_ranges(vec![selection])
+                });
                 window.focus(&editor.focus_handle(cx));
             });
         }

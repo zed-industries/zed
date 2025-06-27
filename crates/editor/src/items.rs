@@ -1352,7 +1352,7 @@ impl ProjectItem for Editor {
                         cx,
                     );
                     if !restoration_data.selections.is_empty() {
-                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        editor.change_selections(None, window, cx, |s| {
                             s.select_ranges(clip_ranges(&restoration_data.selections, &snapshot));
                         });
                     }
@@ -1558,7 +1558,7 @@ impl SearchableItem for Editor {
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
-        self.change_selections(Default::default(), window, cx, |s| {
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select_ranges([range]);
         })
     }
@@ -1570,7 +1570,7 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+        self.change_selections(None, window, cx, |s| {
             s.select_ranges(matches.iter().cloned())
         });
     }

@@ -21,6 +21,7 @@ use editor::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
     },
+    scroll::Autoscroll,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
@@ -388,7 +389,7 @@ impl TextThreadEditor {
                 cursor..cursor
             };
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Default::default(), window, cx, |selections| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
                     selections.select_ranges([new_selection])
                 });
             });
@@ -448,7 +449,8 @@ impl TextThreadEditor {
         if let Some(command) = self.slash_commands.command(name, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
-                    editor.change_selections(Default::default(), window, cx, |s| s.try_cancel());
+                    editor
+                        .change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel());
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let newest_cursor = editor.selections.newest::<Point>(cx).head();
                     if newest_cursor.column > 0
@@ -1581,7 +1583,7 @@ impl TextThreadEditor {
 
             self.editor.update(cx, |editor, cx| {
                 editor.transact(window, cx, |this, window, cx| {
-                    this.change_selections(Default::default(), window, cx, |s| {
+                    this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select(selections);
                     });
                     this.insert("", window, cx);
@@ -3139,7 +3141,6 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::SelectionEffects;
     use fs::FakeFs;
     use gpui::{App, TestAppContext, VisualTestContext};
     use indoc::indoc;
@@ -3365,9 +3366,7 @@ mod tests {
     ) {
         context_editor.update_in(cx, |context_editor, window, cx| {
             context_editor.editor.update(cx, |editor, cx| {
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([range])
-                });
+                editor.change_selections(None, window, cx, |s| s.select_ranges([range]));
             });
 
             context_editor.copy(&Default::default(), window, cx);
