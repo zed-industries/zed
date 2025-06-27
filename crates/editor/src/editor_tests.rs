@@ -5279,14 +5279,14 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     // Test that change in comment prefix (e.g., `//` to `///`) trigger seperate rewraps
     assert_rewrap(
         indoc! {"
-              «// A regular long long comment to be wrapped.
-              /// A documentation long comment to be wrapped.ˇ»
+            «// A regular long long comment to be wrapped.
+            /// A documentation long comment to be wrapped.ˇ»
           "},
         indoc! {"
-              «// A regular long long comment to be
-              // wrapped.
-              /// A documentation long comment to be
-              /// wrapped.ˇ»
+            «// A regular long long comment to be
+            // wrapped.
+            /// A documentation long comment to be
+            /// wrapped.ˇ»
           "},
         language_with_doc_comments.clone(),
         &mut cx,
@@ -5343,25 +5343,27 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     // Test that rewrapping works in Markdown documents where `allow_rewrap` is `Anywhere`
     assert_rewrap(
         indoc! {"
-             # Header
-             A long line of markdown text to wrap.ˇ
+            # Header
+            A long line of markdown text to wrap.ˇ
          "},
         indoc! {"
-             # Header
-             A long line of markdown text to
-             wrap.ˇ
+            # Header
+            A long line of markdown text to
+            wrap.ˇ
          "},
         markdown_language,
         &mut cx,
     );
 
-    // Test: Rewrapping works in plain text where `allow_rewrap` is `Anywhere`
+    // Test that rewrapping works in plain text where `allow_rewrap` is `Anywhere`
     assert_rewrap(
-        "ˇThis is a very long line of plain text that will be wrapped.",
         indoc! {"
-              ˇThis is a very long line of plain
-              text that will be wrapped.
-          "},
+            ˇThis is a very long line of plain text that will be wrapped.,
+        "},
+        indoc! {"
+            ˇThis is a very long line of plain
+            text that will be wrapped.
+        "},
         plaintext_language.clone(),
         &mut cx,
     );
