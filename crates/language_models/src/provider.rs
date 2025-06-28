@@ -10,3 +10,4 @@ pub mod ollama;
 pub mod open_ai;
 pub mod open_router;
 pub mod pollinations;
+pub mod vercel;

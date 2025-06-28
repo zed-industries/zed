@@ -12,6 +12,13 @@ pub enum BedrockModelMode {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct BedrockModelCacheConfiguration {
+    pub max_cache_anchors: usize,
+    pub min_total_token: u64,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // Anthropic models (already included)
@@ -104,6 +111,7 @@ pub enum Model {
         display_name: Option<String>,
         max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
+        cache_configuration: Option<BedrockModelCacheConfiguration>,
     },
 }
 
@@ -401,6 +409,56 @@ impl Model {
         }
     }
 
+    pub fn supports_caching(&self) -> bool {
+        match self {
+            // Only Claude models on Bedrock support caching
+            // Nova models support only text caching
+            // https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models
+            Self::Claude3_5Haiku
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking => true,
+
+            // Custom models - check if they have cache configuration
+            Self::Custom {
+                cache_configuration,
+                ..
+            } => cache_configuration.is_some(),
+
+            // All other models don't support caching
+            _ => false,
+        }
+    }
+
+    pub fn cache_configuration(&self) -> Option<BedrockModelCacheConfiguration> {
+        match self {
+            Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking => Some(BedrockModelCacheConfiguration {
+                max_cache_anchors: 4,
+                min_total_token: 1024,
+            }),
+
+            Self::Claude3_5Haiku => Some(BedrockModelCacheConfiguration {
+                max_cache_anchors: 4,
+                min_total_token: 2048,
+            }),
+
+            Self::Custom {
+                cache_configuration,
+                ..
+            } => cache_configuration.clone(),
+
+            _ => None,
+        }
+    }
+
     pub fn mode(&self) -> BedrockModelMode {
         match self {
             Model::Claude3_7SonnetThinking => BedrockModelMode::Thinking {
@@ -660,6 +718,7 @@ mod tests {
             display_name: Some("My Custom Model".to_string()),
             max_output_tokens: Some(8192),
             default_temperature: Some(0.7),
+            cache_configuration: None,
         };
 
         // Custom model should return its name unchanged

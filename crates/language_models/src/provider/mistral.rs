@@ -36,7 +36,6 @@ const PROVIDER_NAME: &str = "Mistral";
 pub struct MistralSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

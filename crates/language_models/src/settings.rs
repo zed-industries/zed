@@ -1,12 +1,8 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use gpui::App;
-use language_model::LanguageModelCacheConfiguration;
-use project::Fs;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, update_settings_file};
+use settings::{Settings, SettingsSources};
 
 use crate::provider::{
     self,
@@ -21,53 +17,12 @@ use crate::provider::{
     open_ai::OpenAiSettings,
     open_router::OpenRouterSettings,
     pollinations::PollinationsSettings,
+    vercel::VercelSettings,
 };
 
 /// Initializes the language model settings.
-pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
+pub fn init(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
-
-    if AllLanguageModelSettings::get_global(cx)
-        .openai
-        .needs_setting_migration
-    {
-        update_settings_file::<AllLanguageModelSettings>(fs.clone(), cx, move |setting, _| {
-            if let Some(settings) = setting.openai.clone() {
-                let (newest_version, _) = settings.upgrade();
-                setting.openai = Some(OpenAiSettingsContent::Versioned(
-                    VersionedOpenAiSettingsContent::V1(newest_version),
-                ));
-            }
-        });
-    }
-
-    if AllLanguageModelSettings::get_global(cx)
-        .pollinations
-        .needs_setting_migration
-    {
-        update_settings_file::<AllLanguageModelSettings>(fs.clone(), cx, move |setting, _| {
-            if let Some(settings) = setting.openai.clone() {
-                let (newest_version, _) = settings.upgrade();
-                setting.openai = Some(OpenAiSettingsContent::Versioned(
-                    VersionedOpenAiSettingsContent::V1(newest_version),
-                ));
-            }
-        });
-    }
-
-    if AllLanguageModelSettings::get_global(cx)
-        .anthropic
-        .needs_setting_migration
-    {
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |setting, _| {
-            if let Some(settings) = setting.anthropic.clone() {
-                let (newest_version, _) = settings.upgrade();
-                setting.anthropic = Some(AnthropicSettingsContent::Versioned(
-                    VersionedAnthropicSettingsContent::V1(newest_version),
-                ));
-            }
-        });
-    }
 }
 
 #[derive(Default)]
@@ -81,6 +36,7 @@ pub struct AllLanguageModelSettings {
     pub open_router: OpenRouterSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
+    pub vercel: VercelSettings,
 
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
@@ -101,83 +57,13 @@ pub struct AllLanguageModelSettingsContent {
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
+    pub vercel: Option<VercelSettingsContent>,
 
     pub mistral: Option<MistralSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-#[serde(untagged)]
-pub enum AnthropicSettingsContent {
-    Versioned(VersionedAnthropicSettingsContent),
-    Legacy(LegacyAnthropicSettingsContent),
-}
-
-impl AnthropicSettingsContent {
-    pub fn upgrade(self) -> (AnthropicSettingsContentV1, bool) {
-        match self {
-            AnthropicSettingsContent::Legacy(content) => (
-                AnthropicSettingsContentV1 {
-                    api_url: content.api_url,
-                    available_models: content.available_models.map(|models| {
-                        models
-                            .into_iter()
-                            .filter_map(|model| match model {
-                                anthropic::Model::Custom {
-                                    name,
-                                    display_name,
-                                    max_tokens,
-                                    tool_override,
-                                    cache_configuration,
-                                    max_output_tokens,
-                                    default_temperature,
-                                    extra_beta_headers,
-                                    mode,
-                                } => Some(provider::anthropic::AvailableModel {
-                                    name,
-                                    display_name,
-                                    max_tokens,
-                                    tool_override,
-                                    cache_configuration: cache_configuration.as_ref().map(
-                                        |config| LanguageModelCacheConfiguration {
-                                            max_cache_anchors: config.max_cache_anchors,
-                                            should_speculate: config.should_speculate,
-                                            min_total_token: config.min_total_token,
-                                        },
-                                    ),
-                                    max_output_tokens,
-                                    default_temperature,
-                                    extra_beta_headers,
-                                    mode: Some(mode.into()),
-                                }),
-                                _ => None,
-                            })
-                            .collect()
-                    }),
-                },
-                true,
-            ),
-            AnthropicSettingsContent::Versioned(content) => match content {
-                VersionedAnthropicSettingsContent::V1(content) => (content, false),
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct LegacyAnthropicSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<anthropic::Model>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-#[serde(tag = "version")]
-pub enum VersionedAnthropicSettingsContent {
-    #[serde(rename = "1")]
-    V1(AnthropicSettingsContentV1),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct AnthropicSettingsContentV1 {
+pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
 }
@@ -216,64 +102,7 @@ pub struct MistralSettingsContent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-#[serde(untagged)]
-pub enum OpenAiSettingsContent {
-    Versioned(VersionedOpenAiSettingsContent),
-    Legacy(LegacyOpenAiSettingsContent),
-}
-
-impl OpenAiSettingsContent {
-    pub fn upgrade(self) -> (OpenAiSettingsContentV1, bool) {
-        match self {
-            OpenAiSettingsContent::Legacy(content) => (
-                OpenAiSettingsContentV1 {
-                    api_url: content.api_url,
-                    available_models: content.available_models.map(|models| {
-                        models
-                            .into_iter()
-                            .filter_map(|model| match model {
-                                open_ai::Model::Custom {
-                                    name,
-                                    display_name,
-                                    max_tokens,
-                                    max_output_tokens,
-                                    max_completion_tokens,
-                                } => Some(provider::open_ai::AvailableModel {
-                                    name,
-                                    max_tokens,
-                                    max_output_tokens,
-                                    display_name,
-                                    max_completion_tokens,
-                                }),
-                                _ => None,
-                            })
-                            .collect()
-                    }),
-                },
-                true,
-            ),
-            OpenAiSettingsContent::Versioned(content) => match content {
-                VersionedOpenAiSettingsContent::V1(content) => (content, false),
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct LegacyOpenAiSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<open_ai::Model>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-#[serde(tag = "version")]
-pub enum VersionedOpenAiSettingsContent {
-    #[serde(rename = "1")]
-    V1(OpenAiSettingsContentV1),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OpenAiSettingsContentV1 {
+pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
 }
@@ -343,6 +172,12 @@ pub struct PollinationsSettingsContentV1 {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct VercelSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::vercel::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::google::AvailableModel>>,
@@ -377,15 +212,7 @@ impl settings::Settings for AllLanguageModelSettings {
 
         for value in sources.defaults_and_customizations() {
             // Anthropic
-            let (anthropic, upgraded) = match value.anthropic.clone().map(|s| s.upgrade()) {
-                Some((content, upgraded)) => (Some(content), upgraded),
-                None => (None, false),
-            };
-
-            if upgraded {
-                settings.anthropic.needs_setting_migration = true;
-            }
-
+            let anthropic = value.anthropic.clone();
             merge(
                 &mut settings.anthropic.api_url,
                 anthropic.as_ref().and_then(|s| s.api_url.clone()),
@@ -451,15 +278,7 @@ impl settings::Settings for AllLanguageModelSettings {
             );
 
             // OpenAI
-            let (openai, upgraded) = match value.openai.clone().map(|s| s.upgrade()) {
-                Some((content, upgraded)) => (Some(content), upgraded),
-                None => (None, false),
-            };
-
-            if upgraded {
-                settings.openai.needs_setting_migration = true;
-            }
-
+            let openai = value.openai.clone();
             merge(
                 &mut settings.openai.api_url,
                 openai.as_ref().and_then(|s| s.api_url.clone()),
@@ -470,15 +289,7 @@ impl settings::Settings for AllLanguageModelSettings {
             );
 
             // OpenAI
-            let (openai, upgraded) = match value.openai.clone().map(|s| s.upgrade()) {
-                Some((content, upgraded)) => (Some(content), upgraded),
-                None => (None, false),
-            };
-
-            if upgraded {
-                settings.openai.needs_setting_migration = true;
-            }
-
+            let openai = value.openai.clone();
             merge(
                 &mut settings.openai.api_url,
                 openai.as_ref().and_then(|s| s.api_url.clone()),
@@ -488,25 +299,15 @@ impl settings::Settings for AllLanguageModelSettings {
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
 
-            // Pollinations
-            let (pollinations, upgraded) = match value.pollinations.clone().map(|s| s.upgrade()) {
-                Some((content, upgraded)) => (Some(content), upgraded),
-                None => (None, false),
-            };
-
-            if upgraded {
-                settings.pollinations.needs_setting_migration = true;
-            }
-
+            // Vercel
+            let vercel = value.vercel.clone();
             merge(
-                &mut settings.pollinations.api_url,
-                pollinations.as_ref().and_then(|s| s.api_url.clone()),
+                &mut settings.vercel.api_url,
+                vercel.as_ref().and_then(|s| s.api_url.clone()),
             );
             merge(
-                &mut settings.pollinations.available_models,
-                pollinations
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
+                &mut settings.vercel.available_models,
+                vercel.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             merge(
@@ -548,6 +349,26 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.open_router.available_models,
                 open_router
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
+
+            // Pollinations
+            let (pollinations, upgraded) = match value.pollinations.clone().map(|s| s.upgrade()) {
+                Some((content, upgraded)) => (Some(content), upgraded),
+                None => (None, false),
+            };
+
+            if upgraded {
+                settings.pollinations.needs_setting_migration = true;
+            }
+            merge(
+                &mut settings.pollinations.api_url,
+                pollinations.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.pollinations.available_models,
+                pollinations
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );

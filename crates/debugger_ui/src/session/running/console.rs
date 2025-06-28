@@ -582,14 +582,31 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 
     fn is_completion_trigger(
         &self,
-        _buffer: &Entity<Buffer>,
-        _position: language::Anchor,
-        _text: &str,
+        buffer: &Entity<Buffer>,
+        position: language::Anchor,
+        text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
-        _cx: &mut Context<Editor>,
+        menu_is_open: bool,
+        cx: &mut Context<Editor>,
     ) -> bool {
-        true
+        let snapshot = buffer.read(cx).snapshot();
+        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
+            return false;
+        }
+
+        self.0
+            .read_with(cx, |console, cx| {
+                console
+                    .session
+                    .read(cx)
+                    .capabilities()
+                    .completion_trigger_characters
+                    .as_ref()
+                    .map(|triggers| triggers.contains(&text.to_string()))
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(true)
     }
 }
 
@@ -629,8 +646,23 @@ impl ConsoleQueryBarCompletionProvider {
             (variables, string_matches)
         });
 
-        let query = buffer.read(cx).text();
-
+        let snapshot = buffer.read(cx).text_snapshot();
+        let query = snapshot.text();
+        let replace_range = {
+            let buffer_offset = buffer_position.to_offset(&snapshot);
+            let reversed_chars = snapshot.reversed_chars_for_range(0..buffer_offset);
+            let mut word_len = 0;
+            for ch in reversed_chars {
+                if ch.is_alphanumeric() || ch == '_' {
+                    word_len += 1;
+                } else {
+                    break;
+                }
+            }
+            let word_start_offset = buffer_offset - word_len;
+            let start_anchor = snapshot.anchor_at(word_start_offset, Bias::Left);
+            start_anchor..buffer_position
+        };
         cx.spawn(async move |_, cx| {
             const LIMIT: usize = 10;
             let matches = fuzzy::match_strings(
@@ -650,7 +682,7 @@ impl ConsoleQueryBarCompletionProvider {
                     let variable_value = variables.get(&string_match.string)?;
 
                     Some(project::Completion {
-                        replace_range: buffer_position..buffer_position,
+                        replace_range: replace_range.clone(),
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),

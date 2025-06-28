@@ -230,6 +230,8 @@ impl EditorElement {
         register_action(editor, window, Editor::reverse_lines);
         register_action(editor, window, Editor::shuffle_lines);
         register_action(editor, window, Editor::toggle_case);
+        register_action(editor, window, Editor::convert_indentation_to_spaces);
+        register_action(editor, window, Editor::convert_indentation_to_tabs);
         register_action(editor, window, Editor::convert_to_upper_case);
         register_action(editor, window, Editor::convert_to_lower_case);
         register_action(editor, window, Editor::convert_to_title_case);
@@ -5236,8 +5238,8 @@ impl EditorElement {
                     paint_highlight(range.start, range.end, color, edges);
                 }
 
-                let scroll_left =
-                    layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
+                let scroll_left = layout.position_map.snapshot.scroll_position().x
+                    * layout.position_map.em_advance;
 
                 for (wrap_position, active) in layout.wrap_guides.iter() {
                     let x = (layout.position_map.text_hitbox.origin.x
@@ -6674,7 +6676,7 @@ impl EditorElement {
                         let position_map: &PositionMap = &position_map;
 
                         let line_height = position_map.line_height;
-                        let max_glyph_width = position_map.em_width;
+                        let max_glyph_advance = position_map.em_advance;
                         let (delta, axis) = match delta {
                             gpui::ScrollDelta::Pixels(mut pixels) => {
                                 //Trackpad
@@ -6685,15 +6687,15 @@ impl EditorElement {
                             gpui::ScrollDelta::Lines(lines) => {
                                 //Not trackpad
                                 let pixels =
-                                    point(lines.x * max_glyph_width, lines.y * line_height);
+                                    point(lines.x * max_glyph_advance, lines.y * line_height);
                                 (pixels, None)
                             }
                         };
 
                         let current_scroll_position = position_map.snapshot.scroll_position();
-                        let x = (current_scroll_position.x * max_glyph_width
+                        let x = (current_scroll_position.x * max_glyph_advance
                             - (delta.x * scroll_sensitivity))
-                            / max_glyph_width;
+                            / max_glyph_advance;
                         let y = (current_scroll_position.y * line_height
                             - (delta.y * scroll_sensitivity))
                             / line_height;
@@ -8589,7 +8591,7 @@ impl Element for EditorElement {
                                 start_row,
                                 editor_content_width,
                                 scroll_width,
-                                em_width,
+                                em_advance,
                                 &line_layouts,
                                 cx,
                             )

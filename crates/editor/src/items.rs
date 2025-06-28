@@ -778,7 +778,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, true, cx);
+        self.push_to_nav_history(selection.head(), None, true, false, cx);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -1521,7 +1521,7 @@ impl SearchableItem for Editor {
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(window, cx).buffer_snapshot;
-        let selection = self.selections.newest::<usize>(cx);
+        let selection = self.selections.newest_adjusted(cx);
 
         match setting {
             SeedQuerySetting::Never => String::new(),

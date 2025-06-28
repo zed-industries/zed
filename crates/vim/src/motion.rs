@@ -768,6 +768,73 @@ impl Motion {
         }
     }
 
+    pub(crate) fn push_to_jump_list(&self) -> bool {
+        use Motion::*;
+        match self {
+            CurrentLine
+            | Down { .. }
+            | EndOfLine { .. }
+            | EndOfLineDownward
+            | FindBackward { .. }
+            | FindForward { .. }
+            | FirstNonWhitespace { .. }
+            | GoToColumn
+            | Left
+            | MiddleOfLine { .. }
+            | NextLineStart
+            | NextSubwordEnd { .. }
+            | NextSubwordStart { .. }
+            | NextWordEnd { .. }
+            | NextWordStart { .. }
+            | PreviousLineStart
+            | PreviousSubwordEnd { .. }
+            | PreviousSubwordStart { .. }
+            | PreviousWordEnd { .. }
+            | PreviousWordStart { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. }
+            | Right
+            | StartOfLine { .. }
+            | StartOfLineDownward
+            | Up { .. }
+            | WrappingLeft
+            | WrappingRight => false,
+            EndOfDocument
+            | EndOfParagraph
+            | GoToPercentage
+            | Jump { .. }
+            | Matching
+            | NextComment
+            | NextGreaterIndent
+            | NextLesserIndent
+            | NextMethodEnd
+            | NextMethodStart
+            | NextSameIndent
+            | NextSectionEnd
+            | NextSectionStart
+            | PreviousComment
+            | PreviousGreaterIndent
+            | PreviousLesserIndent
+            | PreviousMethodEnd
+            | PreviousMethodStart
+            | PreviousSameIndent
+            | PreviousSectionEnd
+            | PreviousSectionStart
+            | SentenceBackward
+            | SentenceForward
+            | Sneak { .. }
+            | SneakBackward { .. }
+            | StartOfDocument
+            | StartOfParagraph
+            | UnmatchedBackward { .. }
+            | UnmatchedForward { .. }
+            | WindowBottom
+            | WindowMiddle
+            | WindowTop
+            | ZedSearchResult { .. } => true,
+        }
+    }
+
     pub fn infallible(&self) -> bool {
         use Motion::*;
         match self {

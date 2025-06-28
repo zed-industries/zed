@@ -1395,7 +1395,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
 
             buffer
         });

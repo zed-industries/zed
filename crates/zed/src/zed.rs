@@ -30,6 +30,7 @@ use gpui::{
     px, retain_all,
 };
 use image_viewer::ImageInfo;
+use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
@@ -47,8 +48,8 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile, KeymapFileLoadResult,
+    Settings, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
     initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use std::path::PathBuf;
@@ -293,20 +294,18 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let popover_menu_handle = PopoverMenuHandle::default();
-
-        let inline_completion_button = cx.new(|cx| {
+        let inline_completion_menu_handle = PopoverMenuHandle::default();
+        let edit_prediction_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                popover_menu_handle.clone(),
+                inline_completion_menu_handle.clone(),
                 cx,
             )
         });
-
         workspace.register_action({
             move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
-                popover_menu_handle.toggle(window, cx);
+                inline_completion_menu_handle.toggle(window, cx);
             }
         });
 
@@ -315,7 +314,7 @@ pub fn initialize_workspace(
             cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
-            app_state.languages.clone(),
+            workspace.project().read(cx).languages().clone(),
             window,
             cx,
         );
@@ -325,13 +324,24 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
+
+        let lsp_tool_menu_handle = PopoverMenuHandle::default();
+        let lsp_tool =
+            cx.new(|cx| LspTool::new(workspace, lsp_tool_menu_handle.clone(), window, cx));
+        workspace.register_action({
+            move |_, _: &lsp_tool::ToggleMenu, window, cx| {
+                lsp_tool_menu_handle.toggle(window, cx);
+            }
+        });
+
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
+            status_bar.add_left_item(lsp_tool, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(inline_completion_button, window, cx);
+            status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
@@ -1403,10 +1413,15 @@ fn show_markdown_app_notification<F>(
     .detach();
 }
 
-fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
+
+    for key_binding in &mut user_key_bindings {
+        key_binding.set_meta(KeybindSource::User.meta());
+    }
     cx.bind_keys(user_key_bindings);
+
     cx.set_menus(app_menus());
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
@@ -1422,14 +1437,18 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
+    cx.bind_keys(
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
+    );
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
+        cx.bind_keys(
+            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+        );
     }
 }
 
@@ -4291,6 +4310,7 @@ mod tests {
                 "jj",
                 "journal",
                 "language_selector",
+                "lsp_tool",
                 "markdown",
                 "menu",
                 "notebook",
@@ -4309,6 +4329,7 @@ mod tests {
                 "search",
                 "snippets",
                 "supermaven",
+                "svg",
                 "tab_switcher",
                 "task",
                 "terminal",
@@ -4427,12 +4448,7 @@ mod tests {
             );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
-            language_models::init(
-                app_state.user_store.clone(),
-                app_state.client.clone(),
-                app_state.fs.clone(),
-                cx,
-            );
+            language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);

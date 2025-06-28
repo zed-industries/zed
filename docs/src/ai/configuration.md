@@ -445,23 +445,6 @@ Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and 
 You can add a custom API URL for OpenAI either via the UI or by editing your `settings.json`.
 Here are a few model examples you can plug in by using this feature:
 
-#### Vercel v0
-
-[Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
-It supports text and image inputs and provides fast streaming responses.
-
-To use it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
-Once that's done, insert that into the OpenAI API key section, and add this endpoint URL:
-
-```json
-  "language_models": {
-    "openai": {
-      "api_url": "https://api.v0.dev/v1",
-      "version": "1"
-    },
-  }
-```
-
 #### X.ai Grok
 
 Example configuration for using X.ai Grok with Zed:
@@ -539,6 +522,18 @@ The available configuration options for each model are:
 You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+### Vercel v0
+
+[Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+It supports text and image inputs and provides fast streaming responses.
+
+The v0 models are [OpenAI-compatible models](/#openai-api-compatible), but Vercel is listed as first-class provider in the panel's settings view.
+
+To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
+Once you have it, paste it directly into the Vercel provider section in the panel's settings view.
+
+You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 
 ## Advanced Configuration {#advanced-configuration}
 

@@ -67,6 +67,9 @@ pub enum LanguageModelCompletionEvent {
         text: String,
         signature: Option<String>,
     },
+    RedactedThinking {
+        data: String,
+    },
     ToolUse(LanguageModelToolUse),
     StartMessage {
         message_id: String,
@@ -291,7 +294,7 @@ pub trait LanguageModel: Send + Sync {
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
     /// Returns whether this model supports "burn mode";
-    fn supports_max_mode(&self) -> bool {
+    fn supports_burn_mode(&self) -> bool {
         false
     }
 
@@ -359,6 +362,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {

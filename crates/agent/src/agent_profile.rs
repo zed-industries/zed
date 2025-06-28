@@ -85,6 +85,14 @@ impl AgentProfile {
             .collect()
     }
 
+    pub fn is_tool_enabled(&self, source: ToolSource, tool_name: String, cx: &App) -> bool {
+        let Some(settings) = AgentSettings::get_global(cx).profiles.get(&self.id) else {
+            return false;
+        };
+
+        return Self::is_enabled(settings, source, tool_name);
+    }
+
     fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
         match source {
             ToolSource::Native => *settings.tools.get(name.as_str()).unwrap_or(&false),

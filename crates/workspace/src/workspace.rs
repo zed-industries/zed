@@ -2199,7 +2199,7 @@ impl Workspace {
                             // (Note that the tests always do this implicitly, so you must manually test with something like:
                             //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                             // )
-                            window.draw(cx);
+                            window.draw(cx).clear();
                         }
                     })?;
                 }
@@ -5617,7 +5617,6 @@ impl Workspace {
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
-            cx.emit(Event::ClearActivityIndicator);
             cx.propagate();
         }
     }
