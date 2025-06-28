@@ -278,7 +278,13 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
-    pub fn normal_object(&mut self, object: Object, times: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn normal_object(
+        &mut self,
+        object: Object,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
@@ -304,9 +310,14 @@ impl Vim {
                 Some(Operator::Uppercase) => {
                     self.convert_object(object, around, ConvertTarget::UpperCase, times, window, cx)
                 }
-                Some(Operator::OppositeCase) => {
-                    self.convert_object(object, around, ConvertTarget::OppositeCase, times, window, cx)
-                }
+                Some(Operator::OppositeCase) => self.convert_object(
+                    object,
+                    around,
+                    ConvertTarget::OppositeCase,
+                    times,
+                    window,
+                    cx,
+                ),
                 Some(Operator::Rot13) => {
                     self.convert_object(object, around, ConvertTarget::Rot13, times, window, cx)
                 }

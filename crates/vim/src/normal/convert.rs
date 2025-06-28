@@ -77,8 +77,7 @@ impl Vim {
         });
     }
 
-    pub fn
-    convert_object(
+    pub fn convert_object(
         &mut self,
         object: Object,
         around: bool,

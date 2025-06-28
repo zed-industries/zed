@@ -2061,7 +2061,9 @@ async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
     });
 
     cx.simulate_shared_keystrokes("d a p").await;
-    cx.shared_clipboard().await.assert_eq("all it lacks\nis a\n\n");
+    cx.shared_clipboard()
+        .await
+        .assert_eq("all it lacks\nis a\n\n");
 
     //reset to initial state
     cx.simulate_shared_keystrokes("2 u").await;
