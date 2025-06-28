@@ -978,6 +978,7 @@ impl DiagnosticPopover {
             .max_h(max_size.height)
             .overflow_y_scroll()
             .max_w(max_size.width)
+            .track_scroll(&self.scroll_handle)
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
