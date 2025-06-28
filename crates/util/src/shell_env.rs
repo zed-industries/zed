@@ -9,12 +9,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
-    let zed_path = std::env::current_exe()
-        .context("Failed to determine current zed executable path.")?
-        .to_string_lossy()
-        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
-        .to_string();
-
+    let zed_path = super::get_shell_safe_zed_path()?;
     let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
     let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
 
