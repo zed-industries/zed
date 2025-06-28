@@ -303,7 +303,7 @@ impl LanguageModel for PollinationsLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model.supports_parallel_tool_calls()
     }
 
     fn supports_images(&self) -> bool {
@@ -352,7 +352,12 @@ impl LanguageModel for PollinationsLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_pollinations(request, &self.model, self.max_output_tokens());
+        let request = into_pollinations(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.max_output_tokens(),
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = PollinationsEventMapper::new();
@@ -364,10 +369,12 @@ impl LanguageModel for PollinationsLanguageModel {
 
 pub fn into_pollinations(
     request: LanguageModelRequest,
-    model: &Model,
+    model_id: &str,
+    supports_parallel_tool_calls: bool,
     max_output_tokens: Option<u64>,
 ) -> pollinations::Request {
-    let stream = !model.id().starts_with("o1-");
+    let stream = !model_id.starts_with("o1-");
+    let _ = supports_parallel_tool_calls; // use or remove as needed in function body
 
     let mut messages = Vec::new();
     for message in request.messages {
@@ -443,13 +450,13 @@ pub fn into_pollinations(
     }
 
     pollinations::Request {
-        model: model.id().into(),
+        model: model_id.into(),
         messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_completion_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+        parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
         } else {

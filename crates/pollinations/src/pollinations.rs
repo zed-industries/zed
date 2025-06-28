@@ -267,30 +267,30 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::Deepseek => false,
-            Self::DeepseekReasoning => false,
-            Self::Grok => true,
-            Self::Llamascout => false,
-            Self::Mistral => true,
-            Self::OpenAI => true,
-            Self::OpenAIFast => true,
-            Self::OpenAILarge => true,
-            Self::OpenAIReasoning => true,
-            Self::OpenAIRoblox => true,
-            Self::ClaudeHybridspace => false,
-            Self::Phi => false,
-            Self::QwenCoder => true,
-            Self::SearchGpt => true,
-            Self::Bidara => true,
-            Self::ElixpoSearch => false,
-            // Self::Evil => true,
-            // Self::HypnosisTracy => true,
-            Self::Midijourney => true,
-            Self::Mirexa => true,
-            Self::Rtist => true,
-            Self::Sur => true,
-            Self::Unity => true,
-            Model::Custom { .. } => false,
+            Self::Grok
+            | Self::Mistral
+            | Self::OpenAI
+            | Self::OpenAIFast
+            | Self::OpenAILarge
+            | Self::OpenAIReasoning
+            | Self::OpenAIRoblox
+            | Self::QwenCoder
+            | Self::SearchGpt
+            | Self::Bidara
+            | Self::Midijourney
+            | Self::Mirexa
+            | Self::Rtist
+            | Self::Sur
+            // | Self::Evil
+            // | Self::HypnosisTracy
+            | Self::Unity => true,
+            Self::Deepseek
+            | Self::DeepseekReasoning
+            | Self::Llamascout
+            | Self::ClaudeHybridspace
+            | Self::Phi
+            | Self::ElixpoSearch
+            | Model::Custom { .. } => false,
         }
     }
 }
