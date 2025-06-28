@@ -9,7 +9,12 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
-    let zed_path = super::get_shell_safe_zed_path()?;
+    let zed_path = std::env::current_exe()
+        .context("Failed to determine current zed executable path.")?
+        .to_string_lossy()
+        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
+        .to_string();
+
     let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
     let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
 
@@ -19,6 +24,10 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
     // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
     const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
+    let redir = match shell_name {
+        Some("rc") => format!(">[1={}]", ENV_OUTPUT_FD), // `[1=0]`
+        _ => format!(">&{}", ENV_OUTPUT_FD),             // `>&0`
+    };
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -39,10 +48,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!(
-        "sh -c \"{} --printenv >&{}\";",
-        zed_path, ENV_OUTPUT_FD
-    ));
+    command_string.push_str(&format!("sh -c \"{}\" --printenv {};", zed_path, redir));
     command.args(["-i", "-c", &command_string]);
 
     super::set_pre_exec_to_start_new_session(&mut command);
