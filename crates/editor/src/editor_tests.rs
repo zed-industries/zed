@@ -55,7 +55,8 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseInactiveItems, NavigationEntry, OpenOptions, ViewId,
+    CloseActiveItem, CloseAllItems, CloseInactiveItems, MoveItemToPaneInDirection, NavigationEntry,
+    OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
 };
 
@@ -22601,8 +22602,8 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
     );
 }
 
-#[gpui::test]
-async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
+#[gpui::test(iterations = 10)]
+async fn test_document_colors(cx: &mut TestAppContext) {
     let expected_color = Rgba {
         r: 0.33,
         g: 0.33,
@@ -22723,24 +22724,73 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
             panic!("Should not be called");
         });
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(100));
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        3,
+        1,
         requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per editor open (1) and once after the language server startup (2)"
+        "Should query for colors once per editor open"
     );
-
-    cx.executor().advance_clock(Duration::from_millis(500));
-    let save = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, _, cx| {
         assert_eq!(
             vec![expected_color],
             extract_color_inlays(editor, cx),
             "Should have an initial inlay"
         );
+    });
 
+    // opening another file in a split should not influence the LSP query counter
+    workspace
+        .update(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.panes().len(),
+                1,
+                "Should have one pane with one editor"
+            );
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: false,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+    workspace
+        .update(cx, |workspace, _, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 2, "Should have two panes after splitting");
+            for pane in panes {
+                let editor = pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("Should have opened an editor in each split");
+                let editor_file = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("test deals with singleton buffers")
+                    .read(cx)
+                    .file()
+                    .expect("test buffese should have a file")
+                    .path();
+                assert_eq!(
+                    editor_file.as_ref(),
+                    Path::new("first.rs"),
+                    "Both editors should be opened for the same file"
+                )
+            }
+        })
+        .unwrap();
+
+    cx.executor().advance_clock(Duration::from_millis(500));
+    let save = editor.update_in(cx, |editor, window, cx| {
         editor.move_to_end(&MoveToEnd, window, cx);
         editor.handle_input("dirty", window, cx);
         editor.save(
@@ -22757,10 +22807,8 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
 
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
     assert_eq!(
-        5,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per save and once per formatting after save"
     );
@@ -22774,11 +22822,27 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         })
         .unwrap();
     close.await.unwrap();
+    let close = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+            })
+        })
+        .unwrap();
+    close.await.unwrap();
     assert_eq!(
-        5,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
-        "After saving and closing the editor, no extra requests should be made"
+        "After saving and closing all editors, no extra requests should be made"
     );
+    workspace
+        .update(cx, |workspace, _, cx| {
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "Should close all editors"
+            )
+        })
+        .unwrap();
 
     workspace
         .update(cx, |workspace, window, cx| {
@@ -22788,13 +22852,7 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.executor().advance_clock(Duration::from_millis(100));
-    color_request_handle.next().await.unwrap();
     cx.run_until_parked();
-    assert_eq!(
-        6,
-        requests_made.load(atomic::Ordering::Acquire),
-        "After navigating back to an editor and reopening it, another color request should be made"
-    );
     let editor = workspace
         .update(cx, |workspace, _, cx| {
             workspace
@@ -22804,6 +22862,12 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
                 .expect("Should be an editor")
         })
         .unwrap();
+    color_request_handle.next().await.unwrap();
+    assert_eq!(
+        3,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Cache should be reused on buffer close and reopen"
+    );
     editor.update(cx, |editor, cx| {
         assert_eq!(
             vec![expected_color],

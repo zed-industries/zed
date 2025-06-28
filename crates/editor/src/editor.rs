@@ -1845,13 +1845,13 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded(server_id, ..)
-                        | project::Event::LanguageServerRemoved(server_id) => {
+                        project::Event::LanguageServerAdded(..)
+                        | project::Event::LanguageServerRemoved(..) => {
                             if editor.tasks_update_task.is_none() {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(Some(*server_id), None, window, cx);
+                            editor.update_lsp_data(true, None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -2291,7 +2291,7 @@ impl Editor {
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
-            editor.update_lsp_data(None, None, window, cx);
+            editor.update_lsp_data(false, None, window, cx);
         }
 
         editor.report_editor_event("Editor Opened", None, cx);
@@ -5103,7 +5103,7 @@ impl Editor {
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
             reason_description,
-            self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
+            self.visible_excerpts(required_languages.as_ref(), cx),
             invalidate_cache,
             ignore_debounce,
             cx,
@@ -5121,7 +5121,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn excerpts_for_inlay_hints_query(
+    pub fn visible_excerpts(
         &self,
         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut Context<Editor>,
@@ -19562,7 +19562,7 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
 
                 if let Some(buffer) = edited_buffer {
-                    self.update_lsp_data(None, Some(buffer.read(cx).remote_id()), window, cx);
+                    self.update_lsp_data(false, Some(buffer.read(cx).remote_id()), window, cx);
                 }
 
                 if *singleton_buffer_edited {
@@ -19627,7 +19627,7 @@ impl Editor {
                         .detach();
                     }
                 }
-                self.update_lsp_data(None, Some(buffer_id), window, cx);
+                self.update_lsp_data(false, Some(buffer_id), window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -19813,7 +19813,7 @@ impl Editor {
             if !inlay_splice.to_insert.is_empty() || !inlay_splice.to_remove.is_empty() {
                 self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
             }
-            self.refresh_colors(None, None, window, cx);
+            self.refresh_colors(false, None, window, cx);
         }
 
         cx.notify();
@@ -20714,13 +20714,13 @@ impl Editor {
 
     fn update_lsp_data(
         &mut self,
-        for_server_id: Option<LanguageServerId>,
+        ignore_cache: bool,
         for_buffer: Option<BufferId>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
-        self.refresh_colors(for_server_id, for_buffer, window, cx);
+        self.refresh_colors(ignore_cache, for_buffer, window, cx);
     }
 }
 
