@@ -12,7 +12,6 @@ use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
-    scroll::Autoscroll,
 };
 use futures::future::join_all;
 use gpui::{
@@ -43,7 +42,7 @@ use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -626,7 +625,7 @@ impl ProjectDiagnosticsEditor {
                     if let Some(anchor_range) = anchor_ranges.first() {
                         let range_to_select = anchor_range.start..anchor_range.start;
                         this.editor.update(cx, |editor, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_anchor_ranges([range_to_select]);
                             })
                         });
@@ -849,12 +848,12 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, window, cx)
+        self.editor.save(options, project, window, cx)
     }
 
     fn save_as(

@@ -1249,7 +1249,7 @@ pub struct ActiveDiagnosticGroup {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+
 pub(crate) enum ActiveDiagnostic {
     None,
     All,
@@ -5272,7 +5272,7 @@ impl Editor {
                 task.await?;
             }
 
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -7698,7 +7698,7 @@ impl Editor {
                     .gap_1()
                     // Workaround: For some reason, there's a gap if we don't do this
                     .ml(-BORDER_WIDTH)
-                    .shadow(smallvec![gpui::BoxShadow {
+                    .shadow(vec![gpui::BoxShadow {
                         color: gpui::black().opacity(0.05),
                         offset: point(px(1.), px(1.)),
                         blur_radius: px(2.),
@@ -9132,7 +9132,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_lines(window, cx, |lines| lines.sort())
+        self.manipulate_immutable_lines(window, cx, |lines| lines.sort())
     }
 
     pub fn sort_lines_case_insensitive(
@@ -9141,7 +9141,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_lines(window, cx, |lines| {
+        self.manipulate_immutable_lines(window, cx, |lines| {
             lines.sort_by_key(|line| line.to_lowercase())
         })
     }
@@ -9152,7 +9152,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_lines(window, cx, |lines| {
+        self.manipulate_immutable_lines(window, cx, |lines| {
             let mut seen = HashSet::default();
             lines.retain(|line| seen.insert(line.to_lowercase()));
         })
@@ -9164,7 +9164,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_lines(window, cx, |lines| {
+        self.manipulate_immutable_lines(window, cx, |lines| {
             let mut seen = HashSet::default();
             lines.retain(|line| seen.insert(*line));
         })
@@ -9606,20 +9606,20 @@ impl Editor {
     }
 
     pub fn reverse_lines(&mut self, _: &ReverseLines, window: &mut Window, cx: &mut Context<Self>) {
-        self.manipulate_lines(window, cx, |lines| lines.reverse())
+        self.manipulate_immutable_lines(window, cx, |lines| lines.reverse())
     }
 
     pub fn shuffle_lines(&mut self, _: &ShuffleLines, window: &mut Window, cx: &mut Context<Self>) {
-        self.manipulate_lines(window, cx, |lines| lines.shuffle(&mut thread_rng()))
+        self.manipulate_immutable_lines(window, cx, |lines| lines.shuffle(&mut thread_rng()))
     }
 
-    fn manipulate_lines<Fn>(
+    fn manipulate_lines<M>(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut callback: Fn,
+        mut manipulate: M,
     ) where
-        Fn: FnMut(&mut Vec<&str>),
+        M: FnMut(&str) -> LineManipulationResult,
     {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
@@ -9652,18 +9652,14 @@ impl Editor {
                 .text_for_range(start_point..end_point)
                 .collect::<String>();
 
-            let mut lines = text.split('\n').collect_vec();
+            let LineManipulationResult { new_text, line_count_before, line_count_after} = manipulate(&text);
 
-            let lines_before = lines.len();
-            callback(&mut lines);
-            let lines_after = lines.len();
-
-            edits.push((start_point..end_point, lines.join("\n")));
+            edits.push((start_point..end_point, new_text));
 
             // Selections must change based on added and removed line count
             let start_row =
                 MultiBufferRow(start_point.row + added_lines as u32 - removed_lines as u32);
-            let end_row = MultiBufferRow(start_row.0 + lines_after.saturating_sub(1) as u32);
+            let end_row = MultiBufferRow(start_row.0 + line_count_after.saturating_sub(1) as u32);
             new_selections.push(Selection {
                 id: selection.id,
                 start: start_row,
@@ -9672,10 +9668,10 @@ impl Editor {
                 reversed: selection.reversed,
             });
 
-            if lines_after > lines_before {
-                added_lines += lines_after - lines_before;
-            } else if lines_before > lines_after {
-                removed_lines += lines_before - lines_after;
+            if line_count_after > line_count_before {
+                added_lines += line_count_after - line_count_before;
+            } else if line_count_before > line_count_after {
+                removed_lines += line_count_before - line_count_after;
             }
         }
 
@@ -9718,6 +9714,171 @@ impl Editor {
                 text.to_uppercase()
             }
         })
+    }
+
+    fn manipulate_immutable_lines<Fn>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        mut callback: Fn,
+    ) where
+        Fn: FnMut(&mut Vec<&str>),
+    {
+        self.manipulate_lines(window, cx, |text| {
+            let mut lines: Vec<&str> = text.split('\n').collect();
+            let line_count_before = lines.len();
+
+            callback(&mut lines);
+
+            LineManipulationResult {
+                new_text: lines.join("\n"),
+                line_count_before,
+                line_count_after: lines.len(),
+            }
+        });
+    }
+
+    fn manipulate_mutable_lines<Fn>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        mut callback: Fn,
+    ) where
+        Fn: FnMut(&mut Vec<Cow<'_, str>>),
+    {
+        self.manipulate_lines(window, cx, |text| {
+            let mut lines: Vec<Cow<str>> = text.split('\n').map(Cow::from).collect();
+            let line_count_before = lines.len();
+
+            callback(&mut lines);
+
+            LineManipulationResult {
+                new_text: lines.join("\n"),
+                line_count_before,
+                line_count_after: lines.len(),
+            }
+        });
+    }
+
+    pub fn convert_indentation_to_spaces(
+        &mut self,
+        _: &ConvertIndentationToSpaces,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = self.buffer.read(cx).language_settings(cx);
+        let tab_size = settings.tab_size.get() as usize;
+
+        self.manipulate_mutable_lines(window, cx, |lines| {
+            // Allocates a reasonably sized scratch buffer once for the whole loop
+            let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
+            // Avoids recomputing spaces that could be inserted many times
+            let space_cache: Vec<Vec<char>> = (1..=tab_size)
+                .map(|n| IndentSize::spaces(n as u32).chars().collect())
+                .collect();
+
+            for line in lines.iter_mut().filter(|line| !line.is_empty()) {
+                let mut chars = line.as_ref().chars();
+                let mut col = 0;
+                let mut changed = false;
+
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        ' ' => {
+                            reindented_line.push(' ');
+                            col += 1;
+                        }
+                        '\t' => {
+                            // \t are converted to spaces depending on the current column
+                            let spaces_len = tab_size - (col % tab_size);
+                            reindented_line.extend(&space_cache[spaces_len - 1]);
+                            col += spaces_len;
+                            changed = true;
+                        }
+                        _ => {
+                            // If we dont append before break, the character is consumed
+                            reindented_line.push(ch);
+                            break;
+                        }
+                    }
+                }
+
+                if !changed {
+                    reindented_line.clear();
+                    continue;
+                }
+                // Append the rest of the line and replace old reference with new one
+                reindented_line.extend(chars);
+                *line = Cow::Owned(reindented_line.clone());
+                reindented_line.clear();
+            }
+        });
+    }
+
+    pub fn convert_indentation_to_tabs(
+        &mut self,
+        _: &ConvertIndentationToTabs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let settings = self.buffer.read(cx).language_settings(cx);
+        let tab_size = settings.tab_size.get() as usize;
+
+        self.manipulate_mutable_lines(window, cx, |lines| {
+            // Allocates a reasonably sized buffer once for the whole loop
+            let mut reindented_line = String::with_capacity(MAX_LINE_LEN);
+            // Avoids recomputing spaces that could be inserted many times
+            let space_cache: Vec<Vec<char>> = (1..=tab_size)
+                .map(|n| IndentSize::spaces(n as u32).chars().collect())
+                .collect();
+
+            for line in lines.iter_mut().filter(|line| !line.is_empty()) {
+                let mut chars = line.chars();
+                let mut spaces_count = 0;
+                let mut first_non_indent_char = None;
+                let mut changed = false;
+
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        ' ' => {
+                            // Keep track of spaces. Append \t when we reach tab_size
+                            spaces_count += 1;
+                            changed = true;
+                            if spaces_count == tab_size {
+                                reindented_line.push('\t');
+                                spaces_count = 0;
+                            }
+                        }
+                        '\t' => {
+                            reindented_line.push('\t');
+                            spaces_count = 0;
+                        }
+                        _ => {
+                            // Dont append it yet, we might have remaining spaces
+                            first_non_indent_char = Some(ch);
+                            break;
+                        }
+                    }
+                }
+
+                if !changed {
+                    reindented_line.clear();
+                    continue;
+                }
+                // Remaining spaces that didn't make a full tab stop
+                if spaces_count > 0 {
+                    reindented_line.extend(&space_cache[spaces_count - 1]);
+                }
+                // If we consume an extra character that was not indentation, add it back
+                if let Some(extra_char) = first_non_indent_char {
+                    reindented_line.push(extra_char);
+                }
+                // Append the rest of the line and replace old reference with new one
+                reindented_line.extend(chars);
+                *line = Cow::Owned(reindented_line.clone());
+                reindented_line.clear();
+            }
+        });
     }
 
     pub fn convert_to_upper_case(
@@ -10369,8 +10530,8 @@ impl Editor {
                 .map(|line| {
                     line.strip_prefix(&line_prefix)
                         .or_else(|| line.trim_start().strip_prefix(&line_prefix.trim_start()))
-                        .ok_or_else(|| {
-                            anyhow!("line did not start with prefix {line_prefix:?}: {line:?}")
+                        .with_context(|| {
+                            format!("line did not start with prefix {line_prefix:?}: {line:?}")
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -16944,7 +17105,7 @@ impl Editor {
             Err(err) => {
                 let message = format!("Failed to copy permalink: {err}");
 
-                Err::<(), anyhow::Error>(err).log_err();
+                anyhow::Result::<()>::Err(err).log_err();
 
                 if let Some(workspace) = workspace {
                     workspace
@@ -16999,7 +17160,7 @@ impl Editor {
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");
 
-                Err::<(), anyhow::Error>(err).log_err();
+                anyhow::Result::<()>::Err(err).log_err();
 
                 if let Some(workspace) = workspace {
                     workspace
@@ -21156,6 +21317,13 @@ pub struct LineHighlight {
     pub include_gutter: bool,
     pub type_id: Option<TypeId>,
 }
+
+struct LineManipulationResult {
+    pub new_text: String,
+    pub line_count_before: usize,
+    pub line_count_after: usize,
+}
+
 
 fn render_diff_hunk_controls(
     row: u32,

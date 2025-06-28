@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
@@ -8,6 +8,7 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
+use project::Fs;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -22,8 +23,13 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::archive::extract_zip;
 use util::merge_json_value_into;
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{
+    ResultExt,
+    fs::{make_file_executable, remove_matching},
+    maybe,
+};
 
 use crate::language_settings::language_settings;
 
@@ -215,26 +221,16 @@ impl LspAdapter for RustLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             };
 
             // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &server_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
+            make_file_executable(&server_path).await?;
         }
 
         Ok(LanguageServerBinary {
@@ -314,10 +310,15 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} }}"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..name.len(),
+                    filter_range,
                 });
             }
             (
@@ -334,10 +335,15 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} = ();"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..name.len(),
+                    filter_range,
                 });
             }
             (
@@ -371,9 +377,13 @@ impl LspAdapter for RustLspAdapter {
                         text.push(' ');
                         text.push_str(&detail);
                     }
-
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
                     return Some(CodeLabel {
-                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                        filter_range,
                         text,
                         runs,
                     });
@@ -382,12 +392,18 @@ impl LspAdapter for RustLspAdapter {
                     .as_ref()
                     .map_or(false, |detail| detail.starts_with("macro_rules! "))
                 {
-                    let source = Rope::from(completion.label.as_str());
-                    let runs = language.highlight_text(&source, 0..completion.label.len());
-
+                    let text = completion.label.clone();
+                    let len = text.len();
+                    let source = Rope::from(text.as_str());
+                    let runs = language.highlight_text(&source, 0..len);
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..len);
                     return Some(CodeLabel {
-                        filter_range: 0..completion.label.len(),
-                        text: completion.label.clone(),
+                        filter_range,
+                        text,
                         runs,
                     });
                 }
@@ -410,7 +426,7 @@ impl LspAdapter for RustLspAdapter {
                     label.push(' ');
                     label.push_str(detail);
                 }
-                let mut label = CodeLabel::plain(label, None);
+                let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                 if let Some(highlight_name) = highlight_name {
                     let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name)?;
                     label.runs.push((
@@ -559,12 +575,13 @@ impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         task_variables: &TaskVariables,
-        location: &Location,
+        location: ContextLocation<'_>,
         project_env: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
+            .file_location
             .buffer
             .read(cx)
             .file()
@@ -629,9 +646,10 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
+        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
@@ -686,6 +704,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
                     RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-test".to_owned()],
@@ -706,6 +725,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
                     RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-doc-test".to_owned()],
@@ -797,7 +817,7 @@ impl ContextProvider for RustContextProvider {
                 .collect();
         }
 
-        Some(TaskTemplates(task_templates))
+        Task::ready(Some(TaskTemplates(task_templates)))
     }
 
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
@@ -972,7 +992,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })
@@ -1179,6 +1199,49 @@ mod tests {
                     (25..28, highlight_type),
                     (29..30, highlight_type),
                 ],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "await.as_deref_mut()".to_string(),
+                        filter_text: Some("as_deref_mut".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some("fn(&mut self) -> IterMut<'_, T>".to_string()),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel {
+                text: "await.as_deref_mut()".to_string(),
+                filter_range: 6..18,
+                runs: vec![],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "inner_value".to_string(),
+                        filter_text: Some("value".to_string()),
+                        detail: Some("String".to_string()),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel {
+                text: "inner_value: String".to_string(),
+                filter_range: 6..11,
+                runs: vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
             })
         );
     }

@@ -1,9 +1,9 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, value::RawValue};
-use std::{convert::TryFrom, sync::Arc, time::Duration};
+use serde_json::Value;
+use std::{convert::TryFrom, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 
@@ -25,7 +25,7 @@ impl TryFrom<String> for Role {
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
+            _ => anyhow::bail!("invalid role '{value}'"),
         }
     }
 }
@@ -46,15 +46,25 @@ impl From<Role> for String {
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub max_tokens: u64,
+    pub supports_tool_calls: bool,
+    pub supports_images: bool,
 }
 
 impl Model {
-    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
+    pub fn new(
+        name: &str,
+        display_name: Option<&str>,
+        max_tokens: Option<u64>,
+        supports_tool_calls: bool,
+        supports_images: bool,
+    ) -> Self {
         Self {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2048),
+            supports_tool_calls,
+            supports_images,
         }
     }
 
@@ -66,50 +76,132 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
-}
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "role", rename_all = "lowercase")]
-pub enum ChatMessage {
-    Assistant {
-        #[serde(default)]
-        content: Option<String>,
-        #[serde(default)]
-        tool_calls: Option<Vec<LmStudioToolCall>>,
-    },
-    User {
-        content: String,
-    },
-    System {
-        content: String,
-    },
+
+    pub fn supports_tool_calls(&self) -> bool {
+        self.supports_tool_calls
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum LmStudioToolCall {
-    Function(LmStudioFunctionCall),
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+    Other(ToolDefinition),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LmStudioFunctionCall {
-    pub name: String,
-    pub arguments: Box<RawValue>,
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDefinition {
+    #[allow(dead_code)]
+    Function { function: FunctionDefinition },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LmStudioFunctionTool {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Value>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum ChatMessage {
+    Assistant {
+        #[serde(default)]
+        content: Option<MessageContent>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
+    },
+    User {
+        content: MessageContent,
+    },
+    System {
+        content: MessageContent,
+    },
+    Tool {
+        content: MessageContent,
+        tool_call_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Plain(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        MessageContent::Multipart(vec![])
+    }
+
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            MessageContent::Plain(text) => {
+                *self =
+                    MessageContent::Multipart(vec![MessagePart::Text { text: text.clone() }, part]);
+            }
+            MessageContent::Multipart(parts) if parts.is_empty() => match part {
+                MessagePart::Text { text } => *self = MessageContent::Plain(text),
+                MessagePart::Image { .. } => *self = MessageContent::Multipart(vec![part]),
+            },
+            MessageContent::Multipart(parts) => parts.push(part),
+        }
+    }
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(mut parts: Vec<MessagePart>) -> Self {
+        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+            MessageContent::Plain(std::mem::take(text))
+        } else {
+            MessageContent::Multipart(parts)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessagePart {
+    Text {
+        text: String,
+    },
+    #[serde(rename = "image_url")]
+    Image {
+        image_url: ImageUrl,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum LmStudioTool {
-    Function { function: LmStudioFunctionTool },
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -117,10 +209,16 @@ pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    pub tools: Vec<LmStudioTool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -135,8 +233,7 @@ pub struct ChatResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    #[serde(default)]
-    pub delta: serde_json::Value,
+    pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 
@@ -159,9 +256,23 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct Capabilities(Vec<String>);
+
+impl Capabilities {
+    pub fn supports_tool_calls(&self) -> bool {
+        self.0.iter().any(|cap| cap == "tool_use")
+    }
+
+    pub fn supports_images(&self) -> bool {
+        self.0.iter().any(|cap| cap == "vision")
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -175,16 +286,17 @@ pub enum ResponseStreamResult {
 pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
+    pub object: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct ListModelsResponse {
     pub data: Vec<ModelEntry>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ModelEntry {
     pub id: String,
     pub object: String,
@@ -194,8 +306,10 @@ pub struct ModelEntry {
     pub compatibility_type: CompatibilityType,
     pub quantization: Option<String>,
     pub state: ModelState,
-    pub max_context_length: Option<u32>,
-    pub loaded_context_length: Option<u32>,
+    pub max_context_length: Option<u64>,
+    pub loaded_context_length: Option<u64>,
+    #[serde(default)]
+    pub capabilities: Capabilities,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -226,6 +340,8 @@ pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
@@ -253,11 +369,11 @@ pub async fn complete(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ))
+        );
     }
 }
 
@@ -265,7 +381,7 @@ pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatCompletionRequest,
-) -> Result<BoxStream<'static, Result<ChatResponse>>> {
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = http::Request::builder()
         .method(Method::POST)
@@ -304,12 +420,11 @@ pub async fn stream_chat_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to LM Studio API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }
 
@@ -331,47 +446,48 @@ pub async fn get_models(
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
-    if response.status().is_success() {
-        let response: ListModelsResponse =
-            serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
-        Ok(response.data)
-    } else {
-        Err(anyhow!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        ))
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to LM Studio API: {} {}",
+        response.status(),
+        body,
+    );
+    let response: ListModelsResponse =
+        serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
+    Ok(response.data)
 }
 
-/// Sends an empty request to LM Studio to trigger loading the model
-pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
-    let uri = format!("{api_url}/completions");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(
-            &serde_json::json!({
-                "model": model,
-                "messages": [],
-                "stream": false,
-                "max_tokens": 0,
-            }),
-        )?))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let mut response = client.send(request).await?;
+    #[test]
+    fn test_image_message_part_serialization() {
+        let image_part = MessagePart::Image {
+            image_url: ImageUrl {
+                url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==".to_string(),
+                detail: None,
+            },
+        };
 
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        let json = serde_json::to_string(&image_part).unwrap();
+        println!("Serialized image part: {}", json);
 
-        Err(anyhow!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        ))
+        // Verify the structure matches what LM Studio expects
+        let expected_structure = r#"{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="}}"#;
+        assert_eq!(json, expected_structure);
+    }
+
+    #[test]
+    fn test_text_message_part_serialization() {
+        let text_part = MessagePart::Text {
+            text: "Hello, world!".to_string(),
+        };
+
+        let json = serde_json::to_string(&text_part).unwrap();
+        println!("Serialized text part: {}", json);
+
+        let expected_structure = r#"{"type":"text","text":"Hello, world!"}"#;
+        assert_eq!(json, expected_structure);
     }
 }

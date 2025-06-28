@@ -56,6 +56,9 @@
       "[ shift-b": ["pane::ActivateItem", 0],
       "] space": "vim::InsertEmptyLineBelow",
       "[ space": "vim::InsertEmptyLineAbove",
+      "[ e": "editor::MoveLineUp",
+      "] e": "editor::MoveLineDown",
+
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -82,10 +85,10 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
-      "f": ["vim::PushFindForward", { "before": false }],
-      "t": ["vim::PushFindForward", { "before": true }],
-      "shift-f": ["vim::PushFindBackward", { "after": false }],
-      "shift-t": ["vim::PushFindBackward", { "after": true }],
+      "f": ["vim::PushFindForward", { "before": false, "multiline": false }],
+      "t": ["vim::PushFindForward", { "before": true, "multiline": false }],
+      "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": false }],
+      "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": false }],
       "m": "vim::PushMark",
       "'": ["vim::PushJump", { "line": true }],
       "`": ["vim::PushJump", { "line": false }],
@@ -152,6 +155,7 @@
       "g end": ["vim::EndOfLine", { "display_lines": true }],
       "g 0": ["vim::StartOfLine", { "display_lines": true }],
       "g home": ["vim::StartOfLine", { "display_lines": true }],
+      "g shift-m": ["vim::MiddleOfLine", { "display_lines": true }],
       "g ^": ["vim::FirstNonWhitespace", { "display_lines": true }],
       "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
@@ -183,6 +187,8 @@
       "z f": "editor::FoldSelectedRanges",
       "z shift-m": "editor::FoldAll",
       "z shift-r": "editor::UnfoldAll",
+      "z l": "vim::ColumnRight",
+      "z h": "vim::ColumnLeft",
       "shift-z shift-q": ["pane::CloseActiveItem", { "save_intent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "save_intent": "save_all" }],
       // Count support
@@ -197,6 +203,8 @@
       "9": ["vim::Number", 9],
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w ]": "editor::GoToDefinitionSplit",
+      "ctrl-w ctrl-]": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
@@ -360,6 +368,10 @@
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
       ":": "command_palette::Toggle",
+      "left": "vim::WrappingLeft",
+      "right": "vim::WrappingRight",
+      "h": "vim::WrappingLeft",
+      "l": "vim::WrappingRight",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": "editor::Copy",
@@ -377,6 +389,10 @@
       "shift-p": ["vim::Paste", { "before": true }],
       "u": "vim::Undo",
       "ctrl-r": "vim::Redo",
+      "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
+      "t": ["vim::PushFindForward", { "before": true, "multiline": true }],
+      "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
+      "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "r": "vim::PushReplace",
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
@@ -392,6 +408,8 @@
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePreviousItem",
       "insert": "vim::InsertBefore",
+      ".": "vim::Repeat",
+      "alt-.": "vim::RepeatFind",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
@@ -418,6 +436,7 @@
 
       "x": "editor::SelectLine",
       "shift-x": "editor::SelectLine",
+      "%": "editor::SelectAll",
       // Window mode
       "space w h": "workspace::ActivatePaneLeft",
       "space w l": "workspace::ActivatePaneRight",
@@ -447,7 +466,8 @@
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow"
+      "shift-c": "editor::AddSelectionBelow",
+      "alt-shift-c": "editor::AddSelectionAbove"
     }
   },
   {
@@ -708,7 +728,7 @@
     }
   },
   {
-    "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
+    "context": "AgentPanel || GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -838,20 +858,25 @@
     }
   },
   {
+    "context": "MessageEditor > Editor && VimControl",
+    "bindings": {
+      "enter": "agent::Chat",
+      // TODO: Implement search
+      "/": null,
+      "?": null,
+      "#": null,
+      "*": null,
+      "n": null,
+      "shift-n": null
+    }
+  },
+  {
     "context": "os != macos && Editor && edit_prediction_conflict",
     "bindings": {
       // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This
       // is because alt-tab may not be available, as it is often used for window switching on Linux
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
-    }
-  },
-  {
-    // Fixes https://github.com/zed-industries/zed/issues/29095 by ensuring that
-    // the last binding for editor::ToggleComments is not ctrl-c.
-    "context": "hack_to_fix_ctrl-c",
-    "bindings": {
-      "g c": "editor::ToggleComments"
     }
   }
 ]

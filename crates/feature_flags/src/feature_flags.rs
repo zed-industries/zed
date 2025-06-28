@@ -77,11 +77,6 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct DebuggerFeatureFlag {}
-impl FeatureFlag for DebuggerFeatureFlag {
-    const NAME: &'static str = "debugger";
-}
-
 pub struct ThreadAutoCaptureFeatureFlag {}
 impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
     const NAME: &'static str = "thread-auto-capture";
@@ -89,6 +84,12 @@ impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
     fn enabled_for_staff() -> bool {
         false
     }
+}
+
+pub struct JjUiFeatureFlag {}
+
+impl FeatureFlag for JjUiFeatureFlag {
+    const NAME: &'static str = "jj-ui";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {

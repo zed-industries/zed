@@ -55,6 +55,11 @@ impl Model {
 
         account_created_at
     }
+
+    /// Returns the age of the user's account.
+    pub fn account_age(&self) -> chrono::Duration {
+        chrono::Utc::now().naive_utc() - self.account_created_at()
+    }
 }
 
 impl Related<super::access_token::Entity> for Entity {

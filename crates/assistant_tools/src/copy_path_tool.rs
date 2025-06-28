@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
@@ -46,6 +46,10 @@ impl Tool for CopyPathTool {
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        true
     }
 
     fn description(&self) -> String {
@@ -107,17 +111,13 @@ impl Tool for CopyPathTool {
         });
 
         cx.background_spawn(async move {
-            match copy_task.await {
-                Ok(_) => Ok(
-                    format!("Copied {} to {}", input.source_path, input.destination_path).into(),
-                ),
-                Err(err) => Err(anyhow!(
-                    "Failed to copy {} to {}: {}",
-                    input.source_path,
-                    input.destination_path,
-                    err
-                )),
-            }
+            let _ = copy_task.await.with_context(|| {
+                format!(
+                    "Copying {} to {}",
+                    input.source_path, input.destination_path
+                )
+            })?;
+            Ok(format!("Copied {} to {}", input.source_path, input.destination_path).into())
         })
         .into()
     }

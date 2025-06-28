@@ -1,19 +1,21 @@
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
-    Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, size, transparent_black,
+    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
+    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -22,8 +24,10 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
+use itertools::FoldWhile::{Continue, Done};
+use itertools::Itertools;
 use parking_lot::RwLock;
-use raw_window_handle::{HandleError, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -50,6 +54,7 @@ use uuid::Uuid;
 
 mod prompts;
 
+use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
@@ -201,8 +206,20 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    /// 8MB wasn't quite enough...
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(1024 * 1024));
+}
+
+/// Returned when the element arena has been used and so must be cleared before the next draw.
+#[must_use]
+pub struct ArenaClearNeeded;
+
+impl ArenaClearNeeded {
+    /// Clear the element arena.
+    pub fn clear(self) {
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            element_arena.clear();
+        });
+    }
 }
 
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
@@ -261,15 +278,13 @@ impl FocusHandle {
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
-        if ref_count.load(SeqCst) == 0 {
-            None
-        } else {
-            ref_count.fetch_add(1, SeqCst);
-            Some(Self {
-                id,
-                handles: handles.clone(),
-            })
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            return None;
         }
+        Some(Self {
+            id,
+            handles: handles.clone(),
+        })
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -407,18 +422,59 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
+    pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
 }
 
-/// An identifier for a [Hitbox].
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct HitboxId(usize);
+#[derive(Default, Eq, PartialEq)]
+pub(crate) struct HitTest {
+    pub(crate) ids: SmallVec<[HitboxId; 8]>,
+    pub(crate) hover_hitbox_count: usize,
+}
+
+/// A type of window control area that corresponds to the platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowControlArea {
+    /// An area that allows dragging of the platform window.
+    Drag,
+    /// An area that allows closing of the platform window.
+    Close,
+    /// An area that allows maximizing of the platform window.
+    Max,
+    /// An area that allows minimizing of the platform window.
+    Min,
+}
+
+/// An identifier for a [Hitbox] which also includes [HitboxBehavior].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct HitboxId(u64);
 
 impl HitboxId {
-    /// Checks if the hitbox with this id is currently hovered.
-    pub fn is_hovered(&self, window: &Window) -> bool {
-        window.mouse_hit_test.0.contains(self)
+    /// Checks if the hitbox with this ID is currently hovered. Except when handling
+    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// events or paint hover styles.
+    ///
+    /// See [`Hitbox::is_hovered`] for details.
+    pub fn is_hovered(self, window: &Window) -> bool {
+        let hit_test = &window.mouse_hit_test;
+        for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            if self == *id {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
+    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
+    /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
+    /// this distinction.
+    pub fn should_handle_scroll(self, window: &Window) -> bool {
+        window.mouse_hit_test.ids.contains(&self)
+    }
+
+    fn next(mut self) -> HitboxId {
+        HitboxId(self.0.wrapping_add(1))
     }
 }
 
@@ -433,19 +489,98 @@ pub struct Hitbox {
     pub bounds: Bounds<Pixels>,
     /// The content mask when the hitbox was inserted.
     pub content_mask: ContentMask<Pixels>,
-    /// Whether the hitbox occludes other hitboxes inserted prior.
-    pub opaque: bool,
+    /// Flags that specify hitbox behavior.
+    pub behavior: HitboxBehavior,
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered.
+    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
+    /// typically what you want when determining whether to handle mouse events or paint hover
+    /// styles.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
+    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
+    ///
+    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
+    /// non-interactive while still allowing scrolling. More abstractly, this is because
+    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
+    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
+    /// container.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
     }
+
+    /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
+    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
+    /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
+    pub fn should_handle_scroll(&self, window: &Window) -> bool {
+        self.id.should_handle_scroll(window)
+    }
 }
 
-#[derive(Default, Eq, PartialEq)]
-pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
+/// How the hitbox affects mouse behavior.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum HitboxBehavior {
+    /// Normal hitbox mouse behavior, doesn't affect mouse handling for other hitboxes.
+    #[default]
+    Normal,
+
+    /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
+    /// false` and `hitbox.should_handle_scroll() == false`. Typically for elements this causes
+    /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
+    /// [`InteractiveElement::occlude`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
+    ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// This has effects beyond event handling - any use of hitbox checking, such as hover
+    /// styles and tooltops. These other behaviors are the main point of this mechanism. An
+    /// alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouse,
+
+    /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
+    /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
+    /// interaction except scroll events to be ignored - see the documentation of
+    /// [`Hitbox::is_hovered`] for details. This flag is set by
+    /// [`InteractiveElement::block_mouse_except_scroll`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
+    /// handled differently than other mouse events. If also blocking these scroll events is
+    /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
+    ///
+    /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
+    /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
+    /// An alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouseExceptScroll,
+}
 
 /// An identifier for a tooltip.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -496,12 +631,17 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
 }
 
 #[derive(Clone, Default)]
@@ -535,6 +675,7 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
@@ -542,6 +683,12 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            next_inspector_instance_ids: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector_hitboxes: FxHashMap::default(),
         }
     }
 
@@ -555,20 +702,50 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.next_inspector_instance_ids.clear();
+            self.inspector_hitboxes.clear();
+        }
+    }
+
+    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        self.cursor_styles
+            .iter()
+            .rev()
+            .fold_while(None, |style, request| match request.hitbox_id {
+                None => Done(Some(request.style)),
+                Some(hitbox_id) => Continue(
+                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
+                ),
+            })
+            .into_inner()
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        let mut set_hover_hitbox_count = false;
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
-                hit_test.0.push(hitbox.id);
-                if hitbox.opaque {
+                hit_test.ids.push(hitbox.id);
+                if !set_hover_hitbox_count
+                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
+                {
+                    hit_test.hover_hitbox_count = hit_test.ids.len();
+                    set_hover_hitbox_count = true;
+                }
+                if hitbox.behavior == HitboxBehavior::BlockMouse {
                     break;
                 }
             }
+        }
+        if !set_hover_hitbox_count {
+            hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
     }
@@ -620,7 +797,7 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    pub(crate) next_hitbox_id: HitboxId,
+    next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -631,6 +808,7 @@ pub struct Window {
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
+    capslock: Capslock,
     scale_factor: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
@@ -648,6 +826,8 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    inspector: Option<Entity<Inspector>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -740,6 +920,7 @@ impl Window {
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
+        let capslock = platform_window.capslock();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
@@ -799,8 +980,10 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
-                                window.draw(cx);
+                                let arena_clear_needed = window.draw(cx);
                                 window.present();
+                                // drop the arena elements after present to reduce latency
+                                arena_clear_needed.clear();
                             })
                             .log_err();
                     })
@@ -848,6 +1031,7 @@ impl Window {
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
+                        window.capslock = window.platform_window.capslock();
                         window
                             .activation_observers
                             .clone()
@@ -875,6 +1059,22 @@ impl Window {
                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
+            })
+        });
+        platform_window.on_hit_test_window_control({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                                return Some(*area);
+                            }
+                        }
+                        None
+                    })
+                    .log_err()
+                    .unwrap_or(None)
             })
         });
 
@@ -907,7 +1107,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
-            next_hitbox_id: HitboxId::default(),
+            next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -917,6 +1117,7 @@ impl Window {
             mouse_position,
             mouse_hit_test: HitTest::default(),
             modifiers,
+            capslock,
             scale_factor,
             bounds_observers: SubscriberSet::new(),
             appearance,
@@ -935,6 +1136,8 @@ impl Window {
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector: None,
         })
     }
 
@@ -957,7 +1160,7 @@ pub(crate) struct DispatchEventResult {
 /// to leave room to support more complex shapes in the future.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct ContentMask<P: Clone + Default + Debug> {
+pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
 }
@@ -1129,21 +1332,13 @@ impl Window {
 
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut App) {
-        let focus_handle = self.focused(cx);
+        let focus_id = self.focused(cx).map(|handle| handle.id);
 
         let window = self.handle;
         cx.defer(move |cx| {
             window
                 .update(cx, |_, window, cx| {
-                    let node_id = focus_handle
-                        .and_then(|handle| {
-                            window
-                                .rendered_frame
-                                .dispatch_tree
-                                .focusable_node_id(handle.id)
-                        })
-                        .unwrap_or_else(|| window.rendered_frame.dispatch_tree.root_node_id());
-
+                    let node_id = window.focus_node_id_in_rendered_frame(focus_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
                 .log_err();
@@ -1520,17 +1715,11 @@ impl Window {
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
     pub fn is_action_available(&self, action: &dyn Action, cx: &mut App) -> bool {
-        let target = self
-            .focused(cx)
-            .and_then(|focused_handle| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focused_handle.id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
+        let node_id =
+            self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
         self.rendered_frame
             .dispatch_tree
-            .is_action_available(action, target)
+            .is_action_available(action, node_id)
     }
 
     /// The position of the mouse relative to the window.
@@ -1543,6 +1732,11 @@ impl Window {
         self.modifiers
     }
 
+    /// The current state of the keyboard's capslock
+    pub fn capslock(&self) -> Capslock {
+        self.capslock
+    }
+
     fn complete_frame(&self) {
         self.platform_window.completed_frame();
     }
@@ -1550,7 +1744,7 @@ impl Window {
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
-    pub fn draw(&mut self, cx: &mut App) {
+    pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -1574,13 +1768,6 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
-            }
-            element_arena.clear();
-        });
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -1622,6 +1809,8 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+
+        ArenaClearNeeded
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -1658,9 +1847,30 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
+        let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
+        let root_size = {
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            {
+                if self.inspector.is_some() {
+                    let mut size = self.viewport_size;
+                    size.width = (size.width - _inspector_width).max(px(0.0));
+                    size
+                } else {
+                    self.viewport_size
+                }
+            }
+            #[cfg(not(any(feature = "inspector", debug_assertions)))]
+            {
+                self.viewport_size
+            }
+        };
+
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
-        root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+        root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1672,7 +1882,7 @@ impl Window {
         let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
-            element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+            element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
@@ -1691,6 +1901,9 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector(inspector_element, cx);
+
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
         if let Some(mut prompt_element) = prompt_element {
@@ -1700,6 +1913,9 @@ impl Window {
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
         }
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector_hitbox(cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -1960,12 +2176,24 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.map(|hitbox| hitbox.id),
+            hitbox_id: Some(hitbox.id),
             style,
         });
+    }
+
+    /// Updates the cursor style for the entire window at the platform level. A cursor
+    /// style using this method will have precedence over any cursor style set using
+    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// phase of element drawing.
+    pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.cursor_styles.push(CursorStyleRequest {
+            hitbox_id: None,
+            style,
+        })
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -2821,20 +3049,28 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
-        let id = self.next_hitbox_id;
-        self.next_hitbox_id.0 += 1;
+        let mut id = self.next_hitbox_id;
+        self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
             id,
             bounds,
             content_mask,
-            opaque,
+            behavior,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
+    }
+
+    /// Set a hitbox which will act as a control area of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_control_hitboxes.push((area, hitbox));
     }
 
     /// Sets the key context for the current element. This context will be used to translate
@@ -3040,15 +3276,7 @@ impl Window {
         if self.is_window_hovered() {
             let style = self
                 .rendered_frame
-                .cursor_styles
-                .iter()
-                .rev()
-                .find(|request| {
-                    request
-                        .hitbox_id
-                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
-                })
-                .map(|request| request.style)
+                .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -3083,8 +3311,7 @@ impl Window {
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
     /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
-        self.bindings_for_action(action)
-            .last()
+        self.highest_precedence_binding_for_action(action)
             .map(|binding| {
                 binding
                     .keystrokes()
@@ -3129,6 +3356,7 @@ impl Window {
             }
             PlatformInput::ModifiersChanged(modifiers_changed) => {
                 self.modifiers = modifiers_changed.modifiers;
+                self.capslock = modifiers_changed.capslock;
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
             PlatformInput::ScrollWheel(scroll_wheel) => {
@@ -3200,6 +3428,13 @@ impl Window {
             self.reset_cursor_style(cx);
         }
 
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        if self.is_inspector_picking(cx) {
+            self.handle_inspector_mouse_event(event, cx);
+            // When inspector is picking, all other mouse handling is skipped.
+            return;
+        }
+
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
@@ -3241,18 +3476,10 @@ impl Window {
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
-            self.draw(cx);
+            self.draw(cx).clear();
         }
 
-        let node_id = self
-            .focus
-            .and_then(|focus_id| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
-
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         let mut keystroke: Option<Keystroke> = None;
@@ -3324,6 +3551,7 @@ impl Window {
                         return;
                     };
 
+                    let node_id = window.focus_node_id_in_rendered_frame(window.focus);
                     let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
                     let to_replay = window
@@ -3331,6 +3559,7 @@ impl Window {
                         .dispatch_tree
                         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
+                    window.pending_input_changed(cx);
                     window.replay_pending_input(to_replay, cx)
                 })
                 .log_err();
@@ -3454,15 +3683,7 @@ impl Window {
     }
 
     fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
-        let node_id = self
-            .focus
-            .and_then(|focus_id| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
-
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         'replay: for replay in replays {
@@ -3496,6 +3717,16 @@ impl Window {
                 }
             }
         }
+    }
+
+    fn focus_node_id_in_rendered_frame(&self, focus_id: Option<FocusId>) -> DispatchNodeId {
+        focus_id
+            .and_then(|focus_id| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id())
     }
 
     fn dispatch_action_on_node(
@@ -3649,28 +3880,36 @@ impl Window {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[T],
         cx: &mut App,
-    ) -> oneshot::Receiver<usize> {
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         let prompt_builder = cx.prompt_builder.take();
         let Some(prompt_builder) = prompt_builder else {
             unreachable!("Re-entrant window prompting is not supported by GPUI");
         };
 
+        let answers = answers
+            .iter()
+            .map(|answer| answer.clone().into())
+            .collect::<Vec<_>>();
+
         let receiver = match &prompt_builder {
             PromptBuilder::Default => self
                 .platform_window
-                .prompt(level, message, detail, answers)
+                .prompt(level, message, detail, &answers)
                 .unwrap_or_else(|| {
-                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
                 }),
             PromptBuilder::Custom(_) => {
-                self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
             }
         };
 
@@ -3685,7 +3924,7 @@ impl Window {
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
         cx: &mut App,
     ) -> oneshot::Receiver<usize> {
         let (sender, receiver) = oneshot::channel();
@@ -3697,12 +3936,8 @@ impl Window {
 
     /// Returns the current context stack.
     pub fn context_stack(&self) -> Vec<KeyContext> {
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        let node_id = self
-            .focus
-            .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
-            .unwrap_or_else(|| dispatch_tree.root_node_id());
-
         dispatch_tree
             .dispatch_path(node_id)
             .iter()
@@ -3712,15 +3947,7 @@ impl Window {
 
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self, cx: &App) -> Vec<Box<dyn Action>> {
-        let node_id = self
-            .focus
-            .and_then(|focus_id| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
-
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let mut actions = self.rendered_frame.dispatch_tree.available_actions(node_id);
         for action_type in cx.global_action_listeners.keys() {
             if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
@@ -3741,6 +3968,38 @@ impl Window {
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
+    /// Returns the highest precedence key binding that invokes an action on the currently focused
+    /// element. This is more efficient than getting the last result of `bindings_for_action`.
+    pub fn highest_precedence_binding_for_action(&self, action: &dyn Action) -> Option<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .highest_precedence_binding_for_action(
+                action,
+                &self.rendered_frame.dispatch_tree.context_stack,
+            )
+    }
+
+    /// Returns the key bindings for an action in a context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
+    }
+
+    /// Returns the highest precedence key binding for an action in a context. This is more
+    /// efficient than getting the last result of `bindings_for_action_in_context`.
+    pub fn highest_precedence_binding_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.highest_precedence_binding_for_action(action, &[context])
+    }
+
     /// Returns any bindings that would invoke an action on the given focus handle if it were
     /// focused. Bindings are returned in the order they were added. For display, the last binding
     /// should take precedence.
@@ -3750,26 +4009,37 @@ impl Window {
         focus_handle: &FocusHandle,
     ) -> Vec<KeyBinding> {
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-
-        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+        let Some(context_stack) = self.context_stack_for_focus_handle(focus_handle) else {
             return vec![];
         };
+        dispatch_tree.bindings_for_action(action, &context_stack)
+    }
+
+    /// Returns the highest precedence key binding that would invoke an action on the given focus
+    /// handle if it were focused. This is more efficient than getting the last result of
+    /// `bindings_for_action_in`.
+    pub fn highest_precedence_binding_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let context_stack = self.context_stack_for_focus_handle(focus_handle)?;
+        dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
+    }
+
+    fn context_stack_for_focus_handle(
+        &self,
+        focus_handle: &FocusHandle,
+    ) -> Option<Vec<KeyContext>> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let node_id = dispatch_tree.focusable_node_id(focus_handle.id)?;
         let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
-    }
-
-    /// Returns the key bindings for the given action in the given context.
-    pub fn bindings_for_action_in_context(
-        &self,
-        action: &dyn Action,
-        context: KeyContext,
-    ) -> Vec<KeyBinding> {
-        let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        dispatch_tree.bindings_for_action(action, &[context])
+        Some(context_stack)
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
@@ -3829,6 +4099,203 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
+    }
+
+    /// Toggles the inspector mode on this window.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn toggle_inspector(&mut self, cx: &mut App) {
+        self.inspector = match self.inspector {
+            None => Some(cx.new(|_| Inspector::new())),
+            Some(_) => None,
+        };
+        self.refresh();
+    }
+
+    /// Returns true if the window is in inspector mode.
+    pub fn is_inspector_picking(&self, _cx: &App) -> bool {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            if let Some(inspector) = &self.inspector {
+                return inspector.read(_cx).is_picking();
+            }
+        }
+        false
+    }
+
+    /// Executes the provided function with mutable access to an inspector state.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn with_inspector_state<T: 'static, R>(
+        &mut self,
+        _inspector_id: Option<&crate::InspectorElementId>,
+        cx: &mut App,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        if let Some(inspector_id) = _inspector_id {
+            if let Some(inspector) = &self.inspector {
+                let inspector = inspector.clone();
+                let active_element_id = inspector.read(cx).active_element_id();
+                if Some(inspector_id) == active_element_id {
+                    return inspector.update(cx, |inspector, _cx| {
+                        inspector.with_active_element_state(self, f)
+                    });
+                }
+            }
+        }
+        f(&mut None, self)
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn build_inspector_element_id(
+        &mut self,
+        path: crate::InspectorElementPath,
+    ) -> crate::InspectorElementId {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let path = Rc::new(path);
+        let next_instance_id = self
+            .next_frame
+            .next_inspector_instance_ids
+            .entry(path.clone())
+            .or_insert(0);
+        let instance_id = *next_instance_id;
+        *next_instance_id += 1;
+        crate::InspectorElementId { path, instance_id }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
+        if let Some(inspector) = self.inspector.take() {
+            let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
+            inspector_element.prepaint_as_root(
+                point(self.viewport_size.width - inspector_width, px(0.0)),
+                size(inspector_width, self.viewport_size.height).into(),
+                self,
+                cx,
+            );
+            self.inspector = Some(inspector);
+            Some(inspector_element)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
+        if let Some(mut inspector_element) = inspector_element {
+            inspector_element.paint(self, cx);
+        };
+    }
+
+    /// Registers a hitbox that can be used for inspector picking mode, allowing users to select and
+    /// inspect UI elements by clicking on them.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn insert_inspector_hitbox(
+        &mut self,
+        hitbox_id: HitboxId,
+        inspector_id: Option<&crate::InspectorElementId>,
+        cx: &App,
+    ) {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        if !self.is_inspector_picking(cx) {
+            return;
+        }
+        if let Some(inspector_id) = inspector_id {
+            self.next_frame
+                .inspector_hitboxes
+                .insert(hitbox_id, inspector_id.clone());
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector_hitbox(&mut self, cx: &App) {
+        if let Some(inspector) = self.inspector.as_ref() {
+            let inspector = inspector.read(cx);
+            if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
+            {
+                if let Some(hitbox) = self
+                    .next_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| hitbox.id == hitbox_id)
+                {
+                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+                }
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn handle_inspector_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        let Some(inspector) = self.inspector.clone() else {
+            return;
+        };
+        if event.downcast_ref::<MouseMoveEvent>().is_some() {
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.hover(inspector_id, self);
+                }
+            });
+        } else if event.downcast_ref::<crate::MouseDownEvent>().is_some() {
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.select(inspector_id, self);
+                }
+            });
+        } else if let Some(event) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+            // This should be kept in sync with SCROLL_LINES in x11 platform.
+            const SCROLL_LINES: f32 = 3.0;
+            const SCROLL_PIXELS_PER_LAYER: f32 = 36.0;
+            let delta_y = event
+                .delta
+                .pixel_delta(px(SCROLL_PIXELS_PER_LAYER / SCROLL_LINES))
+                .y;
+            if let Some(inspector) = self.inspector.clone() {
+                inspector.update(cx, |inspector, _cx| {
+                    if let Some(depth) = inspector.pick_depth.as_mut() {
+                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
+                        if *depth < 0.0 {
+                            *depth = 0.0;
+                        } else if *depth > max_depth {
+                            *depth = max_depth;
+                        }
+                        if let Some((_, inspector_id)) =
+                            self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                        {
+                            inspector.set_active_element_id(inspector_id.clone(), self);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn hovered_inspector_hitbox(
+        &self,
+        inspector: &Inspector,
+        frame: &Frame,
+    ) -> Option<(HitboxId, crate::InspectorElementId)> {
+        if let Some(pick_depth) = inspector.pick_depth {
+            let depth = (pick_depth as i64).try_into().unwrap_or(0);
+            let max_skipped = self.mouse_hit_test.ids.len().saturating_sub(1);
+            let skip_count = (depth as usize).min(max_skipped);
+            for hitbox_id in self.mouse_hit_test.ids.iter().skip(skip_count) {
+                if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
+                    return Some((*hitbox_id, inspector_id.clone()));
+                }
+            }
+        }
+        return None;
     }
 }
 
@@ -3922,7 +4389,7 @@ impl<V: 'static + Render> WindowHandle<V> {
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
         Ok(x.read(cx))
@@ -4051,6 +4518,14 @@ impl HasWindowHandle for Window {
     }
 }
 
+impl HasDisplayHandle for Window {
+    fn display_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, HandleError> {
+        self.platform_window.display_handle()
+    }
+}
+
 /// An identifier for an [`Element`](crate::Element).
 ///
 /// Can be constructed with a string, a number, or both, as well
@@ -4069,7 +4544,7 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, u64),
-    /// A path
+    /// A path.
     Path(Arc<std::path::Path>),
 }
 
@@ -4103,7 +4578,7 @@ impl TryInto<SharedString> for ElementId {
         if let ElementId::Name(name) = self {
             Ok(name)
         } else {
-            Err(anyhow!("element id is not string"))
+            anyhow::bail!("element id is not string")
         }
     }
 }

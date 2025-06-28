@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 /// Determines the behavior to use when inserting a new query into the search history.
 #[derive(Default, Debug, Clone, PartialEq)]
 pub enum QueryInsertionBehavior {
@@ -28,7 +30,7 @@ impl SearchHistoryCursor {
 
 #[derive(Debug, Clone)]
 pub struct SearchHistory {
-    history: Vec<String>,
+    history: VecDeque<String>,
     max_history_len: Option<usize>,
     insertion_behavior: QueryInsertionBehavior,
 }
@@ -38,7 +40,7 @@ impl SearchHistory {
         SearchHistory {
             max_history_len,
             insertion_behavior,
-            history: Vec::new(),
+            history: VecDeque::new(),
         }
     }
 
@@ -50,7 +52,7 @@ impl SearchHistory {
         }
 
         if self.insertion_behavior == QueryInsertionBehavior::ReplacePreviousIfContains {
-            if let Some(previously_searched) = self.history.last_mut() {
+            if let Some(previously_searched) = self.history.back_mut() {
                 if search_string.contains(previously_searched.as_str()) {
                     *previously_searched = search_string;
                     cursor.selection = Some(self.history.len() - 1);
@@ -59,12 +61,12 @@ impl SearchHistory {
             }
         }
 
-        self.history.push(search_string);
         if let Some(max_history_len) = self.max_history_len {
-            if self.history.len() > max_history_len {
-                self.history.remove(0);
+            if self.history.len() >= max_history_len {
+                self.history.pop_front();
             }
         }
+        self.history.push_back(search_string);
 
         cursor.selection = Some(self.history.len() - 1);
     }

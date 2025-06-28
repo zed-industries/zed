@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 
 #[derive(Debug)]
@@ -20,7 +22,7 @@ impl Database {
         &self,
         user_id: UserId,
     ) -> Result<Option<billing_preference::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_preference::Entity::find()
                 .filter(billing_preference::Column::UserId.eq(user_id))
                 .one(&*tx)
@@ -35,7 +37,7 @@ impl Database {
         user_id: UserId,
         params: &CreateBillingPreferencesParams,
     ) -> Result<billing_preference::Model> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let preferences = billing_preference::Entity::insert(billing_preference::ActiveModel {
                 user_id: ActiveValue::set(user_id),
                 max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
@@ -63,7 +65,7 @@ impl Database {
         user_id: UserId,
         params: &UpdateBillingPreferencesParams,
     ) -> Result<billing_preference::Model> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let preferences = billing_preference::Entity::update_many()
                 .set(billing_preference::ActiveModel {
                     max_monthly_llm_usage_spending_in_cents: params
@@ -82,7 +84,7 @@ impl Database {
             Ok(preferences
                 .into_iter()
                 .next()
-                .ok_or_else(|| anyhow!("billing preferences not found"))?)
+                .context("billing preferences not found")?)
         })
         .await
     }

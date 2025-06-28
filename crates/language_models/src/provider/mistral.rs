@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
+use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -11,13 +12,15 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter, Role,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
-
-use futures::stream::BoxStream;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::collections::HashMap;
+use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
@@ -33,16 +36,17 @@ const PROVIDER_NAME: &str = "Mistral";
 pub struct MistralSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
 }
 
 pub struct MistralLanguageModelProvider {
@@ -209,6 +213,8 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    supports_tools: model.supports_tools,
+                    supports_images: model.supports_images,
                 },
             );
         }
@@ -271,7 +277,7 @@ impl MistralLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Mistral API Key"))?;
+            let api_key = api_key.context("Missing Mistral API Key")?;
             let request =
                 mistral::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
@@ -300,22 +306,26 @@ impl LanguageModel for MistralLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        self.model.supports_tools()
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+        self.model.supports_tools()
+    }
+
+    fn supports_images(&self) -> bool {
+        self.model.supports_images()
     }
 
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -323,7 +333,7 @@ impl LanguageModel for MistralLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         cx.background_spawn(async move {
             let messages = request
                 .messages
@@ -340,7 +350,7 @@ impl LanguageModel for MistralLanguageModel {
                 })
                 .collect::<Vec<_>>();
 
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
         })
         .boxed()
     }
@@ -353,6 +363,7 @@ impl LanguageModel for MistralLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_mistral(
@@ -364,26 +375,8 @@ impl LanguageModel for MistralLanguageModel {
 
         async move {
             let stream = stream.await?;
-            Ok(stream
-                .map(|result| {
-                    result
-                        .and_then(|response| {
-                            response
-                                .choices
-                                .first()
-                                .ok_or_else(|| anyhow!("Empty response"))
-                                .map(|choice| {
-                                    choice
-                                        .delta
-                                        .content
-                                        .clone()
-                                        .unwrap_or_default()
-                                        .map(LanguageModelCompletionEvent::Text)
-                                })
-                        })
-                        .map_err(LanguageModelCompletionError::Other)
-                })
-                .boxed())
+            let mapper = MistralEventMapper::new();
+            Ok(mapper.map_stream(stream).boxed())
         }
         .boxed()
     }
@@ -392,35 +385,173 @@ impl LanguageModel for MistralLanguageModel {
 pub fn into_mistral(
     request: LanguageModelRequest,
     model: String,
-    max_output_tokens: Option<u32>,
+    max_output_tokens: Option<u64>,
 ) -> mistral::Request {
-    let len = request.messages.len();
-    let merged_messages =
-        request
-            .messages
-            .into_iter()
-            .fold(Vec::with_capacity(len), |mut acc, msg| {
-                let role = msg.role;
-                let content = msg.string_contents();
+    let stream = true;
 
-                acc.push(match role {
-                    Role::User => mistral::RequestMessage::User { content },
-                    Role::Assistant => mistral::RequestMessage::Assistant {
-                        content: Some(content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => mistral::RequestMessage::System { content },
+    let mut messages = Vec::new();
+    for message in &request.messages {
+        match message.role {
+            Role::User => {
+                let mut message_content = mistral::MessageContent::empty();
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(text) => {
+                            message_content
+                                .push_part(mistral::MessagePart::Text { text: text.clone() });
+                        }
+                        MessageContent::Image(image_content) => {
+                            message_content.push_part(mistral::MessagePart::ImageUrl {
+                                image_url: image_content.to_base64_url(),
+                            });
+                        }
+                        MessageContent::Thinking { text, .. } => {
+                            message_content
+                                .push_part(mistral::MessagePart::Text { text: text.clone() });
+                        }
+                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::ToolUse(_) | MessageContent::ToolResult(_) => {
+                            // Tool content is not supported in User messages for Mistral
+                        }
+                    }
+                }
+                if !matches!(message_content, mistral::MessageContent::Plain { ref content } if content.is_empty())
+                {
+                    messages.push(mistral::RequestMessage::User {
+                        content: message_content,
+                    });
+                }
+            }
+            Role::Assistant => {
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                            messages.push(mistral::RequestMessage::Assistant {
+                                content: Some(text.clone()),
+                                tool_calls: Vec::new(),
+                            });
+                        }
+                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Image(_) => {}
+                        MessageContent::ToolUse(tool_use) => {
+                            let tool_call = mistral::ToolCall {
+                                id: tool_use.id.to_string(),
+                                content: mistral::ToolCallContent::Function {
+                                    function: mistral::FunctionContent {
+                                        name: tool_use.name.to_string(),
+                                        arguments: serde_json::to_string(&tool_use.input)
+                                            .unwrap_or_default(),
+                                    },
+                                },
+                            };
+
+                            if let Some(mistral::RequestMessage::Assistant { tool_calls, .. }) =
+                                messages.last_mut()
+                            {
+                                tool_calls.push(tool_call);
+                            } else {
+                                messages.push(mistral::RequestMessage::Assistant {
+                                    content: None,
+                                    tool_calls: vec![tool_call],
+                                });
+                            }
+                        }
+                        MessageContent::ToolResult(_) => {
+                            // Tool results are not supported in Assistant messages
+                        }
+                    }
+                }
+            }
+            Role::System => {
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                            messages.push(mistral::RequestMessage::System {
+                                content: text.clone(),
+                            });
+                        }
+                        MessageContent::RedactedThinking(_) => {}
+                        MessageContent::Image(_)
+                        | MessageContent::ToolUse(_)
+                        | MessageContent::ToolResult(_) => {
+                            // Images and tools are not supported in System messages
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for message in &request.messages {
+        for content in &message.content {
+            if let MessageContent::ToolResult(tool_result) = content {
+                let content = match &tool_result.content {
+                    LanguageModelToolResultContent::Text(text) => text.to_string(),
+                    LanguageModelToolResultContent::Image(_) => {
+                        "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                    }
+                };
+
+                messages.push(mistral::RequestMessage::Tool {
+                    content,
+                    tool_call_id: tool_result.tool_use_id.to_string(),
                 });
-                acc
-            });
+            }
+        }
+    }
+
+    // The Mistral API requires that tool messages be followed by assistant messages,
+    // not user messages. When we have a tool->user sequence in the conversation,
+    // we need to insert a placeholder assistant message to maintain proper conversation
+    // flow and prevent API errors. This is a Mistral-specific requirement that differs
+    // from other language model APIs.
+    let messages = {
+        let mut fixed_messages = Vec::with_capacity(messages.len());
+        let mut messages_iter = messages.into_iter().peekable();
+
+        while let Some(message) = messages_iter.next() {
+            let is_tool_message = matches!(message, mistral::RequestMessage::Tool { .. });
+            fixed_messages.push(message);
+
+            // Insert assistant message between tool and user messages
+            if is_tool_message {
+                if let Some(next_msg) = messages_iter.peek() {
+                    if matches!(next_msg, mistral::RequestMessage::User { .. }) {
+                        fixed_messages.push(mistral::RequestMessage::Assistant {
+                            content: Some(" ".to_string()),
+                            tool_calls: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
+
+        fixed_messages
+    };
 
     mistral::Request {
         model,
-        messages: merged_messages,
-        stream: true,
+        messages,
+        stream,
         max_tokens: max_output_tokens,
         temperature: request.temperature,
         response_format: None,
+        tool_choice: match request.tool_choice {
+            Some(LanguageModelToolChoice::Auto) if !request.tools.is_empty() => {
+                Some(mistral::ToolChoice::Auto)
+            }
+            Some(LanguageModelToolChoice::Any) if !request.tools.is_empty() => {
+                Some(mistral::ToolChoice::Any)
+            }
+            Some(LanguageModelToolChoice::None) => Some(mistral::ToolChoice::None),
+            _ if !request.tools.is_empty() => Some(mistral::ToolChoice::Auto),
+            _ => None,
+        },
+        parallel_tool_calls: if !request.tools.is_empty() {
+            Some(false)
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -433,6 +564,136 @@ pub fn into_mistral(
             })
             .collect(),
     }
+}
+
+pub struct MistralEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
+
+impl MistralEventMapper {
+    pub fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + futures::Stream<Item = Result<mistral::StreamResponse>>>>,
+    ) -> impl futures::Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: mistral::StreamResponse,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
+
+        let mut events = Vec::new();
+        if let Some(content) = choice.delta.content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+            for tool_call in tool_calls {
+                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                if let Some(tool_id) = tool_call.id.clone() {
+                    entry.id = tool_id;
+                }
+
+                if let Some(function) = tool_call.function.as_ref() {
+                    if let Some(name) = function.name.clone() {
+                        entry.name = name;
+                    }
+
+                    if let Some(arguments) = function.arguments.clone() {
+                        entry.arguments.push_str(&arguments);
+                    }
+                }
+            }
+        }
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        if let Some(finish_reason) = choice.finish_reason.as_deref() {
+            match finish_reason {
+                "stop" => {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+                "tool_calls" => {
+                    events.extend(self.process_tool_calls());
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                }
+                unexpected => {
+                    log::error!("Unexpected Mistral stop_reason: {unexpected:?}");
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+            }
+        }
+
+        events
+    }
+
+    fn process_tool_calls(
+        &mut self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut results = Vec::new();
+
+        for (_, tool_call) in self.tool_calls_by_index.drain() {
+            if tool_call.id.is_empty() || tool_call.name.is_empty() {
+                results.push(Err(LanguageModelCompletionError::Other(anyhow!(
+                    "Received incomplete tool call: missing id or name"
+                ))));
+                continue;
+            }
+
+            match serde_json::Value::from_str(&tool_call.arguments) {
+                Ok(input) => results.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                    LanguageModelToolUse {
+                        id: tool_call.id.into(),
+                        name: tool_call.name.into(),
+                        is_input_complete: true,
+                        input,
+                        raw_input: tool_call.arguments,
+                    },
+                ))),
+                Err(error) => results.push(Err(LanguageModelCompletionError::BadInputJson {
+                    id: tool_call.id.into(),
+                    tool_name: tool_call.name.into(),
+                    raw_input: tool_call.arguments.into(),
+                    json_parse_error: error.to_string(),
+                })),
+            }
+        }
+
+        results
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 struct ConfigurationView {
@@ -616,6 +877,95 @@ impl Render for ConfigurationView {
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+
+    #[test]
+    fn test_into_mistral_basic_conversion() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("System prompt".into())],
+                    cache: false,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".into())],
+                    cache: false,
+                },
+            ],
+            temperature: Some(0.5),
+            tools: vec![],
+            tool_choice: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            stop: vec![],
+        };
+
+        let mistral_request = into_mistral(request, "mistral-small-latest".into(), None);
+
+        assert_eq!(mistral_request.model, "mistral-small-latest");
+        assert_eq!(mistral_request.temperature, Some(0.5));
+        assert_eq!(mistral_request.messages.len(), 2);
+        assert!(mistral_request.stream);
+    }
+
+    #[test]
+    fn test_into_mistral_with_image() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    MessageContent::Text("What's in this image?".into()),
+                    MessageContent::Image(LanguageModelImage {
+                        source: "base64data".into(),
+                        size: Default::default(),
+                    }),
+                ],
+                cache: false,
+            }],
+            tools: vec![],
+            tool_choice: None,
+            temperature: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            stop: vec![],
+        };
+
+        let mistral_request = into_mistral(request, "pixtral-12b-latest".into(), None);
+
+        assert_eq!(mistral_request.messages.len(), 1);
+        assert!(matches!(
+            &mistral_request.messages[0],
+            mistral::RequestMessage::User {
+                content: mistral::MessageContent::Multipart { .. }
+            }
+        ));
+
+        if let mistral::RequestMessage::User {
+            content: mistral::MessageContent::Multipart { content },
+        } = &mistral_request.messages[0]
+        {
+            assert_eq!(content.len(), 2);
+            assert!(matches!(
+                &content[0],
+                mistral::MessagePart::Text { text } if text == "What's in this image?"
+            ));
+            assert!(matches!(
+                &content[1],
+                mistral::MessagePart::ImageUrl { image_url } if image_url.starts_with("data:image/png;base64,")
+            ));
         }
     }
 }

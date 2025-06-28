@@ -5,9 +5,10 @@ use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
-use smol::stream::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use util::fs::{make_file_executable, remove_matching};
 
 #[derive(Serialize)]
 pub struct GetExternalUserRequest {
@@ -91,7 +92,7 @@ impl SupermavenAdminApi {
             if error.message == "User not found" {
                 return Ok(None);
             } else {
-                return Err(anyhow!("Supermaven API error: {}", error.message));
+                anyhow::bail!("Supermaven API error: {}", error.message);
             }
         } else if response.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
@@ -155,7 +156,7 @@ impl SupermavenAdminApi {
             if error.message == "User not found" {
                 return Ok(());
             } else {
-                return Err(anyhow!("Supermaven API error: {}", error.message));
+                anyhow::bail!("Supermaven API error: {}", error.message);
             }
         } else if response.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
@@ -204,7 +205,7 @@ pub async fn latest_release(
     if response.status().is_client_error() || response.status().is_server_error() {
         let body_str = std::str::from_utf8(&body)?;
         let error: SupermavenApiError = serde_json::from_str(body_str)?;
-        return Err(anyhow!("Supermaven API error: {}", error.message));
+        anyhow::bail!("Supermaven API error: {}", error.message);
     }
 
     serde_json::from_slice::<SupermavenDownloadResponse>(&body)
@@ -239,13 +240,13 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         "macos" => "darwin",
         "windows" => "windows",
         "linux" => "linux",
-        _ => return Err(anyhow!("unsupported platform")),
+        unsupported => anyhow::bail!("unsupported platform {unsupported}"),
     };
 
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
-        _ => return Err(anyhow!("unsupported architecture")),
+        unsupported => anyhow::bail!("unsupported architecture {unsupported}"),
     };
 
     let download_info = latest_release(client.clone(), platform, arch).await?;
@@ -253,6 +254,11 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
     let binary_path = version_path(download_info.version);
 
     if has_version(&binary_path).await {
+        // Due to an issue with the Supermaven binary not being made executable on
+        // earlier Zed versions and Supermaven releases not occurring that frequently,
+        // we ensure here that the found binary is actually executable.
+        make_file_executable(&binary_path).await?;
+
         return Ok(binary_path);
     }
 
@@ -271,21 +277,9 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         .await
         .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
 
-    #[cfg(not(windows))]
-    {
-        file.set_permissions(<fs::Permissions as fs::unix::PermissionsExt>::from_mode(
-            0o755,
-        ))
-        .await?;
-    }
+    make_file_executable(&binary_path).await?;
 
-    let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
-    while let Some(old_binary_path) = old_binary_paths.next().await {
-        let old_binary_path = old_binary_path?;
-        if old_binary_path.path() != binary_path {
-            fs::remove_file(old_binary_path.path()).await?;
-        }
-    }
+    remove_matching(supermaven_dir(), |file| file != binary_path).await;
 
     Ok(binary_path)
 }

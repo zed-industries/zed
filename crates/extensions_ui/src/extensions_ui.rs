@@ -64,6 +64,7 @@ pub fn init(cx: &mut App) {
                             ExtensionProvides::IndexedDocsProviders
                         }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
+                        ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
                     });
 
                     let existing = workspace
@@ -101,7 +102,10 @@ pub fn init(cx: &mut App) {
                         directories: true,
                         multiple: false,
                     },
-                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    DirectoryLister::Local(
+                        workspace.project().clone(),
+                        workspace.app_state().fs.clone(),
+                    ),
                     window,
                     cx,
                 );
@@ -132,10 +136,13 @@ pub fn init(cx: &mut App) {
                         match install_task.await {
                             Ok(_) => {}
                             Err(err) => {
+                                log::error!("Failed to install dev extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
                                         workspace.show_error(
-                                            &err.context("failed to install dev extension"),
+                                            // NOTE: using `anyhow::context` here ends up not printing
+                                            // the error
+                                            &format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
                                     })
@@ -169,6 +176,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::SlashCommands => "Slash Commands",
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
+        ExtensionProvides::DebugAdapters => "Debug Adapters",
     }
 }
 
@@ -444,9 +452,11 @@ impl ExtensionsPage {
 
         let extension_store = ExtensionStore::global(cx);
 
-        let dev_extensions = extension_store.update(cx, |store, _| {
-            store.dev_extensions().cloned().collect::<Vec<_>>()
-        });
+        let dev_extensions = extension_store
+            .read(cx)
+            .dev_extensions()
+            .cloned()
+            .collect::<Vec<_>>();
 
         let remote_extensions = extension_store.update(cx, |store, cx| {
             store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
@@ -464,6 +474,7 @@ impl ExtensionsPage {
                     &match_candidates,
                     &search,
                     false,
+                    true,
                     match_candidates.len(),
                     &Default::default(),
                     cx.background_executor().clone(),
@@ -546,13 +557,15 @@ impl ExtensionsPage {
                     )
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
                             .justify_between()
                             .child(
                                 Button::new(
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
                                 )
+                                .color(Color::Accent)
+                                .disabled(matches!(status, ExtensionStatus::Upgrading))
                                 .on_click({
                                     let extension_id = extension.id.clone();
                                     move |_, _, cx| {
@@ -560,22 +573,20 @@ impl ExtensionsPage {
                                             store.rebuild_dev_extension(extension_id.clone(), cx)
                                         });
                                     }
-                                })
-                                .color(Color::Accent)
-                                .disabled(matches!(status, ExtensionStatus::Upgrading)),
+                                }),
                             )
                             .child(
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
                                         let extension_id = extension.id.clone();
                                         move |_, _, cx| {
                                             ExtensionStore::global(cx).update(cx, |store, cx| {
-                                                store.uninstall_extension(extension_id.clone(), cx)
+                                                store.uninstall_extension(extension_id.clone(), cx).detach_and_log_err(cx);
                                             });
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Removing)),
+                                    }),
                             )
                             .when(can_configure, |this| {
                                 this.child(
@@ -583,8 +594,8 @@ impl ExtensionsPage {
                                         SharedString::from(format!("configure-{}", extension.id)),
                                         "Configure",
                                     )
-
-
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Installing))
                                     .on_click({
                                         let manifest = Arc::new(extension.clone());
                                         move |_, _, cx| {
@@ -601,9 +612,7 @@ impl ExtensionsPage {
                                                 });
                                             }
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Installing)),
+                                    }),
                                 )
                             }),
                     ),
@@ -955,7 +964,7 @@ impl ExtensionsPage {
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .disabled(true)
@@ -974,13 +983,15 @@ impl ExtensionsPage {
                     move |_, _, cx| {
                         telemetry::event!("Extension Uninstalled", extension_id);
                         ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.uninstall_extension(extension_id.clone(), cx)
+                            store
+                                .uninstall_extension(extension_id.clone(), cx)
+                                .detach_and_log_err(cx);
                         });
                     }
                 }),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .on_click({
@@ -1049,7 +1060,7 @@ impl ExtensionsPage {
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .disabled(true)
@@ -1471,18 +1482,12 @@ impl Render for ExtensionsPage {
                             return this.py_4().child(self.render_empty_state(cx));
                         }
 
-                        let extensions_page = cx.entity().clone();
                         let scroll_handle = self.list.clone();
                         this.child(
-                            uniform_list(
-                                extensions_page,
-                                "entries",
-                                count,
-                                Self::render_extensions,
-                            )
-                            .flex_grow()
-                            .pb_4()
-                            .track_scroll(scroll_handle),
+                            uniform_list("entries", count, cx.processor(Self::render_extensions))
+                                .flex_grow()
+                                .pb_4()
+                                .track_scroll(scroll_handle),
                         )
                         .child(
                             div()

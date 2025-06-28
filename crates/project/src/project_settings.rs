@@ -36,6 +36,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -48,13 +49,17 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Common language server settings.
+    #[serde(default)]
+    pub global_lsp_settings: GlobalLspSettings,
+
     /// Configuration for Debugger-related features
     #[serde(default)]
     pub dap: HashMap<DebugAdapterName, DapSettings>,
 
     /// Settings for context servers used for AI-related features.
     #[serde(default)]
-    pub context_servers: HashMap<Arc<str>, ContextServerConfiguration>,
+    pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
@@ -81,19 +86,65 @@ pub struct ProjectSettings {
 #[serde(rename_all = "snake_case")]
 pub struct DapSettings {
     pub binary: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
-pub struct ContextServerConfiguration {
-    /// The command to run this context server.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ContextServerSettings {
+    Custom {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The command to run this context server.
+        ///
+        /// This will override the command set by an extension.
+        command: ContextServerCommand,
+    },
+    Extension {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The settings for this context server specified by the extension.
+        ///
+        /// Consult the documentation for the context server to see what settings
+        /// are supported.
+        settings: serde_json::Value,
+    },
+}
+
+/// Common language server settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalLspSettings {
+    /// Whether to show the LSP servers button in the status bar.
     ///
-    /// This will override the command set by an extension.
-    pub command: Option<ContextServerCommand>,
-    /// The settings for this context server.
-    ///
-    /// Consult the documentation for the context server to see what settings
-    /// are supported.
-    pub settings: Option<serde_json::Value>,
+    /// Default: `true`
+    #[serde(default = "default_true")]
+    pub button: bool,
+}
+
+impl ContextServerSettings {
+    pub fn default_extension() -> Self {
+        Self::Extension {
+            enabled: true,
+            settings: serde_json::json!({}),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        match self {
+            ContextServerSettings::Custom { enabled, .. } => *enabled,
+            ContextServerSettings::Extension { enabled, .. } => *enabled,
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -117,18 +168,22 @@ pub enum DirenvSettings {
     Direct,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
-    #[serde(default = "true_value")]
+    /// Whether to show the project diagnostics button in the status bar.
+    pub button: bool,
+
+    /// Whether or not to include warning diagnostics.
     pub include_warnings: bool,
 
-    /// Settings for showing inline diagnostics
-    #[serde(default)]
+    /// Settings for using LSP pull diagnostics mechanism in Zed.
+    pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
+
+    /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
 
     /// Configuration, related to Rust language diagnostics.
-    #[serde(default)]
     pub cargo: Option<CargoDiagnosticsSettings>,
 }
 
@@ -141,17 +196,37 @@ impl DiagnosticsSettings {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct LspPullDiagnosticsSettings {
+    /// Whether to pull for diagnostics or not.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Minimum time to wait before pulling diagnostics from the language server(s).
+    /// 0 turns the debounce off.
+    ///
+    /// Default: 50
+    #[serde(default = "default_lsp_diagnostics_pull_debounce_ms")]
+    pub debounce_ms: u64,
+}
+
+fn default_lsp_diagnostics_pull_debounce_ms() -> u64 {
+    50
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct InlineDiagnosticsSettings {
     /// Whether or not to show inline diagnostics
     ///
     /// Default: false
-    #[serde(default)]
     pub enabled: bool,
     /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
-    #[serde(default = "default_inline_diagnostics_debounce_ms")]
+    #[serde(default = "default_inline_diagnostics_update_debounce_ms")]
     pub update_debounce_ms: u64,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
@@ -164,11 +239,58 @@ pub struct InlineDiagnosticsSettings {
     /// longer than this value will still push diagnostics further to the right.
     ///
     /// Default: 0
-    #[serde(default)]
     pub min_column: u32,
 
-    #[serde(default)]
     pub max_severity: Option<DiagnosticSeverity>,
+}
+
+fn default_inline_diagnostics_update_debounce_ms() -> u64 {
+    150
+}
+
+fn default_inline_diagnostics_padding() -> u32 {
+    4
+}
+
+impl Default for DiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            include_warnings: true,
+            lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
+            inline: InlineDiagnosticsSettings::default(),
+            cargo: None,
+        }
+    }
+}
+
+impl Default for LspPullDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            debounce_ms: default_lsp_diagnostics_pull_debounce_ms(),
+        }
+    }
+}
+
+impl Default for InlineDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_debounce_ms: default_inline_diagnostics_update_debounce_ms(),
+            padding: default_inline_diagnostics_padding(),
+            min_column: 0,
+            max_severity: None,
+        }
+    }
+}
+
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: default_true(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -204,26 +326,6 @@ impl DiagnosticSeverity {
             DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
         }
     }
-}
-
-impl Default for InlineDiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            update_debounce_ms: default_inline_diagnostics_debounce_ms(),
-            padding: default_inline_diagnostics_padding(),
-            min_column: 0,
-            max_severity: None,
-        }
-    }
-}
-
-fn default_inline_diagnostics_debounce_ms() -> u64 {
-    150
-}
-
-fn default_inline_diagnostics_padding() -> u32 {
-    4
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -304,7 +406,7 @@ pub struct InlineBlameSettings {
     /// the currently focused line.
     ///
     /// Default: true
-    #[serde(default = "true_value")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
@@ -320,10 +422,6 @@ pub struct InlineBlameSettings {
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
-}
-
-const fn true_value() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -432,13 +530,13 @@ impl Settings for ProjectSettings {
                 .extend(mcp.iter().filter_map(|(k, v)| {
                     Some((
                         k.clone().into(),
-                        ContextServerConfiguration {
-                            command: Some(
-                                serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
-                                    .ok()?
-                                    .into(),
-                            ),
-                            settings: None,
+                        ContextServerSettings::Custom {
+                            enabled: true,
+                            command: serde_json::from_value::<VsCodeContextServerCommand>(
+                                v.clone(),
+                            )
+                            .ok()?
+                            .into(),
                         },
                     ))
                 }));
@@ -905,7 +1003,7 @@ impl SettingsObserver {
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
-            let Ok(task_store) = settings_observer.update(cx, |settings_observer, _| {
+            let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
                 settings_observer.task_store.clone()
             }) else {
                 return;

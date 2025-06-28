@@ -7,7 +7,7 @@ use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render,
-    Styled, Task, WeakEntity, Window, actions, impl_actions, rems,
+    Styled, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -25,14 +25,13 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
-#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = tab_switcher)]
 #[serde(deny_unknown_fields)]
 pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,
 }
-
-impl_actions!(tab_switcher, [Toggle]);
 actions!(tab_switcher, [CloseSelectedItem, ToggleAll]);
 
 pub struct TabSwitcher {
@@ -318,6 +317,7 @@ impl TabSwitcherDelegate {
                 &candidates,
                 &query,
                 true,
+                true,
                 10000,
                 &Default::default(),
                 cx.background_executor().clone(),
@@ -450,7 +450,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::default()
+        "Search all tabs…".into()
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {

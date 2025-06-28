@@ -30,7 +30,7 @@ use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
-use util::{path, separator};
+use util::path;
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -198,7 +198,7 @@ async fn test_sharing_an_ssh_remote_project(
                 .path()
                 .to_string_lossy()
                 .to_string(),
-            separator!("src/renamed.rs").to_string()
+            path!("src/renamed.rs").to_string()
         );
     });
 }
@@ -589,12 +589,12 @@ async fn test_remote_server_debugger(
     cx_a.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
         command_palette_hooks::init(cx);
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
+        dap_adapters::init(cx);
     });
     server_cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
+        dap_adapters::init(cx);
     });
     let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
@@ -671,7 +671,7 @@ async fn test_remote_server_debugger(
     });
 
     session.update(cx_a, |session, _| {
-        assert_eq!(session.binary().command, "ssh");
+        assert_eq!(session.binary().unwrap().command.as_deref(), Some("ssh"));
     });
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {

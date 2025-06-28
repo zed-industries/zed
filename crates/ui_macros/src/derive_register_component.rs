@@ -5,7 +5,7 @@ use syn::{DeriveInput, parse_macro_input};
 pub fn derive_register_component(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
-    let reg_fn_name = syn::Ident::new(
+    let register_fn_name = syn::Ident::new(
         &format!("__component_registry_internal_register_{}", name),
         name.span(),
     );
@@ -16,9 +16,12 @@ pub fn derive_register_component(input: TokenStream) -> TokenStream {
         };
 
         #[allow(non_snake_case)]
-        #[linkme::distributed_slice(component::__ALL_COMPONENTS)]
-        fn #reg_fn_name() {
+        fn #register_fn_name() {
             component::register_component::<#name>();
+        }
+
+        component::__private::inventory::submit! {
+            component::ComponentFn::new(#register_fn_name)
         }
     };
     expanded.into()

@@ -4,7 +4,8 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
+use thiserror::Error;
 use util::maybe;
 
 pub fn init(cx: &mut App) {
@@ -15,6 +16,34 @@ pub fn init(cx: &mut App) {
 struct GlobalLanguageModelRegistry(Entity<LanguageModelRegistry>);
 
 impl Global for GlobalLanguageModelRegistry {}
+
+#[derive(Error)]
+pub enum ConfigurationError {
+    #[error("Configure at least one LLM provider to start using the panel.")]
+    NoProvider,
+    #[error("LLM Provider is not configured or does not support the configured model.")]
+    ModelNotFound,
+    #[error("{} LLM provider is not configured.", .0.name().0)]
+    ProviderNotAuthenticated(Arc<dyn LanguageModelProvider>),
+    #[error("Using the {} LLM provider requires accepting the Terms of Service.",
+    .0.name().0)]
+    ProviderPendingTermsAcceptance(Arc<dyn LanguageModelProvider>),
+}
+
+impl std::fmt::Debug for ConfigurationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoProvider => write!(f, "NoProvider"),
+            Self::ModelNotFound => write!(f, "ModelNotFound"),
+            Self::ProviderNotAuthenticated(provider) => {
+                write!(f, "ProviderNotAuthenticated({})", provider.id())
+            }
+            Self::ProviderPendingTermsAcceptance(provider) => {
+                write!(f, "ProviderPendingTermsAcceptance({})", provider.id())
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
@@ -27,9 +56,34 @@ pub struct LanguageModelRegistry {
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
 }
 
+#[derive(Debug)]
 pub struct SelectedModel {
     pub provider: LanguageModelProviderId,
     pub model: LanguageModelId,
+}
+
+impl FromStr for SelectedModel {
+    type Err = String;
+
+    /// Parse string identifiers like `provider_id/model_id` into a `SelectedModel`
+    fn from_str(id: &str) -> Result<SelectedModel, Self::Err> {
+        let parts: Vec<&str> = id.split('/').collect();
+        let [provider_id, model_id] = parts.as_slice() else {
+            return Err(format!(
+                "Invalid model identifier format: `{}`. Expected `provider_id/model_id`",
+                id
+            ));
+        };
+
+        if provider_id.is_empty() || model_id.is_empty() {
+            return Err(format!("Provider and model ids can't be empty: `{}`", id));
+        }
+
+        Ok(SelectedModel {
+            provider: LanguageModelProviderId(provider_id.to_string().into()),
+            model: LanguageModelId(model_id.to_string().into()),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -125,6 +179,36 @@ impl LanguageModelRegistry {
             }
         }));
         providers
+    }
+
+    pub fn configuration_error(
+        &self,
+        model: Option<ConfiguredModel>,
+        cx: &App,
+    ) -> Option<ConfigurationError> {
+        let Some(model) = model else {
+            if !self.has_authenticated_provider(cx) {
+                return Some(ConfigurationError::NoProvider);
+            }
+            return Some(ConfigurationError::ModelNotFound);
+        };
+
+        if !model.provider.is_authenticated(cx) {
+            return Some(ConfigurationError::ProviderNotAuthenticated(model.provider));
+        }
+
+        if model.provider.must_accept_terms(cx) {
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance(
+                model.provider,
+            ));
+        }
+
+        None
+    }
+
+    /// Check that we have at least one provider that is authenticated.
+    fn has_authenticated_provider(&self, cx: &App) -> bool {
+        self.providers.values().any(|p| p.is_authenticated(cx))
     }
 
     pub fn available_models<'a>(
@@ -286,6 +370,7 @@ impl LanguageModelRegistry {
 
         self.commit_message_model
             .clone()
+            .or_else(|| self.default_fast_model.clone())
             .or_else(|| self.default_model.clone())
     }
 

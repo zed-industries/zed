@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::ZED_URL_SCHEME;
 use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
 use release_channel::ReleaseChannel;
@@ -55,11 +55,8 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
         .output()
         .await?
         .status;
-    if status.success() {
-        Ok(link_path.into())
-    } else {
-        Err(anyhow!("error running osascript"))
-    }
+    anyhow::ensure!(status.success(), "error running osascript");
+    Ok(link_path.into())
 }
 
 pub async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {

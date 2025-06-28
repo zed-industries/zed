@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, Window};
+use crate::{
+    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
+};
 
 pub use easing::*;
 use smallvec::SmallVec;
@@ -121,9 +123,14 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         Some(self.id.clone())
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -172,6 +179,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -183,6 +191,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,

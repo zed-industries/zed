@@ -76,11 +76,17 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HighlightKey {
+    Type(TypeId),
+    TypePlus(TypeId, usize),
+}
+
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -473,12 +479,11 @@ impl DisplayMap {
 
     pub fn highlight_text(
         &mut self,
-        type_id: TypeId,
+        key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
     ) {
-        self.text_highlights
-            .insert(type_id, Arc::new((style, ranges)));
+        self.text_highlights.insert(key, Arc::new((style, ranges)));
     }
 
     pub(crate) fn highlight_inlays(
@@ -501,11 +506,22 @@ impl DisplayMap {
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&type_id)?;
+        let highlights = self.text_highlights.get(&HighlightKey::Type(type_id))?;
         Some((highlights.0, &highlights.1))
     }
+
+    #[cfg(feature = "test-support")]
+    pub fn all_text_highlights(
+        &self,
+    ) -> impl Iterator<Item = &Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        self.text_highlights.values()
+    }
+
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self.text_highlights.remove(&type_id).is_some();
+        let mut cleared = self
+            .text_highlights
+            .remove(&HighlightKey::Type(type_id))
+            .is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -639,6 +655,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
+    pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -652,6 +669,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
+        let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -667,6 +685,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -693,6 +712,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -716,6 +736,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -728,6 +749,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
+                    is_inlay,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -944,10 +966,22 @@ impl DisplaySnapshot {
                 .and_then(|id| id.style(&editor_style.syntax));
 
             if let Some(chunk_highlight) = chunk.highlight_style {
+                // For color inlays, blend the color with the editor background
+                let mut processed_highlight = chunk_highlight;
+                if chunk.is_inlay {
+                    if let Some(inlay_color) = chunk_highlight.color {
+                        // Only blend if the color has transparency (alpha < 1.0)
+                        if inlay_color.a < 1.0 {
+                            let blended_color = editor_style.background.blend(inlay_color);
+                            processed_highlight.color = Some(blended_color);
+                        }
+                    }
+                }
+
                 if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(chunk_highlight);
+                    highlight_style.highlight(processed_highlight);
                 } else {
-                    highlight_style = Some(chunk_highlight);
+                    highlight_style = Some(processed_highlight);
                 }
             }
 
@@ -961,7 +995,10 @@ impl DisplaySnapshot {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
                 }
-                if editor_style.show_underlines {
+                if chunk.underline
+                    && editor_style.show_underlines
+                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
+                {
                     let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
@@ -981,6 +1018,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
+                is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
@@ -1026,9 +1064,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system
-            .layout_line(&line, font_size, &runs)
-            .expect("we expect the font to be loaded because it's rendered by the editor")
+        text_system.layout_line(&line, font_size, &runs)
     }
 
     pub fn x_for_display_point(
@@ -1325,7 +1361,9 @@ impl DisplaySnapshot {
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
-        self.text_highlights.get(&type_id).cloned()
+        self.text_highlights
+            .get(&HighlightKey::Type(type_id))
+            .cloned()
     }
 
     #[allow(unused)]
@@ -1999,11 +2037,11 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay {
-                    id: InlayId::InlineCompletion(0),
-                    position: buffer_snapshot.anchor_after(0),
-                    text: "\n".into(),
-                }],
+                vec![Inlay::inline_completion(
+                    0,
+                    buffer_snapshot.anchor_after(0),
+                    "\n",
+                )],
                 cx,
             );
         });
@@ -2286,7 +2324,7 @@ pub mod tests {
         // Insert a block in the middle of a multi-line diagnostic.
         map.update(cx, |map, cx| {
             map.highlight_text(
-                TypeId::of::<usize>(),
+                HighlightKey::Type(TypeId::of::<usize>()),
                 vec![
                     buffer_snapshot.anchor_before(Point::new(3, 9))
                         ..buffer_snapshot.anchor_after(Point::new(3, 14)),
@@ -2514,7 +2552,9 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some(Hsla::blue())),
+                ("oute".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None),
+                ("r".to_string(), Some(Hsla::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
@@ -2537,8 +2577,11 @@ pub mod tests {
             [
                 ("out".to_string(), Some(Hsla::blue())),
                 ("⋯\n".to_string(), None),
-                ("  \nfn ".to_string(), Some(Hsla::red())),
-                ("i\n".to_string(), Some(Hsla::blue()))
+                ("  ".to_string(), Some(Hsla::red())),
+                ("\n".to_string(), None),
+                ("fn ".to_string(), Some(Hsla::red())),
+                ("i".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None)
             ]
         );
     }
@@ -2603,7 +2646,7 @@ pub mod tests {
 
         map.update(cx, |map, _cx| {
             map.highlight_text(
-                TypeId::of::<MyType>(),
+                HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
                     .into_iter()
                     .map(|range| {

@@ -86,6 +86,11 @@
   --download-btn-border: hsla(220, 60%, 40%, 0.2);
   --download-btn-border-hover: hsla(220, 60%, 50%, 0.2);
   --download-btn-shadow: hsla(220, 40%, 60%, 0.1);
+
+  --footer-btn-bg: hsl(220, 60%, 98%, 0.4);
+  --footer-btn-bg-hover: hsl(220, 60%, 93%, 0.5);
+  --footer-btn-border: hsla(220, 60%, 40%, 0.15);
+  --footer-btn-border-hover: hsla(220, 60%, 50%, 0.2);
 }
 
 .dark {
@@ -160,4 +165,9 @@
   --download-btn-border: hsla(220, 90%, 80%, 0.2);
   --download-btn-border-hover: hsla(220, 90%, 80%, 0.4);
   --download-btn-shadow: hsla(220, 50%, 60%, 0.15);
+
+  --footer-btn-bg: hsl(220, 90%, 95%, 0.01);
+  --footer-btn-bg-hover: hsl(220, 90%, 50%, 0.05);
+  --footer-btn-border: hsla(220, 90%, 90%, 0.05);
+  --footer-btn-border-hover: hsla(220, 90%, 80%, 0.2);
 }

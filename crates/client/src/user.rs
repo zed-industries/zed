@@ -2,16 +2,25 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, hash_map::Entry};
+use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };
+use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use std::sync::{Arc, Weak};
+use std::{
+    str::FromStr as _,
+    sync::{Arc, Weak},
+};
 use text::ReplicaId;
 use util::{TryFutureExt as _, maybe};
+use zed_llm_client::{
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+};
 
 pub type UserId = u64;
 
@@ -49,7 +58,6 @@ pub struct User {
     pub github_login: String,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
-    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +66,8 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
     pub user_id: UserId,
     pub is_host: bool,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
 }
 
 impl PartialOrd for User {
@@ -103,11 +113,11 @@ pub struct UserStore {
     current_plan: Option<proto::Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     trial_started_at: Option<DateTime<Utc>>,
-    model_request_usage_amount: Option<u32>,
-    model_request_usage_limit: Option<proto::UsageLimit>,
-    edit_predictions_usage_amount: Option<u32>,
-    edit_predictions_usage_limit: Option<proto::UsageLimit>,
+    model_request_usage: Option<ModelRequestUsage>,
+    edit_prediction_usage: Option<EditPredictionUsage>,
     is_usage_based_billing_enabled: Option<bool>,
+    account_too_young: Option<bool>,
+    has_overdue_invoices: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -152,6 +162,18 @@ enum UpdateContacts {
     Clear(postage::barrier::Sender),
 }
 
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct ModelRequestUsage(pub RequestUsage);
+
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct EditPredictionUsage(pub RequestUsage);
+
+#[derive(Debug, Clone, Copy)]
+pub struct RequestUsage {
+    pub limit: UsageLimit,
+    pub amount: i32,
+}
+
 impl UserStore {
     pub fn new(client: Arc<Client>, cx: &Context<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
@@ -169,11 +191,11 @@ impl UserStore {
             current_plan: None,
             subscription_period: None,
             trial_started_at: None,
-            model_request_usage_amount: None,
-            model_request_usage_limit: None,
-            edit_predictions_usage_amount: None,
-            edit_predictions_usage_limit: None,
+            model_request_usage: None,
+            edit_prediction_usage: None,
             is_usage_based_billing_enabled: None,
+            account_too_young: None,
+            has_overdue_invoices: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -320,7 +342,7 @@ impl UserStore {
         message: TypedEnvelope<proto::UpdateContacts>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.read_with(&mut cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
@@ -347,17 +369,42 @@ impl UserStore {
                 .trial_started_at
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+            this.account_too_young = message.payload.account_too_young;
+            this.has_overdue_invoices = message.payload.has_overdue_invoices;
 
             if let Some(usage) = message.payload.usage {
-                this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
-                this.model_request_usage_limit = usage.model_requests_usage_limit;
-                this.edit_predictions_usage_amount = Some(usage.edit_predictions_usage_amount);
-                this.edit_predictions_usage_limit = usage.edit_predictions_usage_limit;
+                // limits are always present even though they are wrapped in Option
+                this.model_request_usage = usage
+                    .model_requests_usage_limit
+                    .and_then(|limit| {
+                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
+                    })
+                    .map(ModelRequestUsage);
+                this.edit_prediction_usage = usage
+                    .edit_predictions_usage_limit
+                    .and_then(|limit| {
+                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
+                    })
+                    .map(EditPredictionUsage);
             }
 
             cx.notify();
         })?;
         Ok(())
+    }
+
+    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
+        self.model_request_usage = Some(usage);
+        cx.notify();
+    }
+
+    pub fn update_edit_prediction_usage(
+        &mut self,
+        usage: EditPredictionUsage,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit_prediction_usage = Some(usage);
+        cx.notify();
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -388,9 +435,7 @@ impl UserStore {
                     // Users are fetched in parallel above and cached in call to get_users
                     // No need to parallelize here
                     let mut updated_contacts = Vec::new();
-                    let this = this
-                        .upgrade()
-                        .ok_or_else(|| anyhow!("can't upgrade user store handle"))?;
+                    let this = this.upgrade().context("can't upgrade user store handle")?;
                     for contact in message.contacts {
                         updated_contacts
                             .push(Arc::new(Contact::from_proto(contact, &this, cx).await?));
@@ -574,7 +619,7 @@ impl UserStore {
         let client = self.client.upgrade();
         cx.spawn(async move |_, _| {
             client
-                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .context("can't upgrade client reference")?
                 .request(proto::RespondToContactRequest {
                     requester_id,
                     response: proto::ContactRequestResponse::Dismiss as i32,
@@ -596,7 +641,7 @@ impl UserStore {
 
         cx.spawn(async move |this, cx| {
             let response = client
-                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .context("can't upgrade client reference")?
                 .request(request)
                 .await;
             this.update(cx, |this, cx| {
@@ -656,14 +701,14 @@ impl UserStore {
                 .await?;
             }
 
-            this.update(cx, |this, _| {
+            this.read_with(cx, |this, _| {
                 user_ids
                     .iter()
                     .map(|user_id| {
                         this.users
                             .get(user_id)
                             .cloned()
-                            .ok_or_else(|| anyhow!("user {} not found", user_id))
+                            .with_context(|| format!("user {user_id} not found"))
                     })
                     .collect()
             })?
@@ -699,11 +744,11 @@ impl UserStore {
         let load_users = self.get_users(vec![user_id], cx);
         cx.spawn(async move |this, cx| {
             load_users.await?;
-            this.update(cx, |this, _| {
+            this.read_with(cx, |this, _| {
                 this.users
                     .get(&user_id)
                     .cloned()
-                    .ok_or_else(|| anyhow!("server responded with no users"))
+                    .context("server responded with no users")
             })?
         })
     }
@@ -734,24 +779,26 @@ impl UserStore {
         self.is_usage_based_billing_enabled
     }
 
-    pub fn model_request_usage_amount(&self) -> Option<u32> {
-        self.model_request_usage_amount
+    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        self.model_request_usage
     }
 
-    pub fn model_request_usage_limit(&self) -> Option<proto::UsageLimit> {
-        self.model_request_usage_limit.clone()
-    }
-
-    pub fn edit_predictions_usage_amount(&self) -> Option<u32> {
-        self.edit_predictions_usage_amount
-    }
-
-    pub fn edit_predictions_usage_limit(&self) -> Option<proto::UsageLimit> {
-        self.edit_predictions_usage_limit.clone()
+    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
+        self.edit_prediction_usage
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
+    }
+
+    /// Returns whether the user's account is too new to use the service.
+    pub fn account_too_young(&self) -> bool {
+        self.account_too_young.unwrap_or(false)
+    }
+
+    /// Returns whether the current user has overdue invoices and usage should be blocked.
+    pub fn has_overdue_invoices(&self) -> bool {
+        self.has_overdue_invoices.unwrap_or(false)
     }
 
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
@@ -765,20 +812,17 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            if let Some(client) = client.upgrade() {
-                let response = client
-                    .request(proto::AcceptTermsOfService {})
-                    .await
-                    .context("error accepting tos")?;
-
-                this.update(cx, |this, cx| {
-                    this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
-                    cx.emit(Event::PrivateUserInfoUpdated);
-                })
-            } else {
-                Err(anyhow!("client not found"))
-            }
+        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
+            let client = client.upgrade().context("client not found")?;
+            let response = client
+                .request(proto::AcceptTermsOfService {})
+                .await
+                .context("error accepting tos")?;
+            this.update(cx, |this, cx| {
+                this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
+                cx.emit(Event::PrivateUserInfoUpdated);
+            })?;
+            Ok(())
         })
     }
 
@@ -870,7 +914,6 @@ impl User {
             github_login: message.github_login,
             avatar_uri: message.avatar_url.into(),
             name: message.name,
-            email: message.email,
         })
     }
 }
@@ -897,10 +940,72 @@ impl Contact {
 impl Collaborator {
     pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
         Ok(Self {
-            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
+            peer_id: message.peer_id.context("invalid peer id")?,
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
             is_host: message.is_host,
+            committer_name: message.committer_name,
+            committer_email: message.committer_email,
         })
+    }
+}
+
+impl RequestUsage {
+    pub fn over_limit(&self) -> bool {
+        match self.limit {
+            UsageLimit::Limited(limit) => self.amount >= limit,
+            UsageLimit::Unlimited => false,
+        }
+    }
+
+    pub fn from_proto(amount: u32, limit: proto::UsageLimit) -> Option<Self> {
+        let limit = match limit.variant? {
+            proto::usage_limit::Variant::Limited(limited) => {
+                UsageLimit::Limited(limited.limit as i32)
+            }
+            proto::usage_limit::Variant::Unlimited(_) => UsageLimit::Unlimited,
+        };
+        Some(RequestUsage {
+            limit,
+            amount: amount as i32,
+        })
+    }
+
+    fn from_headers(
+        limit_name: &str,
+        amount_name: &str,
+        headers: &HeaderMap<HeaderValue>,
+    ) -> Result<Self> {
+        let limit = headers
+            .get(limit_name)
+            .with_context(|| format!("missing {limit_name:?} header"))?;
+        let limit = UsageLimit::from_str(limit.to_str()?)?;
+
+        let amount = headers
+            .get(amount_name)
+            .with_context(|| format!("missing {amount_name:?} header"))?;
+        let amount = amount.to_str()?.parse::<i32>()?;
+
+        Ok(Self { limit, amount })
+    }
+}
+
+impl ModelRequestUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self(RequestUsage::from_headers(
+            MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME,
+            MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
+            headers,
+        )?))
+    }
+}
+
+impl EditPredictionUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self(RequestUsage::from_headers(
+            EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+            EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
+            headers,
+        )?))
     }
 }

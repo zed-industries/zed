@@ -13,6 +13,7 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
         {
             type Element = gpui::Component<Self>;
 
+            #[track_caller]
             fn into_element(self) -> Self::Element {
                 gpui::Component::new(self)
             }

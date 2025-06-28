@@ -21,12 +21,14 @@ fn test_update_channels(cx: &mut App) {
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: Vec::new(),
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: Vec::new(),
+                    channel_order: 2,
                 },
             ],
             ..Default::default()
@@ -37,8 +39,8 @@ fn test_update_channels(cx: &mut App) {
         &channel_store,
         &[
             //
-            (0, "a".to_string()),
             (0, "b".to_string()),
+            (0, "a".to_string()),
         ],
         cx,
     );
@@ -52,12 +54,14 @@ fn test_update_channels(cx: &mut App) {
                     name: "x".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![1],
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![2],
+                    channel_order: 1,
                 },
             ],
             ..Default::default()
@@ -67,13 +71,109 @@ fn test_update_channels(cx: &mut App) {
     assert_channels(
         &channel_store,
         &[
-            (0, "a".to_string()),
-            (1, "y".to_string()),
             (0, "b".to_string()),
             (1, "x".to_string()),
+            (0, "a".to_string()),
+            (1, "y".to_string()),
         ],
         cx,
     );
+}
+
+#[gpui::test]
+fn test_update_channels_order_independent(cx: &mut App) {
+    /// Based on: https://stackoverflow.com/a/59939809
+    fn unique_permutations<T: Clone>(items: Vec<T>) -> Vec<Vec<T>> {
+        if items.len() == 1 {
+            vec![items]
+        } else {
+            let mut output: Vec<Vec<T>> = vec![];
+
+            for (ix, first) in items.iter().enumerate() {
+                let mut remaining_elements = items.clone();
+                remaining_elements.remove(ix);
+                for mut permutation in unique_permutations(remaining_elements) {
+                    permutation.insert(0, first.clone());
+                    output.push(permutation);
+                }
+            }
+            output
+        }
+    }
+
+    let test_data = vec![
+        proto::Channel {
+            id: 6,
+            name: "β".to_string(),
+            visibility: proto::ChannelVisibility::Members as i32,
+            parent_path: vec![1, 3],
+            channel_order: 1,
+        },
+        proto::Channel {
+            id: 5,
+            name: "α".to_string(),
+            visibility: proto::ChannelVisibility::Members as i32,
+            parent_path: vec![1],
+            channel_order: 2,
+        },
+        proto::Channel {
+            id: 3,
+            name: "x".to_string(),
+            visibility: proto::ChannelVisibility::Members as i32,
+            parent_path: vec![1],
+            channel_order: 1,
+        },
+        proto::Channel {
+            id: 4,
+            name: "y".to_string(),
+            visibility: proto::ChannelVisibility::Members as i32,
+            parent_path: vec![2],
+            channel_order: 1,
+        },
+        proto::Channel {
+            id: 1,
+            name: "b".to_string(),
+            visibility: proto::ChannelVisibility::Members as i32,
+            parent_path: Vec::new(),
+            channel_order: 1,
+        },
+        proto::Channel {
+            id: 2,
+            name: "a".to_string(),
+            visibility: proto::ChannelVisibility::Members as i32,
+            parent_path: Vec::new(),
+            channel_order: 2,
+        },
+    ];
+
+    let channel_store = init_test(cx);
+    let permutations = unique_permutations(test_data);
+
+    for test_instance in permutations {
+        channel_store.update(cx, |channel_store, _| channel_store.reset());
+
+        update_channels(
+            &channel_store,
+            proto::UpdateChannels {
+                channels: test_instance,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_channels(
+            &channel_store,
+            &[
+                (0, "b".to_string()),
+                (1, "x".to_string()),
+                (2, "β".to_string()),
+                (1, "α".to_string()),
+                (0, "a".to_string()),
+                (1, "y".to_string()),
+            ],
+            cx,
+        );
+    }
 }
 
 #[gpui::test]
@@ -89,18 +189,21 @@ fn test_dangling_channel_paths(cx: &mut App) {
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![],
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![0],
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![0, 1],
+                    channel_order: 1,
                 },
             ],
             ..Default::default()
@@ -137,7 +240,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     let user_id = 5;
     let channel_id = 5;
     let channel_store = cx.update(init_test);
-    let client = channel_store.update(cx, |s, _| s.client());
+    let client = channel_store.read_with(cx, |s, _| s.client());
     let server = FakeServer::for_client(user_id, &client, cx).await;
 
     // Get the available channels.
@@ -147,6 +250,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             name: "the-channel".to_string(),
             visibility: proto::ChannelVisibility::Members as i32,
             parent_path: vec![],
+            channel_order: 1,
         }],
         ..Default::default()
     });
@@ -165,7 +269,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 github_login: "nathansobo".into(),
                 avatar_url: "http://avatar.com/nathansobo".into(),
                 name: None,
-                email: None,
             }],
         },
     );
@@ -219,7 +322,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 github_login: "maxbrunsfeld".into(),
                 avatar_url: "http://avatar.com/maxbrunsfeld".into(),
                 name: None,
-                email: None,
             }],
         },
     );
@@ -264,7 +366,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 github_login: "as-cii".into(),
                 avatar_url: "http://avatar.com/as-cii".into(),
                 name: None,
-                email: None,
             }],
         },
     );

@@ -74,8 +74,6 @@ impl Editor {
     pub(super) fn should_open_signature_help_automatically(
         &mut self,
         old_cursor_position: &Anchor,
-        backspace_pressed: bool,
-
         cx: &mut Context<Self>,
     ) -> bool {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
@@ -84,9 +82,7 @@ impl Editor {
         let newest_selection = self.selections.newest::<usize>(cx);
         let head = newest_selection.head();
 
-        // There are two cases where the head and tail of a selection are different: selecting multiple ranges and using backspace.
-        // If we don’t exclude the backspace case, signature_help will blink every time backspace is pressed, so we need to prevent this.
-        if !newest_selection.is_empty() && !backspace_pressed && head != newest_selection.tail() {
+        if !newest_selection.is_empty() && head != newest_selection.tail() {
             self.signature_help_state
                 .hide(SignatureHelpHiddenBy::Selection);
             return false;
@@ -232,7 +228,6 @@ pub struct SignatureHelpState {
     task: Option<Task<()>>,
     popover: Option<SignatureHelpPopover>,
     hidden_by: Option<SignatureHelpHiddenBy>,
-    backspace_pressed: bool,
 }
 
 impl SignatureHelpState {
@@ -252,14 +247,6 @@ impl SignatureHelpState {
 
     pub fn popover_mut(&mut self) -> Option<&mut SignatureHelpPopover> {
         self.popover.as_mut()
-    }
-
-    pub fn backspace_pressed(&self) -> bool {
-        self.backspace_pressed
-    }
-
-    pub fn set_backspace_pressed(&mut self, backspace_pressed: bool) {
-        self.backspace_pressed = backspace_pressed;
     }
 
     pub fn set_popover(&mut self, popover: SignatureHelpPopover) {

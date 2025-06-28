@@ -16,8 +16,6 @@ use futures::{
 };
 use globset::GlobSet;
 use gpui::{App, BackgroundExecutor, SharedString};
-use itertools::FoldWhile::{Continue, Done};
-use itertools::Itertools;
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -41,7 +39,7 @@ use util::{ResultExt, maybe, post_inc};
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
-pub struct LanguageName(SharedString);
+pub struct LanguageName(pub SharedString);
 
 impl LanguageName {
     pub fn new(s: &str) -> Self {
@@ -65,6 +63,12 @@ impl LanguageName {
 impl From<LanguageName> for SharedString {
     fn from(value: LanguageName) -> Self {
         value.0
+    }
+}
+
+impl From<SharedString> for LanguageName {
+    fn from(value: SharedString) -> Self {
+        LanguageName(value)
     }
 }
 
@@ -103,7 +107,7 @@ pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
     executor: BackgroundExecutor,
-    lsp_binary_status_tx: BinaryStatusSender,
+    lsp_binary_status_tx: ServerStatusSender,
 }
 
 struct LanguageRegistryState {
@@ -135,10 +139,27 @@ pub struct FakeLanguageServerEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LanguageServerStatusUpdate {
+    Binary(BinaryStatus),
+    Health(ServerHealth, Option<SharedString>),
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub enum ServerHealth {
+    Ok,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinaryStatus {
     None,
     CheckingForUpdate,
     Downloading,
+    Starting,
+    Stopping,
+    Stopped,
     Failed { error: String },
 }
 
@@ -167,18 +188,12 @@ impl AvailableLanguage {
     }
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Default)]
 enum LanguageMatchPrecedence {
     #[default]
     Undetermined,
-    PathOrContent,
-    UserConfigured,
-}
-
-impl LanguageMatchPrecedence {
-    fn best_possible_match(&self) -> bool {
-        *self == LanguageMatchPrecedence::UserConfigured
-    }
+    PathOrContent(usize),
+    UserConfigured(usize),
 }
 
 enum AvailableGrammar {
@@ -214,7 +229,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
     ("runnables", |q| &mut q.runnables),
-    ("debug_variables", |q| &mut q.debug_variables),
+    ("debugger", |q| &mut q.debugger),
     ("textobjects", |q| &mut q.text_objects),
 ];
 
@@ -231,12 +246,12 @@ pub struct LanguageQueries {
     pub redactions: Option<Cow<'static, str>>,
     pub runnables: Option<Cow<'static, str>>,
     pub text_objects: Option<Cow<'static, str>>,
-    pub debug_variables: Option<Cow<'static, str>>,
+    pub debugger: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
-struct BinaryStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(SharedString, BinaryStatus)>>>>,
+struct ServerStatusSender {
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, BinaryStatus)>>>>,
 }
 
 pub struct LoadedLanguage {
@@ -620,11 +635,32 @@ impl LanguageRegistry {
     ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
         let name = UniCase::new(name);
         let rx = self.get_or_load_language(|language_name, _, current_best_match| {
-            (current_best_match < LanguageMatchPrecedence::PathOrContent
-                && UniCase::new(&language_name.0) == name)
-                .then_some(LanguageMatchPrecedence::PathOrContent)
+            match current_best_match {
+                LanguageMatchPrecedence::Undetermined if UniCase::new(&language_name.0) == name => {
+                    Some(LanguageMatchPrecedence::PathOrContent(name.len()))
+                }
+                LanguageMatchPrecedence::Undetermined
+                | LanguageMatchPrecedence::UserConfigured(_)
+                | LanguageMatchPrecedence::PathOrContent(_) => None,
+            }
         });
         async move { rx.await? }
+    }
+
+    pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
+        self.state.try_read().and_then(|state| {
+            state
+                .available_languages
+                .iter()
+                .find(|language| {
+                    language
+                        .matcher()
+                        .path_suffixes
+                        .iter()
+                        .any(|suffix| *suffix == extension)
+                })
+                .map(|language| language.name.clone())
+        })
     }
 
     pub fn language_for_name_or_extension(
@@ -633,13 +669,23 @@ impl LanguageRegistry {
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let string = UniCase::new(string);
         let rx = self.get_or_load_language(|name, config, current_best_match| {
-            (current_best_match < LanguageMatchPrecedence::PathOrContent
-                && (UniCase::new(&name.0) == string
+            let name_matches = || {
+                UniCase::new(&name.0) == string
                     || config
                         .path_suffixes
                         .iter()
-                        .any(|suffix| UniCase::new(suffix) == string)))
-            .then_some(LanguageMatchPrecedence::PathOrContent)
+                        .any(|suffix| UniCase::new(suffix) == string)
+            };
+
+            match current_best_match {
+                LanguageMatchPrecedence::Undetermined => {
+                    name_matches().then_some(LanguageMatchPrecedence::PathOrContent(string.len()))
+                }
+                LanguageMatchPrecedence::PathOrContent(len) => (string.len() > len
+                    && name_matches())
+                .then_some(LanguageMatchPrecedence::PathOrContent(string.len())),
+                LanguageMatchPrecedence::UserConfigured(_) => None,
+            }
         });
         async move { rx.await? }
     }
@@ -695,10 +741,9 @@ impl LanguageRegistry {
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
         let extension = filename.and_then(|filename| filename.split('.').next_back());
-        let path_suffixes = [extension, filename, path.to_str()];
-        let path_suffixes_candidates = path_suffixes
+        let path_suffixes = [extension, filename, path.to_str()]
             .iter()
-            .filter_map(|suffix| suffix.map(globset::Candidate::new))
+            .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
             .collect::<SmallVec<[_; 3]>>();
         let content = LazyCell::new(|| {
             content.map(|content| {
@@ -709,20 +754,37 @@ impl LanguageRegistry {
         });
         self.find_matching_language(move |language_name, config, current_best_match| {
             let path_matches_default_suffix = || {
-                config
-                    .path_suffixes
-                    .iter()
-                    .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
+                let len =
+                    config
+                        .path_suffixes
+                        .iter()
+                        .fold(0, |acc: usize, path_suffix: &String| {
+                            let ext = ".".to_string() + path_suffix;
+
+                            let matched_suffix_len = path_suffixes
+                                .iter()
+                                .find(|(suffix, _)| suffix.ends_with(&ext) || suffix == path_suffix)
+                                .map(|(suffix, _)| suffix.len());
+
+                            match matched_suffix_len {
+                                Some(len) => acc.max(len),
+                                None => acc,
+                            }
+                        });
+                (len > 0).then_some(len)
             };
+
             let path_matches_custom_suffix = || {
                 user_file_types
                     .and_then(|types| types.get(language_name.as_ref()))
-                    .map_or(false, |custom_suffixes| {
-                        path_suffixes_candidates
+                    .map_or(None, |custom_suffixes| {
+                        path_suffixes
                             .iter()
-                            .any(|suffix| custom_suffixes.is_match_candidate(suffix))
+                            .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))
+                            .map(|(suffix, _)| suffix.len())
                     })
             };
+
             let content_matches = || {
                 config.first_line_pattern.as_ref().map_or(false, |pattern| {
                     content
@@ -734,17 +796,29 @@ impl LanguageRegistry {
             // Only return a match for the given file if we have a better match than
             // the current one.
             match current_best_match {
-                LanguageMatchPrecedence::PathOrContent | LanguageMatchPrecedence::Undetermined
-                    if path_matches_custom_suffix() =>
-                {
-                    Some(LanguageMatchPrecedence::UserConfigured)
+                LanguageMatchPrecedence::PathOrContent(current_len) => {
+                    if let Some(len) = path_matches_custom_suffix() {
+                        // >= because user config should win tie with system ext len
+                        (len >= current_len).then_some(LanguageMatchPrecedence::UserConfigured(len))
+                    } else if let Some(len) = path_matches_default_suffix() {
+                        // >= because user config should win tie with system ext len
+                        (len >= current_len).then_some(LanguageMatchPrecedence::PathOrContent(len))
+                    } else {
+                        None
+                    }
                 }
-                LanguageMatchPrecedence::Undetermined
-                    if path_matches_default_suffix() || content_matches() =>
-                {
-                    Some(LanguageMatchPrecedence::PathOrContent)
+                LanguageMatchPrecedence::Undetermined => {
+                    if let Some(len) = path_matches_custom_suffix() {
+                        Some(LanguageMatchPrecedence::UserConfigured(len))
+                    } else if let Some(len) = path_matches_default_suffix() {
+                        Some(LanguageMatchPrecedence::PathOrContent(len))
+                    } else if content_matches() {
+                        Some(LanguageMatchPrecedence::PathOrContent(1))
+                    } else {
+                        None
+                    }
                 }
-                _ => None,
+                LanguageMatchPrecedence::UserConfigured(_) => None,
             }
         })
     }
@@ -762,28 +836,61 @@ impl LanguageRegistry {
             .available_languages
             .iter()
             .rev()
-            .fold_while(None, |best_language_match, language| {
+            .fold(None, |best_language_match, language| {
                 let current_match_type = best_language_match
                     .as_ref()
                     .map_or(LanguageMatchPrecedence::default(), |(_, score)| *score);
                 let language_score =
                     callback(&language.name, &language.matcher, current_match_type);
-                debug_assert!(
-                    language_score.is_none_or(|new_score| new_score > current_match_type),
-                    "Matching callback should only return a better match than the current one"
-                );
 
-                match language_score {
-                    Some(new_score) if new_score.best_possible_match() => {
-                        Done(Some((language.clone(), new_score)))
+                match (language_score, current_match_type) {
+                    // no current best, so our candidate is better
+                    (
+                        Some(
+                            LanguageMatchPrecedence::PathOrContent(_)
+                            | LanguageMatchPrecedence::UserConfigured(_),
+                        ),
+                        LanguageMatchPrecedence::Undetermined,
+                    ) => language_score.map(|new_score| (language.clone(), new_score)),
+
+                    // our candidate is better only if the name is longer
+                    (
+                        Some(LanguageMatchPrecedence::PathOrContent(new_len)),
+                        LanguageMatchPrecedence::PathOrContent(current_len),
+                    )
+                    | (
+                        Some(LanguageMatchPrecedence::UserConfigured(new_len)),
+                        LanguageMatchPrecedence::UserConfigured(current_len),
+                    )
+                    | (
+                        Some(LanguageMatchPrecedence::PathOrContent(new_len)),
+                        LanguageMatchPrecedence::UserConfigured(current_len),
+                    ) => {
+                        if new_len > current_len {
+                            language_score.map(|new_score| (language.clone(), new_score))
+                        } else {
+                            best_language_match
+                        }
                     }
-                    Some(new_score) if current_match_type < new_score => {
-                        Continue(Some((language.clone(), new_score)))
+
+                    // our candidate is better if the name is longer or equal to
+                    (
+                        Some(LanguageMatchPrecedence::UserConfigured(new_len)),
+                        LanguageMatchPrecedence::PathOrContent(current_len),
+                    ) => {
+                        if new_len >= current_len {
+                            language_score.map(|new_score| (language.clone(), new_score))
+                        } else {
+                            best_language_match
+                        }
                     }
-                    _ => Continue(best_language_match),
+
+                    // no candidate, use current best
+                    (None, _) | (Some(LanguageMatchPrecedence::Undetermined), _) => {
+                        best_language_match
+                    }
                 }
             })
-            .into_inner()
             .map(|(available_language, _)| available_language);
         drop(state);
         available_language
@@ -851,15 +958,13 @@ impl LanguageRegistry {
                                 }
                             }
                             Err(e) => {
-                                log::error!("failed to load language {name}:\n{:?}", e);
+                                log::error!("failed to load language {name}:\n{e:?}");
                                 let mut state = this.state.write();
                                 state.mark_language_loaded(id);
                                 if let Some(mut txs) = state.loading_languages.remove(&id) {
                                     for tx in txs.drain(..) {
                                         let _ = tx.send(Err(anyhow!(
-                                            "failed to load language {}: {}",
-                                            name,
-                                            e
+                                            "failed to load language {name}: {e}",
                                         )));
                                     }
                                 }
@@ -912,6 +1017,7 @@ impl LanguageRegistry {
                     txs.push(tx);
                 }
                 AvailableGrammar::Unloaded(wasm_path) => {
+                    log::trace!("start loading grammar {name:?}");
                     let this = self.clone();
                     let wasm_path = wasm_path.clone();
                     *grammar = AvailableGrammar::Loading(wasm_path.clone(), vec![tx]);
@@ -922,7 +1028,7 @@ impl LanguageRegistry {
                                 let grammar_name = wasm_path
                                     .file_stem()
                                     .and_then(OsStr::to_str)
-                                    .ok_or_else(|| anyhow!("invalid grammar filename"))?;
+                                    .context("invalid grammar filename")?;
                                 anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
                                     let grammar = store.load_language(grammar_name, &wasm_bytes);
@@ -937,6 +1043,7 @@ impl LanguageRegistry {
                                 Err(error) => AvailableGrammar::LoadFailed(error.clone()),
                             };
 
+                            log::trace!("finish loading grammar {name:?}");
                             let old_value = this.state.write().grammars.insert(name, value);
                             if let Some(AvailableGrammar::Loading(_, txs)) = old_value {
                                 for tx in txs {
@@ -948,7 +1055,7 @@ impl LanguageRegistry {
                 }
             }
         } else {
-            tx.send(Err(Arc::new(anyhow!("no such grammar {}", name))))
+            tx.send(Err(Arc::new(anyhow!("no such grammar {name}"))))
                 .ok();
         }
 
@@ -981,8 +1088,8 @@ impl LanguageRegistry {
         self.state.read().all_lsp_adapters.get(name).cloned()
     }
 
-    pub fn update_lsp_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(server_name.0, status);
+    pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        self.lsp_binary_status_tx.send(server_name, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -1037,7 +1144,7 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
+    ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
     }
 
@@ -1151,14 +1258,14 @@ impl LanguageRegistryState {
     }
 }
 
-impl BinaryStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
+impl ServerStatusSender {
+    fn subscribe(&self) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
         let (tx, rx) = mpsc::unbounded();
         self.txs.lock().push(tx);
         rx
     }
 
-    fn send(&self, name: SharedString, status: BinaryStatus) {
+    fn send(&self, name: LanguageServerName, status: BinaryStatus) {
         let mut txs = self.txs.lock();
         txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
     }

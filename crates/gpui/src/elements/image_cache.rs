@@ -1,7 +1,8 @@
 use crate::{
     AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId, ParentElement,
-    Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window, hash,
+    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
+    ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window,
+    hash,
 };
 
 use futures::{FutureExt, future::Shared};
@@ -102,9 +103,14 @@ impl Element for ImageCacheElement {
         None
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -125,6 +131,7 @@ impl Element for ImageCacheElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -138,6 +145,7 @@ impl Element for ImageCacheElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,

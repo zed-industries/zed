@@ -553,10 +553,22 @@ pub enum BufferLineHeight {
     Comfortable,
     /// The default line height.
     Standard,
-    /// A custom line height.
-    ///
-    /// A line height of 1.0 is the height of the buffer's font size.
-    Custom(f32),
+    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
+    Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
+}
+
+fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    if value < 1.0 {
+        return Err(serde::de::Error::custom(
+            "buffer_line_height.custom must be at least 1.0",
+        ));
+    }
+
+    Ok(value)
 }
 
 impl BufferLineHeight {
@@ -1008,5 +1020,56 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_buffer_line_height_deserialize_valid() {
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!("comfortable")).unwrap(),
+            BufferLineHeight::Comfortable
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!("standard")).unwrap(),
+            BufferLineHeight::Standard
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 1.0})).unwrap(),
+            BufferLineHeight::Custom(1.0)
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 1.5})).unwrap(),
+            BufferLineHeight::Custom(1.5)
+        );
+    }
+
+    #[test]
+    fn test_buffer_line_height_deserialize_invalid() {
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 0.99}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 0.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": -1.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
     }
 }

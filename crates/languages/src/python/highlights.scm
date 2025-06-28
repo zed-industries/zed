@@ -52,6 +52,20 @@
 (function_definition
   name: (identifier) @function.definition)
 
+((call
+  function: (identifier) @_isinstance
+  arguments: (argument_list
+    (_)
+    (identifier) @type))
+  (#eq? @_isinstance "isinstance"))
+
+((call
+  function: (identifier) @_issubclass
+  arguments: (argument_list
+    (identifier) @type
+    (identifier) @type))
+  (#eq? @_issubclass "issubclass"))
+
 ; Function arguments
 (function_definition
   parameters: (parameters
@@ -137,6 +151,12 @@
   "}" @punctuation.special) @embedded
 
 ; Docstrings.
+([
+  (expression_statement (assignment))
+  (type_alias_statement)
+]
+. (expression_statement (string) @string.doc)+)
+
 (module
   .(expression_statement (string) @string.doc)+)
 
@@ -157,13 +177,6 @@
 
 (module
   . (comment) @comment*
-  . (expression_statement (string) @string.doc)+)
-
-(module
-  [
-    (expression_statement (assignment))
-    (type_alias_statement)
-  ]
   . (expression_statement (string) @string.doc)+)
 
 (class_definition

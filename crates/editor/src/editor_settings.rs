@@ -1,10 +1,16 @@
+use core::num;
+use std::num::NonZeroU32;
+
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, VsCodeSettings};
+use util::serde::default_true;
 
+/// Imports from the VSCode settings at
+/// https://code.visualstudio.com/docs/reference/default-settings
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
@@ -23,6 +29,7 @@ pub struct EditorSettings {
     pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
+    pub fast_scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
@@ -44,6 +51,24 @@ pub struct EditorSettings {
     pub snippet_sort_order: SnippetSortOrder,
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+    pub inline_code_actions: bool,
+    pub drag_and_drop_selection: bool,
+    pub lsp_document_colors: DocumentColorsRenderMode,
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentColorsRenderMode {
+    /// Do not query and render document colors.
+    None,
+    /// Render document colors as inlay hints near the color text.
+    #[default]
+    Inlay,
+    /// Draw a border around the color text.
+    Border,
+    /// Draw a background behind the color text.
+    Background,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -106,6 +131,7 @@ pub struct Toolbar {
     pub quick_actions: bool,
     pub selections_menu: bool,
     pub agent_review: bool,
+    pub code_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -123,14 +149,21 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
+    pub display_in: DisplayIn,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    pub max_width_columns: num::NonZeroU32,
 }
 
 impl Minimap {
     pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
+    }
+
+    #[inline]
+    pub fn on_active_editor(&self) -> bool {
+        self.display_in == DisplayIn::ActiveEditor
     }
 
     pub fn with_show_override(self) -> Self {
@@ -143,6 +176,7 @@ impl Minimap {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
+    pub min_line_number_digits: usize,
     pub line_numbers: bool,
     pub runnables: bool,
     pub breakpoints: bool,
@@ -179,6 +213,19 @@ pub enum ShowMinimap {
     /// Never show the minimap.
     #[default]
     Never,
+}
+
+/// Where to show the minimap in the editor.
+///
+/// Default: all_editors
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayIn {
+    /// Show on all open editors.
+    AllEditors,
+    /// Show the minimap on the active editor only.
+    #[default]
+    ActiveEditor,
 }
 
 /// When to show the minimap thumb.
@@ -276,6 +323,9 @@ pub enum ScrollBeyondLastLine {
 /// Default options for buffer and project search items.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchSettings {
+    /// Whether to show the project search button in the status bar.
+    #[serde(default = "default_true")]
+    pub button: bool,
     #[serde(default)]
     pub whole_word: bool,
     #[serde(default)]
@@ -328,6 +378,7 @@ pub enum SnippetSortOrder {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -364,9 +415,9 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
-    /// Time to wait before showing the informational hover box
+    /// Time to wait in milliseconds before showing the informational hover box.
     ///
-    /// Default: 350
+    /// Default: 300
     pub hover_popover_delay: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
@@ -397,6 +448,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 1.0
     pub scroll_sensitivity: Option<f32>,
+    /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
+    /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
+    /// happens when a user holds the alt or option key while scrolling.
+    ///
+    /// Default: 4.0
+    pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
@@ -406,7 +463,7 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
-    /// The key to use for adding multiple cursors
+    /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
     /// Default: alt
     pub multi_cursor_modifier: Option<MultiCursorModifier>,
@@ -474,6 +531,21 @@ pub struct EditorSettingsContent {
     /// Default: warning
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+
+    /// Whether to show code action button at start of buffer line.
+    ///
+    /// Default: true
+    pub inline_code_actions: Option<bool>,
+
+    /// Whether to allow drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    pub drag_and_drop_selection: Option<bool>,
+
+    /// How to render LSP `textDocument/documentColor` colors in the editor.
+    ///
+    /// Default: [`DocumentColorsRenderMode::Inlay`]
+    pub lsp_document_colors: Option<DocumentColorsRenderMode>,
 }
 
 // Toolbar related settings
@@ -496,6 +568,10 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub agent_review: Option<bool>,
+    /// Whether to display code action buttons in the editor toolbar.
+    ///
+    /// Default: false
+    pub code_actions: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -534,12 +610,17 @@ pub struct ScrollbarContent {
 }
 
 /// Minimap related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
     ///
     /// Default: never
     pub show: Option<ShowMinimap>,
+
+    /// Where to show the minimap in the editor.
+    ///
+    /// Default: [`DisplayIn::ActiveEditor`]
+    pub display_in: Option<DisplayIn>,
 
     /// When to show the minimap thumb.
     ///
@@ -555,6 +636,11 @@ pub struct MinimapContent {
     ///
     /// Default: inherits editor line highlights setting
     pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+
+    /// Maximum number of columns to display in the minimap.
+    ///
+    /// Default: 80
+    pub max_width_columns: Option<num::NonZeroU32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -578,6 +664,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
+    /// Minimum number of characters to reserve space for in the gutter.
+    ///
+    /// Default: 4
+    pub min_line_number_digits: Option<usize>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true
@@ -727,6 +817,10 @@ impl Settings for EditorSettings {
             "editor.mouseWheelScrollSensitivity",
             &mut current.scroll_sensitivity,
         );
+        vscode.f32_setting(
+            "editor.fastScrollSensitivity",
+            &mut current.fast_scroll_sensitivity,
+        );
         if Some("relative") == vscode.read_string("editor.lineNumbers") {
             current.relative_line_numbers = Some(true);
         }
@@ -764,6 +858,38 @@ impl Settings for EditorSettings {
         if let Some(use_ignored) = vscode.read_bool("search.useIgnoreFiles") {
             let search = current.search.get_or_insert_default();
             search.include_ignored = use_ignored;
+        }
+
+        let mut minimap = MinimapContent::default();
+        let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = vscode.read_bool("editor.minimap.autohide");
+        let mut max_width_columns: Option<u32> = None;
+        vscode.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
+        if minimap_enabled {
+            if let Some(false) = autohide {
+                minimap.show = Some(ShowMinimap::Always);
+            } else {
+                minimap.show = Some(ShowMinimap::Auto);
+            }
+        } else {
+            minimap.show = Some(ShowMinimap::Never);
+        }
+        if let Some(max_width_columns) = max_width_columns {
+            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
+        }
+
+        vscode.enum_setting(
+            "editor.minimap.showSlider",
+            &mut minimap.thumb,
+            |s| match s {
+                "always" => Some(MinimapThumb::Always),
+                "mouseover" => Some(MinimapThumb::Hover),
+                _ => None,
+            },
+        );
+
+        if minimap != MinimapContent::default() {
+            current.minimap = Some(minimap)
         }
     }
 }

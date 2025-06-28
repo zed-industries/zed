@@ -1,0 +1,262 @@
+{
+  "completion_mode": "normal",
+  "cumulative_token_usage": {
+    "cache_creation_input_tokens": 18383,
+    "cache_read_input_tokens": 97250,
+    "input_tokens": 45,
+    "output_tokens": 776
+  },
+  "detailed_summary_state": "NotGenerated",
+  "exceeded_window_error": null,
+  "initial_project_snapshot": {
+    "timestamp": "2025-05-08T14:31:16.701157512Z",
+    "unsaved_buffer_paths": [],
+    "worktree_snapshots": [
+      {
+        "git_state": {
+          "current_branch": null,
+          "diff": "diff --git a/crates/language_model_selector/src/language_model_selector.rs b/crates/language_model_selector/src/language_model_selector.rs\nindex 6775bee98a..e25c9e1415 100644\n--- a/crates/language_model_selector/src/language_model_selector.rs\n+++ b/crates/language_model_selector/src/language_model_selector.rs\n@@ -410,7 +410,8 @@ impl ModelMatcher {\n     }\n \n     pub fn is_match(self: &Self, info: &ModelInfo) -> bool {\n-        self.matched_ids.contains(&info.model.id().0)\n+        let q = (info.model.provider_id(), info.model.id());\n+        self.matched_models.contains(&q)\n     }\n }\n \n",
+          "head_sha": "9245656485e58a5d6d717d82209bc8c57cb9c539",
+          "remote_url": "git@github.com:zed-industries/zed.git"
+        },
+        "worktree_path": "/home/silver/develop/zed"
+      }
+    ]
+  },
+  "messages": [
+    {
+      "context": "\n<context>\nThe following items were attached by the user. They are up-to-date and don't need to be re-read.\n\n<files>\n```rs zed/crates/language_model_selector/src/language_model_selector.rs\nconst TRY_ZED_PRO_URL [L28]\ntype OnModelChanged [L30]\ntype GetActiveModel [L31]\npub struct LanguageModelSelector [L33-37]\n picker [L34]\n _authenticate_all_providers_task [L35]\n _subscriptions [L36]\nimpl LanguageModelSelector [L39-231]\n pub fn new [L40-81]\n fn handle_language_model_registry_event [L83-104]\n fn authenticate_all_providers [L110-154]\n fn all_models [L156-204]\n pub fn active_model [L206-208]\n fn get_active_model_index [L210-230]\nimpl EventEmitter<DismissEvent> for LanguageModelSelector [L233]\nimpl Focusable for LanguageModelSelector [L235-239]\n fn focus_handle [L236-238]\nimpl Render for LanguageModelSelector [L241-245]\n fn render [L242-244]\npub struct LanguageModelSelectorPopoverMenu [L248-258]\n language_model_selector [L253]\n trigger [L254]\n tooltip [L255]\n handle [L256]\n anchor [L257]\nimpl LanguageModelSelectorPopoverMenu<T, TT> [L260-284]\n pub fn new [L265-278]\n pub fn with_handle [L280-283]\nimpl RenderOnce for LanguageModelSelectorPopoverMenu<T, TT> [L286-304]\n fn render [L291-303]\nstruct ModelInfo [L307-310]\n model [L308]\n icon [L309]\npub struct LanguageModelPickerDelegate [L312-319]\n language_model_selector [L313]\n on_model_changed [L314]\n get_active_model [L315]\n all_models [L316]\n filtered_entries [L317]\n selected_index [L318]\nstruct GroupedModels [L321-324]\n recommended [L322]\n other [L323]\nimpl GroupedModels [L326-385]\n pub fn new [L327-342]\n fn entries [L344-370]\n fn model_infos [L372-384]\nenum LanguageModelPickerEntry [L387-390]\n Model [L388]\n Separator [L389]\nstruct ModelMatcher [L392-396]\n models [L393]\n bg_executor [L394]\n candidates [L395]\nimpl ModelMatcher [L398-452]\n fn new [L399-406]\n pub fn fuzzy_search [L408-424]\n pub fn exact_search [L426-438]\n fn make_match_candidates [L440-451]\nimpl PickerDelegate for LanguageModelPickerDelegate [L454-693]\n type ListItem [L455]\n fn match_count [L457-459]\n fn selected_index [L461-463]\n fn set_selected_index [L465-468]\n fn can_select [L470-480]\n fn placeholder_text [L482-484]\n fn update_matches [L486-546]\n fn confirm [L548-560]\n fn dismissed [L562-566]\n fn render_match [L568-636]\n fn render_footer [L638-692]\n\nShowing symbols 1-71 (total symbols: 71)\n\n```\n</files>\n</context>\n",
+      "creases": [
+        {
+          "end": 140,
+          "icon_path": "icons/file_icons/rust.svg",
+          "label": "language_model_selector.rs",
+          "start": 38
+        }
+      ],
+      "id": 0,
+      "role": "user",
+      "segments": [
+        {
+          "text": "I recently introduced fuzzy search in [@language_model_selector.rs](@file:zed/crates/language_model_selector/src/language_model_selector.rs). Can you write unit-test that check it? You can find a test list of models on images. ",
+          "type": "text"
+        }
+      ],
+      "tool_results": [],
+      "tool_uses": []
+    },
+    {
+      "context": "",
+      "creases": [],
+      "id": 1,
+      "role": "assistant",
+      "segments": [
+        {
+          "text": "I'll help you write unit tests for the fuzzy search functionality in the language model selector. I see that you want to test the fuzzy search with the models shown in the images - both Claude models (3, 3.5, 3.7) and GPT models (GPT-3.5, GPT-4, GPT-4o, etc.).\n\nLet's start by examining the code structure to understand how the fuzzy search works.",
+          "type": "text"
+        }
+      ],
+      "tool_results": [
+        {
+          "content": "zed/crates/language_model_selector/Cargo.toml\nzed/crates/language_model_selector/LICENSE-GPL\nzed/crates/language_model_selector/src\n",
+          "is_error": false,
+          "output": null,
+          "tool_use_id": "toolu_01FvYMtHs763GL1wA5mpTpqn"
+        }
+      ],
+      "tool_uses": [
+        {
+          "id": "toolu_01FvYMtHs763GL1wA5mpTpqn",
+          "input": {
+            "path": "zed/crates/language_model_selector"
+          },
+          "name": "list_directory"
+        }
+      ]
+    },
+    {
+      "context": "",
+      "creases": [],
+      "id": 2,
+      "role": "assistant",
+      "segments": [
+        {
+          "text": "Let's look at the structure of the tests directory or see if there are existing tests:",
+          "type": "text"
+        }
+      ],
+      "tool_results": [
+        {
+          "content": "zed/crates/language_model_selector/src/language_model_selector.rs\n",
+          "is_error": false,
+          "output": null,
+          "tool_use_id": "toolu_01KSLDsLLrf7tgixB1sge3cm"
+        }
+      ],
+      "tool_uses": [
+        {
+          "id": "toolu_01KSLDsLLrf7tgixB1sge3cm",
+          "input": {
+            "path": "zed/crates/language_model_selector/src"
+          },
+          "name": "list_directory"
+        }
+      ]
+    },
+    {
+      "context": "",
+      "creases": [],
+      "id": 3,
+      "role": "assistant",
+      "segments": [
+        {
+          "text": "Let's check the Cargo.toml to understand the dependencies:",
+          "type": "text"
+        }
+      ],
+      "tool_results": [
+        {
+          "content": "[package]\nname = \"language_model_selector\"\nversion = \"0.1.0\"\nedition.workspace = true\npublish.workspace = true\nlicense = \"GPL-3.0-or-later\"\n\n[lints]\nworkspace = true\n\n[lib]\npath = \"src/language_model_selector.rs\"\n\n[dependencies]\ncollections.workspace = true\nfeature_flags.workspace = true\nfuzzy.workspace = true\ngpui.workspace = true\nlanguage_model.workspace = true\nlog.workspace = true\npicker.workspace = true\nproto.workspace = true\nui.workspace = true\nworkspace-hack.workspace = true\nzed_actions.workspace = true\n",
+          "is_error": false,
+          "output": null,
+          "tool_use_id": "toolu_019Je2MLfJhpJr93g5igoRAH"
+        }
+      ],
+      "tool_uses": [
+        {
+          "id": "toolu_019Je2MLfJhpJr93g5igoRAH",
+          "input": {
+            "path": "zed/crates/language_model_selector/Cargo.toml"
+          },
+          "name": "read_file"
+        }
+      ]
+    },
+    {
+      "context": "",
+      "creases": [],
+      "id": 4,
+      "role": "assistant",
+      "segments": [
+        {
+          "text": "Now let's look at the fuzzy search implementation in detail:",
+          "type": "text"
+        }
+      ],
+      "tool_results": [
+        {
+          "content": "struct ModelMatcher {\n    models: Vec<ModelInfo>,\n    bg_executor: BackgroundExecutor,\n    candidates: Vec<StringMatchCandidate>,\n}\n\nimpl ModelMatcher {\n    fn new(models: Vec<ModelInfo>, bg_executor: BackgroundExecutor) -> ModelMatcher {\n        let candidates = Self::make_match_candidates(&models);\n        Self {\n            models,\n            bg_executor,\n            candidates,\n        }\n    }\n\n    pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {\n        let matches = self.bg_executor.block(match_strings(\n            &self.candidates,\n            &query,\n            false,\n            100,\n            &Default::default(),\n            self.bg_executor.clone(),\n        ));\n\n        let matched_models: Vec<_> = matches\n            .into_iter()\n            .map(|m| self.models[m.candidate_id].clone())\n            .collect();\n\n        matched_models\n    }\n\n    pub fn exact_search(&self, query: &str) -> Vec<ModelInfo> {\n        self.models\n            .iter()\n            .filter(|m| {\n                m.model\n                    .name()\n                    .0\n                    .to_lowercase()\n                    .contains(&query.to_lowercase())\n            })\n            .cloned()\n            .collect::<Vec<_>>()\n    }\n\n    fn make_match_candidates(model_infos: &Vec<ModelInfo>) -> Vec<StringMatchCandidate> {\n        model_infos\n            .iter()\n            .enumerate()\n            .map(|(index, model)| {\n                StringMatchCandidate::new(\n                    index,\n                    &format!(\"{}/{}\", &model.model.provider_id().0, &model.model.name().0),\n                )\n            })\n            .collect::<Vec<_>>()\n    }\n}",
+          "is_error": false,
+          "output": null,
+          "tool_use_id": "toolu_01GpKFEn6hYrXGiS5yBF3urk"
+        }
+      ],
+      "tool_uses": [
+        {
+          "id": "toolu_01GpKFEn6hYrXGiS5yBF3urk",
+          "input": {
+            "end_line": 452,
+            "path": "zed/crates/language_model_selector/src/language_model_selector.rs",
+            "start_line": 392
+          },
+          "name": "read_file"
+        }
+      ]
+    },
+    {
+      "context": "",
+      "creases": [],
+      "id": 5,
+      "role": "assistant",
+      "segments": [
+        {
+          "text": "Let's now check if there's an existing test module:",
+          "type": "text"
+        }
+      ],
+      "tool_results": [
+        {
+          "content": "No matches found",
+          "is_error": false,
+          "output": null,
+          "tool_use_id": "toolu_01RZAvFvpMq16Dwh6d6cnVzy"
+        }
+      ],
+      "tool_uses": [
+        {
+          "id": "toolu_01RZAvFvpMq16Dwh6d6cnVzy",
+          "input": {
+            "include_pattern": "zed/crates/language_model_selector/**/*.rs",
+            "regex": "mod tests"
+          },
+          "name": "grep"
+        }
+      ]
+    },
+    {
+      "context": "",
+      "creases": [],
+      "id": 6,
+      "role": "assistant",
+      "segments": [
+        {
+          "text": "Now I'll create a test module for the ModelMatcher's fuzzy search functionality. Let's create this test module:",
+          "type": "text"
+        }
+      ],
+      "tool_results": [],
+      "tool_uses": []
+    }
+  ],
+  "model": {
+    "model": "claude-3-7-sonnet-latest",
+    "provider": "zed.dev"
+  },
+  "profile": "Write",
+  "request_token_usage": [
+    {
+      "cache_creation_input_tokens": 9581,
+      "input_tokens": 4,
+      "output_tokens": 5
+    },
+    {
+      "cache_creation_input_tokens": 204,
+      "cache_read_input_tokens": 9581,
+      "input_tokens": 6,
+      "output_tokens": 5
+    },
+    {
+      "cache_creation_input_tokens": 104,
+      "cache_read_input_tokens": 9785,
+      "input_tokens": 6,
+      "output_tokens": 5
+    },
+    {
+      "cache_creation_input_tokens": 239,
+      "cache_read_input_tokens": 9889,
+      "input_tokens": 6,
+      "output_tokens": 5
+    },
+    {
+      "cache_creation_input_tokens": 569,
+      "cache_read_input_tokens": 10128,
+      "input_tokens": 5,
+      "output_tokens": 5
+    },
+    {
+      "cache_creation_input_tokens": 87,
+      "cache_read_input_tokens": 10697,
+      "input_tokens": 5,
+      "output_tokens": 2
+    },
+    {
+      "cache_creation_input_tokens": 7355,
+      "cache_read_input_tokens": 10784,
+      "input_tokens": 5,
+      "output_tokens": 3
+    }
+  ],
+  "summary": "Fuzzy Search Testing Language Model Selector",
+  "updated_at": "2025-05-08T18:20:34.205405751Z",
+  "version": "0.2.0"
+}

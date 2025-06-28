@@ -1,24 +1,27 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::{action_as, action_with_deprecated_aliases, actions};
+use gpui::{Action, actions};
 use schemars::JsonSchema;
 use util::serde::default_true;
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
@@ -27,7 +30,8 @@ pub struct MoveToBeginningOfLine {
     pub stop_at_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
@@ -36,76 +40,93 @@ pub struct SelectToBeginningOfLine {
     pub stop_at_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct MovePageUp {
     #[serde(default)]
     pub(super) center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct MovePageDown {
     #[serde(default)]
     pub(super) center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct MoveToEndOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleCodeActions {
-    // Display row from which the action was deployed.
+    // Source from which the action was deployed.
     #[serde(default)]
     #[serde(skip)]
-    pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from: Option<CodeActionSource>,
     // Run first available task if there is only one.
     #[serde(default)]
     #[serde(skip)]
     pub quick_launch: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Debug)]
+pub enum CodeActionSource {
+    Indicator(DisplayRow),
+    RunMenu(DisplayRow),
+    QuickActionBar,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ComposeCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleComments {
     #[serde(default)]
@@ -114,83 +135,96 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct MoveUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SelectUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SelectDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandExcerpts {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandExcerptsUp {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ExpandExcerptsDown {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct ShowCompletions {
     #[serde(default)]
     pub(super) trigger: Option<String>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 pub struct HandleInput(pub String);
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToNextWordEnd {
     #[serde(default)]
     pub ignore_newlines: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 pub struct FoldAtLevel(pub u32);
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct SpawnNearestTask {
     #[serde(default)]
@@ -204,36 +238,13 @@ pub enum UuidVersion {
     V7,
 }
 
-impl_actions!(
-    editor,
+actions!(debugger, [RunToCursor, EvaluateSelectedText]);
+
+actions!(
+    go_to_line,
     [
-        ComposeCompletion,
-        ConfirmCodeAction,
-        ConfirmCompletion,
-        DeleteToBeginningOfLine,
-        DeleteToNextWordEnd,
-        DeleteToPreviousWordStart,
-        ExpandExcerpts,
-        ExpandExcerptsDown,
-        ExpandExcerptsUp,
-        HandleInput,
-        MoveDownByLines,
-        MovePageDown,
-        MovePageUp,
-        MoveToBeginningOfLine,
-        MoveToEndOfLine,
-        MoveUpByLines,
-        SelectDownByLines,
-        SelectNext,
-        SelectPrevious,
-        SelectToBeginningOfLine,
-        SelectToEndOfLine,
-        SelectUpByLines,
-        SpawnNearestTask,
-        ShowCompletions,
-        ToggleCodeActions,
-        ToggleComments,
-        FoldAtLevel,
+        #[action(name = "Toggle")]
+        ToggleGoToLine
     ]
 );
 
@@ -259,6 +270,8 @@ actions!(
         ContextMenuLast,
         ContextMenuNext,
         ContextMenuPrevious,
+        ConvertIndentationToSpaces,
+        ConvertIndentationToTabs,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
@@ -287,6 +300,8 @@ actions!(
         DuplicateLineDown,
         DuplicateLineUp,
         DuplicateSelection,
+        #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
+        ExpandAllDiffHunks,
         ExpandMacroRecursively,
         FindAllReferences,
         FindNextMatch,
@@ -356,6 +371,8 @@ actions!(
         OpenProposedChangesEditor,
         OpenDocs,
         OpenPermalinkToLine,
+        #[action(deprecated_aliases = ["editor::OpenFile"])]
+        OpenSelectedFilename,
         OpenSelectionsInMultibuffer,
         OpenUrl,
         OrganizeImports,
@@ -371,7 +388,6 @@ actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
-        RevertFile,
         ReloadFile,
         Rewrap,
         RunFlycheck,
@@ -420,8 +436,6 @@ actions!(
         DisableBreakpoint,
         EnableBreakpoint,
         EditLogBreakpoint,
-        DebuggerRunToCursor,
-        DebuggerEvaluateSelectedText,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,
@@ -436,6 +450,8 @@ actions!(
         SwapSelectionEnds,
         SetMark,
         ToggleRelativeLineNumbers,
+        #[action(deprecated_aliases = ["editor::ToggleHunkDiff"])]
+        ToggleSelectedDiffHunks,
         ToggleSelectionMenu,
         ToggleSoftWrap,
         ToggleTabBar,
@@ -449,9 +465,3 @@ actions!(
         UniqueLinesCaseSensitive,
     ]
 );
-
-action_as!(go_to_line, ToggleGoToLine as Toggle);
-
-action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
-action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);
-action_with_deprecated_aliases!(editor, ExpandAllDiffHunks, ["editor::ExpandAllHunkDiffs"]);

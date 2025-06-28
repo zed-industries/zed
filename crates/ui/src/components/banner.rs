@@ -86,7 +86,7 @@ impl RenderOnce for Banner {
                 IconName::Info,
                 Color::Muted,
                 cx.theme().status().info_background.opacity(0.5),
-                cx.theme().colors().border_variant,
+                cx.theme().colors().border.opacity(0.5),
             ),
             Severity::Success => (
                 IconName::Check,

@@ -136,7 +136,9 @@ pub struct IndentGuideLayout {
 
 /// Implements the necessary functionality for rendering indent guides inside a uniform list.
 mod uniform_list {
-    use gpui::{DispatchPhase, Hitbox, MouseButton, MouseDownEvent, MouseMoveEvent};
+    use gpui::{
+        DispatchPhase, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent,
+    };
 
     use super::*;
 
@@ -227,9 +229,14 @@ mod uniform_list {
             None
         }
 
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
         fn request_layout(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -239,6 +246,7 @@ mod uniform_list {
         fn prepaint(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -250,7 +258,12 @@ mod uniform_list {
                     .indent_guides
                     .as_ref()
                     .iter()
-                    .map(|guide| window.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false))
+                    .map(|guide| {
+                        window.insert_hitbox(
+                            guide.hitbox.unwrap_or(guide.bounds),
+                            HitboxBehavior::Normal,
+                        )
+                    })
                     .collect();
                 Self::PrepaintState::Interactive {
                     hitboxes: Rc::new(hitboxes),
@@ -264,6 +277,7 @@ mod uniform_list {
         fn paint(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             prepaint: &mut Self::PrepaintState,
@@ -316,7 +330,7 @@ mod uniform_list {
                     });
                     let mut hovered_hitbox_id = None;
                     for (i, hitbox) in hitboxes.iter().enumerate() {
-                        window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(hitbox));
+                        window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
                         let indent_guide = &self.indent_guides[i];
                         let fill_color = if hitbox.is_hovered(window) {
                             hovered_hitbox_id = Some(hitbox.id);

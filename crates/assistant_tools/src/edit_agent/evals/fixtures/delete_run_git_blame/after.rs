@@ -98,21 +98,21 @@ impl BlameEntry {
         let sha = parts
             .next()
             .and_then(|line| line.parse::<Oid>().ok())
-            .ok_or_else(|| anyhow!("failed to parse sha"))?;
+            .with_context(|| format!("parsing sha from {line}"))?;
 
         let original_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse original line number"))?;
+            .with_context(|| format!("parsing original line number from {line}"))?;
         let final_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .with_context(|| format!("parsing final line number from {line}"))?;
 
         let line_count = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .with_context(|| format!("parsing line count from {line}"))?;
 
         let start_line = final_line_number.saturating_sub(1);
         let end_line = start_line + line_count;

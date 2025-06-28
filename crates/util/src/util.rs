@@ -1,9 +1,12 @@
 pub mod arc_cow;
+pub mod archive;
 pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
+pub mod redact;
 pub mod serde;
+pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -26,12 +29,9 @@ use std::{
 };
 use unicase::UniCase;
 
-#[cfg(unix)]
-use anyhow::{Context as _, anyhow};
-
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::{line_endings, separator, uri};
+pub use util_macros::{line_endings, path, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -42,50 +42,6 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
-    };
-}
-
-/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
-/// the separator from `/` to `\`.
-/// But on non-Windows platforms, it will return the path literal as is.
-///
-/// # Examples
-/// ```rust
-/// use util::path;
-///
-/// let path = path!("/Users/user/file.txt");
-/// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "C:\\Users\\user\\file.txt");
-/// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "/Users/user/file.txt");
-/// ```
-#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
-#[macro_export]
-macro_rules! path {
-    ($path:literal) => {
-        concat!("C:", util::separator!($path))
-    };
-}
-
-/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
-/// the separator from `/` to `\`.
-/// But on non-Windows platforms, it will return the path literal as is.
-///
-/// # Examples
-/// ```rust
-/// use util::path;
-///
-/// let path = path!("/Users/user/file.txt");
-/// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "C:\\Users\\user\\file.txt");
-/// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "/Users/user/file.txt");
-/// ```
-#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
-#[macro_export]
-macro_rules! path {
-    ($path:literal) => {
-        $path
     };
 }
 
@@ -258,6 +214,28 @@ where
     items.sort_by(compare);
 }
 
+/// Prevents execution of the application with root privileges on Unix systems.
+///
+/// This function checks if the current process is running with root privileges
+/// and terminates the program with an error message unless explicitly allowed via the
+/// `ZED_ALLOW_ROOT` environment variable.
+#[cfg(unix)]
+pub fn prevent_root_execution() {
+    let is_root = nix::unistd::geteuid().is_root();
+    let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+    if is_root && !allow_root {
+        eprintln!(
+            "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+        );
+        std::process::exit(1);
+    }
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
@@ -308,50 +286,43 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 #[cfg(unix)]
+/// Returns a shell escaped path for the current zed executable
+pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let zed_path = std::env::current_exe()
+        .context("Failed to determine current zed executable path.")?
+        .to_string_lossy()
+        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
+        .to_string();
+
+    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+    // errors are introduced in the future :(
+    let zed_path_escaped =
+        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
+
+    return Ok(zed_path_escaped.to_string());
+}
+
+#[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
-
-    let marker = "ZED_LOGIN_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
     // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    let shell_cmd_prefix = std::env::var_os("HOME")
-        .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd '{home}';"));
+    for (name, value) in shell_env::capture(paths::home_dir())? {
+        unsafe { env::set_var(&name, &value) };
+    }
 
-    let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env;",
-        shell_cmd_prefix.as_deref().unwrap_or("")
+    log::info!(
+        "set environment variables from shell:{}, path:{}",
+        std::env::var("SHELL").unwrap_or_default(),
+        std::env::var("PATH").unwrap_or_default(),
     );
-
-    let output = set_pre_exec_to_start_new_session(
-        std::process::Command::new(&shell).args(["-l", "-i", "-c", &shell_cmd]),
-    )
-    .output()
-    .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if let Some(env_output_start) = stdout.find(marker) {
-        let env_output = &stdout[env_output_start + marker.len()..];
-
-        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
-
-        log::info!(
-            "set environment variables from shell:{}, path:{}",
-            shell,
-            env::var("PATH").unwrap_or_default(),
-        );
-    }
 
     Ok(())
 }
@@ -376,29 +347,28 @@ pub fn set_pre_exec_to_start_new_session(
     command
 }
 
-/// Parse the result of calling `usr/bin/env` with no arguments
-pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
-    let mut current_key: Option<String> = None;
-    let mut current_value: Option<String> = None;
-
-    for line in env.split_terminator('\n') {
-        if let Some(separator_index) = line.find('=') {
-            if !line[..separator_index].is_empty() {
-                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
-                    f(key, value)
+pub fn merge_json_lenient_value_into(
+    source: serde_json_lenient::Value,
+    target: &mut serde_json_lenient::Value,
+) {
+    match (source, target) {
+        (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_lenient_value_into(value, target);
+                } else {
+                    target.insert(key, value);
                 }
-                current_key = Some(line[..separator_index].to_string());
-                current_value = Some(line[separator_index + 1..].to_string());
-                continue;
-            };
+            }
         }
-        if let Some(value) = current_value.as_mut() {
-            value.push('\n');
-            value.push_str(line);
+
+        (serde_json_lenient::Value::Array(source), serde_json_lenient::Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
         }
-    }
-    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
-        f(key, value)
+
+        (source, target) => *target = source,
     }
 }
 
@@ -466,7 +436,7 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
-pub fn iterate_expanded_and_wrapped_usize_range(
+pub fn expanded_and_wrapped_usize_range(
     range: Range<usize>,
     additional_before: usize,
     additional_after: usize,
@@ -493,6 +463,43 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     } else {
         Either::Left((range.start - additional_before)..(range.end + additional_after))
     }
+}
+
+/// Yields `[i, i + 1, i - 1, i + 2, ..]`, each modulo `wrap_length` and bounded by
+/// `additional_before` and `additional_after`. If the wrapping causes overlap, duplicates are not
+/// emitted. If wrap_length is 0, nothing is yielded.
+pub fn wrapped_usize_outward_from(
+    start: usize,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let mut count = 0;
+    let mut after_offset = 1;
+    let mut before_offset = 1;
+
+    std::iter::from_fn(move || {
+        count += 1;
+        if count > wrap_length {
+            None
+        } else if count == 1 {
+            Some(start % wrap_length)
+        } else if after_offset <= additional_after && after_offset <= before_offset {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else if before_offset <= additional_before {
+            let value = (start + wrap_length - before_offset) % wrap_length;
+            before_offset += 1;
+            Some(value)
+        } else if after_offset <= additional_after {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -857,6 +864,7 @@ mod rng {
 }
 #[cfg(any(test, feature = "test-support"))]
 pub use rng::RandomCharIter;
+
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     match A::get(path).expect(path).data {
@@ -1009,6 +1017,28 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+/// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
+/// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
+pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+    let mut result = Vec::new();
+    let mut start = 0;
+
+    for (i, ch) in s.char_indices() {
+        if pat(ch) {
+            if i > start {
+                result.push((start..i, &s[start..i]));
+            }
+            start = i + ch.len_utf8();
+        }
+    }
+
+    if s.len() > start {
+        result.push((start..s.len(), &s[start..s.len()]));
+    }
+
+    result
+}
+
 pub fn default<D: Default>() -> D {
     Default::default()
 }
@@ -1064,6 +1094,52 @@ mod tests {
 
         extend_sorted(&mut vec, vec![1000, 19, 17, 9, 5], 8, |a, b| b.cmp(a));
         assert_eq!(vec, &[1000, 101, 21, 19, 17, 13, 9, 8]);
+    }
+
+    #[test]
+    fn test_get_shell_safe_zed_path_with_spaces() {
+        // Test that shlex::try_quote handles paths with spaces correctly
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted = shlex::try_quote(path_with_spaces).unwrap();
+
+        // The quoted path should be properly escaped for shell use
+        assert!(quoted.contains(path_with_spaces));
+
+        // When used in a shell command, it should not be split at spaces
+        let command = format!("sh -c '{} --printenv'", quoted);
+        println!("Command would be: {}", command);
+
+        // Test that shlex can parse it back correctly
+        let parsed = shlex::split(&format!("{} --printenv", quoted)).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], path_with_spaces);
+        assert_eq!(parsed[1], "--printenv");
+    }
+
+    #[test]
+    fn test_shell_command_construction_with_quoted_path() {
+        // Test the specific pattern used in shell_env.rs to ensure proper quoting
+        let path_with_spaces = "/Applications/Zed Nightly.app/Contents/MacOS/zed";
+        let quoted_path = shlex::try_quote(path_with_spaces).unwrap();
+
+        // This should be: '/Applications/Zed Nightly.app/Contents/MacOS/zed'
+        assert_eq!(
+            quoted_path,
+            "'/Applications/Zed Nightly.app/Contents/MacOS/zed'"
+        );
+
+        // Test the command construction pattern from shell_env.rs
+        // The fixed version should use double quotes around the entire sh -c argument
+        let env_fd = 0;
+        let command = format!("sh -c \"{} --printenv >&{}\";", quoted_path, env_fd);
+
+        // This should produce: sh -c "'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0";
+        let expected =
+            "sh -c \"'/Applications/Zed Nightly.app/Contents/MacOS/zed' --printenv >&0\";";
+        assert_eq!(command, expected);
+
+        // The command should not contain the problematic double single-quote pattern
+        assert!(!command.contains("''"));
     }
 
     #[test]
@@ -1236,46 +1312,101 @@ Line 3"#
     }
 
     #[test]
-    fn test_iterate_expanded_and_wrapped_usize_range() {
+    fn test_expanded_and_wrapped_usize_range() {
         // Neither wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
             (1..5).collect::<Vec<usize>>()
         );
         // Start wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
             ((0..5).chain(7..8)).collect::<Vec<usize>>()
         );
         // Start wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Start wraps all the way around and past 0
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
             (0..1).chain(2..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around and past the end
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Both start and end wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
+    }
+
+    #[test]
+    fn test_wrapped_usize_outward_from() {
+        // No wrapping
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![4, 5, 3, 6, 2]
+        );
+        // Wrapping at end
+        assert_eq!(
+            wrapped_usize_outward_from(8, 2, 3, 10).collect::<Vec<usize>>(),
+            vec![8, 9, 7, 0, 6, 1]
+        );
+        // Wrapping at start
+        assert_eq!(
+            wrapped_usize_outward_from(1, 3, 2, 10).collect::<Vec<usize>>(),
+            vec![1, 2, 0, 3, 9, 8]
+        );
+        // All values wrap around
+        assert_eq!(
+            wrapped_usize_outward_from(5, 10, 10, 8).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3, 0, 2, 1]
+        );
+        // None before / after
+        assert_eq!(
+            wrapped_usize_outward_from(3, 0, 0, 8).collect::<Vec<usize>>(),
+            vec![3]
+        );
+        // Starting point already wrapped
+        assert_eq!(
+            wrapped_usize_outward_from(15, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3]
+        );
+        // wrap_length of 0
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 0).collect::<Vec<usize>>(),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn test_split_with_ranges() {
+        let input = "hi";
+        let result = split_str_with_ranges(input, |c| c == ' ');
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (0..2, "hi"));
+
+        let input = "héllo🦀world";
+        let result = split_str_with_ranges(input, |c| c == '🦀');
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
+        assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
     }
 }

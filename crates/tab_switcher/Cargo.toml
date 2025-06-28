@@ -32,9 +32,9 @@ workspace-hack.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

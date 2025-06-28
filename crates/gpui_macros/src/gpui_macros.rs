@@ -1,21 +1,30 @@
+mod derive_action;
 mod derive_app_context;
 mod derive_into_element;
-mod derive_path_static_str;
 mod derive_render;
 mod derive_visual_context;
 mod register_action;
 mod styles;
 mod test;
 
+#[cfg(any(feature = "inspector", debug_assertions))]
+mod derive_inspector_reflection;
+
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Ident};
 
-/// register_action! can be used to register an action with the GPUI runtime.
-/// You should typically use `gpui::actions!` or `gpui::impl_actions!` instead,
-/// but this can be used for fine grained customization.
+/// `Action` derive macro - see the trait documentation for details.
+#[proc_macro_derive(Action, attributes(action))]
+pub fn derive_action(input: TokenStream) -> TokenStream {
+    derive_action::derive_action(input)
+}
+
+/// This can be used to register an action with the GPUI runtime when you want to manually implement
+/// the `Action` trait. Typically you should use the `Action` derive macro or `actions!` macro
+/// instead.
 #[proc_macro]
 pub fn register_action(ident: TokenStream) -> TokenStream {
-    register_action::register_action_macro(ident)
+    register_action::register_action(ident)
 }
 
 /// #[derive(IntoElement)] is used to create a Component out of anything that implements
@@ -29,12 +38,6 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
-}
-
-#[proc_macro_derive(PathStaticStr)]
-#[doc(hidden)]
-pub fn derive_path_static_str(input: TokenStream) -> TokenStream {
-    derive_path_static_str::derive_path_static_str(input)
 }
 
 /// #[derive(AppContext)] is used to create a context out of anything that holds a `&mut App`
@@ -185,12 +188,34 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
 }
 
+/// When added to a trait, `#[derive_inspector_reflection]` generates a module which provides
+/// enumeration and lookup by name of all methods that have the shape `fn method(self) -> Self`.
+/// This is used by the inspector so that it can use the builder methods in `Styled` and
+/// `StyledExt`.
+///
+/// The generated module will have the name `<snake_case_trait_name>_reflection` and contain the
+/// following functions:
+///
+/// ```ignore
+/// pub fn methods::<T: TheTrait + 'static>() -> Vec<gpui::inspector_reflection::FunctionReflection<T>>;
+///
+/// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::FunctionReflection<T>>;
+/// ```
+///
+/// The `invoke` method on `FunctionReflection` will run the method. `FunctionReflection` also
+/// provides the method's documentation.
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[proc_macro_attribute]
+pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
+    derive_inspector_reflection::derive_inspector_reflection(_args, input)
+}
+
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {
     match &ast.data {
         syn::Data::Struct(data_struct) => data_struct
             .fields
             .iter()
-            .find(|field| field.attrs.iter().any(|attr| attr.path.is_ident(name)))
+            .find(|field| field.attrs.iter().any(|attr| attr.path().is_ident(name)))
             .map(|field| field.ident.clone().unwrap()),
         syn::Data::Enum(_) => None,
         syn::Data::Union(_) => None,

@@ -90,7 +90,7 @@ impl ChatPanel {
                 languages.clone(),
                 user_store.clone(),
                 None,
-                cx.new(|cx| Editor::auto_height(4, window, cx)),
+                cx.new(|cx| Editor::auto_height(1, 4, window, cx)),
                 window,
                 cx,
             )
@@ -1059,7 +1059,7 @@ impl Render for ChatPanel {
                                         .child(
                                             Label::new(format!(
                                                 "@{}",
-                                                user_being_replied_to.github_login.clone()
+                                                user_being_replied_to.github_login
                                             ))
                                             .size(LabelSize::Small)
                                             .weight(FontWeight::BOLD),
@@ -1218,7 +1218,6 @@ mod tests {
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
                 name: None,
-                email: None,
             }),
             nonce: 5,
             mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
@@ -1274,7 +1273,6 @@ mod tests {
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
                 name: None,
-                email: None,
             }),
             nonce: 5,
             mentions: Vec::new(),
@@ -1323,7 +1321,6 @@ mod tests {
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
                 name: None,
-                email: None,
             }),
             nonce: 5,
             mentions: Vec::new(),

@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GpuSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, RequestFrameOptions, ScaledPixels, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowParams,
+    Point, PromptButton, RequestFrameOptions, ScaledPixels, Size, TestPlatform, TileId,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -21,6 +21,7 @@ pub(crate) struct TestWindowState {
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -65,6 +66,7 @@ impl TestWindow {
             title: Default::default(),
             edited: false,
             should_close_handler: None,
+            hit_test_window_control_callback: None,
             input_callback: None,
             active_status_change_callback: None,
             hover_status_change_callback: None,
@@ -151,6 +153,10 @@ impl PlatformWindow for TestWindow {
         crate::Modifiers::default()
     }
 
+    fn capslock(&self) -> crate::Capslock {
+        crate::Capslock::default()
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.lock().input_handler = Some(input_handler);
     }
@@ -164,7 +170,7 @@ impl PlatformWindow for TestWindow {
         _level: crate::PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         Some(
             self.0
@@ -253,6 +259,10 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        self.0.lock().hit_test_window_control_callback = Some(callback);
+    }
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 

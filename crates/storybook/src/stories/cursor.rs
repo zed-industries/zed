@@ -5,7 +5,7 @@ use ui::prelude::*;
 pub struct CursorStory;
 
 impl Render for CursorStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_cursors: [(&str, Box<dyn Fn(Stateful<Div>) -> Stateful<Div>>); 19] = [
             (
                 "cursor_default",
@@ -85,10 +85,10 @@ impl Render for CursorStory {
             ),
         ];
 
-        Story::container()
+        Story::container(cx)
             .flex()
             .gap_1()
-            .child(Story::title("cursor"))
+            .child(Story::title("cursor", cx))
             .children(all_cursors.map(|(name, apply_cursor)| {
                 div().gap_1().flex().text_color(gpui::white()).child(
                     div()
@@ -102,7 +102,7 @@ impl Render for CursorStory {
                         .bg(gpui::red())
                         .active(|style| style.bg(gpui::green()))
                         .text_sm()
-                        .child(Story::label(name)),
+                        .child(Story::label(name, cx)),
                 )
             }))
     }

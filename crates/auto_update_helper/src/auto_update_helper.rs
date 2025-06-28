@@ -22,7 +22,7 @@ mod windows_impl {
 
     use super::dialog::create_dialog_window;
     use super::updater::perform_update;
-    use anyhow::{Context, Result};
+    use anyhow::{Context as _, Result};
     use windows::{
         Win32::{
             Foundation::{HWND, LPARAM, WPARAM},

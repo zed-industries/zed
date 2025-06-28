@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects};
 use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
@@ -154,7 +154,7 @@ impl CommitView {
             });
             editor.update(cx, |editor, cx| {
                 editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
-                editor.change_selections(None, window, cx, |selections| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     selections.select_ranges(vec![0..0]);
                 });
             });
@@ -172,7 +172,7 @@ impl CommitView {
                             .map(|path| path.worktree_id)
                             .or(first_worktree_id)
                     })?
-                    .ok_or_else(|| anyhow!("project has no worktrees"))?;
+                    .context("project has no worktrees")?;
                 let file = Arc::new(GitBlob {
                     path: file.path.clone(),
                     is_deleted,

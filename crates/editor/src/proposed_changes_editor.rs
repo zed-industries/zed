@@ -1,4 +1,4 @@
-use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SelectionEffects, SemanticsProvider};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
@@ -12,7 +12,7 @@ use text::ToOffset;
 use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
     Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    searchable::SearchableItemHandle,
+    item::SaveOptions, searchable::SearchableItemHandle,
 };
 
 pub struct ProposedChangesEditor {
@@ -213,7 +213,9 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
-            editor.change_selections(None, window, cx, |selections| selections.refresh());
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.refresh()
+            });
             editor.buffer.update(cx, |buffer, cx| {
                 for diff in new_diffs {
                     buffer.add_diff(diff, cx)
@@ -351,13 +353,13 @@ impl Item for ProposedChangesEditor {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         self.editor.update(cx, |editor, cx| {
-            Item::save(editor, format, project, window, cx)
+            Item::save(editor, options, project, window, cx)
         })
     }
 }
@@ -488,7 +490,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Vec<project::DocumentHighlight>>>> {
+    ) -> Option<Task<anyhow::Result<Vec<project::DocumentHighlight>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.document_highlights(&buffer, position, cx)
     }
@@ -499,7 +501,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         position: text::Anchor,
         kind: crate::GotoDefinitionKind,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Vec<project::LocationLink>>>> {
+    ) -> Option<Task<anyhow::Result<Vec<project::LocationLink>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
     }
@@ -509,7 +511,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: &Entity<Buffer>,
         _: text::Anchor,
         _: &mut App,
-    ) -> Option<Task<gpui::Result<Option<Range<text::Anchor>>>>> {
+    ) -> Option<Task<anyhow::Result<Option<Range<text::Anchor>>>>> {
         None
     }
 
@@ -519,7 +521,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: text::Anchor,
         _: String,
         _: &mut App,
-    ) -> Option<Task<gpui::Result<project::ProjectTransaction>>> {
+    ) -> Option<Task<anyhow::Result<project::ProjectTransaction>>> {
         None
     }
 }

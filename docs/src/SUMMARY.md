@@ -19,6 +19,7 @@
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
+- [Visual Customization](./visual-customization.md)
 - [Vim Mode](./vim.md)
 
 <!-- - [Globs](./globs.md) -->
@@ -32,6 +33,8 @@
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)
+- [Debugger](./debugger.md)
+- [Diagnostics](./diagnostics.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)
@@ -48,11 +51,11 @@
 - [Text Threads](./ai/text-threads.md)
 - [Rules](./ai/rules.md)
 - [Model Context Protocol](./ai/mcp.md)
+- [Configuration](./ai/configuration.md)
 - [Subscription](./ai/subscription.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
   - [Models](./ai/models.md)
-- [Use Your Own API Keys](./ai/custom-api-keys.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 
@@ -62,10 +65,11 @@
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
+- [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)
-- [Context Server Extensions](./extensions/context-servers.md)
+- [MCP Server Extensions](./extensions/mcp-extensions.md)
 
 # Language Support
 
@@ -110,6 +114,7 @@
 - [Nim](./languages/nim.md)
 - [OCaml](./languages/ocaml.md)
 - [PHP](./languages/php.md)
+- [PowerShell](./languages/powershell.md)
 - [Prisma](./languages/prisma.md)
 - [Proto](./languages/proto.md)
 - [PureScript](./languages/purescript.md)
@@ -124,6 +129,7 @@
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
 - [Shell Script](./languages/sh.md)
+- [SQL](./languages/sql.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md)
@@ -144,6 +150,7 @@
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
+  - [FreeBSD](./development/freebsd.md)
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
 - [Release Process](./development/releases.md)

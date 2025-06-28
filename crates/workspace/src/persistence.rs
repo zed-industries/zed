@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
@@ -181,7 +181,7 @@ impl Column for BreakpointStateWrapper<'_> {
         match state {
             0 => Ok((BreakpointState::Enabled.into(), start_index + 1)),
             1 => Ok((BreakpointState::Disabled.into(), start_index + 1)),
-            _ => Err(anyhow::anyhow!("Invalid BreakpointState discriminant")),
+            _ => anyhow::bail!("Invalid BreakpointState discriminant {state}"),
         }
     }
 }
@@ -914,7 +914,7 @@ impl WorkspaceDb {
             log::debug!("Inserting SSH project at host {host}");
             self.insert_ssh_project(host, port, paths, user)
                 .await?
-                .ok_or_else(|| anyhow!("failed to insert ssh project"))
+                .context("failed to insert ssh project")
         }
     }
 
@@ -1244,7 +1244,7 @@ impl WorkspaceDb {
                     *axis,
                     flex_string,
                 ))?
-                .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
+                .context("Couldn't retrieve group_id from inserted pane_group")?;
 
                 for (position, group) in children.iter().enumerate() {
                     Self::save_pane_group(conn, workspace_id, group, Some((group_id, position)))?
@@ -1270,7 +1270,7 @@ impl WorkspaceDb {
             VALUES (?, ?, ?)
             RETURNING pane_id
         ))?((workspace_id, pane.active, pane.pinned_count))?
-        .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
+        .context("Could not retrieve inserted pane_id")?;
 
         let (parent_id, order) = parent.unzip();
         conn.exec_bound(sql!(
@@ -1403,8 +1403,8 @@ impl WorkspaceDb {
                     INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path) VALUES (?, ?, ?, ?, ?,  ?)
                     ON CONFLICT DO
                     UPDATE SET
-                        name = ?4,
-                        path = ?5
+                        name = ?5,
+                        path = ?6
 
                 ))
                 .context("Preparing insertion")?;
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_breakpoints() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_breakpoints").await;
         let id = db.next_id().await.unwrap();
@@ -1651,7 +1651,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_last_breakpoint() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_remove_last_breakpoint").await;
         let id = db.next_id().await.unwrap();
@@ -1738,7 +1738,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_next_id_stability() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_next_id_stability").await;
 
@@ -1786,7 +1786,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_workspace_id_stability() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_workspace_id_stability").await;
 
@@ -1880,7 +1880,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_full_workspace_serialization() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_full_workspace_serialization").await;
 
@@ -1955,7 +1955,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_workspace_assignment() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_basic_functionality").await;
 
@@ -2051,7 +2051,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_session_workspaces() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_serializing_workspaces_session_id").await;
 
@@ -2488,7 +2488,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_simple_split() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("simple_split").await;
 
@@ -2543,7 +2543,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_cleanup_panes() {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         let db = WorkspaceDb::open_test_db("test_cleanup_panes").await;
 

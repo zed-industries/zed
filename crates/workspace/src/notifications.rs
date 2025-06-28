@@ -1,4 +1,5 @@
 use crate::{SuppressNotification, Toast, Workspace};
+use anyhow::Context as _;
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
@@ -239,9 +240,9 @@ impl LanguageServerPrompt {
             });
 
             potential_future? // App Closed
-                .ok_or_else(|| anyhow::anyhow!("Response already sent"))?
+                .context("Response already sent")?
                 .await
-                .ok_or_else(|| anyhow::anyhow!("Stream already closed"))?;
+                .context("Stream already closed")?;
 
             this.update(cx, |_, cx| cx.emit(DismissEvent))?;
 

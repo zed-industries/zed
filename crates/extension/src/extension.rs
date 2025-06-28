@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ::lsp::LanguageServerName;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use fs::normalize_path;
 use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
+use task::{SpawnInTerminal, ZedDebugConfig};
 
 pub use crate::extension_events::*;
 pub use crate::extension_host_proxy::*;
@@ -135,6 +136,35 @@ pub trait Extension: Send + Sync + 'static {
         package_name: Arc<str>,
         kv_store: Arc<dyn KeyValueStoreDelegate>,
     ) -> Result<()>;
+
+    async fn get_dap_binary(
+        &self,
+        dap_name: Arc<str>,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<DebugAdapterBinary>;
+
+    async fn dap_request_kind(
+        &self,
+        dap_name: Arc<str>,
+        config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest>;
+
+    async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario>;
+
+    async fn dap_locator_create_scenario(
+        &self,
+        locator_name: String,
+        build_config_template: BuildTaskTemplate,
+        resolved_label: String,
+        debug_adapter_name: String,
+    ) -> Result<Option<DebugScenario>>;
+    async fn run_dap_locator(
+        &self,
+        locator_name: String,
+        config: SpawnInTerminal,
+    ) -> Result<DebugRequest>;
 }
 
 pub fn parse_wasm_extension_version(
@@ -165,7 +195,7 @@ pub fn parse_wasm_extension_version(
     //
     // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
     // earlier as an `Err` rather than as a panic.
-    version.ok_or_else(|| anyhow!("extension {} has no zed:api-version section", extension_id))
+    version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {

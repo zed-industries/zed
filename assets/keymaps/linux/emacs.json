@@ -59,7 +59,8 @@
       "alt->": "editor::MoveToEnd", // end-of-buffer
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
-      "alt-^": "editor::JoinLines" // join-line
+      "alt-^": "editor::JoinLines", // join-line
+      "alt-q": "editor::Rewrap" // fill-paragraph
     }
   },
   {
@@ -72,7 +73,9 @@
       "alt-left": "editor::SelectToPreviousWordStart",
       "alt-right": "editor::SelectToNextWordEnd",
       "pagedown": "editor::SelectPageDown",
+      "ctrl-v": "editor::SelectPageDown",
       "pageup": "editor::SelectPageUp",
+      "alt-v": "editor::SelectPageUp",
       "ctrl-f": "editor::SelectRight",
       "ctrl-b": "editor::SelectLeft",
       "ctrl-n": "editor::SelectDown",
@@ -86,6 +89,13 @@
       "alt-<": "editor::SelectToBeginning",
       "alt->": "editor::SelectToEnd",
       "ctrl-g": "editor::Cancel"
+    }
+  },
+  {
+    "context": "Editor && (showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ContextMenuPrevious",
+      "ctrl-n": "editor::ContextMenuNext"
     }
   },
   {

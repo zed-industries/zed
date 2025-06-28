@@ -282,7 +282,6 @@ struct Transform {
     block: Option<Block>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Block {
     Custom(Arc<CustomBlock>),
@@ -465,7 +464,7 @@ impl BlockMap {
         map
     }
 
-    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockMapReader {
+    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockMapReader<'_> {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
         BlockMapReader {
@@ -480,7 +479,7 @@ impl BlockMap {
         }
     }
 
-    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockMapWriter {
+    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockMapWriter<'_> {
         self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter(self)
@@ -1328,7 +1327,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows {
+    pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows<'_> {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();

@@ -2,45 +2,50 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton, Stateful,
-    Subscription, Task, WeakEntity, list,
+    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState, MouseButton,
+    Stateful, Subscription, Task, WeakEntity, list,
 };
+use util::debug_panic;
 
+use crate::StackTraceView;
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
-use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ItemHandle, Workspace};
 
 use super::RunningState;
 
 #[derive(Debug)]
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
+    BuiltEntries,
 }
 
 pub struct StackFrameList {
-    list: ListState,
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
     state: WeakEntity<RunningState>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
-    selected_stack_frame_id: Option<StackFrameId>,
+    selected_ix: Option<usize>,
+    opened_stack_frame_id: Option<StackFrameId>,
     scrollbar_state: ScrollbarState,
+    list_state: ListState,
+    error: Option<SharedString>,
     _refresh_task: Task<()>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum StackFrameEntry {
     Normal(dap::StackFrame),
+    /// Used to indicate that the frame is artificial and is a visual label or separator
+    Label(dap::StackFrame),
     Collapsed(Vec<dap::StackFrame>),
 }
 
@@ -52,22 +57,7 @@ impl StackFrameList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
-
-        let list = ListState::new(
-            0,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, _window, cx| {
-                weak_entity
-                    .upgrade()
-                    .map(|stack_frame_list| {
-                        stack_frame_list.update(cx, |this, cx| this.render_entry(ix, cx))
-                    })
-                    .unwrap_or(div().into_any())
-            },
-        );
 
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
@@ -80,16 +70,27 @@ impl StackFrameList {
                 _ => {}
             });
 
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.), {
+            let this = cx.weak_entity();
+            move |ix, _window, cx| {
+                this.update(cx, |this, cx| this.render_entry(ix, cx))
+                    .unwrap_or(div().into_any())
+            }
+        });
+        let scrollbar_state = ScrollbarState::new(list_state.clone());
+
         let mut this = Self {
-            scrollbar_state: ScrollbarState::new(list.clone()),
-            list,
             session,
             workspace,
             focus_handle,
             state,
             _subscription,
             entries: Default::default(),
-            selected_stack_frame_id: None,
+            error: None,
+            selected_ix: None,
+            opened_stack_frame_id: None,
+            list_state,
+            scrollbar_state,
             _refresh_task: Task::ready(()),
         };
         this.schedule_refresh(true, window, cx);
@@ -101,39 +102,42 @@ impl StackFrameList {
         &self.entries
     }
 
-    #[cfg(test)]
-    pub(crate) fn flatten_entries(&self) -> Vec<dap::StackFrame> {
+    pub(crate) fn flatten_entries(
+        &self,
+        show_collapsed: bool,
+        show_labels: bool,
+    ) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
             .flat_map(|frame| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
-                StackFrameEntry::Collapsed(frames) => frames.clone(),
+                StackFrameEntry::Label(frame) if show_labels => vec![frame.clone()],
+                StackFrameEntry::Collapsed(frames) if show_collapsed => frames.clone(),
+                _ => vec![],
             })
             .collect::<Vec<_>>()
     }
 
-    fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
-        self.state
-            .read_with(cx, |state, _| state.thread_id)
-            .log_err()
-            .flatten()
-            .map(|thread_id| {
-                self.session
-                    .update(cx, |this, cx| this.stack_frames(thread_id, cx))
-            })
-            .unwrap_or_default()
+    fn stack_frames(&self, cx: &mut App) -> Result<Vec<StackFrame>> {
+        if let Ok(Some(thread_id)) = self.state.read_with(cx, |state, _| state.thread_id) {
+            self.session
+                .update(cx, |this, cx| this.stack_frames(thread_id, cx))
+        } else {
+            Ok(Vec::default())
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
         self.stack_frames(cx)
+            .unwrap_or_default()
             .into_iter()
             .map(|stack_frame| stack_frame.dap.clone())
             .collect()
     }
 
-    pub fn selected_stack_frame_id(&self) -> Option<StackFrameId> {
-        self.selected_stack_frame_id
+    pub fn opened_stack_frame_id(&self) -> Option<StackFrameId> {
+        self.opened_stack_frame_id
     }
 
     pub(super) fn schedule_refresh(
@@ -148,7 +152,7 @@ impl StackFrameList {
             let debounce = this
                 .update(cx, |this, cx| {
                     let new_stack_frames = this.stack_frames(cx);
-                    new_stack_frames.is_empty() && !this.entries.is_empty()
+                    new_stack_frames.unwrap_or_default().is_empty() && !this.entries.is_empty()
                 })
                 .ok()
                 .unwrap_or_default();
@@ -166,19 +170,42 @@ impl StackFrameList {
 
     pub fn build_entries(
         &mut self,
-        select_first_stack_frame: bool,
+        open_first_stack_frame: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let old_selected_frame_id = self
+            .selected_ix
+            .and_then(|ix| self.entries.get(ix))
+            .and_then(|entry| match entry {
+                StackFrameEntry::Normal(stack_frame) => Some(stack_frame.id),
+                StackFrameEntry::Collapsed(_) | StackFrameEntry::Label(_) => None,
+            });
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
-        let mut current_stack_frame = None;
+        let mut first_stack_frame = None;
+        let mut first_stack_frame_with_path = None;
 
-        let stack_frames = self.stack_frames(cx);
+        let stack_frames = match self.stack_frames(cx) {
+            Ok(stack_frames) => stack_frames,
+            Err(e) => {
+                self.error = Some(format!("{}", e).into());
+                self.entries.clear();
+                self.selected_ix = None;
+                self.list_state.reset(0);
+                cx.emit(StackFrameListEvent::BuiltEntries);
+                cx.notify();
+                return;
+            }
+        };
         for stack_frame in &stack_frames {
             match stack_frame.dap.presentation_hint {
-                Some(dap::StackFramePresentationHint::Deemphasize) => {
+                Some(dap::StackFramePresentationHint::Deemphasize)
+                | Some(dap::StackFramePresentationHint::Subtle) => {
                     collapsed_entries.push(stack_frame.dap.clone());
+                }
+                Some(dap::StackFramePresentationHint::Label) => {
+                    entries.push(StackFrameEntry::Label(stack_frame.dap.clone()));
                 }
                 _ => {
                     let collapsed_entries = std::mem::take(&mut collapsed_entries);
@@ -186,7 +213,16 @@ impl StackFrameList {
                         entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
                     }
 
-                    current_stack_frame.get_or_insert(&stack_frame.dap);
+                    first_stack_frame.get_or_insert(entries.len());
+
+                    if stack_frame
+                        .dap
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| source.path.is_some())
+                    {
+                        first_stack_frame_with_path.get_or_insert(entries.len());
+                    }
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
             }
@@ -196,70 +232,64 @@ impl StackFrameList {
         if !collapsed_entries.is_empty() {
             entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
         }
+        self.entries = entries;
 
-        std::mem::swap(&mut self.entries, &mut entries);
-        self.list.reset(self.entries.len());
-
-        if let Some(current_stack_frame) = current_stack_frame.filter(|_| select_first_stack_frame)
+        if let Some(ix) = first_stack_frame_with_path
+            .or(first_stack_frame)
+            .filter(|_| open_first_stack_frame)
         {
-            self.select_stack_frame(current_stack_frame, true, window, cx)
-                .detach_and_log_err(cx);
+            self.select_ix(Some(ix), cx);
+            self.activate_selected_entry(window, cx);
+        } else if let Some(old_selected_frame_id) = old_selected_frame_id {
+            let ix = self.entries.iter().position(|entry| match entry {
+                StackFrameEntry::Normal(frame) => frame.id == old_selected_frame_id,
+                StackFrameEntry::Collapsed(_) | StackFrameEntry::Label(_) => false,
+            });
+            self.selected_ix = ix;
         }
 
+        self.list_state.reset(self.entries.len());
+        cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
 
-    pub fn go_to_selected_stack_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if let Some(selected_stack_frame_id) = self.selected_stack_frame_id {
-            let frame = self
-                .entries
-                .iter()
-                .find_map(|entry| match entry {
-                    StackFrameEntry::Normal(dap) => {
-                        if dap.id == selected_stack_frame_id {
-                            Some(dap)
-                        } else {
-                            None
-                        }
-                    }
-                    StackFrameEntry::Collapsed(daps) => {
-                        daps.iter().find(|dap| dap.id == selected_stack_frame_id)
-                    }
-                })
-                .cloned();
-
-            if let Some(frame) = frame.as_ref() {
-                self.select_stack_frame(frame, true, window, cx)
-                    .detach_and_log_err(cx);
-            }
-        }
-    }
-
-    pub fn select_stack_frame(
+    pub fn go_to_stack_frame(
         &mut self,
-        stack_frame: &dap::StackFrame,
-        go_to_stack_frame: bool,
-        window: &Window,
+        stack_frame_id: StackFrameId,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.selected_stack_frame_id = Some(stack_frame.id);
-
-        cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
-            stack_frame.id,
-        ));
-        cx.notify();
-
-        if !go_to_stack_frame {
-            return Task::ready(Ok(()));
+        let Some(stack_frame) = self
+            .entries
+            .iter()
+            .flat_map(|entry| match entry {
+                StackFrameEntry::Label(stack_frame) => std::slice::from_ref(stack_frame),
+                StackFrameEntry::Normal(stack_frame) => std::slice::from_ref(stack_frame),
+                StackFrameEntry::Collapsed(stack_frames) => stack_frames.as_slice(),
+            })
+            .find(|stack_frame| stack_frame.id == stack_frame_id)
+            .cloned()
+        else {
+            return Task::ready(Err(anyhow!("No stack frame for ID")));
         };
+        self.go_to_stack_frame_inner(stack_frame, window, cx)
+    }
 
-        let row = (stack_frame.line.saturating_sub(1)) as u32;
-
-        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame) else {
+    fn go_to_stack_frame_inner(
+        &mut self,
+        stack_frame: dap::StackFrame,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let stack_frame_id = stack_frame.id;
+        self.opened_stack_frame_id = Some(stack_frame_id);
+        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
-
-        let stack_frame_id = stack_frame.id;
+        let row = stack_frame.line.saturating_sub(1) as u32;
+        cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
+            stack_frame_id,
+        ));
         cx.spawn_in(window, async move |this, cx| {
             let (worktree, relative_path) = this
                 .update(cx, |this, cx| {
@@ -286,20 +316,31 @@ impl StackFrameList {
                     })
                 })??
                 .await?;
-            let position = buffer.update(cx, |this, _| {
+            let position = buffer.read_with(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
             })?;
             this.update_in(cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
-                    let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
-                        anyhow!("Could not select a stack frame for unnamed buffer")
-                    })?;
+                    let project_path = buffer
+                        .read(cx)
+                        .project_path(cx)
+                        .context("Could not select a stack frame for unnamed buffer")?;
+
+                    let open_preview = !workspace
+                        .item_of_type::<StackTraceView>(cx)
+                        .map(|viewer| {
+                            workspace
+                                .active_item(cx)
+                                .is_some_and(|item| item.item_id() == viewer.item_id())
+                        })
+                        .unwrap_or_default();
+
                     anyhow::Ok(workspace.open_path_preview(
                         project_path,
                         None,
-                        false,
                         true,
                         true,
+                        open_preview,
                         window,
                         cx,
                     ))
@@ -308,9 +349,9 @@ impl StackFrameList {
             .await?;
 
             this.update(cx, |this, cx| {
-                let Some(thread_id) = this.state.read_with(cx, |state, _| state.thread_id)? else {
-                    return Err(anyhow!("No selected thread ID found"));
-                };
+                let thread_id = this.state.read_with(cx, |state, _| {
+                    state.thread_id.context("No selected thread ID found")
+                })??;
 
                 this.workspace.update(cx, |workspace, cx| {
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
@@ -332,11 +373,12 @@ impl StackFrameList {
         })
     }
 
-    fn abs_path_from_stack_frame(&self, stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
+    pub(crate) fn abs_path_from_stack_frame(stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
         stack_frame.source.as_ref().and_then(|s| {
             s.path
                 .as_deref()
                 .map(|path| Arc::<Path>::from(Path::new(path)))
+                .filter(|path| path.is_absolute())
         })
     }
 
@@ -346,13 +388,41 @@ impl StackFrameList {
         });
     }
 
+    fn render_label_entry(
+        &self,
+        stack_frame: &dap::StackFrame,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        h_flex()
+            .rounded_md()
+            .justify_between()
+            .w_full()
+            .group("")
+            .id(("label-stack-frame", stack_frame.id))
+            .p_1()
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .child(
+                v_flex().justify_center().gap_0p5().child(
+                    Label::new(stack_frame.name.clone())
+                        .size(LabelSize::Small)
+                        .weight(FontWeight::BOLD)
+                        .truncate()
+                        .color(Color::Info),
+                ),
+            )
+            .into_any()
+    }
+
     fn render_normal_entry(
         &self,
+        ix: usize,
         stack_frame: &dap::StackFrame,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let source = stack_frame.source.clone();
-        let is_selected_frame = Some(stack_frame.id) == self.selected_stack_frame_id;
+        let is_selected_frame = Some(ix) == self.selected_ix;
 
         let path = source.clone().and_then(|s| s.path.or(s.name));
         let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
@@ -388,12 +458,12 @@ impl StackFrameList {
             .when(is_selected_frame, |this| {
                 this.bg(cx.theme().colors().element_hover)
             })
-            .on_click(cx.listener({
-                let stack_frame = stack_frame.clone();
-                move |this, _, window, cx| {
-                    this.select_stack_frame(&stack_frame, true, window, cx)
-                        .detach_and_log_err(cx);
-                }
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected_ix = Some(ix);
+                this.activate_selected_entry(window, cx);
             }))
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
@@ -448,19 +518,17 @@ impl StackFrameList {
             .into_any()
     }
 
-    pub fn expand_collapsed_entry(
-        &mut self,
-        ix: usize,
-        stack_frames: &Vec<dap::StackFrame>,
-        cx: &mut Context<Self>,
-    ) {
-        self.entries.splice(
-            ix..ix + 1,
-            stack_frames
-                .iter()
-                .map(|frame| StackFrameEntry::Normal(frame.clone())),
-        );
-        self.list.reset(self.entries.len());
+    pub(crate) fn expand_collapsed_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(StackFrameEntry::Collapsed(stack_frames)) = self.entries.get_mut(ix) else {
+            return;
+        };
+        let entries = std::mem::take(stack_frames)
+            .into_iter()
+            .map(StackFrameEntry::Normal);
+        self.entries.splice(ix..ix + 1, entries);
+        self.selected_ix = Some(ix);
+        self.list_state.reset(self.entries.len());
+        cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
 
@@ -471,6 +539,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let first_stack_frame = &stack_frames[0];
+        let is_selected = Some(ix) == self.selected_ix;
 
         h_flex()
             .rounded_md()
@@ -479,11 +548,15 @@ impl StackFrameList {
             .group("")
             .id(("stack-frame", first_stack_frame.id))
             .p_1()
-            .on_click(cx.listener({
-                let stack_frames = stack_frames.clone();
-                move |this, _, _window, cx| {
-                    this.expand_collapsed_entry(ix, &stack_frames, cx);
-                }
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().element_hover)
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selected_ix = Some(ix);
+                this.activate_selected_entry(window, cx);
             }))
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
@@ -506,7 +579,8 @@ impl StackFrameList {
 
     fn render_entry(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match &self.entries[ix] {
-            StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(stack_frame, cx),
+            StackFrameEntry::Label(stack_frame) => self.render_label_entry(stack_frame, cx),
+            StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(ix, stack_frame, cx),
             StackFrameEntry::Collapsed(stack_frames) => {
                 self.render_collapsed_entry(ix, stack_frames, cx)
             }
@@ -545,15 +619,130 @@ impl StackFrameList {
             .cursor_default()
             .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
+
+    fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        self.selected_ix = ix;
+        cx.notify();
+    }
+
+    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        let ix = match self.selected_ix {
+            _ if self.entries.len() == 0 => None,
+            None => Some(0),
+            Some(ix) => {
+                if ix == self.entries.len() - 1 {
+                    Some(0)
+                } else {
+                    Some(ix + 1)
+                }
+            }
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ix = match self.selected_ix {
+            _ if self.entries.len() == 0 => None,
+            None => Some(self.entries.len() - 1),
+            Some(ix) => {
+                if ix == 0 {
+                    Some(self.entries.len() - 1)
+                } else {
+                    Some(ix - 1)
+                }
+            }
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ix = if self.entries.len() > 0 {
+            Some(0)
+        } else {
+            None
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        let ix = if self.entries.len() > 0 {
+            Some(self.entries.len() - 1)
+        } else {
+            None
+        };
+        self.select_ix(ix, cx);
+    }
+
+    fn activate_selected_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.selected_ix else {
+            return;
+        };
+        let Some(entry) = self.entries.get_mut(ix) else {
+            return;
+        };
+        match entry {
+            StackFrameEntry::Normal(stack_frame) => {
+                let stack_frame = stack_frame.clone();
+                self.go_to_stack_frame_inner(stack_frame, window, cx)
+                    .detach_and_log_err(cx)
+            }
+            StackFrameEntry::Label(_) => {
+                debug_panic!("You should not be able to select a label stack frame")
+            }
+            StackFrameEntry::Collapsed(_) => self.expand_collapsed_entry(ix, cx),
+        }
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        self.activate_selected_entry(window, cx);
+    }
+
+    fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .p_1()
+            .size_full()
+            .child(list(self.list_state.clone()).size_full())
+    }
 }
 
 impl Render for StackFrameList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
-            .p_1()
-            .child(list(self.list.clone()).size_full())
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
+            .when_some(self.error.clone(), |el, error| {
+                el.child(
+                    h_flex()
+                        .bg(cx.theme().status().warning_background)
+                        .border_b_1()
+                        .border_color(cx.theme().status().warning_border)
+                        .pl_1()
+                        .child(Icon::new(IconName::Warning).color(Color::Warning))
+                        .gap_2()
+                        .child(
+                            Label::new(error)
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        ),
+                )
+            })
+            .child(self.render_list(window, cx))
             .child(self.render_vertical_scrollbar(cx))
     }
 }

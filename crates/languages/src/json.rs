@@ -1,15 +1,18 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
+use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{App, AsyncApp};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
-use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{
+    ContextProvider, LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
+use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -25,8 +28,10 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
+
+use crate::PackageJsonData;
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -35,23 +40,92 @@ const SERVER_PATH: &str =
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
 
-pub(super) fn json_task_context() -> ContextProviderWithTasks {
-    ContextProviderWithTasks::new(TaskTemplates(vec![
-        TaskTemplate {
-            label: "package script $ZED_CUSTOM_script".to_owned(),
-            command: "npm --prefix $ZED_DIRNAME run".to_owned(),
-            args: vec![VariableName::Custom("script".into()).template_value()],
-            tags: vec!["package-script".into()],
-            ..TaskTemplate::default()
-        },
-        TaskTemplate {
-            label: "composer script $ZED_CUSTOM_script".to_owned(),
-            command: "composer -d $ZED_DIRNAME".to_owned(),
-            args: vec![VariableName::Custom("script".into()).template_value()],
-            tags: vec!["composer-script".into()],
-            ..TaskTemplate::default()
-        },
-    ]))
+pub(crate) struct JsonTaskProvider;
+
+impl ContextProvider for JsonTaskProvider {
+    fn associated_tasks(
+        &self,
+        _: Arc<dyn Fs>,
+        file: Option<Arc<dyn language::File>>,
+        cx: &App,
+    ) -> gpui::Task<Option<TaskTemplates>> {
+        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+            return Task::ready(None);
+        };
+        let is_package_json = file.path.ends_with("package.json");
+        let is_composer_json = file.path.ends_with("composer.json");
+        if !is_package_json && !is_composer_json {
+            return Task::ready(None);
+        }
+
+        cx.spawn(async move |cx| {
+            let contents = file
+                .worktree
+                .update(cx, |this, cx| this.load_file(&file.path, cx))
+                .ok()?
+                .await
+                .ok()?;
+
+            let task_templates = if is_package_json {
+                let package_json = serde_json_lenient::from_str::<
+                    HashMap<String, serde_json_lenient::Value>,
+                >(&contents.text)
+                .ok()?;
+                let package_json = PackageJsonData::new(file.path.clone(), package_json);
+                let command = package_json.package_manager.unwrap_or("npm").to_owned();
+                package_json
+                    .scripts
+                    .into_iter()
+                    .map(|(_, key)| TaskTemplate {
+                        label: format!("run {key}"),
+                        command: command.clone(),
+                        args: vec!["run".into(), key],
+                        cwd: Some(VariableName::Dirname.template_value()),
+                        ..TaskTemplate::default()
+                    })
+                    .chain([TaskTemplate {
+                        label: "package script $ZED_CUSTOM_script".to_owned(),
+                        command: command.clone(),
+                        args: vec![
+                            "run".into(),
+                            VariableName::Custom("script".into()).template_value(),
+                        ],
+                        cwd: Some(VariableName::Dirname.template_value()),
+                        tags: vec!["package-script".into()],
+                        ..TaskTemplate::default()
+                    }])
+                    .collect()
+            } else if is_composer_json {
+                serde_json_lenient::Value::from_str(&contents.text)
+                    .ok()?
+                    .get("scripts")?
+                    .as_object()?
+                    .keys()
+                    .map(|key| TaskTemplate {
+                        label: format!("run {key}"),
+                        command: "composer".to_owned(),
+                        args: vec!["-d".into(), "$ZED_DIRNAME".into(), key.into()],
+                        ..TaskTemplate::default()
+                    })
+                    .chain([TaskTemplate {
+                        label: "composer script $ZED_CUSTOM_script".to_owned(),
+                        command: "composer".to_owned(),
+                        args: vec![
+                            "-d".into(),
+                            "$ZED_DIRNAME".into(),
+                            VariableName::Custom("script".into()).template_value(),
+                        ],
+                        tags: vec!["composer-script".into()],
+                        ..TaskTemplate::default()
+                    }])
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            Some(TaskTemplates(task_templates))
+        })
+    }
 }
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -75,7 +149,11 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(language_names: Vec<String>, cx: &mut App) -> Value {
+    fn get_workspace_config(
+        language_names: Vec<String>,
+        adapter_schemas: AdapterSchemas,
+        cx: &mut App,
+    ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
@@ -85,13 +163,73 @@ impl JsonLspAdapter {
             },
             cx,
         );
+
         let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema();
+        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
-        // This can be viewed via `debug: open language server logs` -> `json-language-server` ->
+        #[allow(unused_mut)]
+        let mut schemas = serde_json::json!([
+            {
+                "fileMatch": ["tsconfig.json"],
+                "schema":tsconfig_schema
+            },
+            {
+                "fileMatch": ["package.json"],
+                "schema":package_json_schema
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::settings_file()),
+                    paths::local_settings_file_relative_path()
+                ],
+                "schema": settings_schema,
+            },
+            {
+                "fileMatch": [schema_file_match(paths::keymap_file())],
+                "schema": keymap_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::tasks_file()),
+                    paths::local_tasks_file_relative_path()
+                ],
+                "schema": tasks_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(
+                        paths::snippets_dir()
+                            .join("*.json")
+                            .as_path()
+                    )
+                ],
+                "schema": snippets_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::debug_scenarios_file()),
+                    paths::local_debug_file_relative_path()
+                ],
+                "schema": debug_schema,
+            },
+        ]);
+
+        #[cfg(debug_assertions)]
+        {
+            schemas.as_array_mut().unwrap().push(serde_json::json!(
+                {
+                    "fileMatch": [
+                        "zed-inspector-style.json"
+                    ],
+                    "schema": generate_inspector_style_schema(),
+                }
+            ))
+        }
+
+        // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
             "json": {
@@ -102,52 +240,7 @@ impl JsonLspAdapter {
                 {
                     "enable": true,
                 },
-                "schemas": [
-                    {
-                        "fileMatch": ["tsconfig.json"],
-                        "schema":tsconfig_schema
-                    },
-                    {
-                        "fileMatch": ["package.json"],
-                        "schema":package_json_schema
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::settings_file()),
-                            paths::local_settings_file_relative_path()
-                        ],
-                        "schema": settings_schema,
-                    },
-                    {
-                        "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": keymap_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::tasks_file()),
-                            paths::local_tasks_file_relative_path()
-                        ],
-                        "schema": tasks_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(
-                                paths::snippets_dir()
-                                    .join("*.json")
-                                    .as_path()
-                            )
-                        ],
-                        "schema": snippets_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::debug_scenarios_file()),
-                            paths::local_debug_file_relative_path()
-                        ],
-                        "schema": debug_schema,
-
-                    },
-                ]
+                "schemas": schemas
             }
         })
     }
@@ -160,11 +253,28 @@ impl JsonLspAdapter {
             }
         }
         let mut writer = self.workspace_config.write().await;
-        let config =
-            cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+
+        let adapter_schemas = cx
+            .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
+            .adapters_schema()
+            .await;
+
+        let config = cx.update(|cx| {
+            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+        })?;
         writer.replace(config.clone());
         return Ok(config);
     }
+}
+
+#[cfg(debug_assertions)]
+fn generate_inspector_style_schema() -> serde_json_lenient::Value {
+    let schema = schemars::r#gen::SchemaSettings::draft07()
+        .with(|settings| settings.option_add_null_type = false)
+        .into_generator()
+        .into_root_schema_for::<gpui::StyleRefinement>();
+
+    serde_json_lenient::to_value(schema).unwrap()
 }
 
 #[async_trait(?Send)]
@@ -321,20 +431,17 @@ async fn get_cached_server_binary(
             }
         }
 
-        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let last_version_dir = last_version_dir.context("no cached binary")?;
         let server_path = last_version_dir.join(SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                last_version_dir
-            ))
-        }
+        anyhow::ensure!(
+            server_path.exists(),
+            "missing executable in directory {last_version_dir:?}"
+        );
+        Ok(LanguageServerBinary {
+            path: node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     })
     .await
     .log_err()
@@ -430,13 +537,9 @@ impl LspAdapter for NodeVersionAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                node_runtime::extract_zip(
-                    &destination_container_path,
-                    BufReader::new(response.body_mut()),
-                )
-                .await?;
+                extract_zip(&destination_container_path, response.body_mut()).await?;
             } else if version.url.ends_with(".tar.gz") {
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
@@ -452,15 +555,6 @@ impl LspAdapter for NodeVersionAdapter {
                 &destination_path,
             )
             .await?;
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &destination_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
         Ok(LanguageServerBinary {
@@ -488,7 +582,7 @@ async fn get_cached_version_server_binary(container_dir: PathBuf) -> Option<Lang
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })

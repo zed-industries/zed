@@ -17,9 +17,7 @@ fs.stat(prettierContainerPath, (err, stats) => {
   }
 
   if (!stats.isDirectory()) {
-    process.stderr.write(
-      `Path '${prettierContainerPath}' exists but is not a directory\n`,
-    );
+    process.stderr.write(`Path '${prettierContainerPath}' exists but is not a directory\n`);
     process.exit(1);
   }
 });
@@ -43,11 +41,7 @@ class Prettier {
     process.stderr.write(`Failed to load prettier: ${e}\n`);
     process.exit(1);
   }
-  process.stderr.write(
-    `Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(
-      config,
-    )}\n`,
-  );
+  process.stderr.write(`Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(config)}\n`);
   process.stdin.resume();
   handleBuffer(new Prettier(prettierPath, prettier, config));
 })();
@@ -58,22 +52,17 @@ async function handleBuffer(prettier) {
     try {
       message = JSON.parse(messageText);
     } catch (e) {
-      sendResponse(makeError(`Failed to parse message '${messageText}': ${e}`));
+      sendResponse(makeError(`Parse error in request message: ${e}\nMessage: ${messageText}`));
       continue;
     }
     // allow concurrent request handling by not `await`ing the message handling promise (async function)
     handleMessage(message, prettier).catch((e) => {
-      const errorMessage = message;
-      if ((errorMessage.params || {}).text !== undefined) {
-        errorMessage.params.text = "..snip..";
+      if ((message.params || {}).text !== undefined) {
+        message.params.text = "..snip..";
       }
       sendResponse({
         id: message.id,
-        ...makeError(
-          `error during message '${JSON.stringify(
-            errorMessage,
-          )}' handling: ${e}`,
-        ),
+        ...makeError(`${e}\nWhile handling prettier request: ${JSON.stringify(message)}`),
       });
     });
   }
@@ -107,9 +96,7 @@ async function* readStdin() {
       if (messageLength === null) {
         while (buffer.indexOf(`${headerSeparator}${headerSeparator}`) === -1) {
           if (streamEnded) {
-            await handleStreamEnded(
-              "Unexpected end of stream: headers not found",
-            );
+            await handleStreamEnded("Unexpected end of stream: headers not found");
             continue main_loop;
           } else if (buffer.length > contentLengthHeaderName.length * 10) {
             await handleStreamEnded(
@@ -119,22 +106,16 @@ async function* readStdin() {
           }
           await once(process.stdin, "readable");
         }
-        const headers = buffer
-          .subarray(0, buffer.indexOf(`${headerSeparator}${headerSeparator}`))
-          .toString("ascii");
+        const headers = buffer.subarray(0, buffer.indexOf(`${headerSeparator}${headerSeparator}`)).toString("ascii");
         const contentLengthHeader = headers
           .split(headerSeparator)
           .map((header) => header.split(":"))
           .filter((header) => header[2] === undefined)
           .filter((header) => (header[1] || "").length > 0)
-          .find(
-            (header) => (header[0] || "").trim() === contentLengthHeaderName,
-          );
+          .find((header) => (header[0] || "").trim() === contentLengthHeaderName);
         const contentLength = (contentLengthHeader || [])[1];
         if (contentLength === undefined) {
-          await handleStreamEnded(
-            `Missing or incorrect ${contentLengthHeaderName} header: ${headers}`,
-          );
+          await handleStreamEnded(`Missing or incorrect ${contentLengthHeaderName} header: ${headers}`);
           continue main_loop;
         }
         headersLength = headers.length + headerSeparator.length * 2;
@@ -179,28 +160,20 @@ async function handleMessage(message, prettier) {
 
   if (method === "prettier/format") {
     if (params === undefined || params.text === undefined) {
-      throw new Error(
-        `Message params.text is undefined: ${JSON.stringify(message)}`,
-      );
+      throw new Error(`Message params.text is undefined: ${JSON.stringify(message)}`);
     }
     if (params.options === undefined) {
-      throw new Error(
-        `Message params.options is undefined: ${JSON.stringify(message)}`,
-      );
+      throw new Error(`Message params.options is undefined: ${JSON.stringify(message)}`);
     }
 
     let resolvedConfig = {};
     if (params.options.filepath) {
-      resolvedConfig =
-        (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
+      resolvedConfig = (await prettier.prettier.resolveConfig(params.options.filepath)) || {};
 
       if (params.options.ignorePath) {
-        const fileInfo = await prettier.prettier.getFileInfo(
-          params.options.filepath,
-          {
-            ignorePath: params.options.ignorePath,
-          },
-        );
+        const fileInfo = await prettier.prettier.getFileInfo(params.options.filepath, {
+          ignorePath: params.options.ignorePath,
+        });
         if (fileInfo.ignored) {
           process.stderr.write(
             `Ignoring file '${params.options.filepath}' based on rules in '${params.options.ignorePath}'\n`,
@@ -218,8 +191,7 @@ async function handleMessage(message, prettier) {
     }
 
     const plugins =
-      Array.isArray(resolvedConfig?.plugins) &&
-      resolvedConfig.plugins.length > 0
+      Array.isArray(resolvedConfig?.plugins) && resolvedConfig.plugins.length > 0
         ? resolvedConfig.plugins
         : params.options.plugins;
 
@@ -239,8 +211,7 @@ async function handleMessage(message, prettier) {
     sendResponse({ id, result: { text: formattedText } });
   } else if (method === "prettier/clear_cache") {
     prettier.prettier.clearConfigCache();
-    prettier.config =
-      (await prettier.prettier.resolveConfig(prettier.path)) || {};
+    prettier.config = (await prettier.prettier.resolveConfig(prettier.path)) || {};
     sendResponse({ id, result: null });
   } else if (method === "initialize") {
     sendResponse({
@@ -283,9 +254,7 @@ function loadPrettier(prettierPath) {
         try {
           resolve(require(prettierPath));
         } catch (err) {
-          reject(
-            `Error requiring prettier module from path '${prettierPath}'.Error: ${err}`,
-          );
+          reject(`Error requiring prettier module from path '${prettierPath}'.Error: ${err}`);
         }
       }
     });

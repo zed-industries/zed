@@ -5,19 +5,14 @@
 mod persistence;
 mod preview_support;
 
-use std::sync::Arc;
-
-use std::iter::Iterator;
-
-use agent::{ActiveThread, TextThreadStore, ThreadStore};
+use agent::{TextThreadStore, ThreadStore};
+use agent_ui::ActiveThread;
 use client::UserStore;
+use collections::HashMap;
 use component::{ComponentId, ComponentMetadata, ComponentStatus, components};
 use gpui::{
     App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
 };
-
-use collections::HashMap;
-
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -26,11 +21,14 @@ use preview_support::active_thread::{
     load_preview_text_thread_store, load_preview_thread_store, static_active_thread,
 };
 use project::Project;
+use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt as _;
-use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
-use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
+use workspace::{
+    AppState, Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
+    item::ItemEvent,
+};
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
@@ -641,7 +639,7 @@ impl ComponentPreview {
         // Check if the component's scope is Agent
         if scope == ComponentScope::Agent {
             if let Some(active_thread) = self.active_thread.clone() {
-                if let Some(element) = agent::get_agent_preview(
+                if let Some(element) = agent_ui::get_agent_preview(
                     &component.id(),
                     self.workspace.clone(),
                     active_thread,
@@ -775,15 +773,14 @@ impl Render for ComponentPreview {
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()
+                    .h_full()
                     .border_r_1()
                     .border_color(cx.theme().colors().border)
-                    .h_full()
                     .child(
                         gpui::uniform_list(
-                            cx.entity().clone(),
                             "component-nav",
                             sidebar_entries.len(),
-                            move |this, range, _window, cx| {
+                            cx.processor(move |this, range: Range<usize>, _window, cx| {
                                 range
                                     .filter_map(|ix| {
                                         if ix < sidebar_entries.len() {
@@ -797,26 +794,30 @@ impl Render for ComponentPreview {
                                         }
                                     })
                                     .collect()
-                            },
+                            }),
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
-                        .pt_4()
-                        .px_4()
+                        .p_2p5()
                         .w(px(240.))
                         .h_full()
                         .flex_1(),
                     )
                     .child(
-                        div().w_full().pb_4().child(
-                            Button::new("toast-test", "Launch Toast")
-                                .on_click(cx.listener({
-                                    move |this, _, _window, cx| {
-                                        this.test_status_toast(cx);
-                                        cx.notify();
-                                    }
-                                }))
-                                .full_width(),
-                        ),
+                        div()
+                            .w_full()
+                            .p_2p5()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(
+                                Button::new("toast-test", "Launch Toast")
+                                    .full_width()
+                                    .on_click(cx.listener({
+                                        move |this, _, _window, cx| {
+                                            this.test_status_toast(cx);
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
                     ),
             )
             .child(
@@ -824,7 +825,7 @@ impl Render for ComponentPreview {
                     .id("content-area")
                     .flex_1()
                     .size_full()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .child(
                         div()
                             .p_2()
@@ -951,7 +952,7 @@ impl SerializableItem for ComponentPreview {
         item_id: ItemId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<Entity<Self>>> {
+    ) -> Task<anyhow::Result<Entity<Self>>> {
         let deserialized_active_page =
             match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
                 Ok(page) => {
@@ -1009,7 +1010,7 @@ impl SerializableItem for ComponentPreview {
         alive_items: Vec<ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         delete_unloaded_items(
             alive_items,
             workspace_id,
@@ -1026,7 +1027,7 @@ impl SerializableItem for ComponentPreview {
         _closing: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<gpui::Result<()>>> {
+    ) -> Option<Task<anyhow::Result<()>>> {
         let active_page = self.active_page_id(cx);
         let workspace_id = self.workspace_id?;
         Some(cx.background_spawn(async move {
@@ -1104,9 +1105,8 @@ impl ComponentPreviewPage {
 
     fn render_header(&self, _: &Window, cx: &App) -> impl IntoElement {
         v_flex()
-            .px_12()
-            .pt_16()
-            .pb_12()
+            .py_12()
+            .px_16()
             .gap_6()
             .bg(cx.theme().colors().surface_background)
             .border_b_1()
@@ -1121,7 +1121,6 @@ impl ComponentPreviewPage {
                     )
                     .child(
                         h_flex()
-                            .items_center()
                             .gap_2()
                             .child(
                                 Headline::new(self.component.scopeless_name())
@@ -1138,7 +1137,7 @@ impl ComponentPreviewPage {
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         // Try to get agent preview first if we have an active thread
         let maybe_agent_preview = if let Some(active_thread) = self.active_thread.as_ref() {
-            agent::get_agent_preview(
+            agent_ui::get_agent_preview(
                 &self.component.id(),
                 self.workspace.clone(),
                 active_thread.clone(),
@@ -1149,34 +1148,36 @@ impl ComponentPreviewPage {
             None
         };
 
+        let content = if let Some(ag_preview) = maybe_agent_preview {
+            // Use agent preview if available
+            ag_preview
+        } else if let Some(preview) = self.component.preview() {
+            // Fall back to component preview
+            preview(window, cx).unwrap_or_else(|| {
+                div()
+                    .child("Failed to load preview. This path should be unreachable")
+                    .into_any_element()
+            })
+        } else {
+            div().child("No preview available").into_any_element()
+        };
+
         v_flex()
+            .size_full()
             .flex_1()
             .px_12()
             .py_6()
             .bg(cx.theme().colors().editor_background)
-            .child(if let Some(element) = maybe_agent_preview {
-                // Use agent preview if available
-                element
-            } else if let Some(preview) = self.component.preview() {
-                // Fall back to component preview
-                preview(window, cx).unwrap_or_else(|| {
-                    div()
-                        .child("Failed to load preview. This path should be unreachable")
-                        .into_any_element()
-                })
-            } else {
-                div().child("No preview available").into_any_element()
-            })
+            .child(content)
     }
 }
 
 impl RenderOnce for ComponentPreviewPage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
-            .id("component-preview-page")
-            .overflow_y_scroll()
+            .size_full()
+            .flex_1()
             .overflow_x_hidden()
-            .w_full()
             .child(self.render_header(window, cx))
             .child(self.render_preview(window, cx))
     }

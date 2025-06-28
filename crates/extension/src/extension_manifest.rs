@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
@@ -87,6 +87,10 @@ pub struct ExtensionManifest {
     pub snippets: Option<PathBuf>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub debug_adapters: BTreeMap<Arc<str>, DebugAdapterManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub debug_locators: BTreeMap<Arc<str>, DebugLocatorManifestEntry>,
 }
 
 impl ExtensionManifest {
@@ -162,7 +166,7 @@ pub struct GrammarManifestEntry {
     pub path: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     /// Deprecated in favor of `languages`.
     #[serde(default)]
@@ -206,12 +210,20 @@ pub struct SlashCommandManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct IndexedDocsProviderEntry {}
 
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DebugAdapterManifestEntry {
+    pub schema_path: Option<PathBuf>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct DebugLocatorManifestEntry {}
+
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
         let extension_name = extension_dir
             .file_name()
             .and_then(OsStr::to_str)
-            .ok_or_else(|| anyhow!("invalid extension name"))?;
+            .context("invalid extension name")?;
 
         let mut extension_manifest_path = extension_dir.join("extension.json");
         if fs.is_file(&extension_manifest_path).await {
@@ -274,6 +286,8 @@ fn manifest_from_old_manifest(
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
+        debug_adapters: Default::default(),
+        debug_locators: Default::default(),
     }
 }
 
@@ -301,6 +315,8 @@ mod tests {
             indexed_docs_providers: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
+            debug_adapters: Default::default(),
+            debug_locators: Default::default(),
         }
     }
 

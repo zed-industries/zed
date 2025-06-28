@@ -23,13 +23,17 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+collections.workspace = true
 dap.workspace = true
 futures.workspace = true
 gpui.workspace = true
+json_dotpath.workspace = true
 language.workspace = true
+log.workspace = true
 paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+shlex.workspace = true
 task.workspace = true
 util.workspace = true
 workspace-hack.workspace = true

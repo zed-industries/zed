@@ -50,11 +50,36 @@ Try it! Open the Command Palette and type in `new file`. You should see the list
 
 Any time you see instructions that include commands of the form `zed: ...` or `editor: ...` and so on that means you need to execute them in the Command Palette.
 
+## CLI
+
+Zed has a CLI, on Linux this should come with the distribution's Zed package (binary name can vary from distribution to distribution, `zed` will be used later for brevity).
+For macOS, the CLI comes in the same package with the editor binary, and could be installed into the system with the `cli: install` Zed command which will create a symlink to the `/usr/local/bin/zed`.
+It can also be built from source out of the `cli` crate in this repository.
+
+Use `zed --help` to see the full list of capabilities.
+General highlights:
+
+- Opening another empty Zed window: `zed`
+
+- Opening a file or directory in Zed: `zed /path/to/entry` (use `-n` to open in the new window)
+
+- Reading from stdin: `ps axf | zed -`
+
+- Starting Zed with logs in the terminal: `zed --foreground`
+
+- Uninstalling Zed and all its related files: `zed --uninstall`
+
 ## Configure Zed
 
 To open your custom settings to set things like fonts, formatting settings, per-language settings, and more, use the {#kb zed::OpenSettings} keybinding.
 
-To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default settings". You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
+To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for `zed: open default settings`.
+You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
+
+## Configure AI in Zed
+
+Zed smoothly integrates LLMs in multiple ways across the editor.
+Visit [the AI overview page](./ai/overview.md) to learn how to quickly get started with LLMs on Zed.
 
 ## Set up your key bindings
 

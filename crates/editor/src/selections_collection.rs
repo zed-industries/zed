@@ -81,9 +81,9 @@ impl SelectionsCollection {
         count
     }
 
-    /// The non-pending, non-overlapping selections. There could still be a pending
-    /// selection that overlaps these if the mouse is being dragged, etc. Returned as
-    /// selections over Anchors.
+    /// The non-pending, non-overlapping selections. There could be a pending selection that
+    /// overlaps these if the mouse is being dragged, etc. This could also be empty if there is a
+    /// pending selection. Returned as selections over Anchors.
     pub fn disjoint_anchors(&self) -> Arc<[Selection<Anchor>]> {
         self.disjoint.clone()
     }
@@ -92,6 +92,20 @@ impl SelectionsCollection {
         // Mapping the Arc slice would borrow it, whereas indexing captures it.
         let disjoint = self.disjoint_anchors();
         (0..disjoint.len()).map(move |ix| disjoint[ix].range())
+    }
+
+    /// Non-overlapping selections using anchors, including the pending selection.
+    pub fn all_anchors(&self, cx: &mut App) -> Arc<[Selection<Anchor>]> {
+        if self.pending.is_none() {
+            self.disjoint_anchors()
+        } else {
+            let all_offset_selections = self.all::<usize>(cx);
+            let buffer = self.buffer(cx);
+            all_offset_selections
+                .into_iter()
+                .map(|selection| selection_to_anchor_selection(selection, &buffer))
+                .collect()
+        }
     }
 
     pub fn pending_anchor(&self) -> Option<Selection<Anchor>> {
@@ -352,28 +366,32 @@ impl SelectionsCollection {
     ) -> Option<Selection<Point>> {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
-
         let line = display_map.layout_row(row, text_layout_details);
-
         let start_col = line.closest_index_for_x(positions.start) as u32;
-        if start_col < line_len || (is_empty && positions.start == line.width) {
+
+        let (start, end) = if is_empty {
+            let point = DisplayPoint::new(row, std::cmp::min(start_col, line_len));
+            (point, point)
+        } else {
+            if start_col >= line_len {
+                return None;
+            }
             let start = DisplayPoint::new(row, start_col);
             let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
+            (start, end)
+        };
 
-            Some(Selection {
-                id: post_inc(&mut self.next_selection_id),
-                start: start.to_point(display_map),
-                end: end.to_point(display_map),
-                reversed,
-                goal: SelectionGoal::HorizontalRange {
-                    start: positions.start.into(),
-                    end: positions.end.into(),
-                },
-            })
-        } else {
-            None
-        }
+        Some(Selection {
+            id: post_inc(&mut self.next_selection_id),
+            start: start.to_point(display_map),
+            end: end.to_point(display_map),
+            reversed,
+            goal: SelectionGoal::HorizontalRange {
+                start: positions.start.into(),
+                end: positions.end.into(),
+            },
+        })
     }
 
     pub fn change_with<R>(
@@ -407,7 +425,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    pub fn buffer(&self) -> Ref<MultiBufferSnapshot> {
+    pub fn buffer(&self) -> Ref<'_, MultiBufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
@@ -530,21 +548,11 @@ impl<'a> MutableSelectionsCollection<'a> {
             }
         }
 
-        self.collection.disjoint = Arc::from_iter(selections.into_iter().map(|selection| {
-            let end_bias = if selection.end > selection.start {
-                Bias::Left
-            } else {
-                Bias::Right
-            };
-            Selection {
-                id: selection.id,
-                start: buffer.anchor_after(selection.start),
-                end: buffer.anchor_at(selection.end, end_bias),
-                reversed: selection.reversed,
-                goal: selection.goal,
-            }
-        }));
-
+        self.collection.disjoint = Arc::from_iter(
+            selections
+                .into_iter()
+                .map(|selection| selection_to_anchor_selection(selection, &buffer)),
+        );
         self.collection.pending = None;
         self.selections_changed = true;
     }
@@ -655,6 +663,7 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
         self.select(selections);
     }
+
     pub fn reverse_selections(&mut self) {
         let map = &self.display_map();
         let mut new_selections: Vec<Selection<Point>> = Vec::new();
@@ -872,6 +881,27 @@ impl Deref for MutableSelectionsCollection<'_> {
 impl DerefMut for MutableSelectionsCollection<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.collection
+    }
+}
+
+fn selection_to_anchor_selection<T>(
+    selection: Selection<T>,
+    buffer: &MultiBufferSnapshot,
+) -> Selection<Anchor>
+where
+    T: ToOffset + Ord,
+{
+    let end_bias = if selection.end > selection.start {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+    Selection {
+        id: selection.id,
+        start: buffer.anchor_after(selection.start),
+        end: buffer.anchor_at(selection.end, end_bias),
+        reversed: selection.reversed,
+        goal: selection.goal,
     }
 }
 

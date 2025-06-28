@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context as _;
 use prost::Message;
 use text::{EditOperation, UndoOperation};
 
@@ -117,6 +118,8 @@ impl Database {
                         user_id: collaborator.user_id.to_proto(),
                         replica_id: collaborator.replica_id.0 as u32,
                         is_host: false,
+                        committer_name: None,
+                        committer_email: None,
                     })
                     .collect(),
             })
@@ -224,6 +227,8 @@ impl Database {
                                 user_id: collaborator.user_id.to_proto(),
                                 replica_id: collaborator.replica_id.0 as u32,
                                 is_host: false,
+                                committer_name: None,
+                                committer_email: None,
                             })
                             .collect(),
                     },
@@ -260,6 +265,8 @@ impl Database {
                         replica_id: db_collaborator.replica_id.0 as u32,
                         user_id: db_collaborator.user_id.to_proto(),
                         is_host: false,
+                        committer_name: None,
+                        committer_email: None,
                     })
                 } else {
                     collaborator_ids_to_remove.push(db_collaborator.id);
@@ -389,6 +396,8 @@ impl Database {
                 replica_id: row.replica_id.0 as u32,
                 user_id: row.user_id.to_proto(),
                 is_host: false,
+                committer_name: None,
+                committer_email: None,
             });
         }
 
@@ -467,7 +476,7 @@ impl Database {
                 .filter(buffer::Column::ChannelId.eq(channel_id))
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such buffer"))?;
+                .context("no such buffer")?;
 
             let serialization_version = self
                 .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &tx)
@@ -606,7 +615,7 @@ impl Database {
             .into_values::<_, QueryOperationSerializationVersion>()
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("missing buffer snapshot"))?)
+            .context("missing buffer snapshot")?)
     }
 
     pub async fn get_channel_buffer(
@@ -621,7 +630,7 @@ impl Database {
         .find_related(buffer::Entity)
         .one(tx)
         .await?
-        .ok_or_else(|| anyhow!("no such buffer"))?)
+        .context("no such buffer")?)
     }
 
     async fn get_buffer_state(
@@ -643,7 +652,7 @@ impl Database {
                 )
                 .one(tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such snapshot"))?;
+                .context("no such snapshot")?;
 
             let version = snapshot.operation_serialization_version;
             (snapshot.text, version)
@@ -839,7 +848,7 @@ fn operation_from_storage(
     _format_version: i32,
 ) -> Result<proto::operation::Variant, Error> {
     let operation =
-        storage::Operation::decode(row.value.as_slice()).map_err(|error| anyhow!("{}", error))?;
+        storage::Operation::decode(row.value.as_slice()).map_err(|error| anyhow!("{error}"))?;
     let version = version_from_storage(&operation.version);
     Ok(if operation.is_undo {
         proto::operation::Variant::Undo(proto::operation::Undo {

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,

@@ -42,14 +42,14 @@ pub trait HttpClient: 'static + Send + Sync {
     fn send(
         &self,
         req: http::Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>;
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>;
 
     fn get<'a>(
         &'a self,
         uri: &str,
         body: AsyncBody,
         follow_redirects: bool,
-    ) -> BoxFuture<'a, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .follow_redirects(if follow_redirects {
@@ -69,7 +69,7 @@ pub trait HttpClient: 'static + Send + Sync {
         &'a self,
         uri: &str,
         body: AsyncBody,
-    ) -> BoxFuture<'a, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .method(Method::POST)
@@ -114,7 +114,7 @@ impl HttpClient for HttpClientWithProxy {
     fn send(
         &self,
         req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         self.client.send(req)
     }
 
@@ -131,7 +131,7 @@ impl HttpClient for Arc<HttpClientWithProxy> {
     fn send(
         &self,
         req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         self.client.send(req)
     }
 
@@ -246,7 +246,7 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     fn send(
         &self,
         req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         self.client.send(req)
     }
 
@@ -263,7 +263,7 @@ impl HttpClient for HttpClientWithUrl {
     fn send(
         &self,
         req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         self.client.send(req)
     }
 
@@ -304,7 +304,7 @@ impl HttpClient for BlockedHttpClient {
     fn send(
         &self,
         _req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         Box::pin(async {
             Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -325,7 +325,7 @@ impl HttpClient for BlockedHttpClient {
 
 #[cfg(feature = "test-support")]
 type FakeHttpHandler = Box<
-    dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>
+    dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>
         + Send
         + Sync
         + 'static,
@@ -340,7 +340,7 @@ pub struct FakeHttpClient {
 impl FakeHttpClient {
     pub fn create<Fut, F>(handler: F) -> Arc<HttpClientWithUrl>
     where
-        Fut: futures::Future<Output = Result<Response<AsyncBody>, anyhow::Error>> + Send + 'static,
+        Fut: futures::Future<Output = anyhow::Result<Response<AsyncBody>>> + Send + 'static,
         F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
     {
         Arc::new(HttpClientWithUrl {
@@ -385,7 +385,7 @@ impl HttpClient for FakeHttpClient {
     fn send(
         &self,
         req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let future = (self.handler)(req);
         future
     }
