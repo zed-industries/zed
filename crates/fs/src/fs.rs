@@ -831,7 +831,7 @@ impl Fs for RealFs {
             .filter(|output| output.status.success())
             .and_then(|output| String::from_utf8(output.stdout).ok())
             .filter(|output| !output.is_empty())
-            .map(|path| PathBuf::from(path))
+            .map(PathBuf::from)
             .or_else(|| Some(dirs::config_dir()?.join("git").join("ignore")))
     }
 
