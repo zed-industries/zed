@@ -43,7 +43,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!("sh -c \"{}\" --printenv {};", zed_path, redir));
+    command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
     command.args(["-i", "-c", &command_string]);
 
     super::set_pre_exec_to_start_new_session(&mut command);
