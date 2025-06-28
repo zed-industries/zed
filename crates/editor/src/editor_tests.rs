@@ -22602,7 +22602,7 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
     );
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_document_colors(cx: &mut TestAppContext) {
     let expected_color = Rgba {
         r: 0.33,
@@ -22727,13 +22727,10 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_millis(100));
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(100));
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
     assert_eq!(
-        3,
+        1,
         requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per editor open (1) and once after the language server startup (2)"
+        "Should query for colors once per editor open"
     );
     editor.update_in(cx, |editor, _, cx| {
         assert_eq!(
@@ -22810,10 +22807,8 @@ async fn test_document_colors(cx: &mut TestAppContext) {
 
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
     assert_eq!(
-        5,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per save and once per formatting after save"
     );
@@ -22827,11 +22822,27 @@ async fn test_document_colors(cx: &mut TestAppContext) {
         })
         .unwrap();
     close.await.unwrap();
+    let close = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+            })
+        })
+        .unwrap();
+    close.await.unwrap();
     assert_eq!(
-        5,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
-        "After saving and closing the editor, no extra requests should be made"
+        "After saving and closing all editors, no extra requests should be made"
     );
+    workspace
+        .update(cx, |workspace, _, cx| {
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "Should close all editors"
+            )
+        })
+        .unwrap();
 
     workspace
         .update(cx, |workspace, window, cx| {
@@ -22841,13 +22852,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
         })
         .unwrap();
     cx.executor().advance_clock(Duration::from_millis(100));
-    color_request_handle.next().await.unwrap();
     cx.run_until_parked();
-    assert_eq!(
-        5,
-        requests_made.load(atomic::Ordering::Acquire),
-        "Cache should be reused on buffer close and reopen"
-    );
     let editor = workspace
         .update(cx, |workspace, _, cx| {
             workspace
@@ -22857,6 +22862,12 @@ async fn test_document_colors(cx: &mut TestAppContext) {
                 .expect("Should be an editor")
         })
         .unwrap();
+    color_request_handle.next().await.unwrap();
+    assert_eq!(
+        3,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Cache should be reused on buffer close and reopen"
+    );
     editor.update(cx, |editor, cx| {
         assert_eq!(
             vec![expected_color],

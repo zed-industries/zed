@@ -6,7 +6,7 @@ use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::DocumentColor;
+use project::{DocumentColor, lsp_store::ColorFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};
@@ -19,6 +19,7 @@ use crate::{
 
 #[derive(Debug)]
 pub(super) struct LspColorData {
+    cache_version_used: usize,
     colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
     inlay_colors: HashMap<InlayId, usize>,
     render_mode: DocumentColorsRenderMode,
@@ -27,6 +28,7 @@ pub(super) struct LspColorData {
 impl LspColorData {
     pub fn new(cx: &App) -> Self {
         Self {
+            cache_version_used: 0,
             colors: Vec::new(),
             inlay_colors: HashMap::default(),
             render_mode: EditorSettings::get_global(cx).lsp_document_colors,
@@ -156,13 +158,26 @@ impl Editor {
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
-                    let colors_task = lsp_store.document_colors(ignore_cache, buffer, cx)?;
+                    let fetch_strategy = if ignore_cache {
+                        ColorFetchStrategy::IgnoreCache
+                    } else {
+                        ColorFetchStrategy::UseCache {
+                            known_cache_version: self
+                                .colors
+                                .as_ref()
+                                .map(|colors| colors.cache_version_used),
+                        }
+                    };
+                    let colors_task = lsp_store.document_colors(fetch_strategy, buffer, cx)?;
                     Some(async move { (buffer_id, colors_task.await) })
                 })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |editor, cx| {
             let all_colors = join_all(all_colors_task).await;
+            if all_colors.is_empty() {
+                return;
+            }
             let Ok((multi_buffer_snapshot, editor_excerpts)) = editor.update(cx, |editor, cx| {
                 let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                 let editor_excerpts = multi_buffer_snapshot.excerpts().fold(
@@ -186,6 +201,7 @@ impl Editor {
                 return;
             };
 
+            let mut cache_version = None;
             let mut new_editor_colors = Vec::<(Range<Anchor>, DocumentColor)>::new();
             for (buffer_id, colors) in all_colors {
                 let Some(excerpts) = editor_excerpts.get(&buffer_id) else {
@@ -193,7 +209,8 @@ impl Editor {
                 };
                 match colors {
                     Ok(colors) => {
-                        for color in colors {
+                        cache_version = colors.cache_version;
+                        for color in colors.colors {
                             let color_start = point_from_lsp(color.lsp_range.start);
                             let color_end = point_from_lsp(color.lsp_range.end);
 
@@ -336,6 +353,9 @@ impl Editor {
                     }
 
                     let mut updated = colors.set_colors(new_color_inlays);
+                    if let Some(cache_version) = cache_version {
+                        colors.cache_version_used = cache_version;
+                    }
                     if colors.render_mode == DocumentColorsRenderMode::Inlay
                         && (!colors_splice.to_insert.is_empty()
                             || !colors_splice.to_remove.is_empty())
