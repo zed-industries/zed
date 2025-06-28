@@ -3,6 +3,7 @@
 R support is available via multiple R Zed extensions:
 
 - [ocsmit/zed-r](https://github.com/ocsmit/zed-r)
+
   - Tree-sitter: [r-lib/tree-sitter-r](https://github.com/r-lib/tree-sitter-r)
   - Language-Server: [REditorSupport/languageserver](https://github.com/REditorSupport/languageserver)
 
@@ -36,7 +37,7 @@ Rscript -e 'packageVersion("lintr")'
 
 ### Linting
 
-`REditorSupport/languageserver` bundles support for [r-lib/lintr](https://github.com/r-lib/lintr) as a linter.  This can be configured via the use of a `.lintr` inside your project (or in your home directory for global defaults).
+`REditorSupport/languageserver` bundles support for [r-lib/lintr](https://github.com/r-lib/lintr) as a linter. This can be configured via the use of a `.lintr` inside your project (or in your home directory for global defaults).
 
 ```r
 linters: linters_with_defaults(
@@ -76,7 +77,7 @@ For example to disable Lintr linting and suppress code snippet suggestions (both
         "r": {
           "lsp": {
             "diagnostics": false,
-            "snippet_support": false,
+            "snippet_support": false
           }
         }
       }
