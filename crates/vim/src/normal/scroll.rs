@@ -18,7 +18,9 @@ actions!(
         ScrollUp,
         ScrollDown,
         PageUp,
-        PageDown
+        PageDown,
+        HalfPageRight,
+        HalfPageLeft,
     ]
 );
 
@@ -42,6 +44,16 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &PageUp, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
+    });
+    Vim::action(editor, cx, |vim, _: &HalfPageRight, window, cx| {
+        vim.scroll(false, window, cx, |c| {
+            ScrollAmount::PageWidth(c.unwrap_or(0.5))
+        })
+    });
+    Vim::action(editor, cx, |vim, _: &HalfPageLeft, window, cx| {
+        vim.scroll(false, window, cx, |c| {
+            ScrollAmount::PageWidth(-c.unwrap_or(0.5))
+        })
     });
     Vim::action(editor, cx, |vim, _: &ScrollDown, window, cx| {
         vim.scroll(true, window, cx, |c| {
