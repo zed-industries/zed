@@ -137,6 +137,10 @@ fn scroll_editor(
         return;
     };
 
+    let Some(visible_column_count) = editor.visible_column_count() else {
+        return;
+    };
+
     let top_anchor = editor.scroll_manager.anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
@@ -148,6 +152,7 @@ fn scroll_editor(
             s.move_with(|map, selection| {
                 let mut head = selection.head();
                 let top = top_anchor.to_display_point(map);
+                let max_point = map.max_point();
 
                 let vertical_scroll_margin =
                     (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
@@ -176,9 +181,8 @@ fn scroll_editor(
                     (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
                 );
                 // scroll off the end.
-                let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0
-                {
-                    map.max_point().row()
+                let max_row = if top.row().0 + visible_line_count as u32 >= max_point.row().0 {
+                    max_point.row()
                 } else {
                     DisplayRow(
                         (top.row().0 + visible_line_count as u32)
@@ -198,7 +202,32 @@ fn scroll_editor(
                 } else {
                     head.row()
                 };
-                let new_head = map.clip_point(DisplayPoint::new(new_row, top.column()), Bias::Left);
+
+                // The minimum column position that the cursor position can be
+                // at is the scroll manager's anchor column, which is the
+                // left-most column in the visible area. As for the maximum
+                // column position, that should be either the right-most column
+                // in the visible area, which we can easily calculate by adding
+                // the visible column count to the minimum column position, or
+                // the right-most column in the current line, seeing as the
+                // cursor might be in a short line, in which case we don't want
+                // to go past its last column.
+                let min_column = top.column();
+                let max_column = match min_column + visible_column_count as u32 {
+                    max_column if max_column >= max_point.column() => max_point.column(),
+                    max_column => max_column,
+                };
+
+                // Ensure that the cursor's column stays within the visible
+                // area, otherwise clip it at either the left or right edge of
+                // the visible area.
+                let new_column = match (min_column, max_column) {
+                    (min_column, _) if head.column() < min_column => min_column,
+                    (_, max_column) if head.column() > max_column => max_column,
+                    _ => head.column(),
+                };
+
+                let new_head = map.clip_point(DisplayPoint::new(new_row, new_column), Bias::Left);
 
                 if selection.is_empty() {
                     selection.collapse_to(new_head, selection.goal)
