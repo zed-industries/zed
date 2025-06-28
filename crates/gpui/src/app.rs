@@ -1334,6 +1334,11 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    /// Get all key bindings in the app.
+    pub fn key_bindings(&self) -> Rc<RefCell<Keymap>> {
+        self.keymap.clone()
+    }
+
     /// Register a global listener for actions invoked via the keyboard.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners

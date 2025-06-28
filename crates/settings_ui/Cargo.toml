@@ -12,12 +12,21 @@ workspace = true
 path = "src/settings_ui.rs"
 
 [dependencies]
+command_palette.workspace = true
 command_palette_hooks.workspace = true
+component.workspace = true
+collections.workspace = true
+db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
+menu.workspace = true
+paths.workspace = true
+project.workspace = true
+search.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true

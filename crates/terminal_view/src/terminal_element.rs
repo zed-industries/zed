@@ -196,7 +196,6 @@ impl TerminalElement {
             interactivity: Default::default(),
         }
         .track_focus(&focus)
-        .element
     }
 
     //Vec<Range<AlacPoint>> -> Clip out the parts of the ranges
