@@ -444,7 +444,11 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn usage(&self, cx: &App) -> Option<ModelRequestUsage> {
-        self.state.read(cx).user_store.read(cx).model_request_usage()
+        self.state
+            .read(cx)
+            .user_store
+            .read(cx)
+            .model_request_usage()
     }
 }
 
