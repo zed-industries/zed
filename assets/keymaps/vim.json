@@ -210,7 +210,8 @@
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
       "ctrl-6": "pane::AlternateFile",
-      "ctrl-^": "pane::AlternateFile"
+      "ctrl-^": "pane::AlternateFile",
+      ".": "vim::Repeat"
     }
   },
   {
@@ -219,7 +220,6 @@
       "ctrl-[": "editor::Cancel",
       "escape": "editor::Cancel",
       ":": "command_palette::Toggle",
-      ".": "vim::Repeat",
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
