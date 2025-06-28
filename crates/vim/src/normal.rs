@@ -277,40 +277,51 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
-    pub fn normal_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn normal_object(
+        &mut self,
+        object: Object,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
-                Some(Operator::Change) => self.change_object(object, around, window, cx),
-                Some(Operator::Delete) => self.delete_object(object, around, window, cx),
-                Some(Operator::Yank) => self.yank_object(object, around, window, cx),
+                Some(Operator::Change) => self.change_object(object, around, times, window, cx),
+                Some(Operator::Delete) => self.delete_object(object, around, times, window, cx),
+                Some(Operator::Yank) => self.yank_object(object, around, times, window, cx),
                 Some(Operator::Indent) => {
-                    self.indent_object(object, around, IndentDirection::In, window, cx)
+                    self.indent_object(object, around, IndentDirection::In, times, window, cx)
                 }
                 Some(Operator::Outdent) => {
-                    self.indent_object(object, around, IndentDirection::Out, window, cx)
+                    self.indent_object(object, around, IndentDirection::Out, times, window, cx)
                 }
                 Some(Operator::AutoIndent) => {
-                    self.indent_object(object, around, IndentDirection::Auto, window, cx)
+                    self.indent_object(object, around, IndentDirection::Auto, times, window, cx)
                 }
                 Some(Operator::ShellCommand) => {
                     self.shell_command_object(object, around, window, cx);
                 }
-                Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
+                Some(Operator::Rewrap) => self.rewrap_object(object, around, times, window, cx),
                 Some(Operator::Lowercase) => {
-                    self.convert_object(object, around, ConvertTarget::LowerCase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::LowerCase, times, window, cx)
                 }
                 Some(Operator::Uppercase) => {
-                    self.convert_object(object, around, ConvertTarget::UpperCase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::UpperCase, times, window, cx)
                 }
-                Some(Operator::OppositeCase) => {
-                    self.convert_object(object, around, ConvertTarget::OppositeCase, window, cx)
-                }
+                Some(Operator::OppositeCase) => self.convert_object(
+                    object,
+                    around,
+                    ConvertTarget::OppositeCase,
+                    times,
+                    window,
+                    cx,
+                ),
                 Some(Operator::Rot13) => {
-                    self.convert_object(object, around, ConvertTarget::Rot13, window, cx)
+                    self.convert_object(object, around, ConvertTarget::Rot13, times, window, cx)
                 }
                 Some(Operator::Rot47) => {
-                    self.convert_object(object, around, ConvertTarget::Rot47, window, cx)
+                    self.convert_object(object, around, ConvertTarget::Rot47, times, window, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
@@ -318,7 +329,7 @@ impl Vim {
                     });
                 }
                 Some(Operator::ToggleComments) => {
-                    self.toggle_comments_object(object, around, window, cx)
+                    self.toggle_comments_object(object, around, times, window, cx)
                 }
                 Some(Operator::ReplaceWithRegister) => {
                     self.replace_with_register_object(object, around, window, cx)

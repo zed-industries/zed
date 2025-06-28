@@ -52,7 +52,7 @@ impl Vim {
                 for selection in &display_selections {
                     let range = match &target {
                         SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around)
+                            object.range(&display_map, selection.clone(), *around, None)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -150,7 +150,9 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = pair_object.range(&display_map, selection.clone(), true) {
+                    if let Some(range) =
+                        pair_object.range(&display_map, selection.clone(), true, None)
+                    {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
                         if !pair_object.is_multiline() {
@@ -247,7 +249,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = target.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            target.range(&display_map, selection.clone(), true, None)
+                        {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
                                     && selection.end.row() == range.end.row();
@@ -348,7 +352,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = object.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            object.range(&display_map, selection.clone(), true, None)
+                        {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not
                             if object.is_multiline()

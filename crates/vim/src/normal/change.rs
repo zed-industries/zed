@@ -105,6 +105,7 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -115,7 +116,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        objects_found |= object.expand_selection(map, selection, around);
+                        objects_found |= object.expand_selection(map, selection, around, times);
                     });
                 });
                 if objects_found {
