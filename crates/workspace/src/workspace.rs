@@ -3331,7 +3331,7 @@ impl Workspace {
         }
     }
 
-    fn activate_pane_at_index(
+    pub fn activate_pane_at_index(
         &mut self,
         action: &ActivatePane,
         window: &mut Window,

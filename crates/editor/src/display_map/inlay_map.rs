@@ -327,9 +327,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
                     InlayId::Color(_) => match inlay.color {
                         Some(color) => {
-                            let style = self.highlight_styles.inlay_hint.get_or_insert_default();
+                            let mut style = self.highlight_styles.inlay_hint.unwrap_or_default();
                             style.color = Some(color);
-                            Some(*style)
+                            Some(style)
                         }
                         None => self.highlight_styles.inlay_hint,
                     },
