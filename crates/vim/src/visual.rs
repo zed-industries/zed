@@ -365,7 +365,13 @@ impl Vim {
         })
     }
 
-    pub fn visual_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Vim>) {
+    pub fn visual_object(
+        &mut self,
+        object: Object,
+        count: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Vim>,
+    ) {
         if let Some(Operator::Object { around }) = self.active_operator() {
             self.pop_operator(window, cx);
             let current_mode = self.mode;
@@ -391,7 +397,7 @@ impl Vim {
                             );
                         }
 
-                        if let Some(range) = object.range(map, mut_selection, around, None) {
+                        if let Some(range) = object.range(map, mut_selection, around, count) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
                                     || selection.is_empty()
@@ -403,7 +409,7 @@ impl Vim {
                                         && object.always_expands_both_ways()
                                     {
                                         if let Some(range) =
-                                            object.range(map, selection.clone(), around, None)
+                                            object.range(map, selection.clone(), around, count)
                                         {
                                             selection.start = range.start;
                                             selection.end = range.end;
@@ -1759,5 +1765,27 @@ mod test {
             fox"
         });
         cx.shared_clipboard().await.assert_eq("quick\n");
+    }
+
+    #[gpui::test]
+    async fn test_v2ap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The
+            quicˇk
+
+            brown
+            fox"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("v 2 a p").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«The
+            quick
+
+            brown
+            fˇ»ox"
+        });
     }
 }

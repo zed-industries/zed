@@ -378,7 +378,7 @@ impl Vim {
         match self.mode {
             Mode::Normal => self.normal_object(object, count, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_object(object, window, cx)
+                self.visual_object(object, count, window, cx)
             }
             Mode::Insert | Mode::Replace | Mode::HelixNormal => {
                 // Shouldn't execute a text object in insert mode. Ignoring
@@ -1406,12 +1406,10 @@ fn paragraph(
     around: bool,
     times: usize,
 ) -> Option<Range<DisplayPoint>> {
-
     let mut paragraph_start = start_of_paragraph(map, relative_to);
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
     for i in 0..times {
-
         let paragraph_end_row = paragraph_end.row();
         let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
         let point = relative_to.to_point(map);
@@ -1431,7 +1429,9 @@ fn paragraph(
                 }
             } else {
                 let mut start_row = paragraph_end_row.0 + 1;
-                if i > 0 { start_row += 1; }
+                if i > 0 {
+                    start_row += 1;
+                }
                 let next_paragraph_start = Point::new(start_row, 0).to_display_point(map);
                 paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
@@ -1440,7 +1440,6 @@ fn paragraph(
 
     let range = paragraph_start..paragraph_end;
     Some(range)
-
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
