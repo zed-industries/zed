@@ -663,7 +663,8 @@ pub fn count_pollinations_tokens(
             | Model::SearchGpt
             | Model::Bidara
             | Model::ElixpoSearch
-            | Model::Evil
+            // | Model::HypnosisTracy
+            // | Model::Evil
             | Model::Midijourney
             | Model::Mirexa
             | Model::Rtist

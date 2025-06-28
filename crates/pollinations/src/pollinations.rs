@@ -82,8 +82,10 @@ pub enum Model {
     Bidara,
     #[serde(rename = "elixposearch")]
     ElixpoSearch,
-    #[serde(rename = "evil")]
-    Evil,
+    // #[serde(rename = "evil")]
+    // Evil,
+    // #[serde(rename = "hypnosis-tracy")]
+    // HypnosisTracy,
     #[serde(rename = "midijourney")]
     Midijourney,
     #[serde(rename = "mirexa")]
@@ -129,7 +131,8 @@ impl Model {
             "searchgpt" => Ok(Self::SearchGpt),
             "bidara" => Ok(Self::Bidara),
             "elixposearch" => Ok(Self::ElixpoSearch),
-            "evil" => Ok(Self::Evil),
+            // "evil" => Ok(Self::Evil),
+            // "hypnosis-tracy" => Ok(Self::HypnosisTracy),
             "midijourney" => Ok(Self::Midijourney),
             "mirexa" => Ok(Self::Mirexa),
             "rtist" => Ok(Self::Rtist),
@@ -157,7 +160,8 @@ impl Model {
             Self::SearchGpt => "searchgpt",
             Self::Bidara => "bidara",
             Self::ElixpoSearch => "elixposearch",
-            Self::Evil => "evil",
+            // Self::Evil => "evil",
+            // Self::HypnosisTracy => "hypnosis-tracy",
             Self::Midijourney => "midijourney",
             Self::Mirexa => "mirexa",
             Self::Rtist => "rtist",
@@ -185,7 +189,8 @@ impl Model {
             Self::SearchGpt => "OpenAI GPT-4o Mini Search Preview",
             Self::Bidara => "BIDARA (NASA)",
             Self::ElixpoSearch => "Elixpo Search",
-            Self::Evil => "Evil",
+            // Self::Evil => "Evil",
+            // Self::HypnosisTracy => "Hypnosis Tracy",
             Self::Midijourney => "MIDIjourney",
             Self::Mirexa => "Mirexa AI Companion",
             Self::Rtist => "Rtist",
@@ -215,7 +220,8 @@ impl Model {
             Self::SearchGpt => 16_385,
             Self::Bidara => 32_000,
             Self::ElixpoSearch => 32_000,
-            Self::Evil => 32_000,
+            // Self::Evil => 32_000,
+            // Self::HypnosisTracy => 32_000,
             Self::Midijourney => 32_000,
             Self::Mirexa => 32_000,
             Self::Rtist => 32_000,
@@ -246,7 +252,8 @@ impl Model {
             Self::SearchGpt => Some(4_096),
             Self::Bidara => Some(4_096),
             Self::ElixpoSearch => Some(4_096),
-            Self::Evil => Some(4_096),
+            // Self::Evil => Some(4_096),
+            // Self::HypnosisTracy => Some(4_096),
             Self::Midijourney => Some(4_096),
             Self::Mirexa => Some(4_096),
             Self::Rtist => Some(4_096),
@@ -260,29 +267,30 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::OpenAI
-            | Self::OpenAILarge
-            | Self::OpenAIFast
-            | Self::Grok
-            | Self::QwenCoder
-            | Self::SearchGpt
-            | Self::Bidara
-            | Self::Midijourney
-            | Self::Mirexa
-            | Self::Rtist
-            | Self::Sur
-            | Self::Unity
-            | Self::Evil => true,
-            Self::ClaudeHybridspace
-            | Self::Mistral
-            | Self::OpenAIReasoning
-            | Self::OpenAIRoblox
-            | Self::Deepseek
-            | Self::DeepseekReasoning
-            | Self::Llamascout
-            | Self::Phi
-            | Self::ElixpoSearch
-            | Model::Custom { .. } => false,
+            Self::Deepseek => false,
+            Self::DeepseekReasoning => false,
+            Self::Grok => true,
+            Self::Llamascout => false,
+            Self::Mistral => true,
+            Self::OpenAI => true,
+            Self::OpenAIFast => true,
+            Self::OpenAILarge => true,
+            Self::OpenAIReasoning => true,
+            Self::OpenAIRoblox => true,
+            Self::ClaudeHybridspace => false,
+            Self::Phi => false,
+            Self::QwenCoder => true,
+            Self::SearchGpt => true,
+            Self::Bidara => true,
+            Self::ElixpoSearch => false,
+            // Self::Evil => true,
+            // Self::HypnosisTracy => true,
+            Self::Midijourney => true,
+            Self::Mirexa => true,
+            Self::Rtist => true,
+            Self::Sur => true,
+            Self::Unity => true,
+            Model::Custom { .. } => false,
         }
     }
 }
