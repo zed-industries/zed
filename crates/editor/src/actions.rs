@@ -463,5 +463,6 @@ actions!(
         UnfoldRecursive,
         UniqueLinesCaseInsensitive,
         UniqueLinesCaseSensitive,
+        UnwrapSyntaxNode
     ]
 );
