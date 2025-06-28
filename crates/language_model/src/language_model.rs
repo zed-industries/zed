@@ -190,7 +190,7 @@ impl LanguageModelCompletionError {
         {
             Self::from_http_status(upstream_provider, status_code, message, retry_after)
         } else if let Some(status_code) = code
-            .strip_prefix("upstream_http_")
+            .strip_prefix("http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
             Self::from_http_status(ZED_CLOUD_PROVIDER_NAME, status_code, message, retry_after)
@@ -219,6 +219,10 @@ impl LanguageModelCompletionError {
             },
             StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
             StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            _ if status_code.as_u16() == 529 => Self::ServerOverloaded {
                 provider,
                 retry_after,
             },
