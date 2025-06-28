@@ -693,18 +693,24 @@ impl Editor {
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
+        let Some(visible_column_count) = self.visible_column_count() else {
+            return;
+        };
 
         // If the scroll position is currently at the left edge of the document
         // (x == 0.0) and the intent is to scroll right, the gutter's margin
         // should first be added to the current position, otherwise the cursor
         // will end at the column position minus the margin, which looks off.
-        if current_position.x == 0.0 && amount.columns() > 0. {
+        if current_position.x == 0.0 && amount.columns(visible_column_count) > 0. {
             if let Some(last_position_map) = &self.last_position_map {
                 current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
             }
         }
-        let new_position =
-            current_position + point(amount.columns(), amount.lines(visible_line_count));
+        let new_position = current_position
+            + point(
+                amount.columns(visible_column_count),
+                amount.lines(visible_line_count),
+            );
         self.set_scroll_position(new_position, window, cx);
     }
 
