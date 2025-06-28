@@ -956,7 +956,7 @@ fn fetch_and_update_hints(
             .update(cx, |editor, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
-                        .excerpts_for_inlay_hints_query(None, cx)
+                        .visible_excerpts(None, cx)
                         .remove(&query.excerpt_id)
                     {
                         Some((_, _, current_visible_range)) => {
@@ -2525,9 +2525,7 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| {
-                editor.excerpts_for_inlay_hints_query(None, cx)
-            })
+            .update(cx, |editor, _window, cx| editor.visible_excerpts(None, cx))
             .unwrap();
         assert_eq!(
             ranges.len(),

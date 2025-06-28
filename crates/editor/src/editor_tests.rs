@@ -55,7 +55,8 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseInactiveItems, NavigationEntry, OpenOptions, ViewId,
+    CloseActiveItem, CloseAllItems, CloseInactiveItems, MoveItemToPaneInDirection, NavigationEntry,
+    OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
 };
 
@@ -22602,7 +22603,7 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
 }
 
 #[gpui::test]
-async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
+async fn test_document_colors(cx: &mut TestAppContext) {
     let expected_color = Rgba {
         r: 0.33,
         g: 0.33,
@@ -22723,8 +22724,10 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
             panic!("Should not be called");
         });
+    cx.executor().advance_clock(Duration::from_millis(100));
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(100));
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
@@ -22732,15 +22735,65 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per editor open (1) and once after the language server startup (2)"
     );
-
-    cx.executor().advance_clock(Duration::from_millis(500));
-    let save = editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, _, cx| {
         assert_eq!(
             vec![expected_color],
             extract_color_inlays(editor, cx),
             "Should have an initial inlay"
         );
+    });
 
+    // opening another file in a split should not influence the LSP query counter
+    workspace
+        .update(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.panes().len(),
+                1,
+                "Should have one pane with one editor"
+            );
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: false,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+        })
+        .unwrap();
+    cx.run_until_parked();
+    workspace
+        .update(cx, |workspace, _, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 2, "Should have two panes after splitting");
+            for pane in panes {
+                let editor = pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("Should have opened an editor in each split");
+                let editor_file = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("test deals with singleton buffers")
+                    .read(cx)
+                    .file()
+                    .expect("test buffese should have a file")
+                    .path();
+                assert_eq!(
+                    editor_file.as_ref(),
+                    Path::new("first.rs"),
+                    "Both editors should be opened for the same file"
+                )
+            }
+        })
+        .unwrap();
+
+    cx.executor().advance_clock(Duration::from_millis(500));
+    let save = editor.update_in(cx, |editor, window, cx| {
         editor.move_to_end(&MoveToEnd, window, cx);
         editor.handle_input("dirty", window, cx);
         editor.save(
@@ -22791,9 +22844,9 @@ async fn test_mtime_and_document_colors(cx: &mut TestAppContext) {
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        6,
+        5,
         requests_made.load(atomic::Ordering::Acquire),
-        "After navigating back to an editor and reopening it, another color request should be made"
+        "Cache should be reused on buffer close and reopen"
     );
     let editor = workspace
         .update(cx, |workspace, _, cx| {

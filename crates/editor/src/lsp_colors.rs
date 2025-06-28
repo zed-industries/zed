@@ -3,8 +3,8 @@ use std::{cmp, ops::Range};
 use collections::HashMap;
 use futures::future::join_all;
 use gpui::{Hsla, Rgba};
+use itertools::Itertools;
 use language::point_from_lsp;
-use lsp::LanguageServerId;
 use multi_buffer::Anchor;
 use project::DocumentColor;
 use settings::Settings as _;
@@ -122,7 +122,7 @@ impl LspColorData {
 impl Editor {
     pub(super) fn refresh_colors(
         &mut self,
-        for_server_id: Option<LanguageServerId>,
+        ignore_cache: bool,
         buffer_id: Option<BufferId>,
         _: &Window,
         cx: &mut Context<Self>,
@@ -141,23 +141,22 @@ impl Editor {
             return;
         }
 
+        let visible_buffers = self
+            .visible_excerpts(None, cx)
+            .into_values()
+            .map(|(buffer, ..)| buffer)
+            .filter(|editor_buffer| {
+                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer.read(cx).remote_id())
+            })
+            .unique_by(|buffer| buffer.read(cx).remote_id())
+            .collect::<Vec<_>>();
+
         let all_colors_task = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            self.buffer()
-                .update(cx, |multi_buffer, cx| {
-                    multi_buffer
-                        .all_buffers()
-                        .into_iter()
-                        .filter(|editor_buffer| {
-                            buffer_id.is_none_or(|buffer_id| {
-                                buffer_id == editor_buffer.read(cx).remote_id()
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
+            visible_buffers
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
-                    let colors_task = lsp_store.document_colors(for_server_id, buffer, cx)?;
+                    let colors_task = lsp_store.document_colors(ignore_cache, buffer, cx)?;
                     Some(async move { (buffer_id, colors_task.await) })
                 })
                 .collect::<Vec<_>>()

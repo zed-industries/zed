@@ -6209,79 +6209,93 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        for_server_id: Option<LanguageServerId>,
+        ignore_cache: bool,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let lsp_data = self.lsp_data.entry(buffer_id).or_default();
-        if !version_queried_for.changed_since(&lsp_data.colors_for_version) {
-            match for_server_id {
-                Some(for_server_id) => {
-                    if let Some(cached_colors) = lsp_data.colors.get(&for_server_id) {
-                        return Some(Task::ready(Ok(cached_colors.clone())).shared());
-                    }
-                }
-                None => {
-                    if !lsp_data.colors.is_empty() {
-                        return Some(
-                            Task::ready(Ok(lsp_data.colors.values().flatten().cloned().collect()))
-                                .shared(),
-                        );
-                    }
-                }
+
+        if !ignore_cache {
+            if let Some(cached_data) = self.lsp_data.get(&buffer_id)
+                && !version_queried_for.changed_since(&cached_data.colors_for_version)
+            {
+                return Some(
+                    Task::ready(Ok(cached_data.colors.values().flatten().cloned().collect()))
+                        .shared(),
+                );
             }
         }
 
+        let lsp_data = self.lsp_data.entry(buffer_id).or_default();
+        if let Some((updating_for, running_update)) = &lsp_data.colors_update {
+            if !version_queried_for.changed_since(&updating_for) {
+                return Some(running_update.clone());
+            }
+        }
         let query_version_queried_for = version_queried_for.clone();
         let new_task = cx
             .spawn(async move |lsp_store, cx| {
                 cx.background_executor()
-                    .timer(Duration::from_millis(50))
+                    .timer(Duration::from_millis(30))
                     .await;
-                if Some(true)
-                    != buffer
-                        .update(cx, |buffer, _| {
-                            buffer.version() != query_version_queried_for
-                        })
-                        .ok()
-                {
-                    return Ok(HashSet::default());
-                }
                 let fetched_colors = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_document_colors_for_buffer(buffer, cx)
+                        lsp_store.fetch_document_colors_for_buffer(buffer.clone(), cx)
                     })?
                     .await
                     .context("fetching document colors")
                     .map_err(Arc::new);
-                match lsp_store
+                let fetched_colors = match fetched_colors {
+                    Ok(fetched_colors) => {
+                        if !ignore_cache
+                            && Some(true)
+                                == buffer
+                                    .update(cx, |buffer, _| {
+                                        buffer.version() != query_version_queried_for
+                                    })
+                                    .ok()
+                        {
+                            return Ok(HashSet::default());
+                        }
+                        fetched_colors
+                    }
+                    Err(e) => {
+                        lsp_store
+                            .update(cx, |lsp_store, _| {
+                                lsp_store
+                                    .lsp_data
+                                    .entry(buffer_id)
+                                    .or_default()
+                                    .colors_update = None;
+                            })
+                            .ok();
+                        return Err(e);
+                    }
+                };
+
+                lsp_store
                     .update(cx, |lsp_store, _| {
                         let lsp_data = lsp_store.lsp_data.entry(buffer_id).or_default();
-                        if !lsp_data
+
+                        if lsp_data.colors_for_version == query_version_queried_for {
+                            lsp_data.colors.extend(fetched_colors.clone());
+                        } else if !lsp_data
                             .colors_for_version
                             .changed_since(&query_version_queried_for)
                         {
-                            if let Ok(fetched_colors) = &fetched_colors {
-                                lsp_data.colors_for_version = query_version_queried_for;
-                                lsp_data.colors = fetched_colors.clone();
-                            }
+                            lsp_data.colors_for_version = query_version_queried_for;
+                            lsp_data.colors = fetched_colors.clone();
                         }
                         lsp_data.colors_update = None;
-                        fetched_colors.map(|fetched_colors| {
-                            fetched_colors
-                                .into_values()
-                                .flatten()
-                                .collect::<HashSet<_>>()
-                        })
+                        lsp_data
+                            .colors
+                            .values()
+                            .flatten()
+                            .cloned()
+                            .collect::<HashSet<_>>()
                     })
                     .map_err(Arc::new)
-                {
-                    Ok(Ok(new_matches)) => Ok(new_matches),
-                    Ok(Err(e)) => Err(e),
-                    Err(e) => Err(e),
-                }
             })
             .shared();
         lsp_data.colors_update = Some((version_queried_for, new_task.clone()));
