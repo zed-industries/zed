@@ -225,20 +225,40 @@ impl LanguageServerTree {
                     .unwrap_or_else(|| root_path.clone());
                 let attach = adapter.attach_kind();
 
+                // Check if the user has configured single instance mode for this language server
+                let effective_attach =
+                    if let Some(crate::project_settings::LspInstanceMode::Single) =
+                        settings.instance_mode.as_ref()
+                    {
+                        language::Attach::Shared
+                    } else {
+                        attach
+                    };
+
+                // For single instance mode, always use the worktree root
+                let effective_root_path = if matches!(effective_attach, language::Attach::Shared) {
+                    ProjectPath {
+                        worktree_id: root_path.worktree_id,
+                        path: Arc::from("".as_ref()),
+                    }
+                } else {
+                    root_path.clone()
+                };
+
                 let inner_node = self
                     .instances
-                    .entry(root_path.worktree_id)
+                    .entry(effective_root_path.worktree_id)
                     .or_default()
                     .roots
-                    .entry(root_path.path.clone())
+                    .entry(effective_root_path.path.clone())
                     .or_default()
                     .entry(adapter.name());
                 let (node, languages) = inner_node.or_insert_with(|| {
                     (
                         Arc::new(InnerTreeNode::new(
                             adapter.name(),
-                            attach,
-                            root_path.clone(),
+                            effective_attach,
+                            effective_root_path.clone(),
                             settings.clone(),
                         )),
                         Default::default(),
