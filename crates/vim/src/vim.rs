@@ -22,7 +22,8 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
+    ToPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -963,7 +964,7 @@ impl Vim {
                 }
             }
 
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.
@@ -1163,7 +1164,7 @@ impl Vim {
             } else {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
                         })
@@ -1438,27 +1439,29 @@ impl Vim {
             Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
                 self.update_editor(window, cx, |vim, editor, window, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
-                    editor.change_selections(None, window, cx, |s| match original_mode {
-                        Some(Mode::VisualLine) => {
-                            s.move_with(|map, selection| {
-                                selection.collapse_to(
-                                    map.prev_line_boundary(selection.start.to_point(map)).1,
-                                    SelectionGoal::None,
-                                )
-                            });
-                        }
-                        Some(Mode::VisualBlock) => {
-                            let mut first = s.first_anchor();
-                            first.collapse_to(first.start, first.goal);
-                            s.select_anchors(vec![first]);
-                        }
-                        _ => {
-                            s.move_with(|map, selection| {
-                                selection.collapse_to(
-                                    map.clip_at_line_end(selection.start),
-                                    selection.goal,
-                                );
-                            });
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        match original_mode {
+                            Some(Mode::VisualLine) => {
+                                s.move_with(|map, selection| {
+                                    selection.collapse_to(
+                                        map.prev_line_boundary(selection.start.to_point(map)).1,
+                                        SelectionGoal::None,
+                                    )
+                                });
+                            }
+                            Some(Mode::VisualBlock) => {
+                                let mut first = s.first_anchor();
+                                first.collapse_to(first.start, first.goal);
+                                s.select_anchors(vec![first]);
+                            }
+                            _ => {
+                                s.move_with(|map, selection| {
+                                    selection.collapse_to(
+                                        map.clip_at_line_end(selection.start),
+                                        selection.goal,
+                                    );
+                                });
+                            }
                         }
                     });
                 });
@@ -1466,7 +1469,7 @@ impl Vim {
             }
             Mode::Normal => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             selection
                                 .collapse_to(map.clip_at_line_end(selection.end), selection.goal)

@@ -26,7 +26,6 @@ use collections::BTreeSet;
 use convert::ConvertTarget;
 use editor::Bias;
 use editor::Editor;
-use editor::scroll::Autoscroll;
 use editor::{Anchor, SelectionEffects};
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window, actions};
@@ -103,7 +102,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
         vim.record_current_action(cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
                         selection.end = movement::right(map, selection.end)
@@ -278,40 +277,51 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
-    pub fn normal_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn normal_object(
+        &mut self,
+        object: Object,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
-                Some(Operator::Change) => self.change_object(object, around, window, cx),
-                Some(Operator::Delete) => self.delete_object(object, around, window, cx),
-                Some(Operator::Yank) => self.yank_object(object, around, window, cx),
+                Some(Operator::Change) => self.change_object(object, around, times, window, cx),
+                Some(Operator::Delete) => self.delete_object(object, around, times, window, cx),
+                Some(Operator::Yank) => self.yank_object(object, around, times, window, cx),
                 Some(Operator::Indent) => {
-                    self.indent_object(object, around, IndentDirection::In, window, cx)
+                    self.indent_object(object, around, IndentDirection::In, times, window, cx)
                 }
                 Some(Operator::Outdent) => {
-                    self.indent_object(object, around, IndentDirection::Out, window, cx)
+                    self.indent_object(object, around, IndentDirection::Out, times, window, cx)
                 }
                 Some(Operator::AutoIndent) => {
-                    self.indent_object(object, around, IndentDirection::Auto, window, cx)
+                    self.indent_object(object, around, IndentDirection::Auto, times, window, cx)
                 }
                 Some(Operator::ShellCommand) => {
                     self.shell_command_object(object, around, window, cx);
                 }
-                Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
+                Some(Operator::Rewrap) => self.rewrap_object(object, around, times, window, cx),
                 Some(Operator::Lowercase) => {
-                    self.convert_object(object, around, ConvertTarget::LowerCase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::LowerCase, times, window, cx)
                 }
                 Some(Operator::Uppercase) => {
-                    self.convert_object(object, around, ConvertTarget::UpperCase, window, cx)
+                    self.convert_object(object, around, ConvertTarget::UpperCase, times, window, cx)
                 }
-                Some(Operator::OppositeCase) => {
-                    self.convert_object(object, around, ConvertTarget::OppositeCase, window, cx)
-                }
+                Some(Operator::OppositeCase) => self.convert_object(
+                    object,
+                    around,
+                    ConvertTarget::OppositeCase,
+                    times,
+                    window,
+                    cx,
+                ),
                 Some(Operator::Rot13) => {
-                    self.convert_object(object, around, ConvertTarget::Rot13, window, cx)
+                    self.convert_object(object, around, ConvertTarget::Rot13, times, window, cx)
                 }
                 Some(Operator::Rot47) => {
-                    self.convert_object(object, around, ConvertTarget::Rot47, window, cx)
+                    self.convert_object(object, around, ConvertTarget::Rot47, times, window, cx)
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
@@ -319,7 +329,7 @@ impl Vim {
                     });
                 }
                 Some(Operator::ToggleComments) => {
-                    self.toggle_comments_object(object, around, window, cx)
+                    self.toggle_comments_object(object, around, times, window, cx)
                 }
                 Some(Operator::ReplaceWithRegister) => {
                     self.replace_with_register_object(object, around, window, cx)
@@ -377,7 +387,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
             });
         });
@@ -388,7 +398,7 @@ impl Vim {
         if self.mode.is_visual() {
             let current_mode = self.mode;
             self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         if current_mode == Mode::VisualLine {
                             let start_of_line = motion::start_of_line(map, false, selection.start);
@@ -412,7 +422,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
@@ -432,7 +442,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
@@ -453,7 +463,7 @@ impl Vim {
                 return;
             };
 
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
             });
         });
@@ -489,7 +499,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
                 editor.edit_with_autoindent(edits, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
                         let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
@@ -530,7 +540,7 @@ impl Vim {
                         (end_of_line..end_of_line, "\n".to_string() + &indent)
                     })
                     .collect::<Vec<_>>();
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
                         Motion::CurrentLine.move_point(
                             map,
@@ -607,7 +617,7 @@ impl Vim {
                     .collect::<Vec<_>>();
                 editor.edit(edits, cx);
 
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|_, selection| {
                         if let Some(position) = original_positions.get(&selection.id) {
                             selection.collapse_to(*position, SelectionGoal::None);
@@ -755,7 +765,7 @@ impl Vim {
                     editor.newline(&editor::actions::Newline, window, cx);
                 }
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let point = movement::saturating_left(map, selection.head());
                         selection.collapse_to(point, SelectionGoal::None)
@@ -791,7 +801,7 @@ impl Vim {
         cx: &mut Context<Editor>,
         mut positions: HashMap<usize, Anchor>,
     ) {
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        editor.change_selections(Default::default(), window, cx, |s| {
             s.move_with(|map, selection| {
                 if let Some(anchor) = positions.remove(&selection.id) {
                     selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);

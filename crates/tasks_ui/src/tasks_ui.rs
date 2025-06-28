@@ -393,7 +393,7 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use editor::Editor;
+    use editor::{Editor, SelectionEffects};
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
@@ -538,7 +538,7 @@ mod tests {
 
         // And now, let's select an identifier.
         editor2.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([14..18])
             })
         });
