@@ -12,8 +12,8 @@ use crate::{
     ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightKey,
-        HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
+        HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -7119,7 +7119,7 @@ pub(crate) struct LineWithInvisibles {
 enum LineFragment {
     Text(ShapedLine),
     Element {
-        id: FoldId,
+        id: ChunkRendererId,
         element: Option<AnyElement>,
         size: Size<Pixels>,
         len: usize,
@@ -8297,7 +8297,7 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-                    let new_fold_widths = line_layouts
+                    let new_renrerer_widths = line_layouts
                         .iter()
                         .flat_map(|layout| &layout.fragments)
                         .filter_map(|fragment| {
@@ -8308,7 +8308,7 @@ impl Element for EditorElement {
                             }
                         });
                     if self.editor.update(cx, |editor, cx| {
-                        editor.update_fold_widths(new_fold_widths, cx)
+                        editor.update_renderer_widths(new_renrerer_widths, cx)
                     }) {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in

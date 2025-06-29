@@ -17333,9 +17333,9 @@ impl Editor {
         self.active_indent_guides_state.dirty = true;
     }
 
-    pub fn update_fold_widths(
+    pub fn update_renderer_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.display_map
