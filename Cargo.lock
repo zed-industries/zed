@@ -10807,10 +10807,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
+ "gpui",
  "http_client",
+ "indoc",
+ "inline_completion",
+ "language",
+ "multi_buffer",
+ "project",
  "schemars",
  "serde",
  "serde_json",
+ "text",
  "workspace-hack",
 ]
 
@@ -20005,6 +20012,7 @@ dependencies = [
  "nix 0.29.0",
  "node_runtime",
  "notifications",
+ "ollama",
  "outline",
  "outline_panel",
  "parking_lot",

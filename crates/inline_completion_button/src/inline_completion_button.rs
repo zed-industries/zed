@@ -358,6 +358,41 @@ impl Render for InlineCompletionButton {
 
                 div().child(popover_menu.into_any_element())
             }
+
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(false);
+                let icon = if enabled {
+                    IconName::AiOllama
+                } else {
+                    IconName::AiOllama // Could add disabled variant
+                };
+
+                let this = cx.entity().clone();
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            Some(
+                                this.update(cx, |this, cx| {
+                                    this.build_ollama_context_menu(window, cx)
+                                }),
+                            )
+                        })
+                        .trigger(
+                            IconButton::new("ollama-completion", icon)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|window, cx| {
+                                    Tooltip::for_action(
+                                        "Ollama Completion",
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
         }
     }
 }
@@ -802,6 +837,26 @@ impl InlineCompletionButton {
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
+        })
+    }
+
+    fn build_ollama_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
+        ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("Toggle Ollama Completions", None, {
+                let fs = fs.clone();
+                move |_window, cx| {
+                    toggle_inline_completions_globally(fs.clone(), cx);
+                }
+            })
+            .entry("Ollama Settings...", None, |_window, cx| {
+                // TODO: Open Ollama-specific settings
+                cx.open_url("http://localhost:11434");
+            })
         })
     }
 

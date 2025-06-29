@@ -4,7 +4,9 @@ use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use settings::SettingsStore;
+use language_models::AllLanguageModelSettings;
+use ollama::OllamaCompletionProvider;
+use settings::{Settings, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -129,7 +131,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         }
                         EditPredictionProvider::None
                         | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
+                        | EditPredictionProvider::Supermaven
+                        | EditPredictionProvider::Ollama => {}
                     }
                 }
             }
@@ -282,6 +285,21 @@ fn assign_edit_prediction_provider(
 
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
+        }
+        EditPredictionProvider::Ollama => {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            let api_url = settings.api_url.clone();
+
+            // Use first available model or default
+            let model = settings
+                .available_models
+                .first()
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| "codellama:7b".to_string());
+
+            let provider =
+                cx.new(|_| OllamaCompletionProvider::new(client.http_client(), api_url, model));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
     }
 }

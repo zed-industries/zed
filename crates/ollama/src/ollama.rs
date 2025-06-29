@@ -98,6 +98,38 @@ impl Model {
     }
 }
 
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateRequest {
+    pub model: String,
+    pub prompt: String,
+    pub stream: bool,
+    pub options: Option<GenerateOptions>,
+    pub keep_alive: Option<KeepAlive>,
+    pub context: Option<Vec<i64>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateOptions {
+    pub num_predict: Option<i32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateResponse {
+    pub response: String,
+    pub done: bool,
+    pub context: Option<Vec<i64>>,
+    pub total_duration: Option<u64>,
+    pub load_duration: Option<u64>,
+    pub prompt_eval_count: Option<i32>,
+    pub eval_count: Option<i32>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
@@ -357,6 +389,36 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     );
     let details: ModelShow = serde_json::from_str(body.as_str())?;
     Ok(details)
+}
+
+pub async fn generate(
+    client: &dyn HttpClient,
+    api_url: &str,
+    request: GenerateRequest,
+) -> Result<GenerateResponse> {
+    let uri = format!("{api_url}/api/generate");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to Ollama API: {} {}",
+        response.status(),
+        body,
+    );
+
+    let response: GenerateResponse =
+        serde_json::from_str(&body).context("Unable to parse Ollama generate response")?;
+    Ok(response)
 }
 
 #[cfg(test)]
