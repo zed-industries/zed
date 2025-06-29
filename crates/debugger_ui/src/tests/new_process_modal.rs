@@ -267,7 +267,6 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         "Debugpy",
         "PHP",
         "JavaScript",
-        "Ruby",
         "Delve",
         "GDB",
         "fake-adapter",
