@@ -27,6 +27,8 @@ pub(crate) struct Scene {
     pub(crate) monochrome_sprites: Vec<MonochromeSprite>,
     pub(crate) polychrome_sprites: Vec<PolychromeSprite>,
     pub(crate) surfaces: Vec<PaintSurface>,
+    #[cfg(target_os = "macos")]
+    pub(crate) metal_views: Vec<PaintMetalView>,
 }
 
 impl Scene {
@@ -115,6 +117,11 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            #[cfg(target_os = "macos")]
+            Primitive::MetalView(metal_view) => {
+                metal_view.order = order;
+                self.metal_views.push(metal_view.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -140,6 +147,8 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        #[cfg(target_os = "macos")]
+        self.metal_views.sort_by_key(|metal_view| metal_view.order);
     }
 
     #[cfg_attr(
@@ -172,6 +181,12 @@ impl Scene {
             surfaces: &self.surfaces,
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            #[cfg(target_os = "macos")]
+            metal_views: &self.metal_views,
+            #[cfg(target_os = "macos")]
+            metal_views_start: 0,
+            #[cfg(target_os = "macos")]
+            metal_views_iter: self.metal_views.iter().peekable(),
         }
     }
 }
@@ -193,6 +208,8 @@ pub(crate) enum PrimitiveKind {
     MonochromeSprite,
     PolychromeSprite,
     Surface,
+    #[cfg(target_os = "macos")]
+    MetalView,
 }
 
 pub(crate) enum PaintOperation {
@@ -210,6 +227,8 @@ pub(crate) enum Primitive {
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    #[cfg(target_os = "macos")]
+    MetalView(PaintMetalView),
 }
 
 impl Primitive {
@@ -222,6 +241,8 @@ impl Primitive {
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            #[cfg(target_os = "macos")]
+            Primitive::MetalView(metal_view) => &metal_view.bounds,
         }
     }
 
@@ -234,6 +255,8 @@ impl Primitive {
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            #[cfg(target_os = "macos")]
+            Primitive::MetalView(metal_view) => &metal_view.content_mask,
         }
     }
 }
@@ -267,13 +290,19 @@ struct BatchIterator<'a> {
     surfaces: &'a [PaintSurface],
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    #[cfg(target_os = "macos")]
+    metal_views: &'a [PaintMetalView],
+    #[cfg(target_os = "macos")]
+    metal_views_start: usize,
+    #[cfg(target_os = "macos")]
+    metal_views_iter: Peekable<slice::Iter<'a, PaintMetalView>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
     type Item = PrimitiveBatch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut orders_and_kinds = [
+        let mut orders_and_kinds = vec![
             (
                 self.shadows_iter.peek().map(|s| s.order),
                 PrimitiveKind::Shadow,
@@ -297,6 +326,12 @@ impl<'a> Iterator for BatchIterator<'a> {
                 PrimitiveKind::Surface,
             ),
         ];
+
+        #[cfg(target_os = "macos")]
+        orders_and_kinds.push((
+            self.metal_views_iter.peek().map(|m| m.order),
+            PrimitiveKind::MetalView,
+        ));
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
 
         let first = orders_and_kinds[0];
@@ -426,6 +461,23 @@ impl<'a> Iterator for BatchIterator<'a> {
                     &self.surfaces[surfaces_start..surfaces_end],
                 ))
             }
+            #[cfg(target_os = "macos")]
+            PrimitiveKind::MetalView => {
+                let metal_views_start = self.metal_views_start;
+                let mut metal_views_end = metal_views_start + 1;
+                self.metal_views_iter.next();
+                while self
+                    .metal_views_iter
+                    .next_if(|metal_view| (metal_view.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    metal_views_end += 1;
+                }
+                self.metal_views_start = metal_views_end;
+                Some(PrimitiveBatch::MetalViews(
+                    &self.metal_views[metal_views_start..metal_views_end],
+                ))
+            }
         }
     }
 }
@@ -452,6 +504,8 @@ pub(crate) enum PrimitiveBatch<'a> {
         sprites: &'a [PolychromeSprite],
     },
     Surfaces(&'a [PaintSurface]),
+    #[cfg(target_os = "macos")]
+    MetalViews(&'a [PaintMetalView]),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -668,9 +722,35 @@ pub(crate) struct PaintSurface {
     pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+pub(crate) struct PaintMetalView {
+    pub order: DrawOrder,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub render_callback: crate::MetalRenderCallback,
+}
+
+impl Debug for PaintMetalView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PaintMetalView")
+            .field("order", &self.order)
+            .field("bounds", &self.bounds)
+            .field("content_mask", &self.content_mask)
+            .finish()
+    }
+}
+
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl From<PaintMetalView> for Primitive {
+    fn from(metal_view: PaintMetalView) -> Self {
+        Primitive::MetalView(metal_view)
     }
 }
 

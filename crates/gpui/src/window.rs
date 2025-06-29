@@ -2946,6 +2946,30 @@ impl Window {
         });
     }
 
+    /// Paint a custom Metal view.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    #[cfg(target_os = "macos")]
+    pub fn paint_metal_view(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        render_callback: crate::MetalRenderCallback,
+    ) {
+        use crate::PaintMetalView;
+
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        self.next_frame.scene.insert_primitive(PaintMetalView {
+            order: 0,
+            bounds,
+            content_mask,
+            render_callback,
+        });
+    }
+
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {

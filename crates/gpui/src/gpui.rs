@@ -129,6 +129,8 @@ pub use assets::*;
 pub use color::*;
 pub use ctor::ctor;
 pub use element::*;
+#[cfg(target_os = "macos")]
+pub use elements::metal_view::MetalRenderCallback;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;

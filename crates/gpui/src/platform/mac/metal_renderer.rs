@@ -2,7 +2,7 @@ use super::metal_atlas::MetalAtlas;
 use crate::{
     AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels,
     MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
+    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, px, size,
 };
 use anyhow::{Context as _, Result};
 use block::ConcreteBlock;
@@ -18,7 +18,7 @@ use core_video::{
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
-use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CAMetalLayer, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -97,7 +97,7 @@ pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
     presents_with_transaction: bool,
-    command_queue: CommandQueue,
+    command_queue: metal::CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
     path_sprites_pipeline_state: metal::RenderPipelineState,
     shadows_pipeline_state: metal::RenderPipelineState,
@@ -385,6 +385,7 @@ impl MetalRenderer {
             )
             .with_context(|| format!("rasterizing {} paths", scene.paths().len()))?;
 
+        // Create initial render pass
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
             .color_attachments()
@@ -396,7 +397,7 @@ impl MetalRenderer {
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
         let alpha = if self.layer.is_opaque() { 1. } else { 0. };
         color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
-        let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+        let mut command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
 
         command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
@@ -407,21 +408,53 @@ impl MetalRenderer {
             zfar: 1.0,
         });
 
+        let mut needs_new_encoder = false;
+
+        // Helper to create a continuation render encoder
+        let create_continuation_encoder = || {
+            let render_pass_descriptor = metal::RenderPassDescriptor::new();
+            let color_attachment = render_pass_descriptor
+                .color_attachments()
+                .object_at(0)
+                .unwrap();
+
+            color_attachment.set_texture(Some(drawable.texture()));
+            color_attachment.set_load_action(metal::MTLLoadAction::Load);
+            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+
+            let encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+            encoder.set_viewport(metal::MTLViewport {
+                originX: 0.0,
+                originY: 0.0,
+                width: i32::from(viewport_size.width) as f64,
+                height: i32::from(viewport_size.height) as f64,
+                znear: 0.0,
+                zfar: 1.0,
+            });
+            encoder
+        };
+
         for batch in scene.batches() {
+            // Create a new encoder if needed
+            if needs_new_encoder {
+                command_encoder = create_continuation_encoder();
+                needs_new_encoder = false;
+            }
+
             let ok = match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(
                     shadows,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(
                     quads,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
                 PrimitiveBatch::Paths(paths) => self.draw_paths(
                     paths,
@@ -429,14 +462,14 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(
                     underlines,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
                 PrimitiveBatch::MonochromeSprites {
                     texture_id,
@@ -447,7 +480,7 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
                 PrimitiveBatch::PolychromeSprites {
                     texture_id,
@@ -458,15 +491,72 @@ impl MetalRenderer {
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
                 PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(
                     surfaces,
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
-                    command_encoder,
+                    &command_encoder,
                 ),
+                #[cfg(target_os = "macos")]
+                PrimitiveBatch::MetalViews(metal_views) => {
+                    // End current render pass
+                    command_encoder.end_encoding();
+
+                    // Process each MetalView
+                    for metal_view in metal_views {
+                        // Create a render encoder for the callback
+                        let render_pass_descriptor = metal::RenderPassDescriptor::new();
+                        let color_attachment = render_pass_descriptor
+                            .color_attachments()
+                            .object_at(0)
+                            .unwrap();
+
+                        color_attachment.set_texture(Some(drawable.texture()));
+                        color_attachment.set_load_action(metal::MTLLoadAction::Load);
+                        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+
+                        let callback_encoder =
+                            command_buffer.new_render_command_encoder(render_pass_descriptor);
+                        callback_encoder.set_viewport(metal::MTLViewport {
+                            originX: 0.0,
+                            originY: 0.0,
+                            width: i32::from(viewport_size.width) as f64,
+                            height: i32::from(viewport_size.height) as f64,
+                            znear: 0.0,
+                            zfar: 1.0,
+                        });
+
+                        // Invoke the Metal rendering callback
+                        let scale_factor = self.layer.contents_scale() as f32;
+                        // Convert bounds from ScaledPixels to Pixels
+                        let bounds = Bounds {
+                            origin: point(
+                                px(metal_view.bounds.origin.x.0 / scale_factor),
+                                px(metal_view.bounds.origin.y.0 / scale_factor),
+                            ),
+                            size: size(
+                                px(metal_view.bounds.size.width.0 / scale_factor),
+                                px(metal_view.bounds.size.height.0 / scale_factor),
+                            ),
+                        };
+
+                        (metal_view.render_callback)(
+                            &callback_encoder,
+                            drawable.texture(),
+                            bounds,
+                            scale_factor,
+                        );
+
+                        callback_encoder.end_encoding();
+                    }
+
+                    // Mark that we'll need a new encoder for subsequent primitives
+                    needs_new_encoder = true;
+                    true
+                }
             };
 
             if !ok {
@@ -484,7 +574,10 @@ impl MetalRenderer {
             }
         }
 
-        command_encoder.end_encoding();
+        // End the encoder if we haven't already
+        if !needs_new_encoder {
+            command_encoder.end_encoding();
+        }
 
         instance_buffer.metal_buffer.did_modify_range(NSRange {
             location: 0,
@@ -1134,6 +1227,9 @@ impl MetalRenderer {
         }
         true
     }
+
+    // Note: draw_metal_views is no longer needed as we handle MetalViews
+    // directly in draw_primitives with proper render pass management
 }
 
 fn build_pipeline_state(
