@@ -1220,7 +1220,57 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            } => {
+                // TODO: Use early returns.
+                if let Some(workspace) = workspace.upgrade() {
+                    let result = workspace.read(cx).panes().iter().find_map(|pane| {
+                        let pane_ref = pane.read(cx);
+                        let item_handle = pane_ref
+                            .items()
+                            .find(|item| item.item_id().as_u64() == item_id)?;
+
+                        Some((pane_ref, item_handle))
+                    });
+
+                    if let Some((pane, item_handle)) = result {
+                        let is_pinned = pane
+                            .index_for_item(item_handle.as_ref())
+                            .map(|index| pane.is_tab_pinned(index))
+                            .unwrap_or(false);
+
+                        if is_pinned {
+                            return window.spawn(cx, {
+                                let project = project.clone();
+                                async move |cx| {
+                                    let buffer = project
+                                        .update(cx, |project, cx| project.create_buffer(cx))?
+                                        .await?;
+
+                                    cx.update(|window, cx| {
+                                        cx.new(|cx| {
+                                            let mut editor = Editor::for_buffer(
+                                                buffer,
+                                                Some(project),
+                                                window,
+                                                cx,
+                                            );
+                                            editor.read_metadata_from_db(
+                                                item_id,
+                                                workspace_id,
+                                                window,
+                                                cx,
+                                            );
+                                            editor
+                                        })
+                                    })
+                                }
+                            });
+                        }
+                    }
+                }
+
+                Task::ready(Err(anyhow!("No path or contents found for buffer")))
+            }
         }
     }
 
@@ -1243,6 +1293,16 @@ impl SerializableItem for Editor {
             // projects without worktrees aren't deserialized.
             serialize_dirty_buffers = false;
         }
+
+        // Unsure if we need this, need to fix the crash first.
+
+        // let pane = workspace.pane_for(&cx.entity())?;
+
+        // let pane_ref = pane.read(cx);
+        // let is_pinned = pane_ref
+        // .index_for_item(&cx.entity())
+        // .map(|index| pane_ref.is_tab_pinned(index))
+        // .unwrap_or(false);
 
         if closing && !serialize_dirty_buffers {
             return None;
