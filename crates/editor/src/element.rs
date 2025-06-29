@@ -21,6 +21,7 @@ use crate::{
         ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
+    gutter::breakpoint_indicator::breakpoint_indicator_path,
     hover_popover::{
         self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
         POPOVER_RIGHT_OFFSET, hover_at,
@@ -30,6 +31,7 @@ use crate::{
     mouse_context_menu::{self, MenuPosition},
     scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
 };
+
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use file_icons::FileIcons;
@@ -42,12 +44,12 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length,
+    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
-    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    Window, anchored, canvas, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -61,7 +63,7 @@ use multi_buffer::{
 
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
+    debugger::breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointSessionState},
     project_settings::{GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
@@ -2757,7 +2759,16 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
+                    let button = self.render_breakpoint(
+                        editor,
+                        snapshot,
+                        text_anchor,
+                        display_row,
+                        row,
+                        &bp,
+                        window,
+                        cx,
+                    );
 
                     let button = prepaint_gutter_button(
                         button,
@@ -2774,6 +2785,184 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    fn render_breakpoint(
+        &self,
+        editor: &Editor,
+        snapshot: &EditorSnapshot,
+        position: Anchor,
+        row: DisplayRow,
+        multibuffer_row: MultiBufferRow,
+        breakpoint: &Breakpoint,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let element_id =
+            ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
+
+        // === Extract text style and calculate dimensions ===
+        let text_style = self.style.text.clone();
+        let font_size = text_style.font_size;
+        let font_size_px = font_size.to_pixels(window.rem_size());
+        let rem_size = window.rem_size();
+
+        // Calculate font scale relative to a baseline font size
+        const BASELINE_FONT_SIZE: f32 = 14.0; // Default editor font size
+        let font_scale = font_size_px / px(BASELINE_FONT_SIZE);
+
+        let line_height: Pixels = text_style.line_height.to_pixels(font_size, rem_size);
+
+        // Debug font metrics
+        dbg!(font_size);
+        dbg!(font_size_px);
+        dbg!(rem_size);
+        dbg!(BASELINE_FONT_SIZE);
+        dbg!(font_scale);
+        dbg!(line_height);
+
+        // Helper to scale pixel values based on font size
+        let scale_px = |value: f32| px(value) * font_scale;
+
+        const HORIZONTAL_OFFSET: f32 = 40.0;
+        const VERTICAL_OFFSET: f32 = 4.0;
+
+        let horizontal_offset = scale_px(HORIZONTAL_OFFSET);
+        let vertical_offset = px(VERTICAL_OFFSET);
+        let indicator_height = line_height - vertical_offset;
+
+        let line_number_width = self.max_line_number_width(snapshot, window, cx);
+        let indicator_width = dbg!(line_number_width) + scale_px(HORIZONTAL_OFFSET);
+
+        // Debug indicator dimensions
+        dbg!(horizontal_offset);
+        dbg!(vertical_offset);
+        dbg!(indicator_height);
+        dbg!(indicator_width);
+
+        let is_disabled = breakpoint.is_disabled();
+        let breakpoint_arc = Arc::from(breakpoint.clone());
+
+        let (is_hovered, collides_with_existing) = editor.gutter_breakpoint_indicator.0.map_or(
+            (false, false),
+            |PhantomBreakpointIndicator {
+                 is_active,
+                 display_row,
+                 collides_with_existing_breakpoint,
+             }| {
+                (
+                    is_active && display_row == row,
+                    collides_with_existing_breakpoint,
+                )
+            },
+        );
+
+        let indicator_color = if is_hovered {
+            cx.theme().colors().ghost_element_hover
+        } else if is_disabled {
+            cx.theme().status().info.alpha(0.64)
+        } else {
+            cx.theme().status().info.alpha(0.48)
+        };
+
+        let primary_action = if is_disabled {
+            "enable"
+        } else if is_hovered && !collides_with_existing {
+            "set"
+        } else {
+            "unset"
+        };
+
+        let mut tooltip_text = format!("Click to {primary_action}");
+
+        if collides_with_existing && !is_disabled {
+            use std::fmt::Write;
+            let modifier_key = gpui::Keystroke {
+                modifiers: Modifiers::secondary_key(),
+                ..Default::default()
+            };
+            write!(tooltip_text, ", {modifier_key}-click to disable").ok();
+        }
+
+        div()
+            .id(element_id)
+            .cursor_pointer()
+            .absolute()
+            .left_0()
+            .w(indicator_width)
+            .h(indicator_height)
+            .child(
+                canvas(
+                    |_bounds, _cx, _style| {},
+                    move |bounds, _cx, window, _style| {
+                        // Debug canvas bounds
+                        dbg!(&bounds);
+
+                        // Adjust bounds to account for horizontal offset
+                        let adjusted_bounds = Bounds {
+                            origin: point(bounds.origin.x + horizontal_offset, bounds.origin.y),
+                            size: size(bounds.size.width, indicator_height),
+                        };
+
+                        // Debug adjusted bounds
+                        dbg!(&adjusted_bounds);
+                        dbg!(font_scale);
+
+                        // Generate the breakpoint indicator path
+                        let path =
+                            breakpoint_indicator_path(adjusted_bounds, font_scale, is_disabled);
+
+                        // Paint the path with the calculated color
+                        window.paint_path(path, indicator_color);
+                    },
+                )
+                .size_full(),
+            )
+            .on_click({
+                let editor_weak = self.editor.downgrade();
+                let breakpoint = breakpoint_arc.clone();
+                move |event, window, cx| {
+                    let action = if event.modifiers().platform || breakpoint.is_disabled() {
+                        BreakpointEditAction::InvertState
+                    } else {
+                        BreakpointEditAction::Toggle
+                    };
+
+                    let Some(editor_strong) = editor_weak.upgrade() else {
+                        return;
+                    };
+
+                    window.focus(&editor_strong.focus_handle(cx));
+                    editor_strong.update(cx, |editor, cx| {
+                        editor.edit_breakpoint_at_anchor(
+                            position,
+                            breakpoint.as_ref().clone(),
+                            action,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_mouse_down(gpui::MouseButton::Right, {
+                let editor_weak = self.editor.downgrade();
+                let anchor_position = position.clone();
+                move |event, window, cx| {
+                    let Some(editor_strong) = editor_weak.upgrade() else {
+                        return;
+                    };
+
+                    editor_strong.update(cx, |editor, cx| {
+                        editor.set_breakpoint_context_menu(
+                            row,
+                            Some(anchor_position.clone()),
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3034,7 +3223,7 @@ impl EditorElement {
         scroll_position: gpui::Point<f32>,
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
-        active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
+        _active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
@@ -3090,16 +3279,7 @@ impl EditorElement {
                     return None;
                 }
 
-                let color = active_rows
-                    .get(&display_row)
-                    .map(|spec| {
-                        if spec.breakpoint {
-                            cx.theme().colors().debugger_accent
-                        } else {
-                            cx.theme().colors().editor_active_line_number
-                        }
-                    })
-                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+                let color = cx.theme().colors().editor_active_line_number;
                 let shaped_line =
                     self.shape_line_number(SharedString::from(&line_number), color, window);
                 let scroll_top = scroll_position.y * line_height;
@@ -5577,6 +5757,9 @@ impl EditorElement {
         cx: &mut App,
     ) {
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+            for breakpoint in layout.breakpoints.iter_mut() {
+                breakpoint.paint(window, cx);
+            }
             window.with_element_namespace("crease_toggles", |window| {
                 for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
                     crease_toggle.paint(window, cx);
@@ -5589,12 +5772,23 @@ impl EditorElement {
                 }
             });
 
-            for breakpoint in layout.breakpoints.iter_mut() {
-                breakpoint.paint(window, cx);
-            }
-
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
+            }
+
+            let show_git_gutter = layout
+                .position_map
+                .snapshot
+                .show_git_diff_gutter
+                .unwrap_or_else(|| {
+                    matches!(
+                        ProjectSettings::get_global(cx).git.git_gutter,
+                        Some(GitGutterSetting::TrackedFiles)
+                    )
+                });
+
+            if show_git_gutter {
+                Self::paint_gutter_diff_hunks(layout, window, cx)
             }
         });
     }
@@ -5617,20 +5811,6 @@ impl EditorElement {
                     window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
                 }
             }
-        }
-
-        let show_git_gutter = layout
-            .position_map
-            .snapshot
-            .show_git_diff_gutter
-            .unwrap_or_else(|| {
-                matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
-                    Some(GitGutterSetting::TrackedFiles)
-                )
-            });
-        if show_git_gutter {
-            Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -6879,7 +7059,8 @@ impl EditorElement {
         layout.width
     }
 
-    fn max_line_number_width(
+    /// Get the width of the longest line number in the current editor in Pixels
+    pub(crate) fn max_line_number_width(
         &self,
         snapshot: &EditorSnapshot,
         window: &mut Window,
@@ -6974,7 +7155,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    button: IconButton,
+    button: impl IntoElement,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
@@ -8960,16 +9141,15 @@ impl Element for EditorElement {
                     self.paint_indent_guides(layout, window, cx);
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                        self.paint_gutter_highlights(layout, window, cx);
+                        self.paint_gutter_indicators(layout, window, cx);
+                    }
+                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_blamed_display_rows(layout, window, cx);
                         self.paint_line_numbers(layout, window, cx);
                     }
 
                     self.paint_text(layout, window, cx);
-
-                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                        self.paint_gutter_highlights(layout, window, cx);
-                        self.paint_gutter_indicators(layout, window, cx);
-                    }
 
                     if !layout.blocks.is_empty() {
                         window.with_element_namespace("blocks", |window| {
