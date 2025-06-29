@@ -86,6 +86,9 @@ For example to disable Lintr linting and suppress code snippet suggestions (both
 }
 ```
 
+<!--
+TBD: R REPL Docs
+
 ## REPL
 
 ### Ark Installation
@@ -116,6 +119,4 @@ unzip ark-latest-linux.zip ark
 sudo mv /tmp/ark /usr/local/bin/
 ```
 
-<!--
-TBD: R REPL Docs
 -->
