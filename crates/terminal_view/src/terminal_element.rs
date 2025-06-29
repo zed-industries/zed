@@ -135,8 +135,6 @@ impl BatchedTextRun {
             }
         }
 
-        let mut is_monospace = true;
-
         // Get font ID for the font
         let Ok(font_id) = text_system.font_id(font) else {
             // If we can't get font ID, zed will default to monospace
@@ -151,21 +149,16 @@ impl BatchedTextRun {
         let tolerance = px(0.1); // Small tolerance for floating point comparison
         let mut last_width = None;
 
-        for ch in test_chars {
-            if let Ok(advance) = text_system.advance(font_id, font_size_pixels, ch) {
-                if let Some(last_width) = last_width {
-                    if (advance.width - last_width).abs() > tolerance {
-                        is_monospace = false;
-                        break;
-                    }
-                }
-                last_width = Some(advance.width);
-            } else {
-                // If we can't measure a character, assume not monospace
-                is_monospace = false;
-                break;
-            }
-        }
+        let is_monospace = test_chars.iter().all(|&ch| {
+            text_system
+                .advance(font_id, font_size_pixels, ch)
+                .map_or(false, |advance| {
+                    let result =
+                        last_width.map_or(true, |last| (advance.width - last).abs() <= tolerance);
+                    last_width = Some(advance.width);
+                    result
+                })
+        });
 
         // Store result in cache
         if let Ok(mut cache) = MONOSPACE_FONT_CACHE.write() {
