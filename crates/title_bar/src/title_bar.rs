@@ -558,21 +558,24 @@ impl TitleBar {
         }
     }
 
+    fn sign_in_with_notifications(client: Arc<client::Client>, window: &Window, cx: &App) {
+        window
+            .spawn(cx, async move |cx| {
+                client
+                    .authenticate_and_connect(true, &cx)
+                    .await
+                    .into_response()
+                    .notify_async_err(cx);
+            })
+            .detach();
+    }
+
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
-                let client = client.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        client
-                            .authenticate_and_connect(true, &cx)
-                            .await
-                            .into_response()
-                            .notify_async_err(cx);
-                    })
-                    .detach();
+                Self::sign_in_with_notifications(client.clone(), window, cx);
             })
     }
 
@@ -641,9 +644,11 @@ impl TitleBar {
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
+            let show_sign_in = TitleBarSettings::get_global(cx).show_sign_in;
+            let client = self.client.clone();
             PopoverMenu::new("user-menu")
                 .anchor(Corner::TopRight)
-                .menu(|window, cx| {
+                .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
@@ -659,6 +664,12 @@ impl TitleBar {
                                 "Extensions",
                                 zed_actions::Extensions::default().boxed_clone(),
                             )
+                            .when(!show_sign_in, |menu| {
+                                let client = client.clone();
+                                menu.separator().entry("Sign In", None, move |window, cx| {
+                                    Self::sign_in_with_notifications(client.clone(), window, cx);
+                                })
+                            })
                     })
                     .into()
                 })
