@@ -1,6 +1,6 @@
 [package]
 name = "x_ai"
-version = "0.1.0"
+version = "0.0.1"
 edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
