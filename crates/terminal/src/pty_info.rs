@@ -155,4 +155,64 @@ impl PtyProcessInfo {
     pub fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
     }
+
+    pub fn has_active_child_processes_readonly(&self) -> bool {
+        let main_pid = self.pid_getter().fallback_pid();
+
+        // Create a temporary system instance to inspect all processes
+        let process_refresh_kind = ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_exe(UpdateKind::Always);
+        let refresh_kind = RefreshKind::new().with_processes(process_refresh_kind);
+        let mut temp_system = System::new_with_specifics(refresh_kind);
+
+        temp_system
+            .refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, process_refresh_kind);
+
+        let mut shell_pids = Vec::new();
+
+        for process in temp_system.processes().values() {
+            if let Some(parent_pid) = process.parent() {
+                if parent_pid == Pid::from_u32(main_pid) {
+                    if let Some(name) = process.name().to_str() {
+                        if is_shell_process(name) {
+                            shell_pids.push(process.pid());
+                        } else {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        for shell_pid in &shell_pids {
+            for process in temp_system.processes().values() {
+                if let Some(parent_pid) = process.parent() {
+                    if parent_pid == *shell_pid {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+}
+
+/// Helper function to determine if a process name is a shell process
+fn is_shell_process(process_name: &str) -> bool {
+    matches!(
+        process_name,
+        "bash"
+            | "zsh"
+            | "fish"
+            | "sh"
+            | "csh"
+            | "tcsh"
+            | "ksh"
+            | "dash"
+            | "powershell"
+            | "pwsh"
+            | "cmd"
+    )
 }
