@@ -901,6 +901,7 @@ impl Database {
                         // on number of files only. That shouldn't be a huge deal in practice.
                         size: None,
                         is_fifo: db_entry.is_fifo,
+                        is_broken_symlink: false, // todo!: use actual db_entry.is_broken_symlink
                     });
                 }
             }

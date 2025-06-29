@@ -179,6 +179,7 @@ struct EntryDetails {
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+    is_broken_symlink: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
@@ -1428,6 +1429,15 @@ impl ProjectPanel {
 
         cx: &mut Context<Self>,
     ) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            eprintln!("I am here");
+            if entry.is_broken_symlink {
+                // todo!: Raise error when user tries to open a non symlinked file.
+                eprintln!("Cannot open broken symlink: {}", entry.path.display());
+                return;
+            }
+        }
+
         cx.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,
@@ -2810,6 +2820,7 @@ impl ProjectPanel {
                 canonical_path: parent_entry.canonical_path.clone(),
                 char_bag: parent_entry.char_bag,
                 is_fifo: parent_entry.is_fifo,
+                is_broken_symlink: parent_entry.is_broken_symlink,
             },
             git_summary,
         }
@@ -3439,6 +3450,7 @@ impl ProjectPanel {
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
                         canonical_path: entry.canonical_path.clone(),
+                        is_broken_symlink: entry.is_broken_symlink,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -3882,6 +3894,7 @@ impl ProjectPanel {
             .canonical_path
             .as_ref()
             .map(|f| f.to_string_lossy().to_string());
+        let is_broken_symlink = details.is_broken_symlink;
         let path = details.path.clone();
         let path_for_external_paths = path.clone();
         let path_for_dragged_selection = path.clone();
@@ -4199,14 +4212,14 @@ impl ProjectPanel {
                         }
                     })
                     .selectable(false)
-                    .when_some(canonical_path, |this, path| {
+                    .when(canonical_path.is_some() || is_broken_symlink, |this| {
                         this.end_slot::<AnyElement>(
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
                                 .tooltip(move |window, cx| {
                                     Tooltip::with_meta(
-                                        path.to_string(),
+                                        "Some string",
                                         None,
                                         "Symbolic Link",
                                         window,
