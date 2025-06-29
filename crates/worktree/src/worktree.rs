@@ -4354,8 +4354,9 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
-                        log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
-                        continue;
+                        log::warn!("error reading target of symlink {child_abs_path:?}: {err:#}",);
+                        // Return the original path as a fallback
+                        child_abs_path.to_path_buf()
                     }
                 };
 
