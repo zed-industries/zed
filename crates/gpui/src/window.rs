@@ -826,6 +826,7 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    wait_for_pending_keystroke: Option<oneshot::Receiver<()>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
 }
@@ -1109,6 +1110,7 @@ impl Window {
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
+            wait_for_pending_keystroke: None,
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
             focus_listeners: SubscriberSet::new(),
@@ -1301,6 +1303,25 @@ impl Window {
             style.refine(refinement);
         }
         style
+    }
+
+    /// This function sets up an internal receiver that can later be awaited by calling
+    /// [`wait_until_finished_handling_keystrokes`]. The returned sender should be used to notify
+    /// that keystroke handling has completed.
+    pub fn finished_handled_keystroke_after(&mut self) -> oneshot::Sender<()> {
+        let (tx, rx) = oneshot::channel();
+        self.wait_for_pending_keystroke.replace(rx);
+        tx
+    }
+
+    /// This function retrieves and removes the receiver that was set by a previous call to
+    /// [`finished_handled_keystroke_after`]
+    pub fn wait_until_finished_handling_keystrokes(&mut self) -> oneshot::Receiver<()> {
+        if let Some(waiter) = self.wait_for_pending_keystroke.take() {
+            waiter
+        } else {
+            oneshot::channel().1
+        }
     }
 
     /// Check if the platform window is maximized
