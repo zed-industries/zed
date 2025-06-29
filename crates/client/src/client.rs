@@ -149,7 +149,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
-        move |_: &SignIn, cx| {
+        move |_: &SignIn, _window, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(
                     async move |cx| match client.authenticate_and_connect(true, &cx).await {
@@ -171,7 +171,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
 
     cx.on_action({
         let client = client.clone();
-        move |_: &SignOut, cx| {
+        move |_: &SignOut, _window, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
                     client.sign_out(&cx).await;
@@ -183,7 +183,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
 
     cx.on_action({
         let client = client.clone();
-        move |_: &Reconnect, cx| {
+        move |_: &Reconnect, _window, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
                     client.reconnect(&cx);

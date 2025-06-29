@@ -12,7 +12,7 @@ use std::sync::Arc;
 use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
+use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_window_or_new_workspace};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
@@ -20,18 +20,20 @@ use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut App) {
-    cx.on_action(|action: &zed_actions::theme_selector::Toggle, cx| {
+    cx.on_action(|action: &zed_actions::theme_selector::Toggle, window, cx| {
         let action = action.clone();
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+        with_window_or_new_workspace(window, cx, move |workspace, window, cx| {
             toggle_theme_selector(workspace, &action, window, cx);
         });
     });
-    cx.on_action(|action: &zed_actions::icon_theme_selector::Toggle, cx| {
-        let action = action.clone();
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            toggle_icon_theme_selector(workspace, &action, window, cx);
-        });
-    });
+    cx.on_action(
+        |action: &zed_actions::icon_theme_selector::Toggle, window, cx| {
+            let action = action.clone();
+            with_window_or_new_workspace(window, cx, move |workspace, window, cx| {
+                toggle_icon_theme_selector(workspace, &action, window, cx);
+            });
+        },
+    );
 }
 
 fn toggle_theme_selector(

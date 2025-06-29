@@ -16,7 +16,7 @@ use settings::{SettingsStore, VsCodeSettingsSource};
 use ui::prelude::*;
 use util::truncate_and_remove_front;
 use workspace::item::{Item, ItemEvent};
-use workspace::{Workspace, with_active_or_new_workspace};
+use workspace::{Workspace, with_window_or_new_workspace};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 
@@ -42,8 +42,8 @@ pub struct ImportCursorSettings {
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &OpenSettingsEditor, cx| {
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+    cx.on_action(|_: &OpenSettingsEditor, window, cx| {
+        with_window_or_new_workspace(window, cx, move |workspace, window, cx| {
             let existing = workspace
                 .active_pane()
                 .read(cx)

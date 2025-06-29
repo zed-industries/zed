@@ -742,7 +742,7 @@ fn main() {
                 cx.activate(true);
             })
             .unwrap();
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &Quit, _window, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     });
 }

@@ -438,7 +438,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &Open, cx: &mut App| {
+        move |_: &Open, _window: Option<&mut Window>, cx: &mut App| {
             if let Some(app_state) = app_state.upgrade() {
                 prompt_and_open_paths(
                     app_state,
@@ -454,7 +454,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     });
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &OpenFiles, cx: &mut App| {
+        move |_: &OpenFiles, _window: Option<&mut Window>, cx: &mut App| {
             let directories = cx.can_select_mixed_files_and_dirs();
             if let Some(app_state) = app_state.upgrade() {
                 prompt_and_open_paths(
@@ -2029,23 +2029,12 @@ impl Workspace {
         }
     }
 
-    pub fn close_global(_: &CloseWindow, cx: &mut App) {
-        cx.defer(|cx| {
-            cx.windows().iter().find(|window| {
-                window
-                    .update(cx, |_, window, _| {
-                        if window.is_window_active() {
-                            //This can only get called when the window's project connection has been lost
-                            //so we don't need to prompt the user for anything and instead just close the window
-                            window.remove_window();
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            });
-        });
+    pub fn close_global(_: &CloseWindow, window: Option<&mut Window>, _cx: &mut App) {
+        if let Some(window) = window {
+            //This can only get called when the window's project connection has been lost
+            //so we don't need to prompt the user for anything and instead just close the window
+            window.remove_window();
+        }
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
@@ -7244,31 +7233,23 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn reload(reload: &Reload, cx: &mut App) {
+pub fn reload(reload: &Reload, window: Option<&mut Window>, cx: &mut App) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
-    let mut workspace_windows = cx
+    let workspace_windows = cx
         .windows()
         .into_iter()
         .filter_map(|window| window.downcast::<Workspace>())
         .collect::<Vec<_>>();
 
-    // If multiple windows have unsaved changes, and need a save prompt,
-    // prompt in the active window before switching to a different window.
-    workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
-
     let mut prompt = None;
-    if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
-        prompt = window
-            .update(cx, |_, window, cx| {
-                window.prompt(
-                    PromptLevel::Info,
-                    "Are you sure you want to restart?",
-                    None,
-                    &["Restart", "Cancel"],
-                    cx,
-                )
-            })
-            .ok();
+    if let (true, Some(window)) = (should_confirm, window) {
+        prompt = Some(window.prompt(
+            PromptLevel::Info,
+            "Are you sure you want to restart?",
+            None,
+            &["Restart", "Cancel"],
+            cx,
+        ));
     }
 
     let binary_path = reload.binary_path.clone();
@@ -7747,17 +7728,17 @@ pub fn ssh_workspace_position_from_db(
     })
 }
 
-pub fn with_active_or_new_workspace(
+pub fn with_window_or_new_workspace(
+    mut window: Option<&mut Window>,
     cx: &mut App,
     f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
 ) {
-    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
-        Some(workspace) => {
-            cx.defer(move |cx| {
-                workspace
-                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
-                    .log_err();
-            });
+    match window
+        .as_mut()
+        .and_then(|w| w.root::<Workspace>().flatten().map(|ws| (w, ws)))
+    {
+        Some((window, workspace)) => {
+            workspace.update(cx, |workspace, cx| f(workspace, window, cx));
         }
         None => {
             let app_state = AppState::global(cx);

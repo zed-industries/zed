@@ -11,7 +11,7 @@ pub fn init(_app_state: std::sync::Arc<workspace::AppState>, cx: &mut gpui::App)
     use std::any::TypeId;
     use workspace::notifications::NotifyResultExt as _;
 
-    cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
+    cx.on_action(|_: &zed_actions::dev::ToggleInspector, _window, cx| {
         Err::<(), anyhow::Error>(anyhow::anyhow!(
             "dev::ToggleInspector is only available in debug builds"
         ))
