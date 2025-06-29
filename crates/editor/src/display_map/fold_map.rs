@@ -1,3 +1,5 @@
+use crate::display_map::inlay_map::InlayChunk;
+
 use super::{
     Highlights,
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
@@ -1060,7 +1062,7 @@ impl sum_tree::Summary for TransformSummary {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd, Hash)]
-pub struct FoldId(usize);
+pub struct FoldId(pub(super) usize);
 
 impl From<FoldId> for ElementId {
     fn from(val: FoldId) -> Self {
@@ -1311,7 +1313,7 @@ impl DerefMut for ChunkRendererContext<'_, '_> {
 pub struct FoldChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, InlayOffset)>,
     inlay_chunks: InlayChunks<'a>,
-    inlay_chunk: Option<(InlayOffset, language::Chunk<'a>)>,
+    inlay_chunk: Option<(InlayOffset, InlayChunk<'a>)>,
     inlay_offset: InlayOffset,
     output_offset: FoldOffset,
     max_output_offset: FoldOffset,
@@ -1403,7 +1405,8 @@ impl<'a> Iterator for FoldChunks<'a> {
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((buffer_chunk_start, mut chunk)) = self.inlay_chunk.clone() {
+        if let Some((buffer_chunk_start, mut inlay_chunk)) = self.inlay_chunk.clone() {
+            let chunk = &mut inlay_chunk.chunk;
             let buffer_chunk_end = buffer_chunk_start + InlayOffset(chunk.text.len());
             let transform_end = self.transform_cursor.end(&()).1;
             let chunk_end = buffer_chunk_end.min(transform_end);
@@ -1428,7 +1431,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 underline: chunk.underline,
-                renderer: None,
+                renderer: inlay_chunk.renderer,
             });
         }
 
