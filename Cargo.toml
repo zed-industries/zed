@@ -459,7 +459,9 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.20.1", default-features = false }
+git2 = { version = "0.20.1", default-features = false, features = [
+    "vendored-libgit2",
+] }
 globset = "0.4"
 handlebars = "4.3"
 heck = "0.5"
