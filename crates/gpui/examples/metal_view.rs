@@ -1,15 +1,16 @@
 use gpui::{prelude::*, *};
 use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use metal::{Device, MTLPrimitiveType, RenderCommandEncoderRef, RenderPipelineState, TextureRef};
 
 struct MetalViewExample {
+    start_time: Instant,
     #[cfg(target_os = "macos")]
     pipeline_state: Option<RenderPipelineState>,
     #[cfg(target_os = "macos")]
     device: Option<Device>,
-    epoch: u64,
 }
 
 impl MetalViewExample {
@@ -19,28 +20,21 @@ impl MetalViewExample {
             pipeline_state: None,
             #[cfg(target_os = "macos")]
             device: None,
-            epoch: 0,
+            start_time: Instant::now(),
         }
-    }
-
-    fn update_epoch(&mut self, cx: &mut Context<Self>) {
-        const MAX_EPOCH: u64 = 1024;
-        self.epoch = (self.epoch + 1) % MAX_EPOCH;
-        cx.notify();
     }
 
     #[cfg(target_os = "macos")]
     fn setup_metal(&mut self) {
         let device = Device::system_default().expect("no Metal device");
 
-        // Shader that properly handles viewport transformation
+        // Simplified shader for debugging
         let shader_source = r#"
             #include <metal_stdlib>
             using namespace metal;
 
             struct Uniforms {
-                float2 viewport_size;
-                float epoch;
+                float time;
             };
 
             struct VertexOut {
@@ -54,35 +48,30 @@ impl MetalViewExample {
             ) {
                 VertexOut out;
 
-                // Define a quad in pixel coordinates (0,0 to viewport_size)
-                float2 positions[6] = {
-                    float2(0.0, 0.0),                                      // top-left
-                    float2(uniforms.viewport_size.x, 0.0),                // top-right
-                    float2(0.0, uniforms.viewport_size.y),                // bottom-left
-                    float2(uniforms.viewport_size.x, 0.0),                // top-right
-                    float2(uniforms.viewport_size.x, uniforms.viewport_size.y), // bottom-right
-                    float2(0.0, uniforms.viewport_size.y),                // bottom-left
+                // Define triangle vertices in normalized device coordinates
+                float2 positions[3] = {
+                    float2( 0.0,  0.5),  // Top
+                    float2(-0.5, -0.5),  // Bottom left
+                    float2( 0.5, -0.5)   // Bottom right
                 };
 
-                // Transform from pixel coordinates to normalized device coordinates
+                float3 colors[3] = {
+                    float3(1.0, 0.0, 0.0),  // Red
+                    float3(0.0, 1.0, 0.0),  // Green
+                    float3(0.0, 0.0, 1.0)   // Blue
+                };
+
+                // Apply rotation
                 float2 pos = positions[vid];
-                float2 ndc = (pos / uniforms.viewport_size) * 2.0 - 1.0;
-                ndc.y = -ndc.y; // Flip Y axis to match screen coordinates
-
-                out.position = float4(ndc, 0.0, 1.0);
-
-                // Create an animated gradient using epoch
-                float2 uv = pos / uniforms.viewport_size;
-                float time = uniforms.epoch * 0.01;
-
-                // Animate the gradient with some trigonometric functions
-                out.color = float4(
-                    0.5 + 0.5 * sin(uv.x * 3.14159 + time),          // Red
-                    0.5 + 0.5 * sin(uv.y * 3.14159 + time * 1.3),    // Green
-                    0.5 + 0.5 * sin((uv.x + uv.y) * 3.14159 - time * 0.7), // Blue
-                    1.0                                                // Full opacity
+                float c = cos(uniforms.time);
+                float s = sin(uniforms.time);
+                float2 rotated = float2(
+                    pos.x * c - pos.y * s,
+                    pos.x * s + pos.y * c
                 );
 
+                out.position = float4(rotated, 0.0, 1.0);
+                out.color = float4(colors[vid], 1.0);
                 return out;
             }
 
@@ -98,7 +87,7 @@ impl MetalViewExample {
         let vertex_function = library.get_function("vertex_main", None).unwrap();
         let fragment_function = library.get_function("fragment_main", None).unwrap();
 
-        // Create pipeline state
+        // Create pipeline state - no vertex descriptor needed for vertex_id based rendering
         let pipeline_descriptor = metal::RenderPipelineDescriptor::new();
         pipeline_descriptor.set_vertex_function(Some(&vertex_function));
         pipeline_descriptor.set_fragment_function(Some(&fragment_function));
@@ -108,6 +97,9 @@ impl MetalViewExample {
             .object_at(0)
             .unwrap();
         color_attachment.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+
+        // Note: Depth testing is not enabled for now as it requires proper depth buffer setup
+        // in the GPUI rendering pipeline
 
         // Enable blending
         color_attachment.set_blending_enabled(true);
@@ -127,7 +119,7 @@ impl MetalViewExample {
     }
 
     #[cfg(target_os = "macos")]
-    fn create_render_callback(&self, epoch: u64) -> MetalRenderCallback {
+    fn create_render_callback(&self, time_delta: f32) -> MetalRenderCallback {
         let pipeline_state = self.pipeline_state.clone().unwrap();
 
         Arc::new(
@@ -158,29 +150,21 @@ impl MetalViewExample {
                 };
                 encoder.set_scissor_rect(scissor_rect);
 
-                // Pass viewport size as uniform
+                // Pass time as uniform
+                let time = time_delta * 2.0; // Scale for reasonable rotation speed
                 #[repr(C)]
                 struct Uniforms {
-                    viewport_size: [f32; 2],
-                    epoch: f32,
+                    time: f32,
                 }
-
-                let uniforms = Uniforms {
-                    viewport_size: [
-                        bounds.size.width.0 * scale_factor,
-                        bounds.size.height.0 * scale_factor,
-                    ],
-                    epoch: epoch as f32,
-                };
-
+                let uniforms = Uniforms { time };
                 encoder.set_vertex_bytes(
                     0,
                     std::mem::size_of::<Uniforms>() as u64,
                     &uniforms as *const Uniforms as *const _,
                 );
 
-                // Draw the quad
-                encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, 6);
+                // Draw triangle using vertex_id - no vertex buffer needed
+                encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, 3);
             },
         )
     }
@@ -194,8 +178,7 @@ impl Render for MetalViewExample {
             self.setup_metal();
         }
 
-        // Update epoch and request animation frame
-        self.update_epoch(cx);
+        // Request animation frame
         window.request_animation_frame();
 
         div()
@@ -218,14 +201,15 @@ impl Render for MetalViewExample {
             )
             .child(
                 div()
-                    .child("This is useful for special effects, custom visualizations, or when you need GPU performance that GPUI's standard elements can't provide")
+                    .child("This example shows a rotating 3D cube - the 'Hello World' of 3D graphics programming")
                     .text_sm()
                     .text_color(rgb(0x888888)),
             )
             .child(div().overflow_hidden().child(
                 #[cfg(target_os = "macos")]
                 {
-                    let callback = self.create_render_callback(self.epoch);
+                    let elapsed = self.start_time.elapsed().as_secs_f32();
+                    let callback = self.create_render_callback(elapsed);
                     metal_view()
                         .render_with_shared(callback)
                         .w(px(600.0))

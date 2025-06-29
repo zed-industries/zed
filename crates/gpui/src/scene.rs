@@ -43,6 +43,8 @@ impl Scene {
         self.monochrome_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        #[cfg(target_os = "macos")]
+        self.metal_views.clear();
     }
 
     #[cfg_attr(
