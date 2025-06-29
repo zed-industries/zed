@@ -424,6 +424,7 @@ actions!(
         ShowSignatureHelp,
         ShowWordCompletions,
         ShuffleLines,
+        SortLinesByLength,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
