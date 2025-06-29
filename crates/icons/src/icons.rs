@@ -263,6 +263,7 @@ pub enum IconName {
     Wand,
     Warning,
     WholeWord,
+    XAi,
     X,
     XCircle,
     ZedAssistant,
