@@ -1468,6 +1468,88 @@ impl Render for DebugPanel {
                 if has_sessions {
                     this.children(self.active_session.clone())
                 } else {
+                    let welcome_experience = v_flex()
+                        .w_2_3()
+                        .h_full()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .pr_8()
+                        .child(
+                            Button::new("spawn-new-session-empty-state", "New Session")
+                                .icon(IconName::Plus)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::Start)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(crate::Start.boxed_clone(), cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("edit-debug-settings", "Edit debug.json")
+                                .icon(IconName::Code)
+                                .icon_size(IconSize::XSmall)
+                                .color(Color::Muted)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::Start)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::OpenProjectDebugTasks.boxed_clone(),
+                                        cx,
+                                    );
+                                }),
+                        )
+                        .child(
+                            Button::new("open-debugger-docs", "Debugger Docs")
+                                .icon(IconName::Book)
+                                .color(Color::Muted)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::Start)
+                                .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
+                        )
+                        .child(
+                            Button::new(
+                                "spawn-new-session-install-extensions",
+                                "Debugger Extensions",
+                            )
+                            .icon(IconName::Blocks)
+                            .color(Color::Muted)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .icon_position(IconPosition::Start)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::Extensions {
+                                        category_filter: Some(
+                                            zed_actions::ExtensionCategoryFilter::DebugAdapters,
+                                        ),
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            }),
+                        );
+                    let breakpoint_list = v_flex()
+                        .group("base-breakpoint-list")
+                        .items_start()
+                        .min_w_1_3()
+                        .h_full()
+                        .p_1()
+                        .child(
+                            h_flex()
+                                .pl_1()
+                                .w_full()
+                                .justify_between()
+                                .child(Label::new("Breakpoints").size(LabelSize::Small))
+                                .child(
+                                    h_flex().visible_on_hover("base-breakpoint-list").child(
+                                        self.breakpoint_list.read(cx).render_control_strip(),
+                                    ),
+                                ),
+                        )
+                        .child(Divider::horizontal())
+                        .child(self.breakpoint_list.clone());
                     this.child(
                         v_flex()
                             .h_full()
@@ -1475,65 +1557,13 @@ impl Render for DebugPanel {
                             .items_center()
                             .justify_center()
                             .child(
-                                h_flex().size_full()
+                                h_flex()
+                                    .size_full()
                                     .items_start()
-
-                                    .child(v_flex().group("base-breakpoint-list").items_start().min_w_1_3().h_full().p_1()
-                                        .child(h_flex().pl_1().w_full().justify_between()
-                                            .child(Label::new("Breakpoints").size(LabelSize::Small))
-                                            .child(h_flex().visible_on_hover("base-breakpoint-list").child(self.breakpoint_list.read(cx).render_control_strip())))
-                                        .child(Divider::horizontal())
-                                        .child(self.breakpoint_list.clone()))
+                                    .child(breakpoint_list)
                                     .child(Divider::vertical())
-                                    .child(
-                                        v_flex().w_2_3().h_full().items_center().justify_center()
-                                            .gap_2()
-                                            .pr_8()
-                                            .child(
-                                                Button::new("spawn-new-session-empty-state", "New Session")
-                                                    .icon(IconName::Plus)
-                                                    .icon_size(IconSize::XSmall)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(crate::Start.boxed_clone(), cx);
-                                                    })
-                                            )
-                                            .child(
-                                                Button::new("edit-debug-settings", "Edit debug.json")
-                                                    .icon(IconName::Code)
-                                                    .icon_size(IconSize::XSmall)
-                                                    .color(Color::Muted)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(zed_actions::OpenProjectDebugTasks.boxed_clone(), cx);
-                                                    })
-                                            )
-                                            .child(
-                                                Button::new("open-debugger-docs", "Debugger Docs")
-                                                    .icon(IconName::Book)
-                                                    .color(Color::Muted)
-                                                    .icon_size(IconSize::XSmall)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url("https://zed.dev/docs/debugger")
-                                                    })
-                                            )
-                                            .child(
-                                                Button::new("spawn-new-session-install-extensions", "Debugger Extensions")
-                                                    .icon(IconName::Blocks)
-                                                    .color(Color::Muted)
-                                                    .icon_size(IconSize::XSmall)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(zed_actions::Extensions { category_filter: Some(zed_actions::ExtensionCategoryFilter::DebugAdapters)}.boxed_clone(), cx);
-                                                    })
-                                            )
-                                    )
-                            )
+                                    .child(welcome_experience),
+                            ),
                     )
                 }
             })
