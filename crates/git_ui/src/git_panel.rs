@@ -1509,17 +1509,25 @@ impl GitPanel {
         } else if message.trim().is_empty() {
             return None;
         }
-        let buffer = cx.new(|cx| {
-            let mut buffer = Buffer::local(message, cx);
-            buffer.set_language(git_commit_language, cx);
-            buffer
-        });
-        let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
-        let wrapped_message = editor.update(cx, |editor, cx| {
-            editor.select_all(&Default::default(), window, cx);
-            editor.rewrap(&Default::default(), window, cx);
-            editor.text(cx)
-        });
+
+        let wrapped_message = message
+            .split("\n")
+            .map(|line| {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(line.to_string(), cx);
+                    buffer.set_language(git_commit_language.clone(), cx);
+                    buffer
+                });
+                let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
+                editor.update(cx, |editor, cx| {
+                    editor.select_all(&Default::default(), window, cx);
+                    editor.rewrap(&Default::default(), window, cx);
+                    editor.text(cx)
+                })
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+
         if wrapped_message.trim().is_empty() {
             return None;
         }
