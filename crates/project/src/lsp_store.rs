@@ -6227,6 +6227,11 @@ impl LspStore {
     ) -> Option<DocumentColorTask> {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
+        if let Some(local) = self.as_local() {
+            if !local.registered_buffers.contains_key(&buffer_id) {
+                return None;
+            }
+        }
 
         match fetch_strategy {
             ColorFetchStrategy::IgnoreCache => {}
