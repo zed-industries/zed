@@ -967,6 +967,7 @@ fn toggle_show_inline_completions_for_language(
         all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
+            .0
             .entry(language.name())
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
