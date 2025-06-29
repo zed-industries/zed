@@ -161,6 +161,68 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_broken_symlink(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "target_dir": {
+                "actual_file.txt": "hello"
+            },
+            "symlink_to_file": {
+                "type": "symlink",
+                "target": "../target_dir/actual_file.txt"
+            },
+            "broken_symlink_to_file": {
+                "type": "symlink",
+                "target": "../target_dir/nonexistent_file.txt"
+            },
+            "symlink_to_dir": {
+                "type": "symlink",
+                "target": "../target_dir"
+            },
+            "broken_symlink_to_dir": {
+                "type": "symlink",
+                "target": "../nonexistent_dir"
+            }
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let valid_symlink_file = tree.entry_for_path("symlink_to_file").unwrap();
+        assert!(!valid_symlink_file.is_symlink_broken);
+        assert!(valid_symlink_file.canonical_path.is_some());
+
+        let broken_symlink_file = tree.entry_for_path("broken_symlink_to_file").unwrap();
+        assert!(broken_symlink_file.is_symlink_broken);
+        assert!(broken_symlink_file.canonical_path.is_none());
+
+        let valid_symlink_dir = tree.entry_for_path("symlink_to_dir").unwrap();
+        assert!(!valid_symlink_dir.is_symlink_broken);
+        assert!(valid_symlink_dir.canonical_path.is_some());
+
+        let broken_symlink_dir = tree.entry_for_path("broken_symlink_to_dir").unwrap();
+        assert!(broken_symlink_dir.is_symlink_broken);
+        assert!(broken_symlink_dir.canonical_path.is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());

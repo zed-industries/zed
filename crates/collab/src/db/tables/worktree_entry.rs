@@ -22,6 +22,7 @@ pub struct Model {
     pub scan_id: i64,
     pub is_fifo: bool,
     pub canonical_path: Option<String>,
+    pub is_symlink_broken: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

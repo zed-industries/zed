@@ -3475,6 +3475,7 @@ pub struct Entry {
     pub size: u64,
     pub char_bag: CharBag,
     pub is_fifo: bool,
+    pub is_symlink_broken: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3628,6 +3629,7 @@ impl Entry {
             is_private: false,
             char_bag,
             is_fifo: metadata.is_fifo,
+            is_symlink_broken: false,
         }
     }
 
@@ -4351,33 +4353,35 @@ impl BackgroundScanner {
             if job.is_external {
                 child_entry.is_external = true;
             } else if child_metadata.is_symlink {
-                let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
-                    Ok(path) => path,
-                    Err(err) => {
-                        log::warn!("error reading target of symlink {child_abs_path:?}: {err:#}",);
-                        // Return the original path as a fallback
-                        child_abs_path.to_path_buf()
-                    }
-                };
+                match self.fs.canonicalize(&child_abs_path).await {
+                    Ok(canonical_path) => {
+                        // lazily canonicalize the root path in order to determine if
+                        // symlinks point outside of the worktree.
+                        let root_canonical_path = match &root_canonical_path {
+                            Some(path) => path,
+                            None => match self.fs.canonicalize(&root_abs_path).await {
+                                Ok(path) => root_canonical_path.insert(path),
+                                Err(err) => {
+                                    log::error!(
+                                        "error canonicalizing root {:?}: {:?}",
+                                        root_abs_path,
+                                        err
+                                    );
+                                    continue;
+                                }
+                            },
+                        };
 
-                // lazily canonicalize the root path in order to determine if
-                // symlinks point outside of the worktree.
-                let root_canonical_path = match &root_canonical_path {
-                    Some(path) => path,
-                    None => match self.fs.canonicalize(&root_abs_path).await {
-                        Ok(path) => root_canonical_path.insert(path),
-                        Err(err) => {
-                            log::error!("error canonicalizing root {:?}: {:?}", root_abs_path, err);
-                            continue;
+                        if !canonical_path.starts_with(root_canonical_path) {
+                            child_entry.is_external = true;
                         }
-                    },
-                };
-
-                if !canonical_path.starts_with(root_canonical_path) {
-                    child_entry.is_external = true;
+                        child_entry.canonical_path = Some(canonical_path.into());
+                    }
+                    Err(err) => {
+                        log::warn!("broken symlink {child_abs_path:?}: {err:#}");
+                        child_entry.is_symlink_broken = true;
+                    }
                 }
-
-                child_entry.canonical_path = Some(canonical_path.into());
             }
 
             if child_entry.is_dir() {
@@ -5467,6 +5471,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
                 .canonical_path
                 .as_ref()
                 .map(|path| path.as_ref().to_proto()),
+            is_symlink_broken: entry.is_symlink_broken,
         }
     }
 }
@@ -5502,6 +5507,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             is_private: false,
             char_bag,
             is_fifo: entry.is_fifo,
+            is_symlink_broken: entry.is_symlink_broken,
         })
     }
 }
