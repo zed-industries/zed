@@ -59,7 +59,6 @@ use crate::platform::{
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
-    scap_screen_capture::scap_screen_sources,
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
@@ -1480,13 +1479,28 @@ impl LinuxClient for X11Client {
     }
 
     fn is_screen_capture_supported(&self) -> bool {
-        true
+        cfg!(feature = "screen-capture")
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        use crate::platform::scap_screen_capture::scap_screen_sources;
         scap_screen_sources(&self.0.borrow().common.foreground_executor)
+    }
+
+    #[cfg(not(feature = "screen-capture"))]
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow!(
+                "gpui was compiled without the screen-capture feature"
+            )))
+            .ok();
+        sources_rx
     }
 
     fn open_window(
