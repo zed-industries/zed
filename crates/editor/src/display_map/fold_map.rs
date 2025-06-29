@@ -1060,7 +1060,7 @@ impl sum_tree::Summary for TransformSummary {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd, Hash)]
-pub struct FoldId(usize);
+pub struct FoldId(pub(super) usize);
 
 impl From<FoldId> for ElementId {
     fn from(val: FoldId) -> Self {

@@ -39,7 +39,10 @@ use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
-use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
+use gpui::{
+    App, Context, Entity, Font, HighlightStyle, IntoElement as _, LineLayout, Pixels,
+    UnderlineStyle,
+};
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
@@ -66,7 +69,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
+use ui::{ParentElement, SharedString, Styled, div, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -960,7 +963,8 @@ impl DisplaySnapshot {
                 inline_completion: Some(editor_style.inline_completion_styles),
             },
         )
-        .flat_map(|chunk| {
+        .enumerate()
+        .flat_map(|(i, chunk)| {
             let mut highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
@@ -1014,14 +1018,48 @@ impl DisplaySnapshot {
                 highlight_style = Some(diagnostic_highlight);
             }
 
-            HighlightedChunk {
+            let mut highlighted_chunk = HighlightedChunk {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+            };
+
+            if chunk.is_inlay && highlighted_chunk.replacement.is_none() {
+                if let Some(inlay_color) = highlighted_chunk
+                    .style
+                    .as_ref()
+                    .and_then(|style| style.color)
+                {
+                    let border_color = editor_style.border;
+                    highlighted_chunk.replacement =
+                        Some(ChunkReplacement::Renderer(ChunkRenderer {
+                            id: FoldId(i),
+                            render: Arc::new(move |_| {
+                                div()
+                                    .w_4()
+                                    .h_4()
+                                    .relative()
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .right_1()
+                                            .w_3p5()
+                                            .h_3p5()
+                                            .border_2()
+                                            .border_color(border_color)
+                                            .bg(inlay_color),
+                                    )
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                            measured_width: None,
+                        }))
+                }
             }
-            .highlight_invisibles(editor_style)
+
+            highlighted_chunk.highlight_invisibles(editor_style)
         })
     }
 
