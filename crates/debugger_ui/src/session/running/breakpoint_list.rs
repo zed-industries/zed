@@ -877,20 +877,13 @@ impl LineBreakpoint {
                 })
                 .cursor_pointer()
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Label::new(format!("{}:{}", self.name, self.line))
-                                .size(LabelSize::Small)
-                                .line_height_style(ui::LineHeightStyle::UiLabel),
-                        )
-                        .children(self.dir.clone().map(|dir| {
-                            Label::new(dir)
-                                .color(Color::Muted)
-                                .size(LabelSize::Small)
-                                .line_height_style(ui::LineHeightStyle::UiLabel)
-                        })),
+                    Label::new(format!("{}:{}", self.name, self.line))
+                        .size(LabelSize::Small)
+                        .line_height_style(ui::LineHeightStyle::UiLabel),
                 )
+                .when_some(self.dir.as_ref(), |this, parent_dir| {
+                    this.tooltip(Tooltip::text(format!("Worktree parent path: {parent_dir}")))
+                })
                 .child(BreakpointOptionsStrip {
                     props,
                     breakpoint: BreakpointEntry {
