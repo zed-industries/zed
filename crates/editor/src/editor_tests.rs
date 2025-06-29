@@ -30,7 +30,7 @@ use language::{
     },
     tree_sitter_python,
 };
-use language_settings::{Formatter, FormatterList, IndentGuideSettings};
+use language_settings::{Formatter, IndentGuideSettings};
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -3567,7 +3567,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "TOML".into(),
                 LanguageSettingsContent {
@@ -5145,7 +5145,7 @@ fn test_transpose(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_rewrap(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "Markdown".into(),
                 LanguageSettingsContent {
@@ -9326,7 +9326,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
-        settings.languages.insert(
+        settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -9890,7 +9890,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
-        settings.languages.insert(
+        settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -9933,9 +9933,9 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
-        ))
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+            Formatter::LanguageServer { name: None },
+        ]))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10062,21 +10062,17 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-        settings.defaults.formatter =
-            Some(language_settings::SelectedFormatter::List(FormatterList(
-                vec![
-                    Formatter::LanguageServer { name: None },
-                    Formatter::CodeActions(
-                        [
-                            ("code-action-1".into(), true),
-                            ("code-action-2".into(), true),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ),
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+            Formatter::LanguageServer { name: None },
+            Formatter::CodeActions(
+                [
+                    ("code-action-1".into(), true),
+                    ("code-action-2".into(), true),
                 ]
-                .into(),
-            )))
+                .into_iter()
+                .collect(),
+            ),
+        ]))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10328,9 +10324,9 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
-        ))
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+            Formatter::LanguageServer { name: None },
+        ]))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -14905,7 +14901,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         .unwrap();
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
-        language_settings.languages.insert(
+        language_settings.languages.0.insert(
             language_name.clone(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -15803,9 +15799,9 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::Prettier].into()),
-        ))
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+            Formatter::Prettier,
+        ]))
     });
 
     let fs = FakeFs::new(cx.executor());

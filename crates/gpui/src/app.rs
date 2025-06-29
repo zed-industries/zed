@@ -1388,8 +1388,8 @@ impl App {
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(&'static str, Option<schemars::schema::Schema>)> {
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Vec<(&'static str, Option<schemars::Schema>)> {
         self.actions.action_schemas(generator)
     }
 

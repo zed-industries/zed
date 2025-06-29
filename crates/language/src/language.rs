@@ -39,11 +39,7 @@ use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServer
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
-use schemars::{
-    JsonSchema,
-    r#gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -694,7 +690,6 @@ pub struct LanguageConfig {
     pub matcher: LanguageMatcher,
     /// List of bracket types in a language.
     #[serde(default)]
-    #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
@@ -944,10 +939,9 @@ fn deserialize_regex<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Regex>, D
     }
 }
 
-fn regex_json_schema(_: &mut SchemaGenerator) -> Schema {
-    Schema::Object(SchemaObject {
-        instance_type: Some(InstanceType::String.into()),
-        ..Default::default()
+fn regex_json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({
+        "type": "string"
     })
 }
 
@@ -988,12 +982,12 @@ pub struct FakeLspAdapter {
 /// This struct includes settings for defining which pairs of characters are considered brackets and
 /// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
 #[derive(Clone, Debug, Default, JsonSchema)]
+#[schemars(with = "Vec::<BracketPairContent>")]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
     /// A list of tree-sitter scopes for which a given bracket should not be active.
     /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
-    #[serde(skip)]
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 
@@ -1001,10 +995,6 @@ impl BracketPairConfig {
     pub fn is_closing_brace(&self, c: char) -> bool {
         self.pairs.iter().any(|pair| pair.end.starts_with(c))
     }
-}
-
-fn bracket_pair_config_json_schema(r#gen: &mut SchemaGenerator) -> Schema {
-    Option::<Vec<BracketPairContent>>::json_schema(r#gen)
 }
 
 #[derive(Deserialize, JsonSchema)]

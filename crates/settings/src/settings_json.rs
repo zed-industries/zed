@@ -1,11 +1,9 @@
-use std::{ops::Range, sync::LazyLock};
-
 use anyhow::Result;
-use schemars::schema::{
-    ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
-};
+use gpui::App;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use std::borrow::Cow;
+use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
 
@@ -14,71 +12,13 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
 }
 
-impl SettingsJsonSchemaParams<'_> {
-    pub fn font_family_schema(&self) -> Schema {
-        let available_fonts: Vec<_> = self.font_names.iter().cloned().map(Value::String).collect();
-
-        SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        }
-        .into()
-    }
-
-    pub fn font_fallback_schema(&self) -> Schema {
-        SchemaObject {
-            instance_type: Some(SingleOrVec::Vec(vec![
-                InstanceType::Array,
-                InstanceType::Null,
-            ])),
-            array: Some(Box::new(ArrayValidation {
-                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    self.font_family_schema(),
-                ))),
-                unique_items: Some(true),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
-        .into()
-    }
+pub struct ParameterizedJsonSchema {
+    pub name: fn() -> Cow<'static, str>,
+    pub schema:
+        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams, &App) -> schemars::Schema,
 }
 
-type PropertyName<'a> = &'a str;
-type ReferencePath<'a> = &'a str;
-
-/// Modifies the provided [`RootSchema`] by adding references to all of the specified properties.
-///
-/// # Examples
-///
-/// ```
-/// # let root_schema = RootSchema::default();
-/// add_references_to_properties(&mut root_schema, &[
-///     ("property_a", "#/definitions/DefinitionA"),
-///     ("property_b", "#/definitions/DefinitionB"),
-/// ])
-/// ```
-pub fn add_references_to_properties(
-    root_schema: &mut RootSchema,
-    properties_with_references: &[(PropertyName, ReferencePath)],
-) {
-    for (property, definition) in properties_with_references {
-        let Some(schema) = root_schema.schema.object().properties.get_mut(*property) else {
-            log::warn!("property '{property}' not found in JSON schema");
-            continue;
-        };
-
-        match schema {
-            Schema::Object(schema) => {
-                schema.reference = Some(definition.to_string());
-            }
-            Schema::Bool(_) => {
-                // Boolean schemas can't have references.
-            }
-        }
-    }
-}
+inventory::collect!(ParameterizedJsonSchema);
 
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
