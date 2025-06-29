@@ -1839,5 +1839,12 @@ fn is_monospace(font: &Font, text_system: &WindowTextSystem) -> bool {
         cache.insert(cache_key, is_monospace);
     }
 
+    if !is_monospace {
+        log::warn!(
+            "Font {} is not monospace. Terminal performance may be affected.",
+            font.family
+        );
+    }
+
     is_monospace
 }
