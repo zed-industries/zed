@@ -237,8 +237,11 @@ impl Project {
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
                 if let Some(python_venv_directory) = &python_venv_directory {
-                    python_venv_activate_command =
-                        this.python_activate_command(python_venv_directory, &settings.detect_venv);
+                    python_venv_activate_command = this.python_activate_command(
+                        python_venv_directory,
+                        &settings.detect_venv,
+                        &settings.shell,
+                    );
                 }
 
                 match &ssh_details {
@@ -463,10 +466,25 @@ impl Project {
             })
     }
 
+    fn get_activate_venv_script_file(&self, program: Option<&str>) -> &'static str {
+        let shell = std::path::Path::new(program.unwrap_or(""))
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        match shell {
+            "fish" => "activate.fish",
+            "tcsh" => "activate.csh",
+            "nu" => "activate.nu",
+            "powershell" | "pwsh" => "activate.ps1",
+            _ => "activate",
+        }
+    }
+
     fn python_activate_command(
         &self,
         venv_base_directory: &Path,
         venv_settings: &VenvSettings,
+        shell: &Shell,
     ) -> Option<String> {
         let venv_settings = venv_settings.as_option()?;
         let activate_keyword = match venv_settings.activate_script {
@@ -479,7 +497,15 @@ impl Project {
             _ => "source",
         };
         let activate_script_name = match venv_settings.activate_script {
-            terminal_settings::ActivateScript::Default => "activate",
+            terminal_settings::ActivateScript::Default => match shell {
+                Shell::Program(program) => self.get_activate_venv_script_file(Some(program)),
+                Shell::WithArguments {
+                    program,
+                    args: _,
+                    title_override: _,
+                } => self.get_activate_venv_script_file(Some(program)),
+                Shell::System => self.get_activate_venv_script_file(None),
+            },
             terminal_settings::ActivateScript::Csh => "activate.csh",
             terminal_settings::ActivateScript::Fish => "activate.fish",
             terminal_settings::ActivateScript::Nushell => "activate.nu",
