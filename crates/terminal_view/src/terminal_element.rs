@@ -35,11 +35,11 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
+use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
+
 // Cache for monospace font detection results
 static MONOSPACE_FONT_CACHE: LazyLock<RwLock<HashMap<String, bool>>> =
     LazyLock::new(|| RwLock::new(HashMap::with_capacity(1)));
-
-use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -124,50 +124,6 @@ impl BatchedTextRun {
         self.style.len += c.len_utf8();
     }
 
-    fn is_monospace(font: &Font, text_system: &WindowTextSystem) -> bool {
-        // Create a cache key from font family and weight/style
-        let cache_key = font.family.to_string();
-
-        // Check cache first
-        if let Ok(cache) = MONOSPACE_FONT_CACHE.read() {
-            if let Some(&is_monospace) = cache.get(&cache_key) {
-                return is_monospace;
-            }
-        }
-
-        // Get font ID for the font
-        let Ok(font_id) = text_system.font_id(font) else {
-            // If we can't get font ID, zed will default to monospace
-            return true;
-        };
-
-        let font_size_pixels = Pixels(10.0);
-
-        // Compare widths of a few different characters to determine if font is monospace
-        // In a monospace font, all characters should have the same advance width
-        let test_chars = ['z', 'e', 'd', '0', '1', '_', ' '];
-        let tolerance = px(0.1); // Small tolerance for floating point comparison
-        let mut last_width = None;
-
-        let is_monospace = test_chars.iter().all(|&ch| {
-            text_system
-                .advance(font_id, font_size_pixels, ch)
-                .map_or(false, |advance| {
-                    let result =
-                        last_width.map_or(true, |last| (advance.width - last).abs() <= tolerance);
-                    last_width = Some(advance.width);
-                    result
-                })
-        });
-
-        // Store result in cache
-        if let Ok(mut cache) = MONOSPACE_FONT_CACHE.write() {
-            cache.insert(cache_key, is_monospace);
-        }
-
-        is_monospace
-    }
-
     pub fn paint(
         &self,
         origin: Point<Pixels>,
@@ -175,7 +131,7 @@ impl BatchedTextRun {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if Self::is_monospace(&self.style.font, &window.text_system()) {
+        if is_monospace(&self.style.font, &window.text_system()) {
             // For monospace fonts, we can render the entire batch at once
             let pos = Point::new(
                 (origin.x + self.start_point.column as f32 * dimensions.cell_width).floor(),
@@ -1840,4 +1796,48 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
             terminal::get_color_at_index(*i as usize, theme)
         }
     }
+}
+
+fn is_monospace(font: &Font, text_system: &WindowTextSystem) -> bool {
+    // Create a cache key from font family and weight/style
+    let cache_key = font.family.to_string();
+
+    // Check cache first
+    if let Ok(cache) = MONOSPACE_FONT_CACHE.read() {
+        if let Some(&is_monospace) = cache.get(&cache_key) {
+            return is_monospace;
+        }
+    }
+
+    // Get font ID for the font
+    let Ok(font_id) = text_system.font_id(font) else {
+        // If we can't get font ID, zed will default to monospace
+        return true;
+    };
+
+    let font_size_pixels = Pixels(10.0);
+
+    // Compare widths of a few different characters to determine if font is monospace
+    // In a monospace font, all characters should have the same advance width
+    let test_chars = ['z', 'e', 'd', '0', '1', '_', ' '];
+    let tolerance = px(0.1); // Small tolerance for floating point comparison
+    let mut last_width = None;
+
+    let is_monospace = test_chars.iter().all(|&ch| {
+        text_system
+            .advance(font_id, font_size_pixels, ch)
+            .map_or(false, |advance| {
+                let result =
+                    last_width.map_or(true, |last| (advance.width - last).abs() <= tolerance);
+                last_width = Some(advance.width);
+                result
+            })
+    });
+
+    // Store result in cache
+    if let Ok(mut cache) = MONOSPACE_FONT_CACHE.write() {
+        cache.insert(cache_key, is_monospace);
+    }
+
+    is_monospace
 }
