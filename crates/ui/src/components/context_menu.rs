@@ -762,6 +762,17 @@ impl ContextMenu {
         self
     }
 
+    fn should_render_menu_item(&self, ix: usize, item: &ContextMenuItem) -> bool {
+        match item {
+            ContextMenuItem::Separator => {
+                ix > 0
+                    && ix < self.items.len() - 1
+                    && !matches!(self.items.get(ix - 1), Some(ContextMenuItem::Separator))
+            }
+            _ => true,
+        }
+    }
+
     fn render_menu_item(
         &self,
         ix: usize,
@@ -1136,11 +1147,15 @@ impl Render for ContextMenu {
                                 el
                             })
                             .child(
-                                List::new().children(
-                                    self.items.iter().enumerate().map(|(ix, item)| {
-                                        self.render_menu_item(ix, item, window, cx)
-                                    }),
-                                ),
+                                List::new().children(self.items.iter().enumerate().filter_map(
+                                    |(ix, item)| {
+                                        if self.should_render_menu_item(ix, item) {
+                                            Some(self.render_menu_item(ix, item, window, cx))
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                )),
                             ),
                     ),
             )
