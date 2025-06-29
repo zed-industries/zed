@@ -1145,6 +1145,10 @@
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
       //
+      // The amount of padding between the end of the source line and the start
+      // of the inline blame in units of em widths.
+      // "padding": 6
+      //
       // Whether or not to display the git commit summary on the same line.
       // "show_commit_summary": false
       //
