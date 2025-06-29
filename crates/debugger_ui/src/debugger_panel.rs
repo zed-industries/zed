@@ -868,7 +868,7 @@ impl DebugPanel {
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
-                                                session.read(cx).is_running().then(|| {
+                                                session.read(cx).is_started().then(|| {
                                                     session.update(cx, |session, cx| {
                                                         session.threads(cx)
                                                     })
