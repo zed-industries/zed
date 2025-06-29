@@ -1468,13 +1468,16 @@ impl Render for DebugPanel {
                 if has_sessions {
                     this.children(self.active_session.clone())
                 } else {
+                    let docked_to_bottom = self.position(window, cx) == DockPosition::Bottom;
                     let welcome_experience = v_flex()
-                        .w_2_3()
-                        .h_full()
+                        .when_else(
+                            docked_to_bottom,
+                            |this| this.w_2_3().h_full().pr_8(),
+                            |this| this.w_full().h_1_3(),
+                        )
                         .items_center()
                         .justify_center()
                         .gap_2()
-                        .pr_8()
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
                                 .icon(IconName::Plus)
@@ -1530,26 +1533,29 @@ impl Render for DebugPanel {
                                 );
                             }),
                         );
-                    let breakpoint_list = v_flex()
-                        .group("base-breakpoint-list")
-                        .items_start()
-                        .min_w_1_3()
-                        .h_full()
-                        .p_1()
-                        .child(
-                            h_flex()
-                                .pl_1()
-                                .w_full()
-                                .justify_between()
-                                .child(Label::new("Breakpoints").size(LabelSize::Small))
-                                .child(
-                                    h_flex().visible_on_hover("base-breakpoint-list").child(
+                    let breakpoint_list =
+                        v_flex()
+                            .group("base-breakpoint-list")
+                            .items_start()
+                            .when_else(
+                                docked_to_bottom,
+                                |this| this.min_w_1_3().h_full(),
+                                |this| this.w_full().h_2_3(),
+                            )
+                            .p_1()
+                            .child(
+                                h_flex()
+                                    .pl_1()
+                                    .w_full()
+                                    .justify_between()
+                                    .child(Label::new("Breakpoints").size(LabelSize::Small))
+                                    .child(h_flex().visible_on_hover("base-breakpoint-list").child(
                                         self.breakpoint_list.read(cx).render_control_strip(),
-                                    ),
-                                ),
-                        )
-                        .child(Divider::horizontal())
-                        .child(self.breakpoint_list.clone());
+                                    ))
+                                    .track_focus(&self.breakpoint_list.focus_handle(cx)),
+                            )
+                            .child(Divider::horizontal())
+                            .child(self.breakpoint_list.clone());
                     this.child(
                         v_flex()
                             .h_full()
@@ -1557,12 +1563,22 @@ impl Render for DebugPanel {
                             .items_center()
                             .justify_center()
                             .child(
-                                h_flex()
+                                div()
+                                    .when_else(docked_to_bottom, Div::h_flex, Div::v_flex)
                                     .size_full()
-                                    .items_start()
-                                    .child(breakpoint_list)
-                                    .child(Divider::vertical())
-                                    .child(welcome_experience),
+                                    .map(|this| {
+                                        if docked_to_bottom {
+                                            this.items_start()
+                                                .child(breakpoint_list)
+                                                .child(Divider::vertical())
+                                                .child(welcome_experience)
+                                        } else {
+                                            this.items_end()
+                                                .child(welcome_experience)
+                                                .child(Divider::horizontal())
+                                                .child(breakpoint_list)
+                                        }
+                                    }),
                             ),
                     )
                 }
