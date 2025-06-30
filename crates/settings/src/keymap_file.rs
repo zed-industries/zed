@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
 };
 use schemars::{
     JsonSchema,
@@ -679,6 +679,13 @@ impl KeymapFile {
                     continue;
                 };
                 for (keystrokes, action) in bindings {
+                    let Ok(keystrokes) = keystrokes
+                        .split_whitespace()
+                        .map(Keystroke::parse)
+                        .collect::<Result<Vec<_>, _>>()
+                    else {
+                        continue;
+                    };
                     if keystrokes != target.keystrokes {
                         continue;
                     }
@@ -693,9 +700,9 @@ impl KeymapFile {
             if let Some(index) = found_index {
                 let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
                     &keymap_contents,
-                    &["bindings", target.keystrokes],
+                    &["bindings", &target.keystrokes_unparsed()],
                     Some(&source_action_value),
-                    Some(source.keystrokes),
+                    Some(&source.keystrokes_unparsed()),
                     index,
                     tab_size,
                 )
@@ -727,7 +734,7 @@ impl KeymapFile {
             value.insert("bindings".to_string(), {
                 let mut bindings = serde_json::Map::new();
                 let action = keybinding.action_value()?;
-                bindings.insert(keybinding.keystrokes.into(), action);
+                bindings.insert(keybinding.keystrokes_unparsed(), action);
                 bindings.into()
             });
 
@@ -754,11 +761,11 @@ pub enum KeybindUpdateOperation<'a> {
 }
 
 pub struct KeybindUpdateTarget<'a> {
-    context: Option<&'a str>,
-    keystrokes: &'a str,
-    action_name: &'a str,
-    use_key_equivalents: bool,
-    input: Option<&'a str>,
+    pub context: Option<&'a str>,
+    pub keystrokes: &'a [Keystroke],
+    pub action_name: &'a str,
+    pub use_key_equivalents: bool,
+    pub input: Option<&'a str>,
 }
 
 impl<'a> KeybindUpdateTarget<'a> {
@@ -773,6 +780,16 @@ impl<'a> KeybindUpdateTarget<'a> {
             None => action_name,
         };
         return Ok(value);
+    }
+
+    fn keystrokes_unparsed(&self) -> String {
+        let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
+        for keystroke in self.keystrokes {
+            keystrokes.push_str(&keystroke.unparse());
+            keystrokes.push(' ');
+        }
+        keystrokes.pop();
+        keystrokes
     }
 }
 
@@ -857,6 +874,8 @@ mod tests {
 
     #[test]
     fn keymap_update() {
+        use gpui::Keystroke;
+
         zlog::init_test();
         #[track_caller]
         fn check_keymap_update(
@@ -869,10 +888,18 @@ mod tests {
             pretty_assertions::assert_eq!(expected.to_string(), result);
         }
 
+        #[track_caller]
+        fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
+            return keystrokes
+                .split(' ')
+                .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
+                .collect();
+        }
+
         check_keymap_update(
             "[]",
             KeybindUpdateOperation::Add(KeybindUpdateTarget {
-                keystrokes: "ctrl-a",
+                keystrokes: &parse_keystrokes("ctrl-a"),
                 action_name: "zed::SomeAction",
                 context: None,
                 use_key_equivalents: false,
@@ -898,7 +925,7 @@ mod tests {
             ]"#
             .unindent(),
             KeybindUpdateOperation::Add(KeybindUpdateTarget {
-                keystrokes: "ctrl-b",
+                keystrokes: &parse_keystrokes("ctrl-b"),
                 action_name: "zed::SomeOtherAction",
                 context: None,
                 use_key_equivalents: false,
@@ -929,7 +956,7 @@ mod tests {
             ]"#
             .unindent(),
             KeybindUpdateOperation::Add(KeybindUpdateTarget {
-                keystrokes: "ctrl-b",
+                keystrokes: &parse_keystrokes("ctrl-b"),
                 action_name: "zed::SomeOtherAction",
                 context: None,
                 use_key_equivalents: false,
@@ -965,7 +992,7 @@ mod tests {
             ]"#
             .unindent(),
             KeybindUpdateOperation::Add(KeybindUpdateTarget {
-                keystrokes: "ctrl-b",
+                keystrokes: &parse_keystrokes("ctrl-b"),
                 action_name: "zed::SomeOtherAction",
                 context: Some("Zed > Editor && some_condition = true"),
                 use_key_equivalents: true,
@@ -1004,14 +1031,14 @@ mod tests {
             .unindent(),
             KeybindUpdateOperation::Replace {
                 target: KeybindUpdateTarget {
-                    keystrokes: "ctrl-a",
+                    keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
                     input: None,
                 },
                 source: KeybindUpdateTarget {
-                    keystrokes: "ctrl-b",
+                    keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
@@ -1050,14 +1077,14 @@ mod tests {
             .unindent(),
             KeybindUpdateOperation::Replace {
                 target: KeybindUpdateTarget {
-                    keystrokes: "ctrl-a",
+                    keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
                     input: None,
                 },
                 source: KeybindUpdateTarget {
-                    keystrokes: "ctrl-b",
+                    keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
@@ -1091,14 +1118,14 @@ mod tests {
             .unindent(),
             KeybindUpdateOperation::Replace {
                 target: KeybindUpdateTarget {
-                    keystrokes: "ctrl-a",
+                    keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeNonexistentAction",
                     context: None,
                     use_key_equivalents: false,
                     input: None,
                 },
                 source: KeybindUpdateTarget {
-                    keystrokes: "ctrl-b",
+                    keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
@@ -1134,14 +1161,14 @@ mod tests {
             .unindent(),
             KeybindUpdateOperation::Replace {
                 target: KeybindUpdateTarget {
-                    keystrokes: "ctrl-a",
+                    keystrokes: &parse_keystrokes("ctrl-a"),
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
                     input: None,
                 },
                 source: KeybindUpdateTarget {
-                    keystrokes: "ctrl-b",
+                    keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
