@@ -187,7 +187,7 @@ impl Focusable for TerminalView {
     }
 }
 
-const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
+const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(8.);
 
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -953,8 +953,8 @@ impl TerminalView {
                 }))
                 .h_full()
                 .absolute()
-                .right_1()
-                .top_1()
+                .right_0()
+                .top_0()
                 .bottom_0()
                 .w(TERMINAL_SCROLLBAR_WIDTH)
                 .cursor_default()
@@ -1491,7 +1491,7 @@ impl Render for TerminalView {
 
         let focused = self.focus_handle.is_focused(window);
 
-        // Calculate scrollbar width if visible to avoid content overlap
+        // Calculate scrollbar width only when actually visible to prevent text overlap
         let scrollbar_width = if Self::should_show_scrollbar(cx)
             && (self.show_scrollbar || self.scrollbar_state.is_dragging())
             && self.content_mode(window, cx).is_scrollable()
