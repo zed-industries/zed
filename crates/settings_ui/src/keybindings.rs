@@ -32,14 +32,26 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else { return };
+    cx.on_action(|_: &OpenKeymapEditor, cx| {
+        workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let existing = workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<KeymapEditor>());
 
-        workspace.register_action(|workspace, _: &OpenKeymapEditor, window, cx| {
-            let open_keymap_editor =
-                cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
-            workspace.add_item_to_center(Box::new(open_keymap_editor), window, cx);
+            if let Some(existing) = existing {
+                workspace.activate_item(&existing, true, true, window, cx);
+            } else {
+                let keymap_editor =
+                    cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
+                workspace.add_item_to_active_pane(Box::new(keymap_editor), None, true, window, cx);
+            }
         });
+    });
+
+    cx.observe_new(|_workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else { return };
 
         let keymap_ui_actions = [std::any::TypeId::of::<OpenKeymapEditor>()];
 
