@@ -427,7 +427,7 @@ impl KeymapFile {
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {
-        let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
         let deprecations = cx.deprecated_actions_to_preferred_actions();

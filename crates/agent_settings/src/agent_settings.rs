@@ -212,7 +212,6 @@ impl AgentSettingsContent {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
-#[schemars(deny_unknown_fields)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///

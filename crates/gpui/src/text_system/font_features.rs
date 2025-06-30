@@ -143,7 +143,8 @@ impl JsonSchema for FontFeatures {
                     "minimum": 0,
                     "multipleOf": 1
                 }
-            }
+            },
+            "additionalProperties": false
         })
     }
 }
