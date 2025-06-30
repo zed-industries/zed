@@ -719,8 +719,6 @@ pub struct SerializedMessage {
     pub context: String,
     #[serde(default)]
     pub creases: Vec<SerializedCrease>,
-    #[serde(default)]
-    pub is_hidden: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -806,7 +804,6 @@ impl LegacySerializedMessage {
             tool_results: self.tool_results,
             context: String::new(),
             creases: Vec::new(),
-            is_hidden: false,
         }
     }
 }
@@ -1110,7 +1107,6 @@ mod tests {
                     tool_results: vec![],
                     context: "".to_string(),
                     creases: vec![],
-                    is_hidden: false
                 }],
                 version: SerializedThread::VERSION.to_string(),
                 initial_project_snapshot: None,
@@ -1143,7 +1139,6 @@ mod tests {
                     tool_results: vec![],
                     context: "".to_string(),
                     creases: vec![],
-                    is_hidden: false,
                 },
                 SerializedMessage {
                     id: MessageId(2),
@@ -1159,7 +1154,6 @@ mod tests {
                     tool_results: vec![],
                     context: "".to_string(),
                     creases: vec![],
-                    is_hidden: false,
                 },
                 SerializedMessage {
                     id: MessageId(1),
@@ -1176,7 +1170,6 @@ mod tests {
                     }],
                     context: "".to_string(),
                     creases: vec![],
-                    is_hidden: false,
                 },
             ],
             version: SerializedThreadV0_1_0::VERSION.to_string(),
@@ -1208,7 +1201,6 @@ mod tests {
                         tool_results: vec![],
                         context: "".to_string(),
                         creases: vec![],
-                        is_hidden: false
                     },
                     SerializedMessage {
                         id: MessageId(2),
@@ -1229,7 +1221,6 @@ mod tests {
                         }],
                         context: "".to_string(),
                         creases: vec![],
-                        is_hidden: false,
                     },
                 ],
                 version: SerializedThread::VERSION.to_string(),

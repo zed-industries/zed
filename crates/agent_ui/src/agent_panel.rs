@@ -72,7 +72,7 @@ use zed_actions::{
     agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
-use zed_llm_client::{CompletionIntent, UsageLimit};
+use zed_llm_client::UsageLimit;
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 

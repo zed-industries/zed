@@ -195,7 +195,6 @@ pub struct Message {
     pub segments: Vec<MessageSegment>,
     pub loaded_context: LoadedContext,
     pub creases: Vec<MessageCrease>,
-    pub is_hidden: bool,
     pub ui_only: bool,
 }
 
@@ -602,7 +601,6 @@ impl Thread {
         segments: Vec<MessageSegment>,
         loaded_context: LoadedContext,
         creases: Vec<MessageCrease>,
-        is_hidden: bool,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -612,7 +610,6 @@ impl Thread {
             segments,
             loaded_context,
             creases,
-            is_hidden,
             ui_only: false,
         });
         self.touch_updated_at();
@@ -632,7 +629,6 @@ impl Thread {
             segments,
             LoadedContext::default(),
             Vec::new(),
-            false,
             cx,
         )
     }
@@ -678,7 +674,6 @@ impl Thread {
             vec![segment],
             LoadedContext::default(),
             Vec::new(),
-            false,
             cx,
         );
         0
@@ -749,7 +744,6 @@ impl Thread {
             segments: vec![MessageSegment::Text(retry_message)],
             loaded_context: LoadedContext::default(),
             creases: Vec::new(),
-            is_hidden: false,
             ui_only: true,
         });
         self.touch_updated_at();
@@ -1103,7 +1097,7 @@ impl ZedAgent {
             .and_then(|message| {
                 thread
                     .message(message.id)
-                    .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
+                    .map(|next_message| next_message.role == Role::User)
             })
             .unwrap_or(false)
     }
@@ -1190,7 +1184,6 @@ impl ZedAgent {
                         context: None,
                     })
                     .collect(),
-                is_hidden: message.is_hidden,
                 ui_only: false, // UI-only messages are not persisted
             })
             .collect();
@@ -1677,7 +1670,6 @@ impl ZedAgent {
                                     label: crease.label.clone(),
                                 })
                                 .collect(),
-                            is_hidden: message.is_hidden,
                         })
                         .collect(),
                     initial_project_snapshot,
@@ -2245,7 +2237,6 @@ impl ZedAgent {
                 vec![MessageSegment::Text(params.text)],
                 params.context.loaded_context,
                 params.creases,
-                false,
                 cx,
             )
         });

@@ -1934,14 +1934,10 @@ impl ActiveThread {
                 .h_8()
                 .my_3()
                 .mx_5()
-                .when(is_generating_stale || message.is_hidden, |this| {
+                .when(is_generating_stale, |this| {
                     this.child(AnimatedLabel::new("").size(LabelSize::Small))
                 })
         });
-
-        if message.is_hidden {
-            return div().children(loading_dots).into_any();
-        }
 
         let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
             return Empty.into_any();
