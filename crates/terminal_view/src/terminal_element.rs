@@ -1799,7 +1799,6 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
 }
 
 fn is_monospace(font: &Font, text_system: &WindowTextSystem) -> bool {
-    // Create a cache key from font family and weight/style
     let cache_key = font.family.to_string();
 
     // Check cache first
@@ -1809,7 +1808,6 @@ fn is_monospace(font: &Font, text_system: &WindowTextSystem) -> bool {
         }
     }
 
-    // Get font ID for the font
     let Ok(font_id) = text_system.font_id(font) else {
         // If we can't get font ID, zed will default to monospace
         return true;
