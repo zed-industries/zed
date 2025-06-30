@@ -11556,15 +11556,19 @@ impl Editor {
                             let line_text_after_indent = buffer
                                 .text_for_range(indent_end..line_end)
                                 .collect::<String>();
-                            let rewrap_prefix =
-                                language_scope
-                                    .rewrap_prefixes()
-                                    .iter()
-                                    .find_map(|prefix_regex| {
-                                        prefix_regex
-                                            .find_at(&line_text_after_indent, 0)
-                                            .map(|mat| mat.as_str().to_string())
-                                    });
+                            let rewrap_prefix = language_scope
+                                .rewrap_prefixes()
+                                .iter()
+                                .find_map(|prefix_regex| {
+                                    prefix_regex.find(&line_text_after_indent).map(|mat| {
+                                        if mat.start() == 0 {
+                                            Some(mat.as_str().to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .flatten();
                             (comment_prefix, rewrap_prefix)
                         } else {
                             (None, None)
@@ -11573,12 +11577,15 @@ impl Editor {
                 };
 
             let mut ranges = Vec::new();
-            let mut current_range_start = first_row;
             let from_empty_selection = selection.is_empty();
 
+            let mut current_range_start = first_row;
             let mut prev_row = first_row;
-            let (mut prev_indent, mut prev_comment_prefix, mut prev_rewrap_prefix) =
-                indent_and_prefix_for_row(first_row);
+            let (
+                mut current_range_indent,
+                mut current_range_comment_prefix,
+                mut current_range_rewrap_prefix,
+            ) = indent_and_prefix_for_row(first_row);
 
             for row in non_blank_rows_iter.skip(1) {
                 let has_paragraph_break = row > prev_row + 1;
@@ -11586,35 +11593,38 @@ impl Editor {
                 let (row_indent, row_comment_prefix, row_rewrap_prefix) =
                     indent_and_prefix_for_row(row);
 
-                let has_boundary_change = row_indent != prev_indent
-                    || row_comment_prefix != prev_comment_prefix
+                let has_indent_change = row_indent != current_range_indent;
+                let has_comment_change = row_comment_prefix != current_range_comment_prefix;
+
+                let has_boundary_change = has_comment_change
                     || row_rewrap_prefix.is_some()
-                    || prev_rewrap_prefix.is_some();
+                    || (has_indent_change && current_range_comment_prefix.is_some());
 
                 if has_paragraph_break || has_boundary_change {
                     ranges.push((
                         language_settings.clone(),
                         Point::new(current_range_start, 0)
                             ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
-                        prev_indent,
-                        prev_comment_prefix.clone(),
+                        current_range_indent,
+                        current_range_comment_prefix.clone(),
+                        current_range_rewrap_prefix.clone(),
                         from_empty_selection,
                     ));
                     current_range_start = row;
+                    current_range_indent = row_indent;
+                    current_range_comment_prefix = row_comment_prefix;
+                    current_range_rewrap_prefix = row_rewrap_prefix;
                 }
-
                 prev_row = row;
-                prev_indent = row_indent;
-                prev_comment_prefix = row_comment_prefix;
-                prev_rewrap_prefix = row_rewrap_prefix;
             }
 
             ranges.push((
                 language_settings.clone(),
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
-                prev_indent,
-                prev_comment_prefix,
+                current_range_indent,
+                current_range_comment_prefix,
+                current_range_rewrap_prefix,
                 from_empty_selection,
             ));
 
@@ -11624,8 +11634,14 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        for (language_settings, wrap_range, indent_size, comment_prefix, from_empty_selection) in
-            wrap_ranges
+        for (
+            language_settings,
+            wrap_range,
+            indent_size,
+            comment_prefix,
+            rewrap_prefix,
+            from_empty_selection,
+        ) in wrap_ranges
         {
             let mut start_row = wrap_range.start.row;
             let mut end_row = wrap_range.end.row;
@@ -11711,6 +11727,7 @@ impl Editor {
                     .language_settings_at(Point::new(start_row, 0), cx)
                     .preferred_line_length as usize
             });
+
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
                 lines_without_prefixes.join("\n"),
