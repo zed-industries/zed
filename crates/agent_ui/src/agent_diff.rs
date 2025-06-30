@@ -5,7 +5,8 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
-    Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot, ToPoint,
+    Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
+    SelectionEffects, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -171,15 +172,9 @@ impl AgentDiffPane {
 
                     if let Some(first_hunk) = first_hunk {
                         let first_hunk_start = first_hunk.multi_buffer_range().start;
-                        editor.change_selections(
-                            Some(Autoscroll::fit()),
-                            window,
-                            cx,
-                            |selections| {
-                                selections
-                                    .select_anchor_ranges([first_hunk_start..first_hunk_start]);
-                            },
-                        )
+                        editor.change_selections(Default::default(), window, cx, |selections| {
+                            selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
+                        })
                     }
                 }
 
@@ -242,7 +237,7 @@ impl AgentDiffPane {
 
                 if let Some(first_hunk) = first_hunk {
                     let first_hunk_start = first_hunk.multi_buffer_range().start;
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
                         selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
                     })
                 }
@@ -416,7 +411,7 @@ fn update_editor_selection(
     };
 
     if let Some(target_hunk) = target_hunk {
-        editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             let next_hunk_start = target_hunk.multi_buffer_range().start;
             selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
         })
@@ -1380,6 +1375,7 @@ impl AgentDiff {
             | ThreadEvent::ToolConfirmationNeeded
             | ThreadEvent::ToolUseLimitReached
             | ThreadEvent::CancelEditing
+            | ThreadEvent::RetriesFailed { .. }
             | ThreadEvent::ProfileChanged => {}
         }
     }
@@ -1543,7 +1539,7 @@ impl AgentDiff {
                             let first_hunk_start = first_hunk.multi_buffer_range().start;
 
                             editor.change_selections(
-                                Some(Autoscroll::center()),
+                                SelectionEffects::scroll(Autoscroll::center()),
                                 window,
                                 cx,
                                 |selections| {
@@ -1867,7 +1863,7 @@ mod tests {
 
         // Rejecting a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
             });
         });
@@ -2123,7 +2119,7 @@ mod tests {
 
         // Rejecting a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
         editor1.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
             });
         });

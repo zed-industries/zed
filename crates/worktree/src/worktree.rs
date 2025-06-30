@@ -3911,7 +3911,7 @@ impl BackgroundScanner {
                     let Ok(request) = path_prefix_request else { break };
                     log::trace!("adding path prefix {:?}", request.path);
 
-                    let did_scan = self.forcibly_load_paths(&[request.path.clone()]).await;
+                    let did_scan = self.forcibly_load_paths(std::slice::from_ref(&request.path)).await;
                     if did_scan {
                         let abs_path =
                         {

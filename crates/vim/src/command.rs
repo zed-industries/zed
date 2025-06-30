@@ -2,10 +2,9 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
-    Bias, Editor, ToPoint,
+    Bias, Editor, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
-    scroll::Autoscroll,
 };
 use gpui::{Action, App, AppContext as _, Context, Global, Window, actions};
 use itertools::Itertools;
@@ -422,7 +421,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let target = snapshot
                 .buffer_snapshot
                 .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([target..target]);
             });
 
@@ -493,7 +492,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         .disjoint_anchor_ranges()
                         .collect::<Vec<_>>()
                 });
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
@@ -503,7 +502,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         window.dispatch_action(action.action.boxed_clone(), cx);
         cx.defer_in(window, move |vim, window, cx| {
             vim.update_editor(window, cx, |_, editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     if let Some(previous_selections) = previous_selections {
                         s.select_ranges(previous_selections);
                     } else {
@@ -1068,6 +1067,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             )
         }),
         VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
+        VimCommand::new(("di", "splay"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("marks", ""), ToggleMarksView).bang(ToggleMarksView),
         VimCommand::new(("delm", "arks"), ArgumentRequired)
             .bang(DeleteMarks::AllLocal)
@@ -1086,6 +1086,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
+        VimCommand::str(("D", "ebug"), "debug_panel::ToggleFocus"),
         VimCommand::new(("noh", "lsearch"), search::buffer_search::Dismiss),
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
@@ -1455,15 +1456,20 @@ impl OnMatchingLines {
                 editor
                     .update_in(cx, |editor, window, cx| {
                         editor.start_transaction_at(Instant::now(), window, cx);
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
                         });
                         window.dispatch_action(action, cx);
                         cx.defer_in(window, move |editor, window, cx| {
                             let newest = editor.selections.newest::<Point>(cx).clone();
-                            editor.change_selections(None, window, cx, |s| {
-                                s.select(vec![newest]);
-                            });
+                            editor.change_selections(
+                                SelectionEffects::no_scroll(),
+                                window,
+                                cx,
+                                |s| {
+                                    s.select(vec![newest]);
+                                },
+                            );
                             editor.end_transaction_at(Instant::now(), cx);
                         })
                     })
@@ -1566,7 +1572,7 @@ impl Vim {
                 )
                 .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
                     ]);
@@ -1603,10 +1609,10 @@ impl Vim {
             let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
             let range = object
-                .range(&snapshot, start.clone(), around)
+                .range(&snapshot, start.clone(), around, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
                     ]);
@@ -1799,7 +1805,7 @@ impl ShellExec {
                     editor.transact(window, cx, |editor, window, cx| {
                         editor.edit([(range.clone(), text)], cx);
                         let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
                             let point = if is_read {
                                 let point = range.end.to_point(&snapshot);
                                 Point::new(point.row.saturating_sub(1), 0)

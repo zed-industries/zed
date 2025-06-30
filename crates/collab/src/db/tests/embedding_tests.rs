@@ -76,7 +76,10 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     db.purge_old_embeddings().await.unwrap();
 
     // Try to retrieve the purged embeddings
-    let retrieved_embeddings = db.get_embeddings(model, &[digest.clone()]).await.unwrap();
+    let retrieved_embeddings = db
+        .get_embeddings(model, std::slice::from_ref(&digest))
+        .await
+        .unwrap();
     assert!(
         retrieved_embeddings.is_empty(),
         "Old embeddings should have been purged"

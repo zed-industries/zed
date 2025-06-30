@@ -460,8 +460,10 @@ jobs:
           RET_CODE=0
           # Always check style
           [[ "${{ needs.style.result }}"      != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
-          [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
 
+          if [[ "${{ needs.job_spec.outputs.run_docs }}" == "true" ]]; then
+            [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
+          fi
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
             [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }

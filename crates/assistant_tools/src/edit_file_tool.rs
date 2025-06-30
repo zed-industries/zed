@@ -10,7 +10,7 @@ use assistant_tool::{
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, scroll::Autoscroll};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
@@ -823,7 +823,7 @@ impl ToolCard for EditFileToolCard {
                                                         let first_hunk_start =
                                                             first_hunk.multi_buffer_range().start;
                                                         editor.change_selections(
-                                                            Some(Autoscroll::fit()),
+                                                            Default::default(),
                                                             window,
                                                             cx,
                                                             |selections| {
@@ -1065,7 +1065,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
 }

@@ -1,4 +1,4 @@
-use editor::{Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
+use editor::{Bias, Direction, Editor, display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window, actions};
 
 use crate::{Vim, state::Mode};
@@ -29,7 +29,7 @@ impl Vim {
                 .next_change(count, direction)
                 .map(|s| s.to_vec())
             {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     let map = s.display_map();
                     s.select_display_ranges(selections.iter().map(|a| {
                         let point = a.to_display_point(&map);

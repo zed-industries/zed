@@ -778,7 +778,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, true, cx);
+        self.push_to_nav_history(selection.head(), None, true, false, cx);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -1352,7 +1352,7 @@ impl ProjectItem for Editor {
                         cx,
                     );
                     if !restoration_data.selections.is_empty() {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_ranges(clip_ranges(&restoration_data.selections, &snapshot));
                         });
                     }
@@ -1521,7 +1521,7 @@ impl SearchableItem for Editor {
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(window, cx).buffer_snapshot;
-        let selection = self.selections.newest::<usize>(cx);
+        let selection = self.selections.newest_adjusted(cx);
 
         match setting {
             SeedQuerySetting::Never => String::new(),
@@ -1558,7 +1558,7 @@ impl SearchableItem for Editor {
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range]);
         })
     }
@@ -1570,7 +1570,7 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        self.change_selections(None, window, cx, |s| {
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(matches.iter().cloned())
         });
     }

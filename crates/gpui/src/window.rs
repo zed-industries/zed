@@ -206,8 +206,7 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    /// 8MB wasn't quite enough...
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(1024 * 1024));
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
@@ -218,12 +217,8 @@ impl ArenaClearNeeded {
     /// Clear the element arena.
     pub fn clear(self) {
         ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
-            }
             element_arena.clear();
-        })
+        });
     }
 }
 

@@ -430,7 +430,7 @@ impl LogStore {
             log_lines,
             id,
             LogMessage {
-                message: message.trim().to_string(),
+                message: message.trim_end().to_string(),
                 typ,
             },
             language_server_state.log_level,
