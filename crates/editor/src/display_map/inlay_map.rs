@@ -296,12 +296,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                let (prefix, suffix) = chunk.text.split_at(
-                    chunk
-                        .text
-                        .len()
-                        .min(self.transforms.end(&()).0.0 - self.output_offset.0),
+                let split_point = utf8_char_boundary(
+                    chunk.text,
+                    self.transforms.end(&()).0.0 - self.output_offset.0,
                 );
+                let (prefix, suffix) = chunk.text.split_at(split_point);
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
@@ -391,20 +390,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let inlay_chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-                // Ensure we split at a valid UTF-8 character boundary
-                let split_point = inlay_chunk.len().min(next_inlay_highlight_endpoint);
-                let split_point = if split_point < inlay_chunk.len()
-                    && !inlay_chunk.is_char_boundary(split_point)
-                {
-                    // Find the next character boundary after the requested split point
-                    let mut boundary = split_point;
-                    while boundary < inlay_chunk.len() && !inlay_chunk.is_char_boundary(boundary) {
-                        boundary += 1;
-                    }
-                    boundary
-                } else {
-                    split_point
-                };
+
+                let split_point = utf8_char_boundary(inlay_chunk, next_inlay_highlight_endpoint);
                 let (chunk, remainder) = inlay_chunk.split_at(split_point);
                 *inlay_chunk = remainder;
                 if inlay_chunk.is_empty() {
@@ -1156,6 +1143,42 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
     }
 }
 
+/// Given a byte offset into a nonempty string slice, returns the byte index of
+/// the previous valid `char` in the string. We look for the *previous* valid
+/// one because if the index is in the middle of a UTF-8 multibyte sequence, we
+/// can always get from there to a valid index by searching backwards, whereas
+/// if we search forward we may run out of string bytes before finding a `char`.
+///
+/// Panics if given an empty slice.
+#[inline(always)]
+fn utf8_char_boundary(text: &str, byte_index: usize) -> usize {
+    let mut byte_index = byte_index.min(text.len().saturating_sub(1));
+
+    loop {
+        if let Some(byte) = text.as_bytes().get(byte_index) {
+            // The bits in a UTF-8 continuation byte are always 10xxxxxx,
+            // so if we see one of those, we'd be splitting on a continuation
+            // byte instead of a Unicode Scalar Value like we need.
+            if (byte >> 6) != 0b00000010 {
+                return byte_index;
+            }
+        } else {
+            // This should only happen if given an empty string, because we started at index
+            // (text.len() - 1) and then decremented from there. A valid nonempty &str should
+            // have at least one byte which passes the conditional, and the function's docs
+            // note that it panics when given an empty string.
+            panic!(
+                "Tried to find UTF-8 char boundary at index {byte_index} in a string with length {}",
+                text.len()
+            );
+        }
+
+        // Eventually we'll get down to index 0, which in a &str is guaranteed
+        // to not be a continuation byte.
+        byte_index -= 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1896,46 +1919,56 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
     }
 
+    /// Helper to create test highlights for an inlay
+    fn create_inlay_highlights(
+        inlay_id: InlayId,
+        highlight_range: Range<usize>,
+        position: Anchor,
+    ) -> TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+        let mut inlay_highlights = TreeMap::default();
+        let mut type_highlights = TreeMap::default();
+        type_highlights.insert(
+            inlay_id,
+            (
+                HighlightStyle::default(),
+                InlayHighlight {
+                    inlay: inlay_id,
+                    range: highlight_range,
+                    inlay_position: position,
+                },
+            ),
+        );
+        inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
+        inlay_highlights
+    }
+
     #[gpui::test]
-    fn test_inlay_utf8_boundary_panic(cx: &mut App) {
+    fn test_inlay_utf8_boundary_panic_fix(cx: &mut App) {
         init_test(cx);
 
-        // This test reproduces the panic where we try to split a string at a byte index
-        // that's in the middle of a multi-byte UTF-8 character (the '…' ellipsis character).
+        // This test verifies that we handle UTF-8 character boundaries correctly
+        // when splitting inlay text for highlighting. Previously, this would panic
+        // when trying to split at byte 13, which is in the middle of the '…' character.
         let buffer = MultiBuffer::build_simple("fn main() {}\n", cx);
         let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
 
         // Create an inlay with text that contains a multi-byte character
         // The string "SortingDirec…" contains an ellipsis character '…' which is 3 bytes (E2 80 A6)
         let inlay_text = "SortingDirec…";
+        let position = buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 5));
 
-        // Create the inlay at a specific position
         let inlay = Inlay {
             id: InlayId::Hint(0),
-            position: buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 5)),
+            position,
             text: text::Rope::from(inlay_text),
             color: None,
         };
 
-        // Splice the inlay into the map
         let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
 
-        // Create highlights that will cause a split at byte 13, which is in the middle
-        // of the '…' character (bytes 12..15 since '…' is 3 bytes starting at byte 12)
-        let mut inlay_highlights = TreeMap::default();
-        let mut type_highlights = TreeMap::default();
-        type_highlights.insert(
-            InlayId::Hint(0),
-            (
-                HighlightStyle::default(),
-                InlayHighlight {
-                    inlay: InlayId::Hint(0),
-                    range: 0..13, // This will try to split at byte 13
-                    inlay_position: buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 5)),
-                },
-            ),
-        );
-        inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
+        // Create highlights that request a split at byte 13, which is in the middle
+        // of the '…' character (bytes 12..14). Our fix should round up to byte 15.
+        let inlay_highlights = create_inlay_highlights(InlayId::Hint(0), 0..13, position);
 
         let highlights = crate::display_map::Highlights {
             text_highlights: None,
@@ -1943,65 +1976,115 @@ mod tests {
             styles: crate::display_map::HighlightStyles::default(),
         };
 
-        // Create chunks iterator with the highlights - this should trigger the panic
-        let mut chunks = inlay_snapshot.chunks(
-            InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
-            false,
-            highlights,
-        );
+        // Collect chunks - this previously would panic
+        let chunks: Vec<_> = inlay_snapshot
+            .chunks(
+                InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
+                false,
+                highlights,
+            )
+            .collect();
 
-        // Force iteration through chunks to trigger the panic
-        while let Some(chunk) = chunks.next() {
-            // The panic should occur during iteration
-            let _ = chunk;
-        }
+        // Verify the chunks are correct
+        let full_text: String = chunks.iter().map(|c| c.chunk.text).collect();
+        assert_eq!(full_text, "fn maSortingDirec…in() {}\n");
+
+        // Verify the highlighted portion includes the complete ellipsis character
+        let highlighted_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+            .collect();
+
+        assert_eq!(highlighted_chunks.len(), 1);
+        assert_eq!(highlighted_chunks[0].chunk.text, "SortingDirec…");
     }
 
     #[gpui::test]
-    fn test_inlay_utf8_boundary_fix_handles_various_cases(cx: &mut App) {
+    fn test_inlay_utf8_boundaries_comprehensive(cx: &mut App) {
         init_test(cx);
 
-        // Test various UTF-8 characters and boundary conditions
+        struct TestCase {
+            inlay_text: &'static str,
+            highlight_range: Range<usize>,
+            expected_highlighted: &'static str,
+            description: &'static str,
+        }
+
         let test_cases = vec![
-            // (inlay_text, highlight_range, expected_highlighted_length)
-            ("Hello👋World", 0..7, 9), // Emoji is 4 bytes, rounds up to include full emoji
-            ("Test→End", 0..5, 7),     // Arrow is 3 bytes, rounds up to include full arrow
-            ("café", 0..4, 5),         // é is 2 bytes, rounds up to include full é
-            ("🎨🎭🎪", 0..5, 8),       // First two emojis (4 bytes each)
-            ("普通话", 0..4, 6),       // First two Chinese chars (3 bytes each)
-            ("Hello", 0..3, 3),        // ASCII only, no adjustment needed
+            TestCase {
+                inlay_text: "Hello👋World",
+                highlight_range: 0..7,
+                expected_highlighted: "Hello👋",
+                description: "Emoji boundary - rounds up to include full emoji",
+            },
+            TestCase {
+                inlay_text: "Test→End",
+                highlight_range: 0..5,
+                expected_highlighted: "Test→",
+                description: "Arrow boundary - rounds up to include full arrow",
+            },
+            TestCase {
+                inlay_text: "café",
+                highlight_range: 0..4,
+                expected_highlighted: "café",
+                description: "Accented char boundary - rounds up to include full é",
+            },
+            TestCase {
+                inlay_text: "🎨🎭🎪",
+                highlight_range: 0..5,
+                expected_highlighted: "🎨🎭",
+                description: "Multiple emojis - partial highlight",
+            },
+            TestCase {
+                inlay_text: "普通话",
+                highlight_range: 0..4,
+                expected_highlighted: "普通",
+                description: "Chinese characters - partial highlight",
+            },
+            TestCase {
+                inlay_text: "Hello",
+                highlight_range: 0..3,
+                expected_highlighted: "Hel",
+                description: "ASCII only - no adjustment needed",
+            },
+            TestCase {
+                inlay_text: "👋",
+                highlight_range: 0..1,
+                expected_highlighted: "👋",
+                description: "Single emoji - partial byte range includes whole char",
+            },
+            TestCase {
+                inlay_text: "Test",
+                highlight_range: 0..0,
+                expected_highlighted: "",
+                description: "Empty range",
+            },
+            TestCase {
+                inlay_text: "🎨ABC",
+                highlight_range: 2..5,
+                expected_highlighted: "A",
+                description: "Range starting mid-emoji skips the emoji",
+            },
         ];
 
-        for (inlay_text, highlight_range, expected_final_length) in test_cases {
+        for test_case in test_cases {
             let buffer = MultiBuffer::build_simple("test", cx);
             let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
+            let position = buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 2));
 
             let inlay = Inlay {
                 id: InlayId::Hint(0),
-                position: buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 2)),
-                text: text::Rope::from(inlay_text),
+                position,
+                text: text::Rope::from(test_case.inlay_text),
                 color: None,
             };
 
             let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
-
-            let mut inlay_highlights = TreeMap::default();
-            let mut type_highlights = TreeMap::default();
-            type_highlights.insert(
+            let inlay_highlights = create_inlay_highlights(
                 InlayId::Hint(0),
-                (
-                    HighlightStyle::default(),
-                    InlayHighlight {
-                        inlay: InlayId::Hint(0),
-                        range: highlight_range.clone(),
-                        inlay_position: buffer
-                            .read(cx)
-                            .snapshot(cx)
-                            .anchor_before(Point::new(0, 2)),
-                    },
-                ),
+                test_case.highlight_range.clone(),
+                position,
             );
-            inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
 
             let highlights = crate::display_map::Highlights {
                 text_highlights: None,
@@ -2009,7 +2092,6 @@ mod tests {
                 styles: crate::display_map::HighlightStyles::default(),
             };
 
-            // Should not panic even with partial UTF-8 character highlights
             let chunks: Vec<_> = inlay_snapshot
                 .chunks(
                     InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
@@ -2020,21 +2102,57 @@ mod tests {
 
             // Verify we got chunks and they total to the expected text
             let full_text: String = chunks.iter().map(|c| c.chunk.text).collect();
-            assert_eq!(full_text, format!("te{}st", inlay_text));
+            assert_eq!(
+                full_text,
+                format!("te{}st", test_case.inlay_text),
+                "Full text mismatch for case: {}",
+                test_case.description
+            );
 
-            // Verify that the highlighted portion has the expected length
+            // Verify that the highlighted portion matches expectations
             let highlighted_text: String = chunks
                 .iter()
-                .filter(|c| c.chunk.highlight_style.is_some())
+                .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
                 .map(|c| c.chunk.text)
                 .collect();
             assert_eq!(
-                highlighted_text.len(),
-                expected_final_length,
-                "Failed for text '{}' with range {:?}",
-                inlay_text,
-                highlight_range
+                highlighted_text, test_case.expected_highlighted,
+                "Highlighted text mismatch for case: {} (text: '{}', range: {:?})",
+                test_case.description, test_case.inlay_text, test_case.highlight_range
             );
         }
+    }
+
+    #[test]
+    fn test_utf8_char_boundary() {
+        let hello = "Hello";
+        assert!(hello.is_char_boundary(utf8_char_boundary(hello, 3))); // ASCII boundary
+        assert!(hello.is_char_boundary(utf8_char_boundary(hello, 5))); // At end
+        assert!(hello.is_char_boundary(utf8_char_boundary(hello, 10))); // Past end
+
+        let emoji_str = "👋"; // 4-byte emoji
+        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 0))); // Start
+        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 1))); // Mid-emoji -> next boundary
+        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 2))); // Mid-emoji -> next boundary
+        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 3))); // Mid-emoji -> next boundary
+        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 4))); // Valid boundary
+
+        let mixed = "a→b"; // 'a' (1B), '→' (3B), 'b' (1B)
+        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 0))); // Start
+        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 1))); // After 'a'
+        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 2))); // Mid-arrow -> after arrow
+        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 3))); // Mid-arrow -> after arrow
+        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 4))); // After arrow
+        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 5))); // End
+
+        let complex = "Hello 👋 World! 世界";
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 0))); // Start
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 5))); // Before space
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 6))); // At space
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 7))); // Mid-emoji -> after emoji
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 8))); // Mid-emoji -> after emoji
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 9))); // Mid-emoji -> after emoji
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 10))); // After emoji
+        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 17))); // At '!'
     }
 }
