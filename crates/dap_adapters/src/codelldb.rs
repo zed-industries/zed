@@ -365,12 +365,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            arguments: user_args.unwrap_or_else(|| {
-                vec![
-                    "--settings".into(),
-                    json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
-                ]
-            }),
+            arguments: user_args.unwrap_or_default(),
             request_args: self.request_args(delegate, &config).await?,
             envs: HashMap::default(),
             connection: None,
