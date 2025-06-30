@@ -8,7 +8,7 @@ use crate::{AgentPanel, ModelUsageContext};
 use agent::thread::{ToolUseSegment, UserMessageParams};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
-    ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary, ZedAgent,
+    ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary, ZedAgentThread,
     context::{self, AgentContextHandle, RULES_ICON},
     thread::{PendingToolUseStatus, ToolUse},
     thread_store::RulesLoadingError,
@@ -65,7 +65,7 @@ pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
-    agent: Entity<ZedAgent>,
+    agent: Entity<ZedAgentThread>,
     // thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -854,7 +854,7 @@ struct EditingMessageState {
 
 impl ActiveThread {
     pub fn new(
-        agent: Entity<ZedAgent>,
+        agent: Entity<ZedAgentThread>,
         thread_store: Entity<ThreadStore>,
         text_thread_store: Entity<TextThreadStore>,
         context_store: Entity<ContextStore>,
@@ -930,7 +930,7 @@ impl ActiveThread {
         this
     }
 
-    pub fn agent(&self) -> &Entity<ZedAgent> {
+    pub fn agent(&self) -> &Entity<ZedAgentThread> {
         &self.agent
     }
 
@@ -1039,7 +1039,7 @@ impl ActiveThread {
 
     fn handle_thread_event(
         &mut self,
-        _agent: &Entity<ZedAgent>,
+        _agent: &Entity<ZedAgentThread>,
         event: &ThreadEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3698,7 +3698,7 @@ impl Render for ActiveThread {
 }
 
 pub(crate) fn open_active_thread_as_markdown(
-    agent: Entity<ZedAgent>,
+    agent: Entity<ZedAgentThread>,
     workspace: Entity<Workspace>,
     window: &mut Window,
     cx: &mut App,
@@ -4175,7 +4175,7 @@ mod tests {
         &mut VisualTestContext,
         Entity<ActiveThread>,
         Entity<Workspace>,
-        Entity<ZedAgent>,
+        Entity<ZedAgentThread>,
         Arc<dyn LanguageModel>,
     ) {
         let (workspace, cx) =

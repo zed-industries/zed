@@ -503,10 +503,12 @@ impl PendingToolUse2 {
 }
 
 /// A thread of conversation with the LLM.
-pub struct ZedAgent {
+/// todo! Rename to ZedAgentThread (it will implement the AgentThread trait, along with externa)
+pub struct ZedAgentThread {
+    // Formerly Thread -> ZedAgent -> ZedAgentThread
     id: ThreadId,
     next_message_id: MessageId,
-    thread_messages: Vec<Message>,
+    thread_messages: Vec<Message>, // todo!() remove this and just use .messages.
     summary: ThreadSummary,
     pending_checkpoint: Option<ThreadCheckpoint>,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
@@ -554,7 +556,7 @@ pub struct ZedAgent {
     profile: AgentProfile,
 }
 
-impl ZedAgent {
+impl ZedAgentThread {
     pub fn id(&self) -> &ThreadId {
         &self.id
     }
@@ -978,7 +980,7 @@ impl<T: Into<String>> From<T> for UserMessageParams {
     }
 }
 
-impl ZedAgent {
+impl ZedAgentThread {
     pub fn new(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
@@ -2782,7 +2784,7 @@ impl ZedAgent {
                                 project.set_agent_location(None, cx);
                             });
 
-                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<ZedAgent>) {
+                            fn emit_generic_error(error: &anyhow::Error, cx: &mut Context<ZedAgentThread>) {
                                 let error_message = error
                                     .chain()
                                     .map(|err| err.to_string())
@@ -3419,7 +3421,7 @@ impl ZedAgent {
         tool_use_id: LanguageModelToolUseId,
         hallucinated_tool_name: Arc<str>,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<ZedAgent>,
+        cx: &mut Context<ZedAgentThread>,
     ) {
         let available_tools = self.profile.enabled_tools(cx);
 
@@ -3455,7 +3457,7 @@ impl ZedAgent {
         invalid_json: Arc<str>,
         error: String,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<ZedAgent>,
+        cx: &mut Context<ZedAgentThread>,
     ) {
         log::error!("The model returned invalid input JSON: {invalid_json}");
 
@@ -3511,7 +3513,7 @@ impl ZedAgent {
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<ZedAgent>,
+        cx: &mut Context<ZedAgentThread>,
     ) {
         let task =
             self.spawn_tool_use(tool_use_id.clone(), request, input, tool, model, window, cx);
@@ -3531,7 +3533,7 @@ impl ZedAgent {
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<ZedAgent>,
+        cx: &mut Context<ZedAgentThread>,
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
@@ -3551,7 +3553,7 @@ impl ZedAgent {
         }
 
         cx.spawn({
-            async move |thread: WeakEntity<ZedAgent>, cx| {
+            async move |thread: WeakEntity<ZedAgentThread>, cx| {
                 let output = tool_result.output.await;
 
                 thread
@@ -4284,7 +4286,7 @@ pub enum ThreadEvent {
     },
 }
 
-impl EventEmitter<ThreadEvent> for ZedAgent {}
+impl EventEmitter<ThreadEvent> for ZedAgentThread {}
 
 struct PendingCompletion {
     id: usize,
@@ -5023,7 +5025,7 @@ fn main() {{
 
         let deserialized = cx.update(|cx| {
             agent.update(cx, |agent, cx| {
-                ZedAgent::deserialize(
+                ZedAgentThread::deserialize(
                     agent.id().clone(),
                     serialized,
                     agent.project.clone(),
@@ -5854,7 +5856,7 @@ fn main() {{
 
     fn test_summarize_error(
         model: &Arc<dyn LanguageModel>,
-        agent: &Entity<ZedAgent>,
+        agent: &Entity<ZedAgentThread>,
         cx: &mut TestAppContext,
     ) {
         agent.update(cx, |agent, cx| {
@@ -5921,7 +5923,7 @@ fn main() {{
     ) -> (
         Entity<Workspace>,
         Entity<ThreadStore>,
-        Entity<ZedAgent>,
+        Entity<ZedAgentThread>,
         Entity<ContextStore>,
         Arc<dyn LanguageModel>,
     ) {

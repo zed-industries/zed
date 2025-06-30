@@ -1,5 +1,5 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
-use agent::{ThreadEvent, ZedAgent};
+use agent::{ThreadEvent, ZedAgentThread};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::ActionLog;
@@ -42,7 +42,7 @@ use zed_actions::assistant::ToggleFocus;
 pub struct AgentDiffPane {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    agent: Entity<ZedAgent>,
+    agent: Entity<ZedAgentThread>,
     action_log: Entity<ActionLog>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
@@ -52,7 +52,7 @@ pub struct AgentDiffPane {
 
 impl AgentDiffPane {
     pub fn deploy(
-        agent: Entity<ZedAgent>,
+        agent: Entity<ZedAgentThread>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -63,7 +63,7 @@ impl AgentDiffPane {
     }
 
     pub fn deploy_in_workspace(
-        agent: Entity<ZedAgent>,
+        agent: Entity<ZedAgentThread>,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -83,7 +83,7 @@ impl AgentDiffPane {
     }
 
     pub fn new(
-        agent: Entity<ZedAgent>,
+        agent: Entity<ZedAgentThread>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1190,7 +1190,7 @@ pub enum EditorState {
 }
 
 struct WorkspaceThread {
-    agent: WeakEntity<ZedAgent>,
+    agent: WeakEntity<ZedAgentThread>,
     _thread_subscriptions: [Subscription; 2],
     singleton_editors: HashMap<WeakEntity<Buffer>, HashMap<WeakEntity<Editor>, Subscription>>,
     _settings_subscription: Subscription,
@@ -1215,7 +1215,7 @@ impl AgentDiff {
 
     pub fn set_active_thread(
         workspace: &WeakEntity<Workspace>,
-        thread: &Entity<ZedAgent>,
+        thread: &Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -1227,7 +1227,7 @@ impl AgentDiff {
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
-        agent: &Entity<ZedAgent>,
+        agent: &Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1322,7 +1322,7 @@ impl AgentDiff {
 
     fn register_review_action<T: Action>(
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<ZedAgent>, &mut Window, &mut App) -> PostReviewState
+        review: impl Fn(&Entity<Editor>, &Entity<ZedAgentThread>, &mut Window, &mut App) -> PostReviewState
         + 'static,
         this: &Entity<AgentDiff>,
     ) {
@@ -1610,7 +1610,7 @@ impl AgentDiff {
 
     fn keep_all(
         editor: &Entity<Editor>,
-        agent: &Entity<ZedAgent>,
+        agent: &Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1630,7 +1630,7 @@ impl AgentDiff {
 
     fn reject_all(
         editor: &Entity<Editor>,
-        thread: &Entity<ZedAgent>,
+        thread: &Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1650,7 +1650,7 @@ impl AgentDiff {
 
     fn keep(
         editor: &Entity<Editor>,
-        agent: &Entity<ZedAgent>,
+        agent: &Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1663,7 +1663,7 @@ impl AgentDiff {
 
     fn reject(
         editor: &Entity<Editor>,
-        agent: &Entity<ZedAgent>,
+        agent: &Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1686,7 +1686,7 @@ impl AgentDiff {
     fn review_in_active_editor(
         &mut self,
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<ZedAgent>, &mut Window, &mut App) -> PostReviewState,
+        review: impl Fn(&Entity<Editor>, &Entity<ZedAgentThread>, &mut Window, &mut App) -> PostReviewState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {

@@ -58,14 +58,14 @@ use crate::{
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 use agent::{
-    MessageCrease, TokenUsageRatio, ZedAgent,
+    MessageCrease, TokenUsageRatio, ZedAgentThread,
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
-    agent: Entity<ZedAgent>,
+    agent: Entity<ZedAgentThread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
@@ -156,7 +156,7 @@ impl MessageEditor {
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
         text_thread_store: WeakEntity<TextThreadStore>,
-        agent: Entity<ZedAgent>,
+        agent: Entity<ZedAgentThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

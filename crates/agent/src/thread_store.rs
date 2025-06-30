@@ -1,7 +1,7 @@
 use crate::{
     context_server_tool::ContextServerTool,
     thread::{
-        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, ThreadId, ZedAgent,
+        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, ThreadId, ZedAgentThread,
     },
 };
 use agent_settings::{AgentProfileId, CompletionMode};
@@ -400,9 +400,9 @@ impl ThreadStore {
         self.threads.iter()
     }
 
-    pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<ZedAgent> {
+    pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<ZedAgentThread> {
         cx.new(|cx| {
-            ZedAgent::new(
+            ZedAgentThread::new(
                 self.project.clone(),
                 self.tools.clone(),
                 self.prompt_builder.clone(),
@@ -416,9 +416,9 @@ impl ThreadStore {
         &mut self,
         serialized: SerializedThread,
         cx: &mut Context<Self>,
-    ) -> Entity<ZedAgent> {
+    ) -> Entity<ZedAgentThread> {
         cx.new(|cx| {
-            ZedAgent::deserialize(
+            ZedAgentThread::deserialize(
                 ThreadId::new(),
                 serialized,
                 self.project.clone(),
@@ -436,7 +436,7 @@ impl ThreadStore {
         id: &ThreadId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<ZedAgent>>> {
+    ) -> Task<Result<Entity<ZedAgentThread>>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
         let this = cx.weak_entity();
@@ -449,7 +449,7 @@ impl ThreadStore {
 
             let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {
-                    ZedAgent::deserialize(
+                    ZedAgentThread::deserialize(
                         id.clone(),
                         thread,
                         this.project.clone(),
@@ -468,7 +468,7 @@ impl ThreadStore {
 
     pub fn save_thread(
         &self,
-        thread: &Entity<ZedAgent>,
+        thread: &Entity<ZedAgentThread>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let (metadata, serialized_thread) = thread.update(cx, |thread, cx| {

@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::{ThreadEvent, ZedAgent};
+use agent::{ThreadEvent, ZedAgentThread};
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -89,7 +89,7 @@ impl Error for FailedAssertion {}
 pub struct ExampleContext {
     meta: ExampleMetadata,
     log_prefix: String,
-    agent_thread: Entity<agent::ZedAgent>,
+    agent_thread: Entity<agent::ZedAgentThread>,
     app: AsyncApp,
     model: Arc<dyn LanguageModel>,
     pub assertions: AssertionsReport,
@@ -100,7 +100,7 @@ impl ExampleContext {
     pub fn new(
         meta: ExampleMetadata,
         log_prefix: String,
-        agent_thread: Entity<ZedAgent>,
+        agent_thread: Entity<ZedAgentThread>,
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
@@ -382,7 +382,7 @@ impl ExampleContext {
             .unwrap()
     }
 
-    pub fn agent_thread(&self) -> Entity<ZedAgent> {
+    pub fn agent_thread(&self) -> Entity<ZedAgentThread> {
         self.agent_thread.clone()
     }
 }
