@@ -1,10 +1,11 @@
 use crate::{
+    MessageId, ThreadId,
     context::{
         AgentContextHandle, AgentContextKey, ContextId, ContextKind, DirectoryContextHandle,
         FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
         SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
     },
-    thread::{MessageId, Thread, ThreadId},
+    thread::Thread,
     thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -71,6 +72,7 @@ impl ContextStore {
     ) -> Vec<AgentContextHandle> {
         let existing_context = thread
             .messages()
+            .iter()
             .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
             .flat_map(|message| {
                 message
@@ -441,7 +443,7 @@ impl ContextStore {
             match context {
                 AgentContextHandle::Thread(thread_context) => {
                     self.context_thread_ids
-                        .remove(thread_context.thread.read(cx).id());
+                        .remove(&thread_context.thread.read(cx).id());
                 }
                 AgentContextHandle::TextThread(text_thread_context) => {
                     if let Some(path) = text_thread_context.context.read(cx).path() {

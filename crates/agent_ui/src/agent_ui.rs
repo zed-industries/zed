@@ -121,7 +121,7 @@ pub(crate) enum ModelUsageContext {
 impl ModelUsageContext {
     pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
         match self {
-            Self::Thread(thread) => thread.read(cx).configured_model(),
+            Self::Thread(thread) => thread.read(cx).model(),
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }

@@ -1,8 +1,7 @@
 use crate::{
+    MessageId, ThreadId,
     context_server_tool::ContextServerTool,
-    thread::{
-        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
-    },
+    thread::{DetailedSummaryState, ExceededWindowError, ProjectSnapshot, Thread},
 };
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
@@ -400,35 +399,17 @@ impl ThreadStore {
         self.threads.iter()
     }
 
-    pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
-        cx.new(|cx| {
-            Thread::new(
-                self.project.clone(),
-                self.tools.clone(),
-                self.prompt_builder.clone(),
-                self.project_context.clone(),
-                cx,
-            )
-        })
-    }
-
-    pub fn create_thread_from_serialized(
-        &mut self,
-        serialized: SerializedThread,
-        cx: &mut Context<Self>,
-    ) -> Entity<Thread> {
-        cx.new(|cx| {
-            Thread::deserialize(
-                ThreadId::new(),
-                serialized,
-                self.project.clone(),
-                self.tools.clone(),
-                self.prompt_builder.clone(),
-                self.project_context.clone(),
-                None,
-                cx,
-            )
-        })
+    pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<Thread>>> {
+        todo!()
+        // cx.new(|cx| {
+        //     Thread::new(
+        //         self.project.clone(),
+        //         self.tools.clone(),
+        //         self.prompt_builder.clone(),
+        //         self.project_context.clone(),
+        //         cx,
+        //     )
+        // })
     }
 
     pub fn open_thread(
@@ -447,51 +428,53 @@ impl ThreadStore {
                 .await?
                 .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
-            let thread = this.update_in(cx, |this, window, cx| {
-                cx.new(|cx| {
-                    Thread::deserialize(
-                        id.clone(),
-                        thread,
-                        this.project.clone(),
-                        this.tools.clone(),
-                        this.prompt_builder.clone(),
-                        this.project_context.clone(),
-                        Some(window),
-                        cx,
-                    )
-                })
-            })?;
-
-            Ok(thread)
+            todo!();
+            // let thread = this.update_in(cx, |this, window, cx| {
+            //     cx.new(|cx| {
+            //         Thread::deserialize(
+            //             id.clone(),
+            //             thread,
+            //             this.project.clone(),
+            //             this.tools.clone(),
+            //             this.prompt_builder.clone(),
+            //             this.project_context.clone(),
+            //             Some(window),
+            //             cx,
+            //         )
+            //     })
+            // })?;
+            // Ok(thread)
         })
     }
 
     pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let (metadata, serialized_thread) =
-            thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
+        todo!()
+        // let (metadata, serialized_thread) =
+        //     thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
 
-        let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(async move |this, cx| {
-            let serialized_thread = serialized_thread.await?;
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(metadata, serialized_thread).await?;
+        // let database_future = ThreadsDatabase::global_future(cx);
+        // cx.spawn(async move |this, cx| {
+        //     let serialized_thread = serialized_thread.await?;
+        //     let database = database_future.await.map_err(|err| anyhow!(err))?;
+        //     database.save_thread(metadata, serialized_thread).await?;
 
-            this.update(cx, |this, cx| this.reload(cx))?.await
-        })
+        //     this.update(cx, |this, cx| this.reload(cx))?.await
+        // })
     }
 
     pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let id = id.clone();
-        let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(async move |this, cx| {
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.delete_thread(id.clone()).await?;
+        todo!()
+        // let id = id.clone();
+        // let database_future = ThreadsDatabase::global_future(cx);
+        // cx.spawn(async move |this, cx| {
+        //     let database = database_future.await.map_err(|err| anyhow!(err))?;
+        //     database.delete_thread(id.clone()).await?;
 
-            this.update(cx, |this, cx| {
-                this.threads.retain(|thread| thread.id != id);
-                cx.notify();
-            })
-        })
+        //     this.update(cx, |this, cx| {
+        //         this.threads.retain(|thread| thread.id != id);
+        //         cx.notify();
+        //     })
+        // })
     }
 
     pub fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -1067,7 +1050,7 @@ impl ThreadsDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thread::{DetailedSummaryState, MessageId};
+    use crate::{MessageId, thread::DetailedSummaryState};
     use chrono::Utc;
     use language_model::{Role, TokenUsage};
     use pretty_assertions::assert_eq;

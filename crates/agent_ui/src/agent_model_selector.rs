@@ -45,7 +45,7 @@ impl AgentModelSelector {
                                     let registry = LanguageModelRegistry::read_global(cx);
                                     if let Some(provider) = registry.provider(&model.provider_id())
                                     {
-                                        thread.set_configured_model(
+                                        thread.set_model(
                                             Some(ConfiguredModel {
                                                 provider,
                                                 model: model.clone(),

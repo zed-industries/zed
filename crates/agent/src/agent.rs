@@ -5,17 +5,15 @@ pub mod context_server_tool;
 pub mod context_store;
 pub mod history_store;
 pub mod thread;
-mod thread2;
 pub mod thread_store;
-pub mod tool_use;
 mod zed_agent;
 
 pub use agent2::*;
 pub use context::{AgentContext, ContextId, ContextLoadResult};
 pub use context_store::ContextStore;
 pub use thread::{
-    LastRestoreCheckpoint, Message, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback, ThreadId, ThreadSummary, TokenUsageRatio,
+    LastRestoreCheckpoint, Message, MessageCrease, Thread, ThreadError, ThreadEvent,
+    ThreadFeedback, ThreadTitle, TokenUsageRatio,
 };
 pub use thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 pub use zed_agent::*;

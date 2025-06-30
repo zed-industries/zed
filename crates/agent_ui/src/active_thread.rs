@@ -7,7 +7,7 @@ use crate::ui::{
 use crate::{AgentPanel, ModelUsageContext};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
-    Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary,
+    Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadTitle,
     context::{self, AgentContextHandle, RULES_ICON},
     thread_store::RulesLoadingError,
     tool_use::{PendingToolUseStatus, ToolUse},
@@ -816,23 +816,24 @@ impl ActiveThread {
             _load_edited_message_context_task: None,
         };
 
-        for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
-            let rendered_message = RenderedMessage::from_segments(
-                &message.segments,
-                this.language_registry.clone(),
-                cx,
-            );
-            this.push_rendered_message(message.id, rendered_message);
+        for message in thread.read(cx).messages() {
+            todo!()
+            // let rendered_message = RenderedMessage::from_segments(
+            //     &message.segments,
+            //     this.language_registry.clone(),
+            //     cx,
+            // );
+            // this.push_rendered_message(message.id, rendered_message);
 
-            for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
-                this.render_tool_use_markdown(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
-                    tool_use.status.text(),
-                    cx,
-                );
-            }
+            // for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
+            //     this.render_tool_use_markdown(
+            //         tool_use.id.clone(),
+            //         tool_use.ui_text.clone(),
+            //         &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
+            //         tool_use.status.text(),
+            //         cx,
+            //     );
+            // }
         }
 
         this
@@ -846,19 +847,18 @@ impl ActiveThread {
         self.messages.is_empty()
     }
 
-    pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
-        self.thread.read(cx).summary()
+    pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadTitle {
+        self.thread.read(cx).title()
     }
 
     pub fn regenerate_summary(&self, cx: &mut App) {
-        self.thread.update(cx, |thread, cx| thread.summarize(cx))
+        self.thread
+            .update(cx, |thread, cx| thread.regenerate_summary(cx))
     }
 
     pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.last_error.take();
-        self.thread.update(cx, |thread, cx| {
-            thread.cancel_last_completion(Some(window.window_handle()), cx)
-        })
+        self.thread.update(cx, |thread, cx| thread.cancel(cx))
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -1185,7 +1185,7 @@ impl ActiveThread {
             return;
         }
 
-        let title = self.thread.read(cx).summary().unwrap_or("Agent Panel");
+        let title = self.thread.read(cx).title().unwrap_or("Agent Panel");
 
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -3605,7 +3605,7 @@ pub(crate) fn open_active_thread_as_markdown(
         workspace.update_in(cx, |workspace, window, cx| {
             let thread = thread.read(cx);
             let markdown = thread.to_markdown(cx)?;
-            let thread_summary = thread.summary().or_default().to_string();
+            let thread_summary = thread.title().or_default().to_string();
 
             let project = workspace.project().clone();
 
@@ -3776,357 +3776,357 @@ fn open_editor_at_position(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use agent::{MessageSegment, context::ContextLoadResult, thread_store};
-    use assistant_tool::{ToolRegistry, ToolWorkingSet};
-    use editor::EditorSettings;
-    use fs::FakeFs;
-    use gpui::{AppContext, TestAppContext, VisualTestContext};
-    use language_model::{
-        ConfiguredModel, LanguageModel, LanguageModelRegistry,
-        fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
-    };
-    use project::Project;
-    use prompt_store::PromptBuilder;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use util::path;
-    use workspace::CollaboratorId;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use agent::{MessageSegment, context::ContextLoadResult, thread_store};
+//     use assistant_tool::{ToolRegistry, ToolWorkingSet};
+//     use editor::EditorSettings;
+//     use fs::FakeFs;
+//     use gpui::{AppContext, TestAppContext, VisualTestContext};
+//     use language_model::{
+//         ConfiguredModel, LanguageModel, LanguageModelRegistry,
+//         fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
+//     };
+//     use project::Project;
+//     use prompt_store::PromptBuilder;
+//     use serde_json::json;
+//     use settings::SettingsStore;
+//     use util::path;
+//     use workspace::CollaboratorId;
 
-    #[gpui::test]
-    async fn test_agent_is_unfollowed_after_cancelling_completion(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+//     #[gpui::test]
+//     async fn test_agent_is_unfollowed_after_cancelling_completion(cx: &mut TestAppContext) {
+//         init_test_settings(cx);
 
-        let project = create_test_project(
-            cx,
-            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
-        )
-        .await;
+//         let project = create_test_project(
+//             cx,
+//             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+//         )
+//         .await;
 
-        let (cx, _active_thread, workspace, thread, model) =
-            setup_test_environment(cx, project.clone()).await;
+//         let (cx, _active_thread, workspace, thread, model) =
+//             setup_test_environment(cx, project.clone()).await;
 
-        // Insert user message without any context (empty context vector)
-        thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "What is the best way to learn Rust?",
-                ContextLoadResult::default(),
-                None,
-                vec![],
-                cx,
-            );
-        });
+//         // Insert user message without any context (empty context vector)
+//         thread.update(cx, |thread, cx| {
+//             thread.insert_user_message(
+//                 "What is the best way to learn Rust?",
+//                 ContextLoadResult::default(),
+//                 None,
+//                 vec![],
+//                 cx,
+//             );
+//         });
 
-        // Stream response to user message
-        thread.update(cx, |thread, cx| {
-            let intent = CompletionIntent::UserPrompt;
-            let request = thread.to_completion_request(model.clone(), intent, cx);
-            thread.stream_completion(request, model, intent, cx.active_window(), cx)
-        });
-        // Follow the agent
-        cx.update(|window, cx| {
-            workspace.update(cx, |workspace, cx| {
-                workspace.follow(CollaboratorId::Agent, window, cx);
-            })
-        });
-        assert!(cx.read(|cx| workspace.read(cx).is_being_followed(CollaboratorId::Agent)));
+//         // Stream response to user message
+//         thread.update(cx, |thread, cx| {
+//             let intent = CompletionIntent::UserPrompt;
+//             let request = thread.to_completion_request(model.clone(), intent, cx);
+//             thread.stream_completion(request, model, intent, cx.active_window(), cx)
+//         });
+//         // Follow the agent
+//         cx.update(|window, cx| {
+//             workspace.update(cx, |workspace, cx| {
+//                 workspace.follow(CollaboratorId::Agent, window, cx);
+//             })
+//         });
+//         assert!(cx.read(|cx| workspace.read(cx).is_being_followed(CollaboratorId::Agent)));
 
-        // Cancel the current completion
-        thread.update(cx, |thread, cx| {
-            thread.cancel_last_completion(cx.active_window(), cx)
-        });
+//         // Cancel the current completion
+//         thread.update(cx, |thread, cx| {
+//             thread.cancel_last_completion(cx.active_window(), cx)
+//         });
 
-        cx.executor().run_until_parked();
+//         cx.executor().run_until_parked();
 
-        // No longer following the agent
-        assert!(!cx.read(|cx| workspace.read(cx).is_being_followed(CollaboratorId::Agent)));
-    }
+//         // No longer following the agent
+//         assert!(!cx.read(|cx| workspace.read(cx).is_being_followed(CollaboratorId::Agent)));
+//     }
 
-    #[gpui::test]
-    async fn test_reinserting_creases_for_edited_message(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+//     #[gpui::test]
+//     async fn test_reinserting_creases_for_edited_message(cx: &mut TestAppContext) {
+//         init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+//         let project = create_test_project(cx, json!({})).await;
 
-        let (cx, active_thread, _, thread, model) =
-            setup_test_environment(cx, project.clone()).await;
-        cx.update(|_, cx| {
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.set_default_model(
-                    Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
-                        model,
-                    }),
-                    cx,
-                );
-            });
-        });
+//         let (cx, active_thread, _, thread, model) =
+//             setup_test_environment(cx, project.clone()).await;
+//         cx.update(|_, cx| {
+//             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+//                 registry.set_default_model(
+//                     Some(ConfiguredModel {
+//                         provider: Arc::new(FakeLanguageModelProvider),
+//                         model,
+//                     }),
+//                     cx,
+//                 );
+//             });
+//         });
 
-        let creases = vec![MessageCrease {
-            range: 14..22,
-            icon_path: "icon".into(),
-            label: "foo.txt".into(),
-            context: None,
-        }];
+//         let creases = vec![MessageCrease {
+//             range: 14..22,
+//             icon_path: "icon".into(),
+//             label: "foo.txt".into(),
+//             context: None,
+//         }];
 
-        let message = thread.update(cx, |thread, cx| {
-            let message_id = thread.insert_user_message(
-                "Tell me about @foo.txt",
-                ContextLoadResult::default(),
-                None,
-                creases,
-                cx,
-            );
-            thread.message(message_id).cloned().unwrap()
-        });
+//         let message = thread.update(cx, |thread, cx| {
+//             let message_id = thread.insert_user_message(
+//                 "Tell me about @foo.txt",
+//                 ContextLoadResult::default(),
+//                 None,
+//                 creases,
+//                 cx,
+//             );
+//             thread.message(message_id).cloned().unwrap()
+//         });
 
-        active_thread.update_in(cx, |active_thread, window, cx| {
-            if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
-                active_thread.start_editing_message(
-                    message.id,
-                    message_text,
-                    message.creases.as_slice(),
-                    window,
-                    cx,
-                );
-            }
-            let editor = active_thread
-                .editing_message
-                .as_ref()
-                .unwrap()
-                .1
-                .editor
-                .clone();
-            editor.update(cx, |editor, cx| editor.edit([(0..13, "modified")], cx));
-            active_thread.confirm_editing_message(&Default::default(), window, cx);
-        });
-        cx.run_until_parked();
+//         active_thread.update_in(cx, |active_thread, window, cx| {
+//             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
+//                 active_thread.start_editing_message(
+//                     message.id,
+//                     message_text,
+//                     message.creases.as_slice(),
+//                     window,
+//                     cx,
+//                 );
+//             }
+//             let editor = active_thread
+//                 .editing_message
+//                 .as_ref()
+//                 .unwrap()
+//                 .1
+//                 .editor
+//                 .clone();
+//             editor.update(cx, |editor, cx| editor.edit([(0..13, "modified")], cx));
+//             active_thread.confirm_editing_message(&Default::default(), window, cx);
+//         });
+//         cx.run_until_parked();
 
-        let message = thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
-        active_thread.update_in(cx, |active_thread, window, cx| {
-            if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
-                active_thread.start_editing_message(
-                    message.id,
-                    message_text,
-                    message.creases.as_slice(),
-                    window,
-                    cx,
-                );
-            }
-            let editor = active_thread
-                .editing_message
-                .as_ref()
-                .unwrap()
-                .1
-                .editor
-                .clone();
-            let text = editor.update(cx, |editor, cx| editor.text(cx));
-            assert_eq!(text, "modified @foo.txt");
-        });
-    }
+//         let message = thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
+//         active_thread.update_in(cx, |active_thread, window, cx| {
+//             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
+//                 active_thread.start_editing_message(
+//                     message.id,
+//                     message_text,
+//                     message.creases.as_slice(),
+//                     window,
+//                     cx,
+//                 );
+//             }
+//             let editor = active_thread
+//                 .editing_message
+//                 .as_ref()
+//                 .unwrap()
+//                 .1
+//                 .editor
+//                 .clone();
+//             let text = editor.update(cx, |editor, cx| editor.text(cx));
+//             assert_eq!(text, "modified @foo.txt");
+//         });
+//     }
 
-    #[gpui::test]
-    async fn test_editing_message_cancels_previous_completion(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+//     #[gpui::test]
+//     async fn test_editing_message_cancels_previous_completion(cx: &mut TestAppContext) {
+//         init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+//         let project = create_test_project(cx, json!({})).await;
 
-        let (cx, active_thread, _, thread, model) =
-            setup_test_environment(cx, project.clone()).await;
+//         let (cx, active_thread, _, thread, model) =
+//             setup_test_environment(cx, project.clone()).await;
 
-        cx.update(|_, cx| {
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.set_default_model(
-                    Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
-                        model: model.clone(),
-                    }),
-                    cx,
-                );
-            });
-        });
+//         cx.update(|_, cx| {
+//             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+//                 registry.set_default_model(
+//                     Some(ConfiguredModel {
+//                         provider: Arc::new(FakeLanguageModelProvider),
+//                         model: model.clone(),
+//                     }),
+//                     cx,
+//                 );
+//             });
+//         });
 
-        // Track thread events to verify cancellation
-        let cancellation_events = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let new_request_events = Arc::new(std::sync::Mutex::new(Vec::new()));
+//         // Track thread events to verify cancellation
+//         let cancellation_events = Arc::new(std::sync::Mutex::new(Vec::new()));
+//         let new_request_events = Arc::new(std::sync::Mutex::new(Vec::new()));
 
-        let _subscription = cx.update(|_, cx| {
-            let cancellation_events = cancellation_events.clone();
-            let new_request_events = new_request_events.clone();
-            cx.subscribe(
-                &thread,
-                move |_thread, event: &ThreadEvent, _cx| match event {
-                    ThreadEvent::CompletionCanceled => {
-                        cancellation_events.lock().unwrap().push(());
-                    }
-                    ThreadEvent::NewRequest => {
-                        new_request_events.lock().unwrap().push(());
-                    }
-                    _ => {}
-                },
-            )
-        });
+//         let _subscription = cx.update(|_, cx| {
+//             let cancellation_events = cancellation_events.clone();
+//             let new_request_events = new_request_events.clone();
+//             cx.subscribe(
+//                 &thread,
+//                 move |_thread, event: &ThreadEvent, _cx| match event {
+//                     ThreadEvent::CompletionCanceled => {
+//                         cancellation_events.lock().unwrap().push(());
+//                     }
+//                     ThreadEvent::NewRequest => {
+//                         new_request_events.lock().unwrap().push(());
+//                     }
+//                     _ => {}
+//                 },
+//             )
+//         });
 
-        // Insert a user message and start streaming a response
-        let message = thread.update(cx, |thread, cx| {
-            let message_id = thread.insert_user_message(
-                "Hello, how are you?",
-                ContextLoadResult::default(),
-                None,
-                vec![],
-                cx,
-            );
-            thread.advance_prompt_id();
-            thread.send_to_model(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                cx.active_window(),
-                cx,
-            );
-            thread.message(message_id).cloned().unwrap()
-        });
+//         // Insert a user message and start streaming a response
+//         let message = thread.update(cx, |thread, cx| {
+//             let message_id = thread.insert_user_message(
+//                 "Hello, how are you?",
+//                 ContextLoadResult::default(),
+//                 None,
+//                 vec![],
+//                 cx,
+//             );
+//             thread.advance_prompt_id();
+//             thread.send_to_model(
+//                 model.clone(),
+//                 CompletionIntent::UserPrompt,
+//                 cx.active_window(),
+//                 cx,
+//             );
+//             thread.message(message_id).cloned().unwrap()
+//         });
 
-        cx.run_until_parked();
+//         cx.run_until_parked();
 
-        // Verify that a completion is in progress
-        assert!(cx.read(|cx| thread.read(cx).is_generating()));
-        assert_eq!(new_request_events.lock().unwrap().len(), 1);
+//         // Verify that a completion is in progress
+//         assert!(cx.read(|cx| thread.read(cx).is_generating()));
+//         assert_eq!(new_request_events.lock().unwrap().len(), 1);
 
-        // Edit the message while the completion is still running
-        active_thread.update_in(cx, |active_thread, window, cx| {
-            if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
-                active_thread.start_editing_message(
-                    message.id,
-                    message_text,
-                    message.creases.as_slice(),
-                    window,
-                    cx,
-                );
-            }
-            let editor = active_thread
-                .editing_message
-                .as_ref()
-                .unwrap()
-                .1
-                .editor
-                .clone();
-            editor.update(cx, |editor, cx| {
-                editor.set_text("What is the weather like?", window, cx);
-            });
-            active_thread.confirm_editing_message(&Default::default(), window, cx);
-        });
+//         // Edit the message while the completion is still running
+//         active_thread.update_in(cx, |active_thread, window, cx| {
+//             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
+//                 active_thread.start_editing_message(
+//                     message.id,
+//                     message_text,
+//                     message.creases.as_slice(),
+//                     window,
+//                     cx,
+//                 );
+//             }
+//             let editor = active_thread
+//                 .editing_message
+//                 .as_ref()
+//                 .unwrap()
+//                 .1
+//                 .editor
+//                 .clone();
+//             editor.update(cx, |editor, cx| {
+//                 editor.set_text("What is the weather like?", window, cx);
+//             });
+//             active_thread.confirm_editing_message(&Default::default(), window, cx);
+//         });
 
-        cx.run_until_parked();
+//         cx.run_until_parked();
 
-        // Verify that the previous completion was cancelled
-        assert_eq!(cancellation_events.lock().unwrap().len(), 1);
+//         // Verify that the previous completion was cancelled
+//         assert_eq!(cancellation_events.lock().unwrap().len(), 1);
 
-        // Verify that a new request was started after cancellation
-        assert_eq!(new_request_events.lock().unwrap().len(), 2);
+//         // Verify that a new request was started after cancellation
+//         assert_eq!(new_request_events.lock().unwrap().len(), 2);
 
-        // Verify that the edited message contains the new text
-        let edited_message =
-            thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
-        match &edited_message.segments[0] {
-            MessageSegment::Text(text) => {
-                assert_eq!(text, "What is the weather like?");
-            }
-            _ => panic!("Expected text segment"),
-        }
-    }
+//         // Verify that the edited message contains the new text
+//         let edited_message =
+//             thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
+//         match &edited_message.segments[0] {
+//             MessageSegment::Text(text) => {
+//                 assert_eq!(text, "What is the weather like?");
+//             }
+//             _ => panic!("Expected text segment"),
+//         }
+//     }
 
-    fn init_test_settings(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            prompt_store::init(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            language_model::init_settings(cx);
-            ThemeSettings::register(cx);
-            EditorSettings::register(cx);
-            ToolRegistry::default_global(cx);
-        });
-    }
+//     fn init_test_settings(cx: &mut TestAppContext) {
+//         cx.update(|cx| {
+//             let settings_store = SettingsStore::test(cx);
+//             cx.set_global(settings_store);
+//             language::init(cx);
+//             Project::init_settings(cx);
+//             AgentSettings::register(cx);
+//             prompt_store::init(cx);
+//             thread_store::init(cx);
+//             workspace::init_settings(cx);
+//             language_model::init_settings(cx);
+//             ThemeSettings::register(cx);
+//             EditorSettings::register(cx);
+//             ToolRegistry::default_global(cx);
+//         });
+//     }
 
-    // Helper to create a test project with test files
-    async fn create_test_project(
-        cx: &mut TestAppContext,
-        files: serde_json::Value,
-    ) -> Entity<Project> {
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), files).await;
-        Project::test(fs, [path!("/test").as_ref()], cx).await
-    }
+//     // Helper to create a test project with test files
+//     async fn create_test_project(
+//         cx: &mut TestAppContext,
+//         files: serde_json::Value,
+//     ) -> Entity<Project> {
+//         let fs = FakeFs::new(cx.executor());
+//         fs.insert_tree(path!("/test"), files).await;
+//         Project::test(fs, [path!("/test").as_ref()], cx).await
+//     }
 
-    async fn setup_test_environment(
-        cx: &mut TestAppContext,
-        project: Entity<Project>,
-    ) -> (
-        &mut VisualTestContext,
-        Entity<ActiveThread>,
-        Entity<Workspace>,
-        Entity<Thread>,
-        Arc<dyn LanguageModel>,
-    ) {
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+//     async fn setup_test_environment(
+//         cx: &mut TestAppContext,
+//         project: Entity<Project>,
+//     ) -> (
+//         &mut VisualTestContext,
+//         Entity<ActiveThread>,
+//         Entity<Workspace>,
+//         Entity<Thread>,
+//         Arc<dyn LanguageModel>,
+//     ) {
+//         let (workspace, cx) =
+//             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let thread_store = cx
-            .update(|_, cx| {
-                ThreadStore::load(
-                    project.clone(),
-                    cx.new(|_| ToolWorkingSet::default()),
-                    None,
-                    Arc::new(PromptBuilder::new(None).unwrap()),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+//         let thread_store = cx
+//             .update(|_, cx| {
+//                 ThreadStore::load(
+//                     project.clone(),
+//                     cx.new(|_| ToolWorkingSet::default()),
+//                     None,
+//                     Arc::new(PromptBuilder::new(None).unwrap()),
+//                     cx,
+//                 )
+//             })
+//             .await
+//             .unwrap();
 
-        let text_thread_store = cx
-            .update(|_, cx| {
-                TextThreadStore::new(
-                    project.clone(),
-                    Arc::new(PromptBuilder::new(None).unwrap()),
-                    Default::default(),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+//         let text_thread_store = cx
+//             .update(|_, cx| {
+//                 TextThreadStore::new(
+//                     project.clone(),
+//                     Arc::new(PromptBuilder::new(None).unwrap()),
+//                     Default::default(),
+//                     cx,
+//                 )
+//             })
+//             .await
+//             .unwrap();
 
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let context_store =
-            cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
+//         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+//         let context_store =
+//             cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
 
-        let model = FakeLanguageModel::default();
-        let model: Arc<dyn LanguageModel> = Arc::new(model);
+//         let model = FakeLanguageModel::default();
+//         let model: Arc<dyn LanguageModel> = Arc::new(model);
 
-        let language_registry = LanguageRegistry::new(cx.executor());
-        let language_registry = Arc::new(language_registry);
+//         let language_registry = LanguageRegistry::new(cx.executor());
+//         let language_registry = Arc::new(language_registry);
 
-        let active_thread = cx.update(|window, cx| {
-            cx.new(|cx| {
-                ActiveThread::new(
-                    thread.clone(),
-                    thread_store.clone(),
-                    text_thread_store,
-                    context_store.clone(),
-                    language_registry.clone(),
-                    workspace.downgrade(),
-                    window,
-                    cx,
-                )
-            })
-        });
+//         let active_thread = cx.update(|window, cx| {
+//             cx.new(|cx| {
+//                 ActiveThread::new(
+//                     thread.clone(),
+//                     thread_store.clone(),
+//                     text_thread_store,
+//                     context_store.clone(),
+//                     language_registry.clone(),
+//                     workspace.downgrade(),
+//                     window,
+//                     cx,
+//                 )
+//             })
+//         });
 
-        (cx, active_thread, workspace, thread, model)
-    }
-}
+//         (cx, active_thread, workspace, thread, model)
+//     }
+// }

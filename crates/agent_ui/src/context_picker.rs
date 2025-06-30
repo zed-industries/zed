@@ -670,7 +670,7 @@ fn recent_context_picker_entries(
         let mut threads = unordered_thread_entries(thread_store, text_thread_store, cx)
             .filter(|(_, thread)| match thread {
                 ThreadContextEntry::Thread { id, .. } => {
-                    Some(id) != active_thread_id && !current_threads.contains(id)
+                    Some(id) != active_thread_id.as_ref() && !current_threads.contains(id)
                 }
                 ThreadContextEntry::Context { .. } => true,
             })

@@ -169,13 +169,13 @@ impl ContextStrip {
             if self
                 .context_store
                 .read(cx)
-                .includes_thread(active_thread.id())
+                .includes_thread(&active_thread.id())
             {
                 return None;
             }
 
             Some(SuggestedContext::Thread {
-                name: active_thread.summary().or_default(),
+                name: active_thread.title().or_default(),
                 thread: weak_active_thread,
             })
         } else if let Some(active_context_editor) = panel.active_context_editor() {

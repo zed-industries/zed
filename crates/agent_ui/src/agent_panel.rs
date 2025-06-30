@@ -26,7 +26,7 @@ use crate::{
     ui::AgentOnboardingModal,
 };
 use agent::{
-    Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
+    Thread, ThreadError, ThreadEvent, ThreadId, ThreadTitle, TokenUsageRatio,
     context_store::ContextStore,
     history_store::{HistoryEntryId, HistoryStore},
     thread_store::{TextThreadStore, ThreadStore},
@@ -72,7 +72,7 @@ use zed_actions::{
     agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
-use zed_llm_client::{CompletionIntent, UsageLimit};
+use zed_llm_client::UsageLimit;
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
@@ -252,7 +252,7 @@ impl ActiveView {
 
                             thread.update(cx, |thread, cx| {
                                 thread.thread().update(cx, |thread, cx| {
-                                    thread.set_summary(new_summary, cx);
+                                    thread.set_title(new_summary, cx);
                                 });
                             })
                         }
@@ -278,7 +278,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |_, thread, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary().or_default();
+                        let summary = thread.read(cx).title().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -492,10 +492,15 @@ impl AgentPanel {
                 None
             };
 
+            let thread = thread_store
+                .update(cx, |this, cx| this.create_thread(cx))?
+                .await?;
+
             let panel = workspace.update_in(cx, |workspace, window, cx| {
                 let panel = cx.new(|cx| {
                     Self::new(
                         workspace,
+                        thread,
                         thread_store,
                         context_store,
                         prompt_store,
@@ -518,13 +523,13 @@ impl AgentPanel {
 
     fn new(
         workspace: &Workspace,
+        thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         context_store: Entity<TextThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
@@ -647,11 +652,12 @@ impl AgentPanel {
             |this, _, event: &language_model::Event, cx| match event {
                 language_model::Event::DefaultModelChanged => match &this.active_view {
                     ActiveView::Thread { thread, .. } => {
-                        thread
-                            .read(cx)
-                            .thread()
-                            .clone()
-                            .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
+                        // todo!(do we need this?);
+                        // thread
+                        //     .read(cx)
+                        //     .thread()
+                        //     .clone()
+                        //     .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
                     }
                     ActiveView::TextThread { .. }
                     | ActiveView::History
@@ -784,46 +790,61 @@ impl AgentPanel {
             .detach_and_log_err(cx);
         }
 
-        let active_thread = cx.new(|cx| {
-            ActiveThread::new(
-                thread.clone(),
-                self.thread_store.clone(),
-                self.context_store.clone(),
-                context_store.clone(),
-                self.language_registry.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            )
-        });
+        let fs = self.fs.clone();
+        let user_store = self.user_store.clone();
+        let thread_store = self.thread_store.clone();
+        let text_thread_store = self.context_store.clone();
+        let prompt_store = self.prompt_store.clone();
+        let language_registry = self.language_registry.clone();
+        let workspace = self.workspace.clone();
 
-        let message_editor = cx.new(|cx| {
-            MessageEditor::new(
-                self.fs.clone(),
-                self.workspace.clone(),
-                self.user_store.clone(),
-                context_store.clone(),
-                self.prompt_store.clone(),
-                self.thread_store.downgrade(),
-                self.context_store.downgrade(),
-                thread.clone(),
-                window,
-                cx,
-            )
-        });
+        cx.spawn_in(window, async move |this, cx| {
+            let thread = thread.await?;
+            let active_thread = cx.new_window_entity(|window, cx| {
+                ActiveThread::new(
+                    thread.clone(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
+                    context_store.clone(),
+                    language_registry.clone(),
+                    workspace.clone(),
+                    window,
+                    cx,
+                )
+            })?;
 
-        if let Some(text) = preserved_text {
-            message_editor.update(cx, |editor, cx| {
-                editor.set_text(text, window, cx);
-            });
-        }
+            let message_editor = cx.new_window_entity(|window, cx| {
+                MessageEditor::new(
+                    fs.clone(),
+                    workspace.clone(),
+                    user_store.clone(),
+                    context_store.clone(),
+                    prompt_store.clone(),
+                    thread_store.downgrade(),
+                    text_thread_store.downgrade(),
+                    thread.clone(),
+                    window,
+                    cx,
+                )
+            })?;
 
-        message_editor.focus_handle(cx).focus(window);
+            if let Some(text) = preserved_text {
+                message_editor.update_in(cx, |editor, window, cx| {
+                    editor.set_text(text, window, cx);
+                });
+            }
 
-        let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
-        self.set_active_view(thread_view, window, cx);
+            this.update_in(cx, |this, window, cx| {
+                message_editor.focus_handle(cx).focus(window);
 
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+                let thread_view =
+                    ActiveView::thread(active_thread.clone(), message_editor, window, cx);
+                this.set_active_view(thread_view, window, cx);
+
+                AgentDiff::set_active_thread(&this.workspace, &thread, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1254,23 +1275,11 @@ impl AgentPanel {
             return;
         }
 
-        let model = thread_state.configured_model().map(|cm| cm.model.clone());
-        if let Some(model) = model {
-            thread.update(cx, |active_thread, cx| {
-                active_thread.thread().update(cx, |thread, cx| {
-                    thread.insert_invisible_continue_message(cx);
-                    thread.advance_prompt_id();
-                    thread.send_to_model(
-                        model,
-                        CompletionIntent::UserPrompt,
-                        Some(window.window_handle()),
-                        cx,
-                    );
-                });
-            });
-        } else {
-            log::warn!("No configured model available for continuation");
-        }
+        thread.update(cx, |active_thread, cx| {
+            active_thread
+                .thread()
+                .update(cx, |thread, cx| thread.resume(window, cx))
+        });
     }
 
     fn toggle_burn_mode(
@@ -1552,24 +1561,24 @@ impl AgentPanel {
                 let state = {
                     let active_thread = active_thread.read(cx);
                     if active_thread.is_empty() {
-                        &ThreadSummary::Pending
+                        &ThreadTitle::Pending
                     } else {
                         active_thread.summary(cx)
                     }
                 };
 
                 match state {
-                    ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT.clone())
+                    ThreadTitle::Pending => Label::new(ThreadTitle::DEFAULT.clone())
                         .truncate()
                         .into_any_element(),
-                    ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                    ThreadTitle::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
                         .truncate()
                         .into_any_element(),
-                    ThreadSummary::Ready(_) => div()
+                    ThreadTitle::Ready(_) => div()
                         .w_full()
                         .child(change_title_editor.clone())
                         .into_any_element(),
-                    ThreadSummary::Error => h_flex()
+                    ThreadTitle::Error => h_flex()
                         .w_full()
                         .child(change_title_editor.clone())
                         .child(
@@ -2024,7 +2033,7 @@ impl AgentPanel {
                     .read(cx)
                     .thread()
                     .read(cx)
-                    .configured_model()
+                    .model()
                     .map_or(false, |model| {
                         model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
                     });
@@ -2629,7 +2638,7 @@ impl AgentPanel {
             return None;
         }
 
-        let model = thread.configured_model()?.model;
+        let model = thread.model()?.model;
 
         let focus_handle = self.focus_handle(cx);
 

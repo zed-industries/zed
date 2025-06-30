@@ -211,7 +211,7 @@ impl AgentDiffPane {
     }
 
     fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self.thread.read(cx).summary().unwrap_or("Agent Changes");
+        let new_title = self.thread.read(cx).title().unwrap_or("Agent Changes");
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
@@ -461,7 +461,7 @@ impl Item for AgentDiffPane {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        let summary = self.thread.read(cx).summary().unwrap_or("Agent Changes");
+        let summary = self.thread.read(cx).title().unwrap_or("Agent Changes");
         Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default
@@ -1369,8 +1369,6 @@ impl AgentDiff {
             | ThreadEvent::MessageDeleted(_)
             | ThreadEvent::SummaryGenerated
             | ThreadEvent::SummaryChanged
-            | ThreadEvent::UsePendingTools { .. }
-            | ThreadEvent::ToolFinished { .. }
             | ThreadEvent::CheckpointChanged
             | ThreadEvent::ToolConfirmationNeeded
             | ThreadEvent::ToolUseLimitReached
@@ -1801,7 +1799,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let thread = thread_store
+            .update(cx, |store, cx| store.create_thread(cx))
+            .await
+            .unwrap();
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
         let (workspace, cx) =
@@ -1966,7 +1967,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let thread = thread_store
+            .update(cx, |store, cx| store.create_thread(cx))
+            .await
+            .unwrap();
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
         let (workspace, cx) =

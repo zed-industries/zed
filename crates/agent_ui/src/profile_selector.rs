@@ -156,7 +156,7 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+        let configured_model = self.thread.read(cx).model().or_else(|| {
             let model_registry = LanguageModelRegistry::read_global(cx);
             model_registry.default_model()
         });
