@@ -184,7 +184,14 @@ impl LanguageModelCompletionError {
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
-        if let Some(status_code) = code
+        if let Some(tokens) = parse_prompt_too_long(&message) {
+            // TODO: currently Anthropic PAYLOAD_TOO_LARGE response may cause INTERNAL_SERVER_ERROR
+            // to be reported. This is a temporary workaround to handle this in the case where the
+            // token limit has been exceeded.
+            Self::PromptTooLarge {
+                tokens: Some(tokens),
+            }
+        } else if let Some(status_code) = code
             .strip_prefix("upstream_http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
