@@ -129,12 +129,6 @@ pub struct OnboardingUI {
     current_focus: OnboardingFocus,
     completed_pages: [bool; 4],
 
-    // Page entities
-    basics_page: Entity<BasicsPage>,
-    editing_page: Entity<EditingPage>,
-    ai_setup_page: Entity<AiSetupPage>,
-    welcome_page: Entity<WelcomePage>,
-
     // Workspace reference for Item trait
     workspace: WeakEntity<Workspace>,
 }
@@ -147,68 +141,16 @@ impl Focusable for OnboardingUI {
     }
 }
 
-pub struct BasicsPage {
-    focus_handle: FocusHandle,
-    parent: WeakEntity<OnboardingUI>,
-}
-
-pub struct EditingPage {
-    focus_handle: FocusHandle,
-    parent: WeakEntity<OnboardingUI>,
-}
-
-pub struct AiSetupPage {
-    focus_handle: FocusHandle,
-    parent: WeakEntity<OnboardingUI>,
-}
-
-pub struct WelcomePage {
-    focus_handle: FocusHandle,
-    parent: WeakEntity<OnboardingUI>,
-}
-
-// Event types for communication between pages and main UI
 #[derive(Clone)]
 pub enum OnboardingEvent {
     PageCompleted(OnboardingPage),
 }
 
-// Implement EventEmitter for all entities
-impl EventEmitter<OnboardingEvent> for BasicsPage {}
-impl EventEmitter<OnboardingEvent> for EditingPage {}
-impl EventEmitter<OnboardingEvent> for AiSetupPage {}
-impl EventEmitter<OnboardingEvent> for WelcomePage {}
-
-impl Focusable for BasicsPage {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Focusable for EditingPage {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Focusable for AiSetupPage {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Focusable for WelcomePage {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-// Placeholder Render implementations
 impl Render for OnboardingUI {
     fn render(
         &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut Context<Self>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
         h_flex()
             .id("onboarding-ui")
@@ -218,82 +160,17 @@ impl Render for OnboardingUI {
             .h(px(500.))
             .gap(px(48.))
             .child(v_flex().h_full().w(px(256.)).child("nav"))
-    }
-}
-
-impl Render for BasicsPage {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut Context<Self>,
-    ) -> impl gpui::IntoElement {
-        gpui::div()
-    }
-}
-
-impl Render for EditingPage {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut Context<Self>,
-    ) -> impl gpui::IntoElement {
-        gpui::div()
-    }
-}
-
-impl Render for AiSetupPage {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut Context<Self>,
-    ) -> impl gpui::IntoElement {
-        gpui::div()
-    }
-}
-
-impl Render for WelcomePage {
-    fn render(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut Context<Self>,
-    ) -> impl gpui::IntoElement {
-        gpui::div()
+            .child(self.render_active_page(window, cx))
     }
 }
 
 impl OnboardingUI {
     pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
-        let parent_handle = cx.entity().downgrade();
-
-        let basics_page = cx.new(|cx| BasicsPage {
-            focus_handle: cx.focus_handle(),
-            parent: parent_handle.clone(),
-        });
-
-        let editing_page = cx.new(|cx| EditingPage {
-            focus_handle: cx.focus_handle(),
-            parent: parent_handle.clone(),
-        });
-
-        let ai_setup_page = cx.new(|cx| AiSetupPage {
-            focus_handle: cx.focus_handle(),
-            parent: parent_handle.clone(),
-        });
-
-        let welcome_page = cx.new(|cx| WelcomePage {
-            focus_handle: cx.focus_handle(),
-            parent: parent_handle.clone(),
-        });
-
         Self {
             focus_handle: cx.focus_handle(),
             current_page: OnboardingPage::Basics,
             current_focus: OnboardingFocus::Page,
             completed_pages: [false; 4],
-            basics_page,
-            editing_page,
-            ai_setup_page,
-            welcome_page,
             workspace: workspace.weak_handle(),
         }
     }
@@ -351,6 +228,35 @@ impl OnboardingUI {
         };
         self.completed_pages[index] = true;
         cx.notify();
+    }
+
+    fn render_active_page(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut Context<Self>,
+    ) -> impl gpui::IntoElement {
+        match self.current_page {
+            OnboardingPage::Basics => self.render_basics_page(),
+            OnboardingPage::Editing => self.render_editing_page(),
+            OnboardingPage::AiSetup => self.render_ai_setup_page(),
+            OnboardingPage::Welcome => self.render_welcome_page(),
+        }
+    }
+
+    fn render_basics_page(&self) -> impl gpui::IntoElement {
+        v_flex().h_full().w_full().child("Basics Page")
+    }
+
+    fn render_editing_page(&self) -> impl gpui::IntoElement {
+        v_flex().h_full().w_full().child("Editing Page")
+    }
+
+    fn render_ai_setup_page(&self) -> impl gpui::IntoElement {
+        v_flex().h_full().w_full().child("AI Setup Page")
+    }
+
+    fn render_welcome_page(&self) -> impl gpui::IntoElement {
+        v_flex().h_full().w_full().child("Welcome Page")
     }
 }
 
