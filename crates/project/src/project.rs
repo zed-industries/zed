@@ -28,6 +28,7 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+use remote_path::{PathStyle, RemotePathBuf};
 pub mod search_history;
 mod yarn;
 
@@ -1154,9 +1155,11 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let ssh_proto = ssh.read(cx).proto_client();
-            let worktree_store =
-                cx.new(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
+            let (ssh_proto, path_style) =
+                ssh.update(cx, |cx, _| (cx.proto_client(), cx.path_style()));
+            let worktree_store = cx.new(|_| {
+                WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID, path_style)
+            });
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1405,8 +1408,15 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
+        // todo(zjk)
+        // Set the proper path style based on the remote
         let worktree_store = cx.new(|_| {
-            WorktreeStore::remote(true, client.clone().into(), response.payload.project_id)
+            WorktreeStore::remote(
+                true,
+                client.clone().into(),
+                response.payload.project_id,
+                PathStyle::Posix,
+            )
         })?;
         let buffer_store = cx.new(|cx| {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
@@ -4062,7 +4072,8 @@ impl Project {
                 })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-            let request_path = Path::new(path);
+            let path_style = ssh_client.read(cx).path_style();
+            let request_path = RemotePathBuf::from_str(path, path_style);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
