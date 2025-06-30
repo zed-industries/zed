@@ -850,6 +850,25 @@
     }
   },
   {
+    "context": "Editor && mode == auto_height && VimControl",
+    "bindings": {
+      // TODO: Implement search
+      "/": null,
+      "?": null,
+      "#": null,
+      "*": null,
+      "n": null,
+      "shift-n": null
+    }
+  },
+  {
+    "context": "GitCommit > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "ctrl-c": "menu::Cancel",
+      "escape": "menu::Cancel"
+    }
+  },
+  {
     "context": "Editor && edit_prediction",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
@@ -860,14 +879,7 @@
   {
     "context": "MessageEditor > Editor && VimControl",
     "bindings": {
-      "enter": "agent::Chat",
-      // TODO: Implement search
-      "/": null,
-      "?": null,
-      "#": null,
-      "*": null,
-      "n": null,
-      "shift-n": null
+      "enter": "agent::Chat"
     }
   },
   {
