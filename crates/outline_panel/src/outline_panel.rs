@@ -308,46 +308,13 @@ struct CachedEntry {
     entry: PanelEntry,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum CollapsedEntry {
     Dir(WorktreeId, ProjectEntryId),
     File(WorktreeId, BufferId),
     ExternalFile(BufferId),
     Excerpt(BufferId, ExcerptId),
     Outline(BufferId, ExcerptId, Range<Anchor>),
-}
-
-impl Hash for CollapsedEntry {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            CollapsedEntry::Dir(worktree_id, entry_id) => {
-                0u8.hash(state);
-                worktree_id.hash(state);
-                entry_id.hash(state);
-            }
-            CollapsedEntry::File(worktree_id, buffer_id) => {
-                1u8.hash(state);
-                worktree_id.hash(state);
-                buffer_id.hash(state);
-            }
-            CollapsedEntry::ExternalFile(buffer_id) => {
-                2u8.hash(state);
-                buffer_id.hash(state);
-            }
-            CollapsedEntry::Excerpt(buffer_id, excerpt_id) => {
-                3u8.hash(state);
-                buffer_id.hash(state);
-                excerpt_id.hash(state);
-            }
-            CollapsedEntry::Outline(buffer_id, excerpt_id, range) => {
-                4u8.hash(state);
-                buffer_id.hash(state);
-                excerpt_id.hash(state);
-                range.start.hash(state);
-                range.end.hash(state);
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
