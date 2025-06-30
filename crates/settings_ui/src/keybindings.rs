@@ -465,6 +465,7 @@ struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
     keybind_editor: Entity<KeybindInput>,
     fs: Arc<dyn Fs>,
+    error: Option<String>,
 }
 
 impl ModalView for KeybindingEditorModal {}
@@ -489,6 +490,7 @@ impl KeybindingEditorModal {
             editing_keybind,
             fs,
             keybind_editor,
+            error: None,
         }
     }
 }
@@ -497,63 +499,93 @@ impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
         return v_flex()
-            .items_center()
-            .text_center()
-            .bg(theme.background)
-            .border_color(theme.border)
-            .border_2()
-            .px_4()
-            .py_2()
+            .gap_4()
             .w(rems(36.))
-            .child(div().text_lg().font_weight(FontWeight::BOLD).child(
-                // todo! better text
-                "Input desired keybinding, then hit Enter to save",
-            ))
             .child(
-                h_flex()
+                v_flex()
+                    .items_center()
+                    .text_center()
+                    .bg(theme.background)
+                    .border_color(theme.border)
+                    .border_2()
+                    .px_4()
+                    .py_2()
                     .w_full()
-                    .child(self.keybind_editor.clone())
                     .child(
-                        IconButton::new("backspace-btn", ui::IconName::Backspace).on_click(
-                            cx.listener(|this, _event, _window, cx| {
-                                this.keybind_editor.update(cx, |editor, cx| {
-                                    editor.keystrokes.pop();
-                                    cx.notify();
-                                })
-                            }),
-                        ),
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .child("Input desired keybinding, then hit save"),
                     )
-                    .child(IconButton::new("clear-btn", ui::IconName::Eraser).on_click(
-                        cx.listener(|this, _event, _window, cx| {
-                            this.keybind_editor.update(cx, |editor, cx| {
-                                editor.keystrokes.clear();
-                                cx.notify();
-                            })
-                        }),
-                    )),
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .child(self.keybind_editor.clone())
+                            .child(
+                                IconButton::new("backspace-btn", ui::IconName::Backspace).on_click(
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.keybind_editor.update(cx, |editor, cx| {
+                                            editor.keystrokes.pop();
+                                            cx.notify();
+                                        })
+                                    }),
+                                ),
+                            )
+                            .child(IconButton::new("clear-btn", ui::IconName::Eraser).on_click(
+                                cx.listener(|this, _event, _window, cx| {
+                                    this.keybind_editor.update(cx, |editor, cx| {
+                                        editor.keystrokes.clear();
+                                        cx.notify();
+                                    })
+                                }),
+                            )),
+                    )
+                    .child(
+                        h_flex().w_full().items_center().justify_center().child(
+                            Button::new("save-btn", "Save")
+                                .label_size(LabelSize::Large)
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    let existing_keybind = this.editing_keybind.clone();
+                                    let fs = this.fs.clone();
+                                    let new_keystrokes = this
+                                        .keybind_editor
+                                        .read_with(cx, |editor, _| editor.keystrokes.clone());
+                                    if new_keystrokes.is_empty() {
+                                        this.error = Some("Keystrokes cannot be empty".to_string());
+                                        cx.notify();
+                                        return;
+                                    }
+                                    cx.spawn(async move |this, cx| {
+                                        if let Err(err) = save_keybinding_update(
+                                            existing_keybind,
+                                            &new_keystrokes,
+                                            &fs,
+                                            cx,
+                                        )
+                                        .await
+                                        {
+                                            this.update(cx, |this, cx| {
+                                                this.error = Some(err);
+                                                cx.notify();
+                                            })
+                                            .log_err();
+                                        }
+                                    })
+                                    .detach();
+                                })),
+                        ),
+                    ),
             )
-            .child(
-                h_flex().w_full().items_center().justify_center().child(
-                    Button::new("save-btn", "Save")
-                        .label_size(LabelSize::Large)
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            let existing_keybind = this.editing_keybind.clone();
-                            let fs = this.fs.clone();
-                            let new_keystrokes = this
-                                .keybind_editor
-                                .read_with(cx, |editor, _| editor.keystrokes.clone());
-                            if new_keystrokes.is_empty() {
-                                todo!("Warn and don't update");
-                            }
-                            cx.spawn(async move |_this, cx| {
-                                save_keybinding_update(existing_keybind, &new_keystrokes, &fs, cx)
-                                    .await
-                                // todo! save error
-                            })
-                            .detach();
-                        })),
-                ),
-            );
+            .when_some(self.error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .bg(theme.background)
+                        .border_color(theme.border)
+                        .border_2()
+                        .rounded_md()
+                        .child(error),
+                )
+            });
     }
 }
 
@@ -714,7 +746,6 @@ impl Render for KeybindInput {
             .flex_row()
             .text_center()
             .justify_center()
-            // todo! how to make text be centered, but have overflow always be on the left side?
             .child(ui::text_for_keystrokes(&self.keystrokes, cx));
     }
 }
