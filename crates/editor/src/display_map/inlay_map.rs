@@ -245,8 +245,9 @@ pub struct InlayChunks<'a> {
     transforms: Cursor<'a, Transform, (InlayOffset, usize)>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
-    inlay_chunks: Option<text::Chunks<'a>>,
-    inlay_chunk: Option<&'a str>,
+    inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
+    /// text, char bitmap, tabs bitmap
+    inlay_chunk: Option<(&'a str, u128, u128)>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_styles: HighlightStyles,
@@ -403,24 +404,43 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
                         - self.transforms.start().0;
-                    inlay.text.chunks_in_range(start.0..end.0)
+                    let chunks = inlay.text.chunks_in_range(start.0..end.0);
+                    text::ChunkWithBitmaps(chunks)
                 });
-                let inlay_chunk = self
+                let (inlay_chunk, chars, tabs) = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-                let (chunk, remainder) =
-                    inlay_chunk.split_at(inlay_chunk.len().min(next_inlay_highlight_endpoint));
+
+                let split_idx = inlay_chunk.len().min(next_inlay_highlight_endpoint);
+
+                let (chunk, remainder) = inlay_chunk.split_at(split_idx);
+
                 *inlay_chunk = remainder;
+
+                let (chars, tabs) = if split_idx == 128 {
+                    let output = (*chars, *tabs);
+                    *chars = 0;
+                    *tabs = 0;
+                    output
+                } else {
+                    let mask = (1 << split_idx as u32) - 1;
+                    let output = (*chars & mask, *tabs & mask);
+                    *chars = *chars >> split_idx;
+                    *tabs = *tabs >> split_idx;
+                    output
+                };
+
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
                 }
 
                 self.output_offset.0 += chunk.len();
 
-                // todo! figure out how to get tabs here
                 InlayChunk {
                     chunk: Chunk {
                         text: chunk,
+                        chars,
+                        tabs,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()
@@ -1930,7 +1950,7 @@ mod tests {
             Highlights::default(),
         );
 
-        for chunk in chunks {
+        for chunk in chunks.into_iter().map(|inlay_chunk| inlay_chunk.chunk) {
             let chunk_text = chunk.text;
             let chars_bitmap = chunk.chars;
             let tabs_bitmap = chunk.tabs;
