@@ -310,7 +310,7 @@ impl ExampleContext {
         let message_count_before = self.app.update_entity(&self.agent_thread, |agent, cx| {
             agent.set_remaining_turns(iterations);
             agent.send_to_model(model, CompletionIntent::UserPrompt, None, cx);
-            agent.thread().read(cx).messages().len()
+            agent.messages().len()
         })?;
 
         loop {
@@ -330,12 +330,7 @@ impl ExampleContext {
 
         let messages = self.app.read_entity(&self.agent_thread, |agent, cx| {
             let mut messages = Vec::new();
-            for message in agent
-                .thread()
-                .read(cx)
-                .messages()
-                .skip(message_count_before)
-            {
+            for message in agent.messages().skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
                     text: message.to_string(),
@@ -360,7 +355,7 @@ impl ExampleContext {
     pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
         self.agent_thread
             .read_with(&self.app, |thread, cx| {
-                let action_log = thread.action_log(cx).read(cx);
+                let action_log = thread.action_log().read(cx);
                 HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
                     |(buffer, diff)| {
                         let snapshot = buffer.read(cx).snapshot();

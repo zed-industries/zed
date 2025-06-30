@@ -560,7 +560,7 @@ impl Display for FetchedUrlContext {
 
 #[derive(Debug, Clone)]
 pub struct ThreadContextHandle {
-    pub thread: Entity<ZedAgent>,
+    pub agent: Entity<ZedAgent>,
     pub context_id: ContextId,
 }
 
@@ -573,23 +573,23 @@ pub struct ThreadContext {
 
 impl ThreadContextHandle {
     pub fn eq_for_key(&self, other: &Self) -> bool {
-        self.thread == other.thread
+        self.agent == other.agent
     }
 
     pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
-        self.thread.hash(state)
+        self.agent.hash(state)
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.thread.read(cx).summary(cx).or_default()
+        self.agent.read(cx).summary().or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
         cx.spawn(async move |cx| {
-            let text = ZedAgent::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
+            let text = ZedAgent::wait_for_detailed_summary_or_text(&self.agent, cx).await?;
             let title = self
-                .thread
-                .read_with(cx, |thread, cx| thread.summary(cx).or_default())
+                .agent
+                .read_with(cx, |thread, _| thread.summary().or_default())
                 .ok()?;
             let context = AgentContext::Thread(ThreadContext {
                 title,

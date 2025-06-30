@@ -472,7 +472,7 @@ impl ThreadStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let (metadata, serialized_thread) = thread.update(cx, |thread, cx| {
-            (thread.id(cx).clone(), thread.serialize(cx))
+            (thread.id().clone(), thread.serialize(cx))
         });
 
         let database_future = ThreadsDatabase::global_future(cx);

@@ -13,7 +13,6 @@ use agent::thread::UserMessageParams;
 use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
-    thread::Thread,
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use buffer_diff::BufferDiff;
@@ -67,7 +66,6 @@ use agent::{
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
     agent: Entity<ZedAgent>,
-    thread: Entity<Thread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
@@ -162,7 +160,6 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let thread = agent.read(cx).thread().clone();
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
@@ -203,9 +200,7 @@ impl MessageEditor {
                 // When context changes, reload it for token counting.
                 let _ = this.reload_context(cx);
             }),
-            cx.observe(&thread.read(cx).action_log().clone(), |_, _, cx| {
-                cx.notify()
-            }),
+            cx.observe(&agent.read(cx).action_log().clone(), |_, _, cx| cx.notify()),
         ];
 
         let model_selector = cx.new(|cx| {
@@ -227,7 +222,6 @@ impl MessageEditor {
             project: agent.read(cx).project().clone(),
             user_store,
             agent,
-            thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
@@ -499,7 +493,7 @@ impl MessageEditor {
             return;
         }
 
-        let action_log = self.thread.read(cx).action_log();
+        let action_log = self.agent.read(cx).action_log();
         action_log.update(cx, |action_log, cx| action_log.keep_all_edits(cx));
         cx.notify();
     }
@@ -509,7 +503,7 @@ impl MessageEditor {
             return;
         }
 
-        let action_log = self.thread.read(cx).action_log();
+        let action_log = self.agent.read(cx).action_log();
         action_log.update(cx, |action_log, cx| action_log.reject_all_edits(cx));
         cx.notify();
     }
@@ -524,7 +518,7 @@ impl MessageEditor {
             return;
         }
 
-        let action_log = self.thread.read(cx).action_log();
+        let action_log = self.agent.read(cx).action_log();
         action_log.update(cx, |action_log, cx| {
             action_log.reject_buffer_edits(buffer, cx)
         });
@@ -541,7 +535,7 @@ impl MessageEditor {
             return;
         }
 
-        let action_log = self.thread.read(cx).action_log();
+        let action_log = self.agent.read(cx).action_log();
         action_log.update(cx, |action_log, cx| {
             action_log.keep_buffer_edits(buffer, cx)
         });
@@ -1301,7 +1295,7 @@ impl MessageEditor {
                 Button::new("start-new-thread", "Start New Thread")
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.agent.read(cx).id(cx).clone());
+                        let from_thread_id = Some(this.agent.read(cx).id().clone());
                         window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
                     })),
             );
@@ -1336,7 +1330,7 @@ impl MessageEditor {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
                 let new_context = this.context_store.read(cx).new_context_for_thread(
-                    this.agent.read(cx).thread().read(cx),
+                    this.agent.read(cx),
                     None,
                     cx,
                 );
@@ -1577,7 +1571,6 @@ impl Focusable for MessageEditor {
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent = self.agent.read(cx);
-        let thread = agent.thread();
         let token_usage_ratio = agent
             .total_token_usage(cx)
             .map_or(TokenUsageRatio::Normal, |total_token_usage| {
@@ -1586,7 +1579,7 @@ impl Render for MessageEditor {
 
         let burn_mode_enabled = agent.completion_mode() == CompletionMode::Burn;
 
-        let action_log = thread.read(cx).action_log();
+        let action_log = agent.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;

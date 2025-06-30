@@ -24,8 +24,8 @@ use futures::{
 };
 use git::repository::DiffType;
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString,
-    Subscription, Task, WeakEntity, Window,
+    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
+    WeakEntity, Window,
 };
 use icons::IconName;
 use language_model::{
@@ -504,8 +504,17 @@ impl PendingToolUse2 {
 
 /// A thread of conversation with the LLM.
 pub struct ZedAgent {
-    thread: Entity<Thread>,
-    _thread_subscription: Subscription,
+    id: ThreadId,
+    next_message_id: MessageId,
+    thread_messages: Vec<Message>,
+    summary: ThreadSummary,
+    pending_checkpoint: Option<ThreadCheckpoint>,
+    checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
+    last_restore_checkpoint: Option<LastRestoreCheckpoint>,
+    action_log: Entity<ActionLog>,
+    updated_at: DateTime<Utc>,
+    last_received_chunk_at: Option<Instant>,
+
     pending_summary: Task<Option<()>>,
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
@@ -545,31 +554,21 @@ pub struct ZedAgent {
     profile: AgentProfile,
 }
 
-pub struct Thread {
-    id: ThreadId,
-    next_message_id: MessageId,
-    messages: Vec<Message>,
-    summary: ThreadSummary,
-    pending_checkpoint: Option<ThreadCheckpoint>,
-    checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
-    last_restore_checkpoint: Option<LastRestoreCheckpoint>,
-    project: Entity<Project>,
-    action_log: Entity<ActionLog>,
-    updated_at: DateTime<Utc>,
-    last_received_chunk_at: Option<Instant>,
-}
-
-impl Thread {
+impl ZedAgent {
     pub fn id(&self) -> &ThreadId {
         &self.id
     }
 
     pub fn is_empty(&self) -> bool {
-        self.messages.is_empty()
+        self.thread_messages.is_empty()
     }
 
     pub fn summary(&self) -> &ThreadSummary {
         &self.summary
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -592,7 +591,7 @@ impl Thread {
     }
 
     pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> + DoubleEndedIterator {
-        self.messages.iter()
+        self.thread_messages.iter()
     }
 
     pub fn insert_message(
@@ -604,7 +603,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
+        self.thread_messages.push(Message {
             id,
             role,
             segments,
@@ -640,7 +639,7 @@ impl Thread {
     ) -> usize {
         self.received_chunk();
 
-        if let Some(last_message) = self.messages.last_mut() {
+        if let Some(last_message) = self.thread_messages.last_mut() {
             if last_message.role == Role::Assistant {
                 match &segment {
                     MessageSegment::Text(chunk) => {
@@ -704,7 +703,7 @@ impl Thread {
         result: Result<LanguageModelToolResultContent>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(last_message) = self.messages.last_mut() {
+        if let Some(last_message) = self.thread_messages.last_mut() {
             if last_message.role == Role::Assistant {
                 if let Some(MessageSegment::ToolUse(ToolUseSegment { output, status, .. })) =
                     last_message.segments.get_mut(segment_index)
@@ -738,7 +737,7 @@ impl Thread {
     pub fn insert_retry_message(&mut self, retry_message: String, cx: &mut Context<Self>) {
         // Add a UI-only message instead of a regular message
         let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
+        self.thread_messages.push(Message {
             id,
             role: Role::System,
             segments: vec![MessageSegment::Text(retry_message)],
@@ -760,7 +759,11 @@ impl Thread {
         checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+        let Some(message) = self
+            .thread_messages
+            .iter_mut()
+            .find(|message| message.id == id)
+        else {
             return false;
         };
         message.role = new_role;
@@ -784,10 +787,14 @@ impl Thread {
     }
 
     pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
-        let Some(index) = self.messages.iter().position(|message| message.id == id) else {
+        let Some(index) = self
+            .thread_messages
+            .iter()
+            .position(|message| message.id == id)
+        else {
             return false;
         };
-        self.messages.remove(index);
+        self.thread_messages.remove(index);
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageDeleted(id));
         true
@@ -799,7 +806,7 @@ impl Thread {
     pub fn text(&self) -> String {
         let mut text = String::new();
 
-        for message in &self.messages {
+        for message in &self.thread_messages {
             text.push_str(match message.role {
                 language_model::Role::User => "User:",
                 language_model::Role::Assistant => "Agent:",
@@ -826,22 +833,8 @@ impl Thread {
         self.updated_at = Utc::now();
     }
 
-    pub fn truncate(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
-        let Some(message_ix) = self
-            .messages
-            .iter()
-            .rposition(|message| message.id == message_id)
-        else {
-            return;
-        };
-        for deleted_message in self.messages.drain(message_ix..) {
-            self.checkpoints_by_message.remove(&deleted_message.id);
-        }
-        cx.notify();
-    }
-
     pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AgentContext> {
-        self.messages
+        self.thread_messages
             .iter()
             .find(|message| message.id == id)
             .into_iter()
@@ -896,10 +889,6 @@ impl Thread {
         self.action_log.clone()
     }
 
-    pub fn project(&self) -> &Entity<Project> {
-        &self.project
-    }
-
     fn insert_checkpoint(&mut self, checkpoint: ThreadCheckpoint, cx: &mut Context<Self>) {
         self.checkpoints_by_message
             .insert(checkpoint.message_id, checkpoint);
@@ -909,11 +898,11 @@ impl Thread {
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
         let index = self
-            .messages
+            .thread_messages
             .binary_search_by(|message| message.id.cmp(&id))
             .ok()?;
 
-        self.messages.get(index)
+        self.thread_messages.get(index)
     }
 
     /// Indicates whether streaming of language model events is stale.
@@ -928,8 +917,6 @@ impl Thread {
         self.last_received_chunk_at = Some(Instant::now());
     }
 }
-
-impl EventEmitter<ThreadEvent> for Thread {}
 
 #[derive(Clone, Debug)]
 struct RetryState {
@@ -1002,28 +989,18 @@ impl ZedAgent {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
         let profile_id = AgentSettings::get_global(cx).default_profile.clone();
-        let thread = cx.new(|cx| Thread {
+
+        Self {
             summary: ThreadSummary::Pending,
             pending_checkpoint: None,
             next_message_id: MessageId(0),
             id: ThreadId::new(),
-            messages: Vec::new(),
+            thread_messages: Vec::new(),
             checkpoints_by_message: HashMap::default(),
             last_restore_checkpoint: None,
             updated_at: Utc::now(),
             action_log: cx.new(|_| ActionLog::new(project.clone())),
-            project: project.clone(),
             last_received_chunk_at: None,
-        });
-
-        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
-            // todo! temporarily reemitting
-            cx.emit(event.clone())
-        });
-
-        Self {
-            thread,
-            _thread_subscription: thread_subscription,
             pending_turn: None,
             messages: Vec::new(),
             pending_summary: Task::ready(None),
@@ -1065,25 +1042,16 @@ impl ZedAgent {
         }
     }
 
-    pub fn action_log(&self, cx: &App) -> Entity<ActionLog> {
-        self.thread().read(cx).action_log().clone()
-    }
-
-    pub fn thread(&self) -> &Entity<Thread> {
-        &self.thread
-    }
-
-    pub fn is_turn_end(&self, ix: usize, cx: &App) -> bool {
-        let thread = self.thread.read(cx);
-        if thread.messages.is_empty() {
+    pub fn is_turn_end(&self, ix: usize) -> bool {
+        if self.thread_messages.is_empty() {
             return false;
         }
 
-        if !self.is_generating() && ix == thread.messages.len() - 1 {
+        if !self.is_generating() && ix == self.thread_messages.len() - 1 {
             return true;
         }
 
-        let Some(message) = thread.messages.get(ix) else {
+        let Some(message) = self.thread_messages.get(ix) else {
             return false;
         };
 
@@ -1091,12 +1059,10 @@ impl ZedAgent {
             return false;
         }
 
-        thread
-            .messages
+        self.thread_messages
             .get(ix + 1)
             .and_then(|message| {
-                thread
-                    .message(message.id)
+                self.message(message.id)
                     .map(|next_message| next_message.role == Role::User)
             })
             .unwrap_or(false)
@@ -1188,28 +1154,17 @@ impl ZedAgent {
             })
             .collect();
 
-        let thread = cx.new(|cx| Thread {
+        Self {
             id,
             next_message_id,
-            messages,
+            thread_messages: messages,
             pending_checkpoint: None,
             checkpoints_by_message: HashMap::default(),
             last_restore_checkpoint: None,
-            project: project.clone(),
             updated_at: serialized.updated_at,
             action_log: cx.new(|_| ActionLog::new(project.clone())),
             summary: ThreadSummary::Ready(serialized.summary),
             last_received_chunk_at: None,
-        });
-
-        let subscription = cx.subscribe(&thread, |_, _, event, cx| {
-            // todo! temporarily reemitting
-            cx.emit(event.clone())
-        });
-
-        Self {
-            thread,
-            _thread_subscription: subscription,
             pending_turn: None,
             messages: Vec::new(),
             pending_summary: Task::ready(None),
@@ -1255,10 +1210,6 @@ impl ZedAgent {
         self.request_callback = Some(Box::new(callback));
     }
 
-    pub fn id<'a>(&'a self, cx: &'a App) -> &'a ThreadId {
-        &self.thread.read(cx).id
-    }
-
     pub fn profile(&self) -> &AgentProfile {
         &self.profile
     }
@@ -1268,10 +1219,6 @@ impl ZedAgent {
             self.profile = AgentProfile::new(id, self.tools.clone());
             cx.emit(ThreadEvent::ProfileChanged);
         }
-    }
-
-    pub fn is_empty(&self, cx: &App) -> bool {
-        self.thread.read(cx).is_empty()
     }
 
     pub fn advance_prompt_id(&mut self) {
@@ -1299,16 +1246,6 @@ impl ZedAgent {
         cx.notify();
     }
 
-    pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
-        &self.thread.read(cx).summary()
-    }
-
-    pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        self.thread.update(cx, |thread, cx| {
-            thread.set_summary(new_summary, cx);
-        });
-    }
-
     pub fn completion_mode(&self) -> CompletionMode {
         self.completion_mode
     }
@@ -1317,31 +1254,10 @@ impl ZedAgent {
         self.completion_mode = mode;
     }
 
-    pub fn message<'a>(&'a self, id: MessageId, cx: &'a App) -> Option<&'a Message> {
-        self.thread.read(cx).message(id)
-    }
-
-    pub fn messages<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl ExactSizeIterator<Item = &'a Message> + DoubleEndedIterator + 'a {
-        self.thread.read(cx).messages.iter()
-    }
-
     pub fn is_generating(&self) -> bool {
         self.pending_turn.is_some()
             || !self.pending_completions.is_empty()
             || !self.all_tools_finished()
-    }
-
-    /// Indicates whether streaming of language model events is stale.
-    pub fn is_generation_stale(&self, cx: &App) -> Option<bool> {
-        const STALE_THRESHOLD: u128 = 250;
-        let thread = self.thread.read(cx);
-
-        thread
-            .last_received_chunk_at
-            .map(|instant| instant.elapsed().as_millis() > STALE_THRESHOLD)
     }
 
     pub fn queue_state(&self) -> Option<QueueState> {
@@ -1373,10 +1289,7 @@ impl ZedAgent {
     fn finalize_pending_checkpoint(&mut self, cx: &mut Context<Self>) {
         let pending_checkpoint = if self.is_generating() {
             return;
-        } else if let Some(checkpoint) = self
-            .thread
-            .update(cx, |thread, _cx| thread.pending_checkpoint.take())
-        {
+        } else if let Some(checkpoint) = self.pending_checkpoint.take() {
             checkpoint
         } else {
             return;
@@ -1407,18 +1320,14 @@ impl ZedAgent {
 
                 if !equal {
                     this.update(cx, |this, cx| {
-                        this.thread.update(cx, |thread, cx| {
-                            thread.insert_checkpoint(pending_checkpoint, cx)
-                        });
+                        this.insert_checkpoint(pending_checkpoint, cx)
                     })?;
                 }
 
                 Ok(())
             }
             Err(_) => this.update(cx, |this, cx| {
-                this.thread.update(cx, |this, cx| {
-                    this.insert_checkpoint(pending_checkpoint, cx)
-                })
+                this.insert_checkpoint(pending_checkpoint, cx)
             }),
         })
         .detach();
@@ -1579,32 +1488,17 @@ impl ZedAgent {
         }
     }
 
-    pub fn insert_assistant_message(
-        &mut self,
-        segments: Vec<MessageSegment>,
-        cx: &mut Context<Self>,
-    ) -> MessageId {
-        self.thread.update(cx, |thread, cx| {
-            thread.insert_assistant_message(segments, cx)
-        })
-    }
-
-    pub fn text(&self, cx: &App) -> String {
-        self.thread.read(cx).text()
-    }
-
     /// Serializes this thread into a format for storage or telemetry.
     pub fn serialize(&self, cx: &mut Context<Self>) -> Task<Result<SerializedThread>> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
             this.read_with(cx, |this, cx| {
-                let thread = this.thread.read(cx);
                 SerializedThread {
                     version: SerializedThread::VERSION.to_string(),
-                    summary: this.summary(cx).or_default(),
-                    updated_at: thread.updated_at,
-                    messages: thread
+                    summary: this.summary().or_default(),
+                    updated_at: this.updated_at,
+                    messages: this
                         .messages()
                         .filter(|message| !message.ui_only)
                         .map(|message| SerializedMessage {
@@ -1697,9 +1591,17 @@ impl ZedAgent {
     }
 
     pub fn truncate(&mut self, old_message_id: MessageId, cx: &mut Context<Self>) {
-        self.thread.update(cx, |thread, cx| {
-            thread.truncate(old_message_id, cx);
-        });
+        let Some(message_ix) = self
+            .thread_messages
+            .iter()
+            .rposition(|message| message.id == old_message_id)
+        else {
+            return;
+        };
+        for deleted_message in self.thread_messages.drain(message_ix..) {
+            self.checkpoints_by_message.remove(&deleted_message.id);
+        }
+        cx.notify();
 
         if let Some(old_message_ix) = self.thread_user_messages.remove(&old_message_id) {
             self.messages.truncate(old_message_ix);
@@ -1775,7 +1677,6 @@ impl ZedAgent {
             custom_delay: Option<Duration>,
         }
         let mut retry_state: Option<RetryState> = None;
-        let thread = this.update(cx, |this, _| this.thread.clone())?;
 
         loop {
             let mut assistant_message = LanguageModelRequestMessage {
@@ -1805,13 +1706,13 @@ impl ZedAgent {
                     let event = event?;
                     match event {
                         LanguageModelCompletionEvent::StartMessage { .. } => {
-                            thread.update(cx, |thread, cx| {
-                                thread.insert_assistant_message(vec![], cx)
+                            this.update(cx, |agent, cx| {
+                                agent.insert_assistant_message(vec![], cx)
                             })?;
                         }
                         LanguageModelCompletionEvent::Text(chunk) => {
-                            thread.update(cx, |thread, cx| {
-                                thread.push_assistant_message_segment(
+                            this.update(cx, |this, cx| {
+                                this.push_assistant_message_segment(
                                     MessageSegment::Text(chunk.clone()),
                                     cx,
                                 );
@@ -1819,7 +1720,7 @@ impl ZedAgent {
                             assistant_message.push(MessageContent::Text(chunk));
                         }
                         LanguageModelCompletionEvent::Thinking { text, signature } => {
-                            thread.update(cx, |thread, cx| {
+                            this.update(cx, |thread, cx| {
                                 thread.push_assistant_message_segment(
                                     MessageSegment::Thinking {
                                         text: text.clone(),
@@ -1857,13 +1758,13 @@ impl ZedAgent {
                                                 tool_use.input.clone(),
                                                 Arc::new(pending_request),
                                                 this.project.clone(),
-                                                this.action_log(cx),
+                                                this.action_log(),
                                                 model.clone(),
                                                 window,
                                                 cx,
                                             )
                                         })?;
-                                        let index = thread.update(cx, |thread, cx| {
+                                        let index = this.update(cx, |thread, cx| {
                                             thread.push_tool_call(
                                                 tool_use.name.clone(),
                                                 tool_use.input.clone(),
@@ -1878,7 +1779,7 @@ impl ZedAgent {
                                         });
                                     }
                                     Err(error) => {
-                                        let index = thread.update(cx, |thread, cx| {
+                                        let index = this.update(cx, |thread, cx| {
                                             thread.push_tool_call(
                                                 tool_use.name.clone(),
                                                 tool_use.input.clone(),
@@ -1916,7 +1817,7 @@ impl ZedAgent {
 
                 while let Some(mut pending_tool_use) = pending_tool_uses.pop() {
                     let (tool_result, thread_result) = pending_tool_use.result().await;
-                    thread.update(cx, |thread, cx| {
+                    this.update(cx, |thread, cx| {
                         thread.set_tool_call_result(
                             pending_tool_use.index_in_message,
                             thread_result,
@@ -1975,7 +1876,7 @@ impl ZedAgent {
                 SendStatus::Finished(result) => {
                     for mut pending_tool_use in pending_tool_uses {
                         let (tool_result, thread_result) = pending_tool_use.result().await;
-                        thread.update(cx, |thread, cx| {
+                        this.update(cx, |thread, cx| {
                             thread.set_tool_call_result(
                                 pending_tool_use.index_in_message,
                                 thread_result,
@@ -2118,8 +2019,7 @@ impl ZedAgent {
                             }
                         };
 
-                        let summary_pending =
-                            matches!(thread.read(cx).summary(), ThreadSummary::Pending);
+                        let summary_pending = matches!(this.summary(), ThreadSummary::Pending);
 
                         if summary_pending && (done || this.messages.len() > 6) {
                             this.summarize(cx);
@@ -2159,7 +2059,7 @@ impl ZedAgent {
             .collect();
 
         let mut request = LanguageModelRequest {
-            thread_id: Some(self.id(cx).to_string()),
+            thread_id: Some(self.id().to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
             intent: Some(intent),
             mode,
@@ -2219,36 +2119,28 @@ impl ZedAgent {
         let req_ix = self.insert_request_user_message(&params);
 
         if !params.context.referenced_buffers.is_empty() {
-            self.thread
-                .read(cx)
-                .action_log
-                .clone()
-                .update(cx, |log, cx| {
-                    for buffer in params.context.referenced_buffers {
-                        log.buffer_read(buffer, cx);
-                    }
-                });
+            self.action_log.clone().update(cx, |log, cx| {
+                for buffer in params.context.referenced_buffers {
+                    log.buffer_read(buffer, cx);
+                }
+            });
         }
 
-        let message_id = self.thread.update(cx, |thread, cx| {
-            thread.insert_message(
-                Role::User,
-                vec![MessageSegment::Text(params.text)],
-                params.context.loaded_context,
-                params.creases,
-                cx,
-            )
-        });
+        let message_id = self.insert_message(
+            Role::User,
+            vec![MessageSegment::Text(params.text)],
+            params.context.loaded_context,
+            params.creases,
+            cx,
+        );
 
         self.thread_user_messages.insert(message_id, req_ix);
 
         if let Some(git_checkpoint) = params.checkpoint {
-            self.thread.update(cx, |thread, _cx| {
-                thread.pending_checkpoint = Some(ThreadCheckpoint {
-                    message_id,
-                    git_checkpoint,
-                })
-            });
+            self.pending_checkpoint = Some(ThreadCheckpoint {
+                message_id,
+                git_checkpoint,
+            })
         }
 
         self.auto_capture_telemetry(cx);
@@ -2294,8 +2186,8 @@ impl ZedAgent {
         self.stream_completion(request, model, intent, window, cx);
     }
 
-    pub fn used_tools_since_last_user_message(&self, cx: &App) -> bool {
-        for message in self.thread().read(cx).messages().rev() {
+    pub fn used_tools_since_last_user_message(&self, _cx: &App) -> bool {
+        for message in self.messages().rev() {
             let message_has_tool_results = self
                 .tool_uses_by_assistant_message
                 .get(&message.id)
@@ -2317,7 +2209,7 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
-            thread_id: Some(self.id(cx).to_string()),
+            thread_id: Some(self.id().to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
             intent: Some(intent),
             mode: None,
@@ -2369,7 +2261,7 @@ impl ZedAgent {
         }
 
         let mut message_ix_to_cache = None;
-        for message in self.thread().read(cx).messages() {
+        for message in &self.thread_messages {
             // ui_only messages are for the UI only, not for the model
             if message.ui_only {
                 continue;
@@ -2490,7 +2382,7 @@ impl ZedAgent {
             temperature: AgentSettings::temperature_for_model(model, cx),
         };
 
-        for message in self.thread.read(cx).messages() {
+        for message in &self.thread_messages {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -2542,13 +2434,11 @@ impl ZedAgent {
         let prompt_id = self.last_prompt_id.clone();
         let tool_use_metadata = ToolUseMetadata {
             model: model.clone(),
-            thread_id: self.id(cx).clone(),
+            thread_id: self.id().clone(),
             prompt_id: prompt_id.clone(),
         };
 
-        self.thread.update(cx, |thread, _| {
-            thread.last_received_chunk_at = Some(Instant::now())
-        });
+        self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |this, cx| {
             let stream_completion_future = model.stream_completion(request, &cx);
@@ -2669,11 +2559,10 @@ impl ZedAgent {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
-                                this.thread.update(cx, |thread, _| thread.received_chunk());
+                                this.received_chunk();
 
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
-                                this.thread.update(cx, |thread, cx| {
-                                    if let Some(last_message) = thread.messages.last_mut() {
+                                    if let Some(last_message) = this.thread_messages.last_mut() {
                                         if last_message.role == Role::Assistant
                                             && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
                                         {
@@ -2689,21 +2578,19 @@ impl ZedAgent {
                                             // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                             // will result in duplicating the text of the chunk in the rendered Markdown.
                                             request_assistant_message_id =
-                                                Some(thread.insert_assistant_message(
+                                                Some(this.insert_assistant_message(
                                                     vec![MessageSegment::Text(chunk.to_string())],
                                                     cx,
                                                 ));
                                         };
                                     }
-                                })
                             }
                             LanguageModelCompletionEvent::Thinking {
                                 text: chunk,
                                 signature,
                             } => {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread.received_chunk();
-                                    if let Some(last_message) = thread.messages.last_mut() {
+                                    this.received_chunk();
+                                    if let Some(last_message) = this.thread_messages.last_mut() {
                                         if last_message.role == Role::Assistant
                                             && !this.tool_uses_by_assistant_message.contains_key(&last_message.id)
                                         {
@@ -2719,7 +2606,7 @@ impl ZedAgent {
                                             // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                             // will result in duplicating the text of the chunk in the rendered Markdown.
                                             request_assistant_message_id =
-                                                Some(thread.insert_assistant_message(
+                                                Some(this.insert_assistant_message(
                                                     vec![MessageSegment::Thinking {
                                                         text: chunk.to_string(),
                                                         signature,
@@ -2728,7 +2615,6 @@ impl ZedAgent {
                                                 ));
                                         };
                                     }
-                                })
                             }
                             LanguageModelCompletionEvent::RedactedThinking {
                                 ..
@@ -2801,7 +2687,7 @@ impl ZedAgent {
                             }
                         }
 
-                        this.thread.update(cx, |thread, _cx| { thread.touch_updated_at() });
+                        this.touch_updated_at();
                         cx.emit(ThreadEvent::StreamedCompletion);
                         cx.notify();
 
@@ -2813,18 +2699,15 @@ impl ZedAgent {
                 }
 
                 this.update(cx, |this, cx| {
-                    this.thread.update(cx, |thread, _| {
-                        thread.last_received_chunk_at.take();
-                    });
+                        this.last_received_chunk_at.take();
                     this
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
 
 
-                    let thread = this.thread.read(cx);
-                    if matches!(thread.summary, ThreadSummary::Pending)
-                        && thread.messages().len() >= 2
-                        && (!this.has_pending_tool_uses() || thread.messages().len() >= 6)
+                    if matches!(this.summary, ThreadSummary::Pending)
+                        && this.messages().len() >= 2
+                        && (!this.has_pending_tool_uses() || this.messages().len() >= 6)
                     {
                         this.summarize(cx);
                     }
@@ -3019,7 +2902,7 @@ impl ZedAgent {
 
                         telemetry::event!(
                             "Assistant Thread Completion",
-                            thread_id = this.id(cx).to_string(),
+                            thread_id = this.id().to_string(),
                             prompt_id = prompt_id,
                             model = model.telemetry_id(),
                             model_provider = model.provider_id().to_string(),
@@ -3059,10 +2942,7 @@ impl ZedAgent {
             cx,
         );
 
-        self.thread.update(cx, |thread, _cx| {
-            thread.summary = ThreadSummary::Generating;
-        });
-        let thread = self.thread.downgrade();
+        self.summary = ThreadSummary::Generating;
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             let result = async {
@@ -3099,24 +2979,23 @@ impl ZedAgent {
             }
             .await;
 
-            thread
-                .update(cx, |thread, cx| {
-                    match result {
-                        Ok(new_summary) => {
-                            if new_summary.is_empty() {
-                                thread.summary = ThreadSummary::Error;
-                            } else {
-                                thread.summary = ThreadSummary::Ready(new_summary.into());
-                            }
-                        }
-                        Err(err) => {
+            this.update(cx, |thread, cx| {
+                match result {
+                    Ok(new_summary) => {
+                        if new_summary.is_empty() {
                             thread.summary = ThreadSummary::Error;
-                            log::error!("Failed to generate thread summary: {}", err);
+                        } else {
+                            thread.summary = ThreadSummary::Ready(new_summary.into());
                         }
                     }
-                    cx.emit(ThreadEvent::SummaryGenerated);
-                })
-                .log_err()?;
+                    Err(err) => {
+                        thread.summary = ThreadSummary::Error;
+                        log::error!("Failed to generate thread summary: {}", err);
+                    }
+                }
+                cx.emit(ThreadEvent::SummaryGenerated);
+            })
+            .log_err()?;
 
             Some(())
         });
@@ -3137,9 +3016,7 @@ impl ZedAgent {
             retry_after.as_secs()
         );
 
-        self.thread.update(cx, |thread, cx| {
-            thread.insert_retry_message(retry_message, cx)
-        });
+        self.insert_retry_message(retry_message, cx);
         // Schedule the retry
         let thread_handle = cx.entity().downgrade();
 
@@ -3202,9 +3079,7 @@ impl ZedAgent {
                 error_message, attempt, max_attempts, delay_secs
             );
 
-            self.thread.update(cx, |thread, cx| {
-                thread.insert_retry_message(retry_message, cx);
-            });
+            self.insert_retry_message(retry_message, cx);
 
             // Schedule the retry
             let thread_handle = cx.entity().downgrade();
@@ -3248,13 +3123,7 @@ impl ZedAgent {
         thread_store: WeakEntity<ThreadStore>,
         cx: &mut Context<Self>,
     ) {
-        let Some(last_message_id) = self
-            .thread
-            .read(cx)
-            .messages
-            .last()
-            .map(|message| message.id)
-        else {
+        let Some(last_message_id) = self.thread_messages.last().map(|message| message.id) else {
             return;
         };
 
@@ -3350,18 +3219,18 @@ impl ZedAgent {
             match detailed_summary_rx.recv().await? {
                 DetailedSummaryState::Generating { .. } => {}
                 DetailedSummaryState::NotGenerated => {
-                    return this.read_with(cx, |this, cx| this.text(cx).into()).ok();
+                    return this.read_with(cx, |this, _cx| this.text().into()).ok();
                 }
                 DetailedSummaryState::Generated { text, .. } => return Some(text),
             }
         }
     }
 
-    pub fn latest_detailed_summary_or_text(&self, cx: &App) -> SharedString {
+    pub fn latest_detailed_summary_or_text(&self, _cx: &App) -> SharedString {
         self.detailed_summary_rx
             .borrow()
             .text()
-            .unwrap_or_else(|| self.text(cx).into())
+            .unwrap_or_else(|| self.text().into())
     }
 
     pub fn is_generating_detailed_summary(&self) -> bool {
@@ -3670,7 +3539,7 @@ impl ZedAgent {
             input,
             request,
             self.project.clone(),
-            self.thread.read(cx).action_log(),
+            self.action_log(),
             model,
             window,
             cx,
@@ -3748,11 +3617,9 @@ impl ZedAgent {
             // When canceled, we always want to insert the checkpoint.
             // (We skip over finalize_pending_checkpoint, because it
             // would conclude we didn't have anything to insert here.)
-            self.thread.update(cx, |thread, cx| {
-                if let Some(checkpoint) = thread.pending_checkpoint.take() {
-                    thread.insert_checkpoint(checkpoint, cx);
-                }
-            })
+            if let Some(checkpoint) = self.pending_checkpoint.take() {
+                self.insert_checkpoint(checkpoint, cx);
+            }
         } else {
             self.finalize_pending_checkpoint(cx);
         }
@@ -3813,7 +3680,7 @@ impl ZedAgent {
 
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
-        let thread_id = self.id(cx).clone();
+        let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
 
         let enabled_tool_names: Vec<String> = self
@@ -3827,8 +3694,7 @@ impl ZedAgent {
 
         cx.notify();
 
-        let thread = self.thread.read(cx);
-        let message_content = thread
+        let message_content = self
             .message(message_id)
             .map(|msg| msg.to_string())
             .unwrap_or_default();
@@ -3864,8 +3730,7 @@ impl ZedAgent {
         feedback: ThreadFeedback,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let thread = self.thread.read(cx);
-        let last_assistant_message_id = thread
+        let last_assistant_message_id = self
             .messages()
             .rev()
             .find(|msg| msg.role == Role::Assistant)
@@ -3876,7 +3741,7 @@ impl ZedAgent {
         } else {
             let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
             let serialized_thread = self.serialize(cx);
-            let thread_id = self.id(cx).clone();
+            let thread_id = self.id().clone();
             let client = self.project.read(cx).client();
             self.feedback = Some(feedback);
             cx.notify();
@@ -4025,10 +3890,10 @@ impl ZedAgent {
         use std::io::Write;
         let mut markdown = Vec::new();
 
-        let summary = self.summary(cx).or_default();
+        let summary = self.summary().or_default();
         writeln!(markdown, "# {summary}\n")?;
 
-        for message in self.thread.read(cx).messages() {
+        for message in self.messages() {
             writeln!(
                 markdown,
                 "## {role}\n",
@@ -4105,10 +3970,6 @@ impl ZedAgent {
         Ok(String::from_utf8_lossy(&markdown).to_string())
     }
 
-    pub fn project(&self) -> &Entity<Project> {
-        &self.project
-    }
-
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
         if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
             return;
@@ -4123,7 +3984,7 @@ impl ZedAgent {
 
         self.last_auto_capture_at = Some(now);
 
-        let thread_id = self.id(cx).clone();
+        let thread_id = self.id().clone();
         let github_login = self
             .project
             .read(cx)
@@ -4157,15 +4018,14 @@ impl ZedAgent {
         self.cumulative_token_usage
     }
 
-    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
+    pub fn token_usage_up_to_message(&self, message_id: MessageId, _cx: &App) -> TotalTokenUsage {
         let Some(model) = self.configured_model.as_ref() else {
             return TotalTokenUsage::default();
         };
 
         let max = model.model.max_token_count();
 
-        let thread = self.thread.read(cx);
-        let index = thread
+        let index = self
             .messages()
             .position(|msg| msg.id == message_id)
             .unwrap_or(0);
@@ -4208,16 +4068,16 @@ impl ZedAgent {
         Some(TotalTokenUsage { total, max })
     }
 
-    fn token_usage_at_last_message(&self, cx: &App) -> Option<TokenUsage> {
+    fn token_usage_at_last_message(&self, _cx: &App) -> Option<TokenUsage> {
         self.request_token_usage
-            .get(self.thread.read(cx).messages().len().saturating_sub(1))
+            .get(self.messages().len().saturating_sub(1))
             .or_else(|| self.request_token_usage.last())
             .cloned()
     }
 
     fn update_token_usage_at_last_message(&mut self, token_usage: TokenUsage, cx: &App) {
         let placeholder = self.token_usage_at_last_message(cx).unwrap_or_default();
-        let len = self.thread.read(cx).messages().len();
+        let len = self.messages().len();
         self.request_token_usage.resize(len, placeholder);
 
         if let Some(last) = self.request_token_usage.last_mut() {
@@ -4640,7 +4500,7 @@ mod tests {
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_workspace, _thread_store, agent, thread, _context_store, model) =
+        let (_workspace, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         agent.update(cx, |agent, cx| {
@@ -4666,15 +4526,15 @@ mod tests {
 
         assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), false);
 
-        thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.messages[0].role, Role::User);
+        agent.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.thread_messages[0].role, Role::User);
             assert_eq!(
-                &thread.messages[0].segments[0],
+                &thread.thread_messages[0].segments[0],
                 &MessageSegment::Text("Hello".to_string())
             );
-            assert_eq!(thread.messages[1].role, Role::Assistant);
+            assert_eq!(thread.thread_messages[1].role, Role::Assistant);
             assert_eq!(
-                &thread.messages[1].segments[0],
+                &thread.thread_messages[1].segments[0],
                 &MessageSegment::Text("Assistant response".to_string())
             )
         });
@@ -4686,7 +4546,7 @@ mod tests {
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_workspace, thread_store, agent, thread, _context_store, model) =
+        let (_workspace, thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         thread_store.update(cx, |thread_store, cx| {
@@ -4743,20 +4603,20 @@ mod tests {
             LanguageModelToolResultContent::Text("the lazy dog...".into())
         );
 
-        thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.messages[0].role, Role::User);
+        agent.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.thread_messages[0].role, Role::User);
             assert_eq!(
-                &thread.messages[0].segments[0],
+                &thread.thread_messages[0].segments[0],
                 &MessageSegment::Text("Read foo.txt".to_string())
             );
-            assert_eq!(thread.messages[1].role, Role::Assistant);
+            assert_eq!(thread.thread_messages[1].role, Role::Assistant);
             assert_eq!(
-                &thread.messages[1].segments[0],
+                &thread.thread_messages[1].segments[0],
                 &MessageSegment::Text("I'll do so".to_string())
             );
 
             let MessageSegment::ToolUse(ToolUseSegment { name, output, .. }) =
-                &thread.messages[1].segments[1]
+                &thread.thread_messages[1].segments[1]
             else {
                 panic!("Expected ToolUse segment")
             };
@@ -4785,7 +4645,7 @@ mod tests {
         )
         .await;
 
-        let (_workspace, _thread_store, agent, thread, context_store, model) =
+        let (_workspace, _thread_store, agent, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         add_file_to_context(&project, &context_store, "test/code.rs", cx)
@@ -4814,7 +4674,7 @@ mod tests {
         });
 
         // Check content and context in message object
-        let message = thread.read_with(cx, |thread, _cx| {
+        let message = agent.read_with(cx, |thread, _cx| {
             thread.message(message_id).unwrap().clone()
         });
 
@@ -4873,7 +4733,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, agent, thread, context_store, model) =
+        let (_, _thread_store, agent, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // First message with context 1
@@ -4953,7 +4813,7 @@ fn main() {{
         });
 
         // Check what contexts are included in each message
-        let (message1, message2, message3) = thread.read_with(cx, |thread, _cx| {
+        let (message1, message2, message3) = agent.read_with(cx, |thread, _cx| {
             (
                 thread.message(message1_id).unwrap().clone(),
                 thread.message(message2_id).unwrap().clone(),
@@ -5054,7 +4914,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, agent, thread, _context_store, model) =
+        let (_, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
@@ -5068,7 +4928,7 @@ fn main() {{
         });
 
         // Check content and context in message object
-        let message = thread.read_with(cx, |thread, _cx| {
+        let message = agent.read_with(cx, |thread, _cx| {
             thread.message(message_id).unwrap().clone()
         });
 
@@ -5097,7 +4957,7 @@ fn main() {{
             agent.send_message("Are there any good books?", model.clone(), None, cx)
         });
 
-        let message2 = thread.read_with(cx, |thread, _cx| {
+        let message2 = agent.read_with(cx, |thread, _cx| {
             thread.message(message2_id).unwrap().clone()
         });
         assert_eq!(message2.loaded_context.text, "");
@@ -5128,7 +4988,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, thread_store, agent, _thread, _context_store, _model) =
+        let (_workspace, thread_store, agent, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Check that we are starting with the default profile
@@ -5150,7 +5010,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, thread_store, agent, _thread, _context_store, _model) =
+        let (_workspace, thread_store, agent, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Profile gets serialized with default values
@@ -5164,7 +5024,7 @@ fn main() {{
         let deserialized = cx.update(|cx| {
             agent.update(cx, |agent, cx| {
                 ZedAgent::deserialize(
-                    agent.id(cx).clone(),
+                    agent.id().clone(),
                     serialized,
                     agent.project.clone(),
                     agent.tools.clone(),
@@ -5193,7 +5053,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, agent, _thread, _context_store, model) =
+        let (_workspace, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Both model and provider
@@ -5283,21 +5143,21 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_, _thread_store, agent, thread, _context_store, model) =
+        let (_, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Initial state should be pending
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Pending));
             assert_eq!(thread.summary().or_default(), ThreadSummary::DEFAULT);
         });
 
         // Manually setting the summary should not be allowed in this state
-        thread.update(cx, |thread, cx| {
+        agent.update(cx, |thread, cx| {
             thread.set_summary("This should not work", cx);
         });
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Pending));
         });
 
@@ -5310,16 +5170,16 @@ fn main() {{
         simulate_successful_response(&fake_model, cx);
 
         // Should start generating summary when there are >= 2 messages
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert_eq!(*thread.summary(), ThreadSummary::Generating);
         });
 
         // Should not be able to set the summary while generating
-        thread.update(cx, |thread, cx| {
+        agent.update(cx, |thread, cx| {
             thread.set_summary("This should not work either", cx);
         });
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Generating));
             assert_eq!(thread.summary().or_default(), ThreadSummary::DEFAULT);
         });
@@ -5331,26 +5191,26 @@ fn main() {{
         cx.run_until_parked();
 
         // Summary should be set
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Ready(_)));
             assert_eq!(thread.summary().or_default(), "Brief Introduction");
         });
 
         // Now we should be able to set a summary
-        thread.update(cx, |thread, cx| {
+        agent.update(cx, |thread, cx| {
             thread.set_summary("Brief Intro", cx);
         });
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert_eq!(thread.summary().or_default(), "Brief Intro");
         });
 
         // Test setting an empty summary (should default to DEFAULT)
-        thread.update(cx, |thread, cx| {
+        agent.update(cx, |thread, cx| {
             thread.set_summary("", cx);
         });
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Ready(_)));
             assert_eq!(thread.summary().or_default(), ThreadSummary::DEFAULT);
         });
@@ -5362,17 +5222,17 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_, _thread_store, agent, thread, _context_store, model) =
+        let (_, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        test_summarize_error(&model, &agent, &thread, cx);
+        test_summarize_error(&model, &agent, cx);
 
         // Now we should be able to set a summary
-        thread.update(cx, |thread, cx| {
+        agent.update(cx, |thread, cx| {
             thread.set_summary("Brief Intro", cx);
         });
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Ready(_)));
             assert_eq!(thread.summary().or_default(), "Brief Intro");
         });
@@ -5384,10 +5244,10 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
 
-        let (_, _thread_store, agent, thread, _context_store, model) =
+        let (_, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        test_summarize_error(&model, &agent, &thread, cx);
+        test_summarize_error(&model, &agent, cx);
 
         // Sending another message should not trigger another summarize request
         agent.update(cx, |agent, cx| {
@@ -5397,7 +5257,7 @@ fn main() {{
         let fake_model = model.as_fake();
         simulate_successful_response(&fake_model, cx);
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             // State is still Error, not Generating
             assert!(matches!(thread.summary(), ThreadSummary::Error));
         });
@@ -5407,7 +5267,7 @@ fn main() {{
             agent.summarize(cx);
         });
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Generating));
         });
 
@@ -5416,7 +5276,7 @@ fn main() {{
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Ready(_)));
             assert_eq!(thread.summary().or_default(), "A successful summary");
         });
@@ -5611,7 +5471,7 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_workspace, _thread_store, agent, thread, _context_store, _model) =
+        let (_workspace, _thread_store, agent, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Create a model that fails once then succeeds
@@ -5647,12 +5507,12 @@ fn main() {{
         cx.run_until_parked();
 
         // Verify the message was sent successfully
-        thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.messages.len(), 2);
-            assert_eq!(thread.messages[0].role, Role::User);
-            assert_eq!(thread.messages[1].role, Role::Assistant);
+        agent.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.thread_messages.len(), 2);
+            assert_eq!(thread.thread_messages[0].role, Role::User);
+            assert_eq!(thread.thread_messages[1].role, Role::Assistant);
             assert_eq!(
-                &thread.messages[1].segments[0],
+                &thread.thread_messages[1].segments[0],
                 &MessageSegment::Text("Assistant response".to_string())
             );
         });
@@ -5663,7 +5523,7 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_workspace, _thread_store, agent, thread, _context_store, _model) =
+        let (_workspace, _thread_store, agent, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Create a model that always fails
@@ -5700,9 +5560,9 @@ fn main() {{
         assert_eq!(*attempt_count.lock(), MAX_RETRY_ATTEMPTS as usize);
 
         // Verify no messages were added (failure case)
-        thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.messages.len(), 1); // Only user message
-            assert_eq!(thread.messages[0].role, Role::User);
+        agent.read_with(cx, |agent, _cx| {
+            assert_eq!(agent.thread_messages.len(), 1); // Only user message
+            assert_eq!(agent.thread_messages[0].role, Role::User);
         });
     }
 
@@ -5711,7 +5571,7 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_workspace, _thread_store, agent, thread, _context_store, _model) =
+        let (_workspace, _thread_store, agent, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Create a model that fails multiple times
@@ -5755,10 +5615,10 @@ fn main() {{
         cx.run_until_parked();
 
         // Verify the message was sent successfully
-        thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.messages.len(), 2);
-            assert_eq!(thread.messages[0].role, Role::User);
-            assert_eq!(thread.messages[1].role, Role::Assistant);
+        agent.read_with(cx, |agent, _cx| {
+            assert_eq!(agent.thread_messages.len(), 2);
+            assert_eq!(agent.thread_messages[0].role, Role::User);
+            assert_eq!(agent.thread_messages[1].role, Role::Assistant);
         });
     }
 
@@ -5767,7 +5627,7 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_workspace, _thread_store, agent, thread, _context_store, _model) =
+        let (_workspace, _thread_store, agent, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Create a model that returns rate limit error with custom delay
@@ -5809,9 +5669,9 @@ fn main() {{
         cx.run_until_parked();
 
         // Verify success
-        thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.messages.len(), 2);
-            assert_eq!(thread.messages[1].role, Role::Assistant);
+        agent.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.thread_messages.len(), 2);
+            assert_eq!(thread.thread_messages[1].role, Role::Assistant);
         });
     }
 
@@ -5995,7 +5855,6 @@ fn main() {{
     fn test_summarize_error(
         model: &Arc<dyn LanguageModel>,
         agent: &Entity<ZedAgent>,
-        thread: &Entity<Thread>,
         cx: &mut TestAppContext,
     ) {
         agent.update(cx, |agent, cx| {
@@ -6005,7 +5864,7 @@ fn main() {{
         let fake_model = model.as_fake();
         simulate_successful_response(&fake_model, cx);
 
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Generating));
             assert_eq!(thread.summary().or_default(), ThreadSummary::DEFAULT);
         });
@@ -6016,7 +5875,7 @@ fn main() {{
         cx.run_until_parked();
 
         // State is set to Error and default message
-        thread.read_with(cx, |thread, _| {
+        agent.read_with(cx, |thread, _| {
             assert!(matches!(thread.summary(), ThreadSummary::Error));
             assert_eq!(thread.summary().or_default(), ThreadSummary::DEFAULT);
         });
@@ -6063,7 +5922,6 @@ fn main() {{
         Entity<Workspace>,
         Entity<ThreadStore>,
         Entity<ZedAgent>,
-        Entity<Thread>,
         Entity<ContextStore>,
         Arc<dyn LanguageModel>,
     ) {
@@ -6108,9 +5966,8 @@ fn main() {{
                 );
             })
         });
-        let thread = agent.update(cx, |agent, _| agent.thread().clone());
 
-        (workspace, thread_store, agent, thread, context_store, model)
+        (workspace, thread_store, agent, context_store, model)
     }
 
     async fn add_file_to_context(
@@ -6142,7 +5999,7 @@ fn main() {{
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
-        let (_workspace, _thread_store, agent, thread, _context_store, model) =
+        let (_workspace, _thread_store, agent, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Send first message
@@ -6179,8 +6036,8 @@ fn main() {{
         cx.run_until_parked();
 
         // Verify we have 6 messages (3 user + 3 assistant)
-        thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.messages.len(), 6);
+        agent.read_with(cx, |thread, _| {
+            assert_eq!(thread.thread_messages.len(), 6);
         });
 
         // Truncate at the second user message
@@ -6189,11 +6046,11 @@ fn main() {{
         });
 
         // Verify truncation
-        thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.messages.len(), 2);
-            assert_eq!(thread.messages[0].id, message_id_1);
-            assert_eq!(thread.messages[0].role, Role::User);
-            assert_eq!(thread.messages[1].role, Role::Assistant);
+        agent.read_with(cx, |thread, _| {
+            assert_eq!(thread.thread_messages.len(), 2);
+            assert_eq!(thread.thread_messages[0].id, message_id_1);
+            assert_eq!(thread.thread_messages[0].role, Role::User);
+            assert_eq!(thread.thread_messages[1].role, Role::Assistant);
 
             // Verify the truncated messages are gone
             assert!(thread.message(message_id_2).is_none());

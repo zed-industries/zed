@@ -42,7 +42,7 @@ impl Example for FileChangeNotificationExample {
         };
 
         cx.agent_thread().update(cx, |thread, cx| {
-            thread.action_log(cx).update(cx, |action_log, cx| {
+            thread.action_log().update(cx, |action_log, cx| {
                 action_log.buffer_read(buffer.clone(), cx);
             });
         })?;

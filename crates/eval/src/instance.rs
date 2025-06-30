@@ -420,13 +420,12 @@ impl ExampleInstance {
                 fs::write(this.run_directory.join("diagnostics_after.txt"), diagnostics_after)?;
             }
 
-            agent.update(cx, |agent, cx| {
-                let thread = agent.thread().read(cx);
-                let response_count = thread
+            agent.update(cx, |agent, _cx| {
+                let response_count = agent
                     .messages()
                     .filter(|message| message.role == language_model::Role::Assistant)
                     .count();
-                let all_messages = messages_to_markdown(thread.messages());
+                let all_messages = messages_to_markdown(agent.messages());
                 RunOutput {
                     repository_diff,
                     diagnostic_summary_before,

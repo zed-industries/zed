@@ -33,7 +33,7 @@ impl Example for CommentTranslation {
 
         let mut create_or_overwrite_count = 0;
         cx.agent_thread().read_with(cx, |agent, cx| {
-            for message in agent.thread().read(cx).messages() {
+            for message in agent.messages() {
                 for tool_use in agent.tool_uses_for_message(message.id, cx) {
                     if tool_use.name == "edit_file" {
                         let input: EditFileToolInput = serde_json::from_value(tool_use.input)?;

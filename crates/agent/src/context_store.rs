@@ -4,7 +4,7 @@ use crate::{
         FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
         SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
     },
-    thread::{MessageId, Thread, ThreadId, ZedAgent},
+    thread::{MessageId, ThreadId, ZedAgent},
     thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -68,10 +68,10 @@ impl ContextStore {
         &self,
         thread: &ZedAgent,
         exclude_messages_from_id: Option<MessageId>,
-        cx: &App,
+        _cx: &App,
     ) -> Vec<AgentContextHandle> {
         let existing_context = thread
-            .messages(cx)
+            .messages()
             .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
             .flat_map(|message| {
                 message
@@ -212,7 +212,10 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) -> Option<AgentContextHandle> {
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContextHandle::Thread(ThreadContextHandle { thread, context_id });
+        let context = AgentContextHandle::Thread(ThreadContextHandle {
+            agent: thread,
+            context_id,
+        });
 
         if let Some(existing) = self.context_set.get(AgentContextKey::ref_cast(&context)) {
             if remove_if_exists {
@@ -388,7 +391,10 @@ impl ContextStore {
                 if let Some(thread) = thread.upgrade() {
                     let context_id = self.next_context_id.post_inc();
                     self.insert_context(
-                        AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
+                        AgentContextHandle::Thread(ThreadContextHandle {
+                            agent: thread,
+                            context_id,
+                        }),
                         cx,
                     );
                 }
@@ -412,11 +418,11 @@ impl ContextStore {
         match &context {
             AgentContextHandle::Thread(thread_context) => {
                 if let Some(thread_store) = self.thread_store.clone() {
-                    thread_context.thread.update(cx, |thread, cx| {
+                    thread_context.agent.update(cx, |thread, cx| {
                         thread.start_generating_detailed_summary_if_needed(thread_store, cx);
                     });
                     self.context_thread_ids
-                        .insert(thread_context.thread.read(cx).id(cx).clone());
+                        .insert(thread_context.agent.read(cx).id().clone());
                 } else {
                     return false;
                 }
@@ -442,7 +448,7 @@ impl ContextStore {
             match context {
                 AgentContextHandle::Thread(thread_context) => {
                     self.context_thread_ids
-                        .remove(thread_context.thread.read(cx).id(cx));
+                        .remove(thread_context.agent.read(cx).id());
                 }
                 AgentContextHandle::TextThread(text_thread_context) => {
                     if let Some(path) = text_thread_context.context.read(cx).path() {

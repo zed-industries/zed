@@ -90,7 +90,7 @@ impl AgentDiffPane {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-        let action_log = agent.read(cx).thread().read(cx).action_log();
+        let action_log = agent.read(cx).action_log();
         let project = agent.read(cx).project().clone();
 
         let editor = cx.new(|cx| {
@@ -127,12 +127,7 @@ impl AgentDiffPane {
 
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let agent = self.agent.read(cx);
-        let changed_buffers = agent
-            .thread()
-            .read(cx)
-            .action_log()
-            .read(cx)
-            .changed_buffers(cx);
+        let changed_buffers = agent.action_log().read(cx).changed_buffers(cx);
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in changed_buffers {
@@ -219,13 +214,7 @@ impl AgentDiffPane {
     }
 
     fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self
-            .agent
-            .read(cx)
-            .thread()
-            .read(cx)
-            .summary()
-            .unwrap_or("Agent Changes");
+        let new_title = self.agent.read(cx).summary().unwrap_or("Agent Changes");
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
@@ -475,7 +464,7 @@ impl Item for AgentDiffPane {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        let summary = self.agent.read(cx).summary(cx).or_default();
+        let summary = self.agent.read(cx).summary().or_default();
         Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default
@@ -1242,7 +1231,7 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let action_log = agent.read(cx).action_log(cx).clone();
+        let action_log = agent.read(cx).action_log().clone();
 
         let action_log_subscription = cx.observe_in(&action_log, window, {
             let workspace = workspace.clone();
@@ -1500,7 +1489,7 @@ impl AgentDiff {
             return;
         };
 
-        let action_log = agent.read(cx).thread().read(cx).action_log();
+        let action_log = agent.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         let mut unaffected = self.reviewing_editors.clone();
@@ -1630,7 +1619,7 @@ impl AgentDiff {
             keep_edits_in_ranges(
                 editor,
                 &snapshot,
-                &agent.read(cx).action_log(cx),
+                &agent.read(cx).action_log(),
                 vec![editor::Anchor::min()..editor::Anchor::max()],
                 window,
                 cx,
@@ -1650,7 +1639,7 @@ impl AgentDiff {
             reject_edits_in_ranges(
                 editor,
                 &snapshot,
-                &thread.read(cx).action_log(cx),
+                &thread.read(cx).action_log(),
                 vec![editor::Anchor::min()..editor::Anchor::max()],
                 window,
                 cx,
@@ -1667,13 +1656,7 @@ impl AgentDiff {
     ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            keep_edits_in_selection(
-                editor,
-                &snapshot,
-                &agent.read(cx).action_log(cx),
-                window,
-                cx,
-            );
+            keep_edits_in_selection(editor, &snapshot, &agent.read(cx).action_log(), window, cx);
             Self::post_review_state(&snapshot)
         })
     }
@@ -1686,13 +1669,7 @@ impl AgentDiff {
     ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            reject_edits_in_selection(
-                editor,
-                &snapshot,
-                &agent.read(cx).action_log(cx),
-                window,
-                cx,
-            );
+            reject_edits_in_selection(editor, &snapshot, &agent.read(cx).action_log(), window, cx);
             Self::post_review_state(&snapshot)
         })
     }
@@ -1729,7 +1706,7 @@ impl AgentDiff {
 
         if let PostReviewState::AllReviewed = review(&editor, &agent, window, cx) {
             if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                let changed_buffers = agent.read(cx).action_log(cx).read(cx).changed_buffers(cx);
+                let changed_buffers = agent.read(cx).action_log().read(cx).changed_buffers(cx);
 
                 let mut keys = changed_buffers.keys().cycle();
                 keys.find(|k| *k == &curr_buffer);
@@ -1828,8 +1805,7 @@ mod tests {
             .await
             .unwrap();
         let agent = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let thread = agent.read_with(cx, |agent, _| agent.thread().clone());
-        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+        let action_log = agent.read_with(cx, |agent, _| agent.action_log().clone());
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -1922,7 +1898,7 @@ mod tests {
                 keep_edits_in_ranges(
                     editor,
                     &snapshot,
-                    &thread.read(cx).action_log(),
+                    &agent.read(cx).action_log(),
                     vec![position..position],
                     window,
                     cx,
@@ -1994,8 +1970,7 @@ mod tests {
             .await
             .unwrap();
         let agent = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let thread = agent.read_with(cx, |agent, _| agent.thread().clone());
-        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+        let action_log = agent.read_with(cx, |agent, _| agent.action_log().clone());
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2174,7 +2149,7 @@ mod tests {
             keep_edits_in_ranges(
                 editor,
                 &snapshot,
-                &thread.read(cx).action_log(),
+                &agent.read(cx).action_log(),
                 vec![position..position],
                 window,
                 cx,

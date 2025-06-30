@@ -251,9 +251,9 @@ impl ActiveView {
                             let new_summary = editor.read(cx).text(cx);
 
                             thread.update(cx, |thread, cx| {
-                                thread.thread().update(cx, |thread, cx| {
-                                    thread.set_summary(new_summary, cx);
-                                });
+                                thread.agent().update(cx, |agent, cx| {
+                                    agent.set_summary(new_summary, cx);
+                                })
                             })
                         }
                         EditorEvent::Blurred => {
@@ -278,7 +278,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |_, agent, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = agent.read(cx).summary(cx).or_default();
+                        let summary = agent.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -525,7 +525,6 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let agent = thread_store.update(cx, |this, cx| this.create_thread(cx));
-        let thread = agent.read(cx).thread().clone();
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
@@ -553,7 +552,7 @@ impl AgentPanel {
             )
         });
 
-        let thread_id = thread.read(cx).id().clone();
+        let thread_id = agent.read(cx).id().clone();
         let history_store = cx.new(|cx| {
             HistoryStore::new(
                 thread_store.clone(),
@@ -1324,7 +1323,7 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 let thread = thread.read(cx);
                 if thread.is_empty() {
-                    let id = thread.thread().read(cx).id().clone();
+                    let id = thread.agent().read(cx).id().clone();
                     self.history_store.update(cx, |store, cx| {
                         store.remove_recently_opened_thread(id, cx);
                     });
@@ -1335,7 +1334,7 @@ impl AgentPanel {
 
         match &new_view {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
-                let id = thread.read(cx).thread().read(cx).id().clone();
+                let id = thread.read(cx).agent().read(cx).id().clone();
                 store.push_recently_opened_entry(HistoryEntryId::Thread(id), cx);
             }),
             ActiveView::TextThread { context_editor, .. } => {
@@ -1720,7 +1719,7 @@ impl AgentPanel {
         };
 
         let active_thread = match &self.active_view {
-            ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
+            ActiveView::Thread { thread, .. } => Some(thread.clone()),
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
         };
 
@@ -1755,7 +1754,7 @@ impl AgentPanel {
                                 this.action(
                                     "New From Summary",
                                     Box::new(NewThread {
-                                        from_thread_id: Some(thread.id().clone()),
+                                        from_thread_id: Some(thread.agent().read(cx).id().clone()),
                                     }),
                                 )
                             } else {

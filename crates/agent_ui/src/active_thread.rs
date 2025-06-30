@@ -5,7 +5,7 @@ use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
 use crate::{AgentPanel, ModelUsageContext};
-use agent::thread::{Thread, ToolUseSegment, UserMessageParams};
+use agent::thread::{ToolUseSegment, UserMessageParams};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
     ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary, ZedAgent,
@@ -175,7 +175,7 @@ impl RenderedMessage {
         &mut self,
         segment_index: usize,
         segment: &ToolUseSegment,
-        tools: &Entity<ToolWorkingSet>,
+        _tools: &Entity<ToolWorkingSet>,
         cx: &mut App,
     ) {
         if let Some(card) = segment.card.clone() {
@@ -234,15 +234,15 @@ impl RenderedMessage {
             );
         });
 
-        rendered.output.update(cx, |this, cx| {
+        rendered.output.update(cx, |_this, _cx| {
             match &segment.output {
-                Some(Ok(LanguageModelToolResultContent::Text(text))) => {
+                Some(Ok(LanguageModelToolResultContent::Text(_text))) => {
                     // todo!
                 }
-                Some(Ok(LanguageModelToolResultContent::Image(image))) => {
+                Some(Ok(LanguageModelToolResultContent::Image(_image))) => {
                     // todo!
                 }
-                Some(Err(error)) => {
+                Some(Err(_error)) => {
                     // todo!
                 }
                 None => {
@@ -877,7 +877,6 @@ impl ActiveThread {
                     .unwrap()
             }
         });
-        let thread = agent.read(cx).thread().clone();
         let project = agent.read(cx).project().clone();
         let mut this = Self {
             language_registry,
@@ -909,7 +908,7 @@ impl ActiveThread {
         };
 
         // todo! hold on to thread entity and get messages directly
-        for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
+        for message in agent.read(cx).messages().cloned().collect::<Vec<_>>() {
             let rendered_message = RenderedMessage::from_segments(
                 &message.segments,
                 this.language_registry.clone(),
@@ -940,7 +939,7 @@ impl ActiveThread {
     }
 
     pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
-        self.agent.read(cx).summary(cx)
+        self.agent.read(cx).summary()
     }
 
     pub fn regenerate_summary(&self, cx: &mut App) {
@@ -1121,7 +1120,7 @@ impl ActiveThread {
             } => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     self.agent.update(cx, |agent, cx| {
-                        if let Some(message) = agent.message(*message_id, cx) {
+                        if let Some(message) = agent.message(*message_id) {
                             let MessageSegment::ToolUse(tool_use) =
                                 &message.segments[*segment_index]
                             else {
@@ -1136,7 +1135,7 @@ impl ActiveThread {
             }
             ThreadEvent::MessageAdded(message_id) => {
                 if let Some(rendered_message) = self.agent.update(cx, |agent, cx| {
-                    agent.message(*message_id, cx).map(|message| {
+                    agent.message(*message_id).map(|message| {
                         RenderedMessage::from_segments(
                             &message.segments,
                             self.language_registry.clone(),
@@ -1153,7 +1152,7 @@ impl ActiveThread {
             ThreadEvent::MessageEdited(message_id) => {
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
                     if let Some(rendered_message) = self.agent.update(cx, |agent, cx| {
-                        agent.message(*message_id, cx).map(|message| {
+                        agent.message(*message_id).map(|message| {
                             let mut rendered_message = RenderedMessage {
                                 language_registry: self.language_registry.clone(),
                                 segments: Vec::with_capacity(message.segments.len()),
@@ -1295,7 +1294,7 @@ impl ActiveThread {
             return;
         }
 
-        let title = self.agent.read(cx).summary(cx).unwrap_or("Agent Panel");
+        let title = self.agent.read(cx).summary().unwrap_or("Agent Panel");
 
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -1814,13 +1813,13 @@ impl ActiveThread {
 
         let comments = editor.read(cx).text(cx);
         if !comments.is_empty() {
-            let thread_id = self.agent.read(cx).id(cx).clone();
+            let thread_id = self.agent.read(cx).id().clone();
             let comments_value = String::from(comments.as_str());
 
             let message_content = self
                 .agent
                 .read(cx)
-                .message(message_id, cx)
+                .message(message_id)
                 .map(|msg| msg.to_string())
                 .unwrap_or_default();
 
@@ -1899,12 +1898,12 @@ impl ActiveThread {
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let Some(message) = agent.message(message_id, cx) else {
+        let Some(message) = agent.message(message_id) else {
             return Empty.into_any();
         };
 
         let is_generating = agent.is_generating();
-        let is_generating_stale = agent.is_generation_stale(cx).unwrap_or(false);
+        let is_generating_stale = agent.is_generation_stale().unwrap_or(false);
 
         let loading_dots = (is_generating && is_last_message).then(|| {
             h_flex()
@@ -1969,7 +1968,7 @@ impl ActiveThread {
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
 
-        let show_feedback = self.agent.read(cx).is_turn_end(ix, cx);
+        let show_feedback = self.agent.read(cx).is_turn_end(ix);
         let feedback_container = h_flex()
             .group("feedback_container")
             .mt_1()
@@ -2242,7 +2241,7 @@ impl ActiveThread {
                                 .on_click(cx.listener({
                                     move |this, _, window, cx| {
                                         if let Some(message_text) =
-                                            this.agent.read(cx).message(message_id, cx).and_then(|message| {
+                                            this.agent.read(cx).message(message_id).and_then(|message| {
                                                 message.segments.first().and_then(|segment| {
                                                     match segment {
                                                         MessageSegment::Text(message_text) => {
@@ -2342,7 +2341,7 @@ impl ActiveThread {
                             .label_size(LabelSize::XSmall)
                             .disabled(is_pending)
                             .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread.update(cx, |thread, cx| {
+                                this.agent.update(cx, |thread, cx| {
                                     thread
                                         .restore_checkpoint(checkpoint.clone(), cx)
                                         .detach_and_log_err(cx);
@@ -2496,7 +2495,7 @@ impl ActiveThread {
         let message_role = self
             .agent
             .read(cx)
-            .message(message_id, cx)
+            .message(message_id)
             .map(|m| m.role)
             .unwrap_or(Role::User);
 
@@ -3716,7 +3715,7 @@ pub(crate) fn open_active_thread_as_markdown(
         workspace.update_in(cx, |workspace, window, cx| {
             let thread = agent.read(cx);
             let markdown = thread.to_markdown(cx)?;
-            let thread_summary = thread.summary(cx).or_default().to_string();
+            let thread_summary = thread.summary().or_default().to_string();
 
             let project = workspace.project().clone();
 
@@ -3803,7 +3802,7 @@ pub(crate) fn open_context(
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.open_thread(thread_context.thread.clone(), window, cx);
+                    panel.open_thread(thread_context.agent.clone(), window, cx);
                 });
             }
         }),
@@ -3996,12 +3995,7 @@ mod tests {
                 None,
                 cx,
             );
-            agent
-                .thread()
-                .read(cx)
-                .message(message_id)
-                .cloned()
-                .unwrap()
+            agent.message(message_id).cloned().unwrap()
         });
 
         active_thread.update_in(cx, |active_thread, window, cx| {
@@ -4026,9 +4020,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let message = thread.update(cx, |thread, cx| {
-            thread.message(message.id, cx).cloned().unwrap()
-        });
+        let message = thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
         active_thread.update_in(cx, |active_thread, window, cx| {
             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
                 active_thread.start_editing_message(
@@ -4097,7 +4089,7 @@ mod tests {
         let message = thread.update(cx, |thread, cx| {
             let message_id =
                 thread.send_message("Hello, how are you?", model.clone(), cx.active_window(), cx);
-            thread.message(message_id, cx).cloned().unwrap()
+            thread.message(message_id).cloned().unwrap()
         });
 
         cx.run_until_parked();
@@ -4139,9 +4131,8 @@ mod tests {
         assert_eq!(new_request_events.lock().unwrap().len(), 2);
 
         // Verify that the edited message contains the new text
-        let edited_message = thread.update(cx, |thread, cx| {
-            thread.message(message.id, cx).cloned().unwrap()
-        });
+        let edited_message =
+            thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
         match &edited_message.segments[0] {
             MessageSegment::Text(text) => {
                 assert_eq!(text, "What is the weather like?");
