@@ -1,15 +1,22 @@
 #![allow(unused, dead_code)]
+mod persistence;
+
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, actions, prelude::*};
+use gpui::{
+    Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, WeakEntity, actions, prelude::*,
+};
+use persistence::ONBOARDING_DB;
+
+use project::Project;
 use settings_ui::SettingsUiFeatureFlag;
 use std::sync::Arc;
-use ui::{KeyBinding, ListItem, Vector, VectorName, prelude::*};
+use ui::{ListItem, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use workspace::{
     Workspace, WorkspaceId,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, SerializableItem},
     notifications::NotifyResultExt,
 };
 
@@ -37,6 +44,8 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+
+    workspace::register_serializable_item::<OnboardingUI>(cx);
 
     feature_gate_onboarding_ui_actions(cx);
 }
@@ -104,6 +113,7 @@ pub struct OnboardingUI {
 
     // Workspace reference for Item trait
     workspace: WeakEntity<Workspace>,
+    workspace_id: Option<WorkspaceId>,
     client: Arc<Client>,
 }
 
@@ -166,8 +176,24 @@ impl OnboardingUI {
             current_focus: OnboardingFocus::Page,
             completed_pages: [false; 4],
             workspace: workspace.weak_handle(),
+            workspace_id: workspace.database_id(),
             client,
         }
+    }
+
+    fn completed_pages_to_string(&self) -> String {
+        self.completed_pages
+            .iter()
+            .map(|&completed| if completed { '1' } else { '0' })
+            .collect()
+    }
+
+    fn completed_pages_from_string(s: &str) -> [bool; 4] {
+        let mut result = [false; 4];
+        for (i, ch) in s.chars().take(4).enumerate() {
+            result[i] = ch == '1';
+        }
+        result
     }
 
     fn jump_to_page(
@@ -350,7 +376,12 @@ impl OnboardingUI {
                 },
             )
             .style(ButtonStyle::Filled)
-            .key_binding(KeyBinding::for_action(&NextPage, window, cx))
+            .key_binding(ui::KeyBinding::for_action_in(
+                &NextPage,
+                &self.focus_handle,
+                window,
+                cx,
+            ))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.next_page(window, cx);
             })),
@@ -432,6 +463,15 @@ impl Item for OnboardingUI {
         f(event.clone())
     }
 
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.workspace_id = workspace.database_id();
+    }
+
     fn show_toolbar(&self) -> bool {
         false
     }
@@ -451,5 +491,92 @@ impl Item for OnboardingUI {
         } else {
             None
         }
+    }
+}
+
+impl SerializableItem for OnboardingUI {
+    fn serialized_item_kind() -> &'static str {
+        "OnboardingUI"
+    }
+
+    fn deserialize(
+        _project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: u64,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        window.spawn(cx, async move |cx| {
+            let (current_page, completed_pages) = if let Some((page_str, completed_str)) =
+                ONBOARDING_DB.get_state(item_id, workspace_id)?
+            {
+                let page = match page_str.as_str() {
+                    "basics" => OnboardingPage::Basics,
+                    "editing" => OnboardingPage::Editing,
+                    "ai_setup" => OnboardingPage::AiSetup,
+                    "welcome" => OnboardingPage::Welcome,
+                    _ => OnboardingPage::Basics,
+                };
+                let completed = OnboardingUI::completed_pages_from_string(&completed_str);
+                (page, completed)
+            } else {
+                (OnboardingPage::Basics, [false; 4])
+            };
+
+            cx.update(|window, cx| {
+                let workspace = workspace
+                    .upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+
+                workspace.update(cx, |workspace, cx| {
+                    let client = workspace.client().clone();
+                    Ok(cx.new(|cx| {
+                        let mut onboarding = OnboardingUI::new(workspace, client, cx);
+                        onboarding.current_page = current_page;
+                        onboarding.completed_pages = completed_pages;
+                        onboarding
+                    }))
+                })
+            })?
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        item_id: u64,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        let workspace_id = self.workspace_id?;
+        let current_page = match self.current_page {
+            OnboardingPage::Basics => "basics",
+            OnboardingPage::Editing => "editing",
+            OnboardingPage::AiSetup => "ai_setup",
+            OnboardingPage::Welcome => "welcome",
+        }
+        .to_string();
+        let completed_pages = self.completed_pages_to_string();
+
+        Some(cx.background_spawn(async move {
+            ONBOARDING_DB
+                .save_state(item_id, workspace_id, current_page, completed_pages)
+                .await
+        }))
+    }
+
+    fn cleanup(
+        _workspace_id: WorkspaceId,
+        _item_ids: Vec<u64>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn should_serialize(&self, _event: &ItemEvent) -> bool {
+        true
     }
 }
