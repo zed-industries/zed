@@ -17,7 +17,6 @@ test-support = [
     "gpui/test-support",
     "language/test-support",
 ]
-eval-support = []
 
 [dependencies]
 agent_settings.workspace = true

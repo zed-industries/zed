@@ -620,20 +620,6 @@ impl Thread {
         id
     }
 
-    pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
-        let id = self.insert_message(
-            Role::User,
-            vec![MessageSegment::Text("Continue where you left off".into())],
-            LoadedContext::default(),
-            vec![],
-            true,
-            cx,
-        );
-        self.pending_checkpoint = None;
-
-        id
-    }
-
     pub fn insert_assistant_message(
         &mut self,
         segments: Vec<MessageSegment>,
@@ -1583,12 +1569,6 @@ impl ZedAgent {
         }
     }
 
-    pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
-        self.thread.update(cx, |thread, cx| {
-            thread.insert_invisible_continue_message(cx)
-        })
-    }
-
     pub fn insert_assistant_message(
         &mut self,
         segments: Vec<MessageSegment>,
@@ -1743,6 +1723,26 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id = self.insert_user_message(params.into(), cx);
+        self.run_turn(model, window, cx);
+        message_id
+    }
+
+    pub fn send_continue_message(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_request_user_message(&"Continue where you left off".into());
+        self.run_turn(model, window, cx);
+    }
+
+    fn run_turn(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         self.advance_prompt_id();
 
         let prev_turn = self.cancel();
@@ -1753,7 +1753,7 @@ impl ZedAgent {
                     prev_turn.await?;
                 }
 
-                Self::run_turn(
+                Self::turn_loop(
                     &this,
                     model,
                     CompletionIntent::UserPrompt,
@@ -1769,72 +1769,9 @@ impl ZedAgent {
             }),
             cancel_tx,
         });
-
-        message_id
     }
 
-    // todo! only used in eval. remove somehow?
-    pub fn insert_user_message(
-        &mut self,
-        params: impl Into<UserMessageParams>,
-        cx: &mut Context<Self>,
-    ) -> MessageId {
-        let params = params.into();
-        if !params.context.referenced_buffers.is_empty() {
-            self.thread
-                .read(cx)
-                .action_log
-                .clone()
-                .update(cx, |log, cx| {
-                    for buffer in params.context.referenced_buffers {
-                        log.buffer_read(buffer, cx);
-                    }
-                });
-        }
-
-        let mut request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![],
-            cache: false,
-        };
-        params
-            .context
-            .loaded_context
-            .add_to_request_message(&mut request_message);
-        request_message
-            .content
-            .push(MessageContent::Text(params.text.clone()));
-
-        let message_id = self.thread.update(cx, |thread, cx| {
-            thread.insert_message(
-                Role::User,
-                vec![MessageSegment::Text(params.text)],
-                params.context.loaded_context,
-                params.creases,
-                false,
-                cx,
-            )
-        });
-        self.thread_user_messages
-            .insert(message_id, self.messages.len());
-
-        if let Some(git_checkpoint) = params.checkpoint {
-            self.thread.update(cx, |thread, _cx| {
-                thread.pending_checkpoint = Some(ThreadCheckpoint {
-                    message_id,
-                    git_checkpoint,
-                })
-            });
-        }
-
-        self.messages.push(request_message);
-
-        self.auto_capture_telemetry(cx);
-
-        message_id
-    }
-
-    async fn run_turn(
+    async fn turn_loop(
         this: &WeakEntity<Self>,
         model: Arc<dyn LanguageModel>,
         mut intent: CompletionIntent,
@@ -2279,6 +2216,74 @@ impl ZedAgent {
 
         request.messages.extend(self.messages.iter().cloned());
         request
+    }
+
+    // todo! only used in eval. make private somehow?
+    pub fn insert_user_message(
+        &mut self,
+        params: impl Into<UserMessageParams>,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        let params = params.into();
+        let req_ix = self.insert_request_user_message(&params);
+
+        if !params.context.referenced_buffers.is_empty() {
+            self.thread
+                .read(cx)
+                .action_log
+                .clone()
+                .update(cx, |log, cx| {
+                    for buffer in params.context.referenced_buffers {
+                        log.buffer_read(buffer, cx);
+                    }
+                });
+        }
+
+        let message_id = self.thread.update(cx, |thread, cx| {
+            thread.insert_message(
+                Role::User,
+                vec![MessageSegment::Text(params.text)],
+                params.context.loaded_context,
+                params.creases,
+                false,
+                cx,
+            )
+        });
+
+        self.thread_user_messages.insert(message_id, req_ix);
+
+        if let Some(git_checkpoint) = params.checkpoint {
+            self.thread.update(cx, |thread, _cx| {
+                thread.pending_checkpoint = Some(ThreadCheckpoint {
+                    message_id,
+                    git_checkpoint,
+                })
+            });
+        }
+
+        self.auto_capture_telemetry(cx);
+
+        message_id
+    }
+
+    fn insert_request_user_message(&mut self, params: &UserMessageParams) -> usize {
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+
+        params
+            .context
+            .loaded_context
+            .add_to_request_message(&mut request_message);
+        request_message
+            .content
+            .push(MessageContent::Text(params.text.clone()));
+
+        let ix = self.messages.len();
+        self.messages.push(request_message);
+        ix
     }
 
     pub fn send_to_model(

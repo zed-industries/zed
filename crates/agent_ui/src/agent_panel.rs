@@ -1259,14 +1259,7 @@ impl AgentPanel {
         if let Some(model) = model {
             thread.update(cx, |active_thread, cx| {
                 active_thread.agent().update(cx, |agent, cx| {
-                    agent.insert_invisible_continue_message(cx);
-                    agent.advance_prompt_id();
-                    agent.send_to_model(
-                        model,
-                        CompletionIntent::UserPrompt,
-                        Some(window.window_handle()),
-                        cx,
-                    );
+                    agent.send_continue_message(model, Some(window.window_handle()), cx);
                 });
             });
         } else {
