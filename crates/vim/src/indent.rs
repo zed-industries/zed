@@ -122,6 +122,7 @@ impl Vim {
         object: Object,
         around: bool,
         dir: IndentDirection,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -133,7 +134,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                     });
                 });
                 match dir {

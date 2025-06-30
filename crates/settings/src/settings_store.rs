@@ -8,7 +8,7 @@ use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
@@ -967,16 +967,38 @@ impl SettingsStore {
             }
         }
 
-        for release_stage in ["dev", "nightly", "stable", "preview"] {
-            let schema = combined_schema.schema.clone();
-            combined_schema
-                .schema
-                .object()
-                .properties
-                .insert(release_stage.to_string(), schema.into());
+        const ZED_SETTINGS: &str = "ZedSettings";
+        let RootSchema {
+            meta_schema,
+            schema: zed_settings_schema,
+            mut definitions,
+        } = combined_schema;
+        definitions.insert(ZED_SETTINGS.to_string(), zed_settings_schema.into());
+        let zed_settings_ref = Schema::new_ref(format!("#/definitions/{ZED_SETTINGS}"));
+
+        // settings file contents matches ZedSettings + overrides for each release stage
+        let mut root_schema = json!({
+            "allOf": [
+                zed_settings_ref,
+                {
+                    "properties": {
+                        "dev": zed_settings_ref,
+                        "nightly": zed_settings_ref,
+                        "stable": zed_settings_ref,
+                        "preview": zed_settings_ref,
+                    }
+                }
+            ],
+            "definitions": definitions,
+        });
+
+        if let Some(meta_schema) = meta_schema {
+            if let Some(root_schema_object) = root_schema.as_object_mut() {
+                root_schema_object.insert("$schema".to_string(), meta_schema.into());
+            }
         }
 
-        serde_json::to_value(&combined_schema).unwrap()
+        root_schema
     }
 
     fn recompute_values(

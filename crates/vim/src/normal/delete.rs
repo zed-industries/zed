@@ -91,6 +91,7 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -103,7 +104,7 @@ impl Vim {
                 let mut should_move_to_start: HashSet<_> = Default::default();
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {

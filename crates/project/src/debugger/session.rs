@@ -1037,10 +1037,6 @@ impl Session {
         matches!(self.mode, Mode::Building)
     }
 
-    pub fn is_running(&self) -> bool {
-        matches!(self.mode, Mode::Running(_))
-    }
-
     pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
         match &mut self.mode {
             Mode::Running(local_mode) => Some(local_mode),

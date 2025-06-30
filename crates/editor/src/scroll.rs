@@ -487,8 +487,9 @@ impl Editor {
         if opened_first_time {
             cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(cx, |editor, cx| {
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
+                    .update_in(cx, |editor, window, cx| {
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                        editor.refresh_colors(false, None, window, cx);
                     })
                     .ok()
             })
@@ -599,6 +600,7 @@ impl Editor {
         );
 
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.refresh_colors(false, None, window, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {

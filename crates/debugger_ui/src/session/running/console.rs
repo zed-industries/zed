@@ -114,7 +114,7 @@ impl Console {
     }
 
     fn is_running(&self, cx: &Context<Self>) -> bool {
-        self.session.read(cx).is_running()
+        self.session.read(cx).is_started()
     }
 
     fn handle_stack_frame_list_events(

@@ -1067,6 +1067,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             )
         }),
         VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
+        VimCommand::new(("di", "splay"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("marks", ""), ToggleMarksView).bang(ToggleMarksView),
         VimCommand::new(("delm", "arks"), ArgumentRequired)
             .bang(DeleteMarks::AllLocal)
@@ -1085,6 +1086,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
+        VimCommand::str(("D", "ebug"), "debug_panel::ToggleFocus"),
         VimCommand::new(("noh", "lsearch"), search::buffer_search::Dismiss),
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
@@ -1607,7 +1609,7 @@ impl Vim {
             let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
             let range = object
-                .range(&snapshot, start.clone(), around)
+                .range(&snapshot, start.clone(), around, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

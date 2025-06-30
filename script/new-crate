@@ -27,7 +27,7 @@ elif [[ "$LICENSE_FLAG" == *"agpl"* ]]; then
     LICENSE_FILE="LICENSE-AGPL"
 else
     LICENSE_MODE="GPL-3.0-or-later"
-    LICENSE_FILE="LICENSE"
+    LICENSE_FILE="LICENSE-GPL"
 fi
 
 if [[ ! "$CRATE_NAME" =~ ^[a-z0-9_]+$ ]]; then
@@ -39,7 +39,7 @@ CRATE_PATH="crates/$CRATE_NAME"
 mkdir -p "$CRATE_PATH/src"
 
 # Symlink the license
-ln -sf "../../../$LICENSE_FILE" "$CRATE_PATH/LICENSE"
+ln -sf "../../../$LICENSE_FILE" "$CRATE_PATH/$LICENSE_FILE"
 
 CARGO_TOML_TEMPLATE=$(cat << 'EOF'
 [package]
