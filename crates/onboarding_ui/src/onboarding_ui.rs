@@ -306,6 +306,8 @@ impl OnboardingUI {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
+        let client = self.client.clone();
+
         v_flex()
             .h_full()
             .w(px(256.))
@@ -319,18 +321,56 @@ impl OnboardingUI {
                         h_flex()
                             .w_full()
                             .justify_between()
+                            .py(px(24.))
+                            .pl(px(24.))
+                            .pr(px(12.))
                             .child(Vector::new(VectorName::ZedLogo, rems(2.), rems(2.)))
-                            .child(self.render_sign_in_button(cx)),
+                            .child(
+                                Button::new("sign_in", "Sign in")
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                        let client = client.clone();
+                                        window
+                                            .spawn(cx, async move |cx| {
+                                                client
+                                                    .authenticate_and_connect(true, &cx)
+                                                    .await
+                                                    .into_response()
+                                                    .notify_async_err(cx);
+                                            })
+                                            .detach();
+                                    })),
+                            ),
                     )
-                    .child(self.render_nav_item(OnboardingPage::Basics, "The Basics", "1", cx))
-                    .child(self.render_nav_item(
-                        OnboardingPage::Editing,
-                        "Editing Experience",
-                        "2",
-                        cx,
-                    ))
-                    .child(self.render_nav_item(OnboardingPage::AiSetup, "AI Setup", "3", cx))
-                    .child(self.render_nav_item(OnboardingPage::Welcome, "Welcome", "4", cx)),
+                    .child(
+                        v_flex()
+                            .gap_px()
+                            .py(px(16.))
+                            .child(self.render_nav_item(
+                                OnboardingPage::Basics,
+                                "The Basics",
+                                "1",
+                                cx,
+                            ))
+                            .child(self.render_nav_item(
+                                OnboardingPage::Editing,
+                                "Editing Experience",
+                                "2",
+                                cx,
+                            ))
+                            .child(self.render_nav_item(
+                                OnboardingPage::AiSetup,
+                                "AI Setup",
+                                "3",
+                                cx,
+                            ))
+                            .child(self.render_nav_item(
+                                OnboardingPage::Welcome,
+                                "Welcome",
+                                "4",
+                                cx,
+                            )),
+                    ),
             )
             .child(self.render_bottom_controls(window, cx))
     }
@@ -345,17 +385,27 @@ impl OnboardingUI {
         let selected = self.current_page == page;
         let label = label.into();
         let shortcut = shortcut.into();
+        let id = ElementId::Name(label.clone());
 
-        ListItem::new(label.clone())
+        h_flex()
+            .id(id)
+            .h(rems(1.5))
+            .w_full()
+            .child(
+                div()
+                    .w(px(3.))
+                    .h_full()
+                    .when(selected, |this| this.bg(cx.theme().status().info)),
+            )
             .child(
                 h_flex()
-                    .w_full()
+                    .pl(px(23.))
+                    .flex_1()
                     .justify_between()
-                    .child(Label::new(label.clone()))
+                    .items_center()
+                    .child(Label::new(label))
                     .child(Label::new(format!("⌘{}", shortcut.clone())).color(Color::Muted)),
             )
-            .selectable(true)
-            .toggle_state(selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.jump_to_page(page, window, cx);
             }))
@@ -431,24 +481,6 @@ impl OnboardingUI {
             .w_full()
             .child("Welcome Page")
             .into_any_element()
-    }
-
-    fn render_sign_in_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let client = self.client.clone();
-        Button::new("sign_in", "Sign in")
-            .label_size(LabelSize::Small)
-            .on_click(cx.listener(move |_, _, window, cx| {
-                let client = client.clone();
-                window
-                    .spawn(cx, async move |cx| {
-                        client
-                            .authenticate_and_connect(true, &cx)
-                            .await
-                            .into_response()
-                            .notify_async_err(cx);
-                    })
-                    .detach();
-            }))
     }
 }
 
