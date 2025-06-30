@@ -12,7 +12,7 @@ pub struct VsSnippetsFile {
 
 impl VsSnippetsFile {
     pub fn generate_json_schema() -> Value {
-        let schema = schemars::generate::SchemaSettings::draft07()
+        let schema = schemars::generate::SchemaSettings::draft2019_09()
             .into_generator()
             .root_schema_for::<Self>();
 

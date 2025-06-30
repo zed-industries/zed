@@ -23,7 +23,7 @@ pub fn replace_subschema<T: JsonSchema>(
     generator: &mut schemars::SchemaGenerator,
     schema: schemars::Schema,
 ) -> schemars::Schema {
-    const DEFINITIONS_PATH: &str = "#/definitions/";
+    const DEFINITIONS_PATH: &str = "#/$defs/";
     // The key in definitions may not match T::schema_name() if multiple types have the same name.
     // This is a workaround for there being no straightforward way to get the key used for a type -
     // see https://github.com/GREsau/schemars/issues/449

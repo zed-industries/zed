@@ -115,7 +115,7 @@ pub struct TaskTemplates(pub Vec<TaskTemplate>);
 impl TaskTemplates {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
-        let schema = schemars::generate::SchemaSettings::draft07()
+        let schema = schemars::generate::SchemaSettings::draft2019_09()
             .into_generator()
             .root_schema_for::<Self>();
 

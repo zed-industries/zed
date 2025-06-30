@@ -864,7 +864,7 @@ impl SettingsStore {
     }
 
     pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams, cx: &App) -> Value {
-        let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
         let mut combined_schema = json!({
             "type": "object",
             "properties": {}
@@ -993,11 +993,25 @@ impl SettingsStore {
         }
 
         const ZED_SETTINGS: &str = "ZedSettings";
-        let old_zed_settings_definition = generator
+        let old_zed_settings = generator
             .definitions_mut()
             .insert(ZED_SETTINGS.to_string(), combined_schema);
-        assert_eq!(old_zed_settings_definition, None);
-        let zed_settings_ref = schemars::Schema::new_ref(format!("#/definitions/{ZED_SETTINGS}"));
+        assert_eq!(old_zed_settings, None);
+        let zed_settings_ref = schemars::Schema::new_ref(format!("#/$defs/{ZED_SETTINGS}"));
+
+        // "unevaluatedProperties: false" to report unknown keys. "additionalProperties: false" is
+        // not set on the schema for `ZedSettings` so that its use in the root schema does not treat
+        // release stage fields as unrecognized.
+        const ZED_RELEASE_STAGE_SETTINGS: &str = "ZedReleaseStageSettings";
+        let mut zed_release_stage_settings = zed_settings_ref.clone();
+        zed_release_stage_settings.insert("unevaluatedProperties".to_string(), false.into());
+        let old_zed_release_stage_settings = generator.definitions_mut().insert(
+            ZED_RELEASE_STAGE_SETTINGS.to_string(),
+            zed_release_stage_settings.to_value(),
+        );
+        assert_eq!(old_zed_release_stage_settings, None);
+        let zed_release_stage_settings_ref =
+            schemars::Schema::new_ref(format!("#/$defs/{ZED_RELEASE_STAGE_SETTINGS}"));
 
         let mut root_schema = if let Some(meta_schema) = generator.settings().meta_schema.as_ref() {
             json_schema!({ "$schema": meta_schema.to_string() })
@@ -1005,25 +1019,27 @@ impl SettingsStore {
             json_schema!({})
         };
 
-        // settings file contents matches ZedSettings + overrides for each release stage
+        // "unevaluatedProperties: false" to report keys that match no settings field or release
+        // stage override field.
+        root_schema.insert("unevaluatedProperties".to_string(), false.into());
+
+        // Settings file contents matches ZedSettings + overrides for each release stage.
         root_schema.insert(
             "allOf".to_string(),
             json!([
                 zed_settings_ref,
                 {
                     "properties": {
-                        "dev": zed_settings_ref,
-                        "nightly": zed_settings_ref,
-                        "stable": zed_settings_ref,
-                        "preview": zed_settings_ref,
+                        "dev": zed_release_stage_settings_ref,
+                        "nightly": zed_release_stage_settings_ref,
+                        "stable": zed_release_stage_settings_ref,
+                        "preview": zed_release_stage_settings_ref,
                     }
                 }
             ]),
         );
-        root_schema.insert(
-            "definitions".to_string(),
-            generator.take_definitions(true).into(),
-        );
+
+        root_schema.insert("$defs".to_string(), generator.take_definitions(true).into());
 
         root_schema.to_value()
     }
