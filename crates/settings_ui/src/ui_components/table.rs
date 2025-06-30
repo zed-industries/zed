@@ -476,7 +476,7 @@ pub fn render_row<const COLS: usize>(
     };
     let column_widths = table_context
         .column_widths
-        .map_or([None; COLS], |widths| widths.map(|width| Some(width)));
+        .map_or([None; COLS], |widths| widths.map(Some));
     let is_selected = table_context.selected_item_index == Some(row_index);
 
     let row = div()
@@ -526,7 +526,7 @@ pub fn render_header<const COLS: usize>(
 ) -> impl IntoElement {
     let column_widths = table_context
         .column_widths
-        .map_or([None; COLS], |widths| widths.map(|width| Some(width)));
+        .map_or([None; COLS], |widths| widths.map(Some));
     div()
         .flex()
         .flex_row()
@@ -558,7 +558,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             striped: table.striped,
             total_row_count: table.rows.len(),
             column_widths: table.column_widths,
-            selected_item_index: table.selected_item_index.clone(),
+            selected_item_index: table.selected_item_index,
             on_click_row: table.on_click_row.clone(),
         }
     }

@@ -6,9 +6,9 @@ use editor::{Editor, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ReadGlobal, ScrollStrategy,
-    Subscription, WeakEntity, actions, div,
+    AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, Subscription,
+    WeakEntity, actions, div,
 };
 use settings::KeybindSource;
 use util::ResultExt;
@@ -162,9 +162,7 @@ impl KeymapEditor {
         let mut string_match_candidates = Vec::new();
 
         for key_binding in key_bindings {
-            let source = key_binding
-                .meta()
-                .map(|meta| settings::KeybindSource::from_meta(meta));
+            let source = key_binding.meta().map(settings::KeybindSource::from_meta);
 
             let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = Some(
@@ -417,7 +415,7 @@ impl Render for KeymapEditor {
                     .striped()
                     .column_widths([rems(24.), rems(16.), rems(32.), rems(8.)])
                     .header(["Command", "Keystrokes", "Context", "Source"])
-                    .selected_item_index(self.selected_index.clone())
+                    .selected_item_index(self.selected_index)
                     .on_click_row(cx.processor(|this, row_index, _window, _cx| {
                         this.selected_index = Some(row_index);
                     }))
@@ -485,7 +483,7 @@ impl KeybindingEditorModal {
         _window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(|cx| KeybindInput::new(cx));
+        let keybind_editor = cx.new(KeybindInput::new);
         Self {
             editing_keybind,
             fs,

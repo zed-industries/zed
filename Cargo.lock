@@ -17067,7 +17067,6 @@ dependencies = [
  "gpui_macros",
  "icons",
  "itertools 0.14.0",
- "log",
  "menu",
  "serde",
  "settings",

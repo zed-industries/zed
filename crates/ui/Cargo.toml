@@ -20,7 +20,6 @@ gpui.workspace = true
 gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
-log.workspace = true
 menu.workspace = true
 serde.workspace = true
 settings.workspace = true
