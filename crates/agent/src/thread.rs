@@ -1343,6 +1343,7 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => {
+                        let text = text.trim_end();
                         if !text.is_empty() {
                             request_message
                                 .content
