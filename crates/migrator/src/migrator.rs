@@ -294,6 +294,15 @@ mod tests {
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
+    fn assert_migrate_settings_with_migrations(
+        migrations: &[(MigrationPatterns, &Query)],
+        input: &str,
+        output: Option<&str>,
+    ) {
+        let migrated = run_migrations(input, migrations).unwrap();
+        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+    }
+
     #[test]
     fn test_replace_array_with_single_string() {
         assert_migrate_keymap(
@@ -881,7 +890,11 @@ mod tests {
 
     #[test]
     fn test_mcp_settings_migration() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
             r#"{
     "context_servers": {
         "empty_server": {},
@@ -961,18 +974,22 @@ mod tests {
         },
         "custom_server": {
             "source": "custom",
-            "command": "foo",
-            "args": ["bar"],
-            "env": {
-                "FOO": "BAR"
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
             }
         },
         "invalid_server": {
             "source": "custom",
-            "command": "foo",
-            "args": ["bar"],
-            "env": {
-                "FOO": "BAR"
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
             },
             "settings": {
                 "foo": "bar"
@@ -993,20 +1010,24 @@ mod tests {
         "custom_server2": {
             "source": "custom",
             "foo": "bar",
-            "command": "foo",
-            "args": ["bar"],
-            "env": {
-                "FOO": "BAR"
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
             },
             "bar": "foo"
         },
         "invalid_server2": {
             "source": "custom",
             "foo": "bar",
-            "command": "foo",
-            "args": ["bar"],
-            "env": {
-                "FOO": "BAR"
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
             },
             "bar": "foo",
             "settings": {
