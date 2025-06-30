@@ -466,7 +466,7 @@ impl DebugAdapter for GoDebugAdapter {
                     })
                     .collect();
             } else {
-                warn!("")
+                warn!("Couldn't read env file: {env_file}");
             }
         }
 
