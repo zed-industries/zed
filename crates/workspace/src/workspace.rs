@@ -288,6 +288,7 @@ actions!(
 
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = file_finder, name = "Toggle")]
+#[serde(deny_unknown_fields)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,

@@ -65,6 +65,7 @@ actions!(
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = git, deprecated_aliases = ["editor::RevertFile"])]
+#[serde(deny_unknown_fields)]
 pub struct RestoreFile {
     #[serde(default)]
     pub skip_prompt: bool,

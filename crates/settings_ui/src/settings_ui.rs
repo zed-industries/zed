@@ -28,6 +28,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct ImportVsCodeSettings {
     #[serde(default)]
     pub skip_prompt: bool,
@@ -35,6 +36,7 @@ pub struct ImportVsCodeSettings {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct ImportCursorSettings {
     #[serde(default)]
     pub skip_prompt: bool,
