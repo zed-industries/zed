@@ -10812,7 +10812,6 @@ dependencies = [
  "indoc",
  "inline_completion",
  "language",
- "multi_buffer",
  "project",
  "schemars",
  "serde",
