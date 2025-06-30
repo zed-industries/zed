@@ -519,7 +519,7 @@ impl DebugAdapter for GoDebugAdapter {
                 ]
             };
         }
-        Ok(dbg!(DebugAdapterBinary {
+        Ok(DebugAdapterBinary {
             command,
             arguments,
             cwd,
@@ -529,6 +529,6 @@ impl DebugAdapter for GoDebugAdapter {
                 configuration,
                 request: self.request_kind(&task_definition.config).await?,
             },
-        }))
+        })
     }
 }
