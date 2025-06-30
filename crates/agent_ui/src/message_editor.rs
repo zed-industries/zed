@@ -387,25 +387,14 @@ impl MessageEditor {
 
             thread
                 .update(cx, |thread, cx| {
-                    thread.insert_user_message(
-                        user_message,
-                        loaded_context,
-                        checkpoint.ok(),
-                        user_message_creases,
-                        cx,
-                    );
-                })
-                .log_err();
-
-            thread
-                .update(cx, |thread, cx| {
-                    thread.advance_prompt_id();
-                    thread.send_to_model(
-                        model,
-                        CompletionIntent::UserPrompt,
-                        Some(window_handle),
-                        cx,
-                    );
+                    todo!();
+                    // thread.send(
+                    // user_message,
+                    // loaded_context,
+                    // checkpoint.ok(),
+                    // user_message_creases,
+                    // cx,
+                    // );
                 })
                 .log_err();
         })

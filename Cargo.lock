@@ -78,6 +78,7 @@ dependencies = [
  "language",
  "language_model",
  "log",
+ "markdown",
  "parking_lot",
  "paths",
  "postage",

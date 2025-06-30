@@ -6,12 +6,12 @@ use crate::ui::{
 };
 use crate::{AgentPanel, ModelUsageContext};
 use agent::{
-    ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
-    Thread, ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadTitle,
+    ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, TextThreadStore, Thread,
+    ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadTitle,
     context::{self, AgentContextHandle, RULES_ICON},
     thread_store::RulesLoadingError,
-    tool_use::{PendingToolUseStatus, ToolUse},
 };
+use agent::{Message, MessageSegment};
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
@@ -40,6 +40,7 @@ use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::ffi::OsStr;
+use std::iter;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -72,11 +73,9 @@ pub struct ActiveThread {
     scrollbar_state: ScrollbarState,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
-    rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
     editing_message: Option<(MessageId, EditingMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
-    expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
+    thinking_segment_states: HashMap<(MessageId, usize), bool>,
     expanded_code_blocks: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -85,94 +84,6 @@ pub struct ActiveThread {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
     _load_edited_message_context_task: Option<Task<()>>,
-}
-
-struct RenderedMessage {
-    language_registry: Arc<LanguageRegistry>,
-    segments: Vec<RenderedMessageSegment>,
-}
-
-#[derive(Clone)]
-struct RenderedToolUse {
-    label: Entity<Markdown>,
-    input: Entity<Markdown>,
-    output: Entity<Markdown>,
-}
-
-impl RenderedMessage {
-    fn from_segments(
-        segments: &[MessageSegment],
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        let mut this = Self {
-            language_registry,
-            segments: Vec::with_capacity(segments.len()),
-        };
-        for segment in segments {
-            this.push_segment(segment, cx);
-        }
-        this
-    }
-
-    fn append_thinking(&mut self, text: &String, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Thinking {
-            content,
-            scroll_handle,
-        }) = self.segments.last_mut()
-        {
-            content.update(cx, |markdown, cx| {
-                markdown.append(text, cx);
-            });
-            scroll_handle.scroll_to_bottom();
-        } else {
-            self.segments.push(RenderedMessageSegment::Thinking {
-                content: parse_markdown(text.into(), self.language_registry.clone(), cx),
-                scroll_handle: ScrollHandle::default(),
-            });
-        }
-    }
-
-    fn append_text(&mut self, text: &String, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
-            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
-        } else {
-            self.segments
-                .push(RenderedMessageSegment::Text(parse_markdown(
-                    SharedString::from(text),
-                    self.language_registry.clone(),
-                    cx,
-                )));
-        }
-    }
-
-    fn push_segment(&mut self, segment: &MessageSegment, cx: &mut App) {
-        match segment {
-            MessageSegment::Thinking { text, .. } => {
-                self.segments.push(RenderedMessageSegment::Thinking {
-                    content: parse_markdown(text.into(), self.language_registry.clone(), cx),
-                    scroll_handle: ScrollHandle::default(),
-                })
-            }
-            MessageSegment::Text(text) => {
-                self.segments
-                    .push(RenderedMessageSegment::Text(parse_markdown(
-                        text.into(),
-                        self.language_registry.clone(),
-                        cx,
-                    )))
-            }
-            MessageSegment::RedactedThinking(_) => {}
-        };
-    }
-}
-
-enum RenderedMessageSegment {
-    Thinking {
-        content: Entity<Markdown>,
-        scroll_handle: ScrollHandle,
-    },
-    Text(Entity<Markdown>),
 }
 
 fn parse_markdown(
@@ -763,6 +674,11 @@ struct EditingMessageState {
     _update_token_count_task: Option<Task<()>>,
 }
 
+struct ThinkingSegmentState {
+    expanded: bool,
+    scroll_handle: ScrollHandle,
+}
+
 impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
@@ -788,7 +704,7 @@ impl ActiveThread {
                     .unwrap()
             }
         });
-        let mut this = Self {
+        Self {
             language_registry,
             thread_store,
             text_thread_store,
@@ -797,10 +713,8 @@ impl ActiveThread {
             workspace,
             save_thread_task: None,
             messages: Vec::new(),
-            rendered_messages_by_id: HashMap::default(),
-            rendered_tool_uses: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
-            expanded_thinking_segments: HashMap::default(),
+            thinking_segment_states: HashMap::default(),
             expanded_code_blocks: HashMap::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state),
@@ -814,29 +728,7 @@ impl ActiveThread {
             notification_subscriptions: HashMap::default(),
             open_feedback_editors: HashMap::default(),
             _load_edited_message_context_task: None,
-        };
-
-        for message in thread.read(cx).messages() {
-            todo!()
-            // let rendered_message = RenderedMessage::from_segments(
-            //     &message.segments,
-            //     this.language_registry.clone(),
-            //     cx,
-            // );
-            // this.push_rendered_message(message.id, rendered_message);
-
-            // for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
-            //     this.render_tool_use_markdown(
-            //         tool_use.id.clone(),
-            //         tool_use.ui_text.clone(),
-            //         &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
-            //         tool_use.status.text(),
-            //         cx,
-            //     );
-            // }
         }
-
-        this
     }
 
     pub fn thread(&self) -> &Entity<Thread> {
@@ -856,9 +748,10 @@ impl ActiveThread {
             .update(cx, |thread, cx| thread.regenerate_summary(cx))
     }
 
-    pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) -> bool {
+    pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) {
         self.last_error.take();
-        self.thread.update(cx, |thread, cx| thread.cancel(cx))
+        self.thread
+            .update(cx, |thread, cx| thread.cancel(window, cx));
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -888,22 +781,6 @@ impl ActiveThread {
         &self.text_thread_store
     }
 
-    fn push_rendered_message(&mut self, id: MessageId, rendered_message: RenderedMessage) {
-        let old_len = self.messages.len();
-        self.messages.push(id);
-        self.list_state.splice(old_len..old_len, 1);
-        self.rendered_messages_by_id.insert(id, rendered_message);
-    }
-
-    fn deleted_message(&mut self, id: &MessageId) {
-        let Some(index) = self.messages.iter().position(|message_id| message_id == id) else {
-            return;
-        };
-        self.messages.remove(index);
-        self.list_state.splice(index..index + 1, 0);
-        self.rendered_messages_by_id.remove(id);
-    }
-
     fn render_tool_use_markdown(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -912,37 +789,38 @@ impl ActiveThread {
         tool_output: SharedString,
         cx: &mut Context<Self>,
     ) {
-        let rendered = self
-            .rendered_tool_uses
-            .entry(tool_use_id.clone())
-            .or_insert_with(|| RenderedToolUse {
-                label: cx.new(|cx| {
-                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
-                }),
-                input: cx.new(|cx| {
-                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
-                }),
-                output: cx.new(|cx| {
-                    Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
-                }),
-            });
+        todo!();
+        // let rendered = self
+        //     .rendered_tool_uses
+        //     .entry(tool_use_id.clone())
+        //     .or_insert_with(|| RenderedToolUse {
+        //         label: cx.new(|cx| {
+        //             Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+        //         }),
+        //         input: cx.new(|cx| {
+        //             Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+        //         }),
+        //         output: cx.new(|cx| {
+        //             Markdown::new("".into(), Some(self.language_registry.clone()), None, cx)
+        //         }),
+        //     });
 
-        rendered.label.update(cx, |this, cx| {
-            this.replace(tool_label, cx);
-        });
-        rendered.input.update(cx, |this, cx| {
-            this.replace(
-                MarkdownCodeBlock {
-                    tag: "json",
-                    text: tool_input,
-                }
-                .to_string(),
-                cx,
-            );
-        });
-        rendered.output.update(cx, |this, cx| {
-            this.replace(tool_output, cx);
-        });
+        // rendered.label.update(cx, |this, cx| {
+        //     this.replace(tool_label, cx);
+        // });
+        // rendered.input.update(cx, |this, cx| {
+        //     this.replace(
+        //         MarkdownCodeBlock {
+        //             tag: "json",
+        //             text: tool_input,
+        //         }
+        //         .to_string(),
+        //         cx,
+        //     );
+        // });
+        // rendered.output.update(cx, |this, cx| {
+        //     this.replace(tool_output, cx);
+        // });
     }
 
     fn handle_thread_event(
@@ -1014,136 +892,17 @@ impl ActiveThread {
                     cx,
                 );
             }
-            ThreadEvent::StreamedAssistantText(message_id, text) => {
-                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_text(text, cx);
-                }
-            }
-            ThreadEvent::StreamedAssistantThinking(message_id, text) => {
-                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    rendered_message.append_thinking(text, cx);
-                }
-            }
-            ThreadEvent::MessageAdded(message_id) => {
-                if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
-                    thread.message(*message_id).map(|message| {
-                        RenderedMessage::from_segments(
-                            &message.segments,
-                            self.language_registry.clone(),
-                            cx,
-                        )
-                    })
-                }) {
-                    self.push_rendered_message(*message_id, rendered_message);
-                }
-
-                self.save_thread(cx);
-                cx.notify();
-            }
-            ThreadEvent::MessageEdited(message_id) => {
-                if let Some(index) = self.messages.iter().position(|id| id == message_id) {
-                    if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
-                        thread.message(*message_id).map(|message| {
-                            let mut rendered_message = RenderedMessage {
-                                language_registry: self.language_registry.clone(),
-                                segments: Vec::with_capacity(message.segments.len()),
-                            };
-                            for segment in &message.segments {
-                                rendered_message.push_segment(segment, cx);
-                            }
-                            rendered_message
-                        })
-                    }) {
-                        self.list_state.splice(index..index + 1, 1);
-                        self.rendered_messages_by_id
-                            .insert(*message_id, rendered_message);
-                        self.scroll_to_bottom(cx);
-                        self.save_thread(cx);
-                        cx.notify();
-                    }
-                }
-            }
-            ThreadEvent::MessageDeleted(message_id) => {
-                self.deleted_message(message_id);
-                self.save_thread(cx);
-                cx.notify();
-            }
-            ThreadEvent::UsePendingTools { tool_uses } => {
-                for tool_use in tool_uses {
-                    self.render_tool_use_markdown(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
-                        "".into(),
-                        cx,
-                    );
-                }
-            }
-            ThreadEvent::StreamedToolUse {
-                tool_use_id,
-                ui_text,
-                input,
+            ThreadEvent::MessagesUpdated {
+                old_range,
+                new_length,
             } => {
-                self.render_tool_use_markdown(
-                    tool_use_id.clone(),
-                    ui_text.clone(),
-                    &serde_json::to_string_pretty(&input).unwrap_or_default(),
-                    "".into(),
-                    cx,
-                );
-            }
-            ThreadEvent::ToolFinished {
-                pending_tool_use, ..
-            } => {
-                if let Some(tool_use) = pending_tool_use {
-                    self.render_tool_use_markdown(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        &serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
-                        self.thread
-                            .read(cx)
-                            .output_for_tool(&tool_use.id)
-                            .map(|output| output.clone().into())
-                            .unwrap_or("".into()),
-                        cx,
-                    );
-                }
+                // todo!("ensure auxiliary state is deleted")
+                self.list_state.splice(old_range.clone(), *new_length);
+                self.scroll_to_bottom(cx);
+                cx.notify();
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
             ThreadEvent::ReceivedTextChunk => {}
-            ThreadEvent::InvalidToolInput {
-                tool_use_id,
-                ui_text,
-                invalid_input_json,
-            } => {
-                self.render_tool_use_markdown(
-                    tool_use_id.clone(),
-                    ui_text,
-                    invalid_input_json,
-                    self.thread
-                        .read(cx)
-                        .output_for_tool(tool_use_id)
-                        .map(|output| output.clone().into())
-                        .unwrap_or("".into()),
-                    cx,
-                );
-            }
-            ThreadEvent::MissingToolUse {
-                tool_use_id,
-                ui_text,
-            } => {
-                self.render_tool_use_markdown(
-                    tool_use_id.clone(),
-                    ui_text,
-                    "",
-                    self.thread
-                        .read(cx)
-                        .output_for_tool(tool_use_id)
-                        .map(|output| output.clone().into())
-                        .unwrap_or("".into()),
-                    cx,
-                );
-            }
             ThreadEvent::ProfileChanged => {
                 self.save_thread(cx);
                 cx.notify();
@@ -1796,591 +1555,589 @@ impl ActiveThread {
             )))
     }
 
-    fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let message_id = self.messages[ix];
-        let workspace = self.workspace.clone();
-        let thread = self.thread.read(cx);
+    fn render_message(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        todo!()
+        // let workspace = self.workspace.clone();
+        // let thread = self.thread.read(cx);
 
-        let is_first_message = ix == 0;
-        let is_last_message = ix == self.messages.len() - 1;
+        // let is_first_message = ix == 0;
+        // let is_last_message = ix == self.messages.len() - 1;
 
-        let Some(message) = thread.message(message_id) else {
-            return Empty.into_any();
-        };
+        // let Some(message) = thread.messages().get(ix) else {
+        //     return Empty.into_any();
+        // };
 
-        let is_generating = thread.is_generating();
-        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
+        // let is_generating = thread.is_generating();
+        // let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
 
-        let loading_dots = (is_generating && is_last_message).then(|| {
-            h_flex()
-                .h_8()
-                .my_3()
-                .mx_5()
-                .when(is_generating_stale || message.is_hidden, |this| {
-                    this.child(AnimatedLabel::new("").size(LabelSize::Small))
-                })
-        });
+        // let loading_dots = (is_generating && is_last_message).then(|| {
+        //     h_flex()
+        //         .h_8()
+        //         .my_3()
+        //         .mx_5()
+        //         .when(is_generating_stale || message.is_hidden, |this| {
+        //             this.child(AnimatedLabel::new("").size(LabelSize::Small))
+        //         })
+        // });
 
-        if message.is_hidden {
-            return div().children(loading_dots).into_any();
-        }
+        // if message.is_hidden {
+        //     return div().children(loading_dots).into_any();
+        // }
 
-        let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
-            return Empty.into_any();
-        };
+        // // Get all the data we need from thread before we start using it in closures
+        // let checkpoint = thread.checkpoint_for_message(message_id);
+        // let configured_model = thread.model().map(|m| m.model);
+        // let added_context = message
+        //     .loaded_context
+        //     .contexts
+        //     .iter()
+        //     .map(|context| AddedContext::new_attached(context, configured_model.as_ref(), cx))
+        //     .collect::<Vec<_>>();
 
-        // Get all the data we need from thread before we start using it in closures
-        let checkpoint = thread.checkpoint_for_message(message_id);
-        let configured_model = thread.configured_model().map(|m| m.model);
-        let added_context = thread
-            .context_for_message(message_id)
-            .map(|context| AddedContext::new_attached(context, configured_model.as_ref(), cx))
-            .collect::<Vec<_>>();
+        // let tool_uses = thread.tool_uses_for_message(message_id, cx);
+        // let has_tool_uses = !tool_uses.is_empty();
 
-        let tool_uses = thread.tool_uses_for_message(message_id, cx);
-        let has_tool_uses = !tool_uses.is_empty();
+        // let editing_message_state = self
+        //     .editing_message
+        //     .as_ref()
+        //     .filter(|(id, _)| *id == message_id)
+        //     .map(|(_, state)| state);
 
-        let editing_message_state = self
-            .editing_message
-            .as_ref()
-            .filter(|(id, _)| *id == message_id)
-            .map(|(_, state)| state);
+        // let (editor_bg_color, panel_bg) = {
+        //     let colors = cx.theme().colors();
+        //     (colors.editor_background, colors.panel_background)
+        // };
 
-        let (editor_bg_color, panel_bg) = {
-            let colors = cx.theme().colors();
-            (colors.editor_background, colors.panel_background)
-        };
+        // let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::DocumentText)
+        //     .icon_size(IconSize::XSmall)
+        //     .icon_color(Color::Ignored)
+        //     .tooltip(Tooltip::text("Open Thread as Markdown"))
+        //     .on_click({
+        //         let thread = self.thread.clone();
+        //         let workspace = self.workspace.clone();
+        //         move |_, window, cx| {
+        //             if let Some(workspace) = workspace.upgrade() {
+        //                 open_active_thread_as_markdown(thread.clone(), workspace, window, cx)
+        //                     .detach_and_log_err(cx);
+        //             }
+        //         }
+        //     });
 
-        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::DocumentText)
-            .icon_size(IconSize::XSmall)
-            .icon_color(Color::Ignored)
-            .tooltip(Tooltip::text("Open Thread as Markdown"))
-            .on_click({
-                let thread = self.thread.clone();
-                let workspace = self.workspace.clone();
-                move |_, window, cx| {
-                    if let Some(workspace) = workspace.upgrade() {
-                        open_active_thread_as_markdown(thread.clone(), workspace, window, cx)
-                            .detach_and_log_err(cx);
-                    }
-                }
-            });
+        // let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUpAlt)
+        //     .icon_size(IconSize::XSmall)
+        //     .icon_color(Color::Ignored)
+        //     .tooltip(Tooltip::text("Scroll To Top"))
+        //     .on_click(cx.listener(move |this, _, _, cx| {
+        //         this.scroll_to_top(cx);
+        //     }));
 
-        let scroll_to_top = IconButton::new(("scroll_to_top", ix), IconName::ArrowUpAlt)
-            .icon_size(IconSize::XSmall)
-            .icon_color(Color::Ignored)
-            .tooltip(Tooltip::text("Scroll To Top"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.scroll_to_top(cx);
-            }));
+        // // For all items that should be aligned with the LLM's response.
+        // const RESPONSE_PADDING_X: Pixels = px(19.);
 
-        // For all items that should be aligned with the LLM's response.
-        const RESPONSE_PADDING_X: Pixels = px(19.);
+        // let show_feedback = thread.is_turn_end(ix);
+        // let feedback_container = h_flex()
+        //     .group("feedback_container")
+        //     .mt_1()
+        //     .py_2()
+        //     .px(RESPONSE_PADDING_X)
+        //     .mr_1()
+        //     .opacity(0.4)
+        //     .hover(|style| style.opacity(1.))
+        //     .gap_1p5()
+        //     .flex_wrap()
+        //     .justify_end();
+        // let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
+        //     Some(feedback) => feedback_container
+        //         .child(
+        //             div().visible_on_hover("feedback_container").child(
+        //                 Label::new(match feedback {
+        //                     ThreadFeedback::Positive => "Thanks for your feedback!",
+        //                     ThreadFeedback::Negative => {
+        //                         "We appreciate your feedback and will use it to improve."
+        //                     }
+        //                 })
+        //             .color(Color::Muted)
+        //             .size(LabelSize::XSmall)
+        //             .truncate())
+        //         )
+        //         .child(
+        //             h_flex()
+        //                 .child(
+        //                     IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
+        //                         .icon_size(IconSize::XSmall)
+        //                         .icon_color(match feedback {
+        //                             ThreadFeedback::Positive => Color::Accent,
+        //                             ThreadFeedback::Negative => Color::Ignored,
+        //                         })
+        //                         .tooltip(Tooltip::text("Helpful Response"))
+        //                         .on_click(cx.listener(move |this, _, window, cx| {
+        //                             this.handle_feedback_click(
+        //                                 message_id,
+        //                                 ThreadFeedback::Positive,
+        //                                 window,
+        //                                 cx,
+        //                             );
+        //                         })),
+        //                 )
+        //                 .child(
+        //                     IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
+        //                         .icon_size(IconSize::XSmall)
+        //                         .icon_color(match feedback {
+        //                             ThreadFeedback::Positive => Color::Ignored,
+        //                             ThreadFeedback::Negative => Color::Accent,
+        //                         })
+        //                         .tooltip(Tooltip::text("Not Helpful"))
+        //                         .on_click(cx.listener(move |this, _, window, cx| {
+        //                             this.handle_feedback_click(
+        //                                 message_id,
+        //                                 ThreadFeedback::Negative,
+        //                                 window,
+        //                                 cx,
+        //                             );
+        //                         })),
+        //                 )
+        //                 .child(open_as_markdown),
+        //         )
+        //         .into_any_element(),
+        //     None if AgentSettings::get_global(cx).enable_feedback =>
+        //         feedback_container
+        //         .child(
+        //             div().visible_on_hover("feedback_container").child(
+        //                 Label::new(
+        //                     "Rating the thread sends all of your current conversation to the Zed team.",
+        //                 )
+        //                 .color(Color::Muted)
+        //             .size(LabelSize::XSmall)
+        //             .truncate())
+        //         )
+        //         .child(
+        //             h_flex()
+        //                 .child(
+        //                     IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
+        //                         .icon_size(IconSize::XSmall)
+        //                         .icon_color(Color::Ignored)
+        //                         .tooltip(Tooltip::text("Helpful Response"))
+        //                         .on_click(cx.listener(move |this, _, window, cx| {
+        //                             this.handle_feedback_click(
+        //                                 message_id,
+        //                                 ThreadFeedback::Positive,
+        //                                 window,
+        //                                 cx,
+        //                             );
+        //                         })),
+        //                 )
+        //                 .child(
+        //                     IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
+        //                         .icon_size(IconSize::XSmall)
+        //                         .icon_color(Color::Ignored)
+        //                         .tooltip(Tooltip::text("Not Helpful"))
+        //                         .on_click(cx.listener(move |this, _, window, cx| {
+        //                             this.handle_feedback_click(
+        //                                 message_id,
+        //                                 ThreadFeedback::Negative,
+        //                                 window,
+        //                                 cx,
+        //                             );
+        //                         })),
+        //                 )
+        //                 .child(open_as_markdown)
+        //                 .child(scroll_to_top),
+        //         )
+        //         .into_any_element(),
+        //     None => feedback_container
+        //         .child(h_flex()
+        //             .child(open_as_markdown))
+        //             .child(scroll_to_top)
+        //         .into_any_element(),
+        // };
 
-        let show_feedback = thread.is_turn_end(ix);
-        let feedback_container = h_flex()
-            .group("feedback_container")
-            .mt_1()
-            .py_2()
-            .px(RESPONSE_PADDING_X)
-            .mr_1()
-            .opacity(0.4)
-            .hover(|style| style.opacity(1.))
-            .gap_1p5()
-            .flex_wrap()
-            .justify_end();
-        let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
-            Some(feedback) => feedback_container
-                .child(
-                    div().visible_on_hover("feedback_container").child(
-                        Label::new(match feedback {
-                            ThreadFeedback::Positive => "Thanks for your feedback!",
-                            ThreadFeedback::Negative => {
-                                "We appreciate your feedback and will use it to improve."
-                            }
-                        })
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall)
-                    .truncate())
-                )
-                .child(
-                    h_flex()
-                        .child(
-                            IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(match feedback {
-                                    ThreadFeedback::Positive => Color::Accent,
-                                    ThreadFeedback::Negative => Color::Ignored,
-                                })
-                                .tooltip(Tooltip::text("Helpful Response"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        message_id,
-                                        ThreadFeedback::Positive,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(
-                            IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(match feedback {
-                                    ThreadFeedback::Positive => Color::Ignored,
-                                    ThreadFeedback::Negative => Color::Accent,
-                                })
-                                .tooltip(Tooltip::text("Not Helpful"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        message_id,
-                                        ThreadFeedback::Negative,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(open_as_markdown),
-                )
-                .into_any_element(),
-            None if AgentSettings::get_global(cx).enable_feedback =>
-                feedback_container
-                .child(
-                    div().visible_on_hover("feedback_container").child(
-                        Label::new(
-                            "Rating the thread sends all of your current conversation to the Zed team.",
-                        )
-                        .color(Color::Muted)
-                    .size(LabelSize::XSmall)
-                    .truncate())
-                )
-                .child(
-                    h_flex()
-                        .child(
-                            IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Ignored)
-                                .tooltip(Tooltip::text("Helpful Response"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        message_id,
-                                        ThreadFeedback::Positive,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(
-                            IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Ignored)
-                                .tooltip(Tooltip::text("Not Helpful"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        message_id,
-                                        ThreadFeedback::Negative,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(open_as_markdown)
-                        .child(scroll_to_top),
-                )
-                .into_any_element(),
-            None => feedback_container
-                .child(h_flex()
-                    .child(open_as_markdown))
-                    .child(scroll_to_top)
-                .into_any_element(),
-        };
+        // // todo!("all messages in therad should display content, in theory?")
+        // // let message_is_empty = message.should_display_content();
+        // let has_content = !message_is_empty || !added_context.is_empty();
 
-        let message_is_empty = message.should_display_content();
-        let has_content = !message_is_empty || !added_context.is_empty();
+        // let message_content =
+        //     has_content.then(|| {
+        //         if let Some(state) = editing_message_state.as_ref() {
+        //             self.render_edit_message_editor(state, window, cx)
+        //                 .into_any_element()
+        //         } else {
+        //             v_flex()
+        //                 .w_full()
+        //                 .gap_1()
+        //                 .when(!added_context.is_empty(), |parent| {
+        //                     parent.child(h_flex().flex_wrap().gap_1().children(
+        //                         added_context.into_iter().map(|added_context| {
+        //                             let context = added_context.handle.clone();
+        //                             ContextPill::added(added_context, false, false, None).on_click(
+        //                                 Rc::new(cx.listener({
+        //                                     let workspace = workspace.clone();
+        //                                     move |_, _, window, cx| {
+        //                                         if let Some(workspace) = workspace.upgrade() {
+        //                                             open_context(&context, workspace, window, cx);
+        //                                             cx.notify();
+        //                                         }
+        //                                     }
+        //                                 })),
+        //                             )
+        //                         }),
+        //                     ))
+        //                 })
+        //                 .when(!message_is_empty, |parent| {
+        //                     parent.child(div().pt_0p5().min_h_6().child(
+        //                         self.render_message_content(message, workspace.clone(), window, cx),
+        //                     ))
+        //                 })
+        //                 .into_any_element()
+        //         }
+        //     });
 
-        let message_content = has_content.then(|| {
-            if let Some(state) = editing_message_state.as_ref() {
-                self.render_edit_message_editor(state, window, cx)
-                    .into_any_element()
-            } else {
-                v_flex()
-                    .w_full()
-                    .gap_1()
-                    .when(!added_context.is_empty(), |parent| {
-                        parent.child(h_flex().flex_wrap().gap_1().children(
-                            added_context.into_iter().map(|added_context| {
-                                let context = added_context.handle.clone();
-                                ContextPill::added(added_context, false, false, None).on_click(
-                                    Rc::new(cx.listener({
-                                        let workspace = workspace.clone();
-                                        move |_, _, window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                open_context(&context, workspace, window, cx);
-                                                cx.notify();
-                                            }
-                                        }
-                                    })),
-                                )
-                            }),
-                        ))
-                    })
-                    .when(!message_is_empty, |parent| {
-                        parent.child(div().pt_0p5().min_h_6().child(self.render_message_content(
-                            message_id,
-                            rendered_message,
-                            has_tool_uses,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )))
-                    })
-                    .into_any_element()
-            }
-        });
+        // let styled_message = if message.ui_only {
+        //     self.render_ui_notification(message_content, ix, cx)
+        // } else {
+        //     match message.role {
+        //         Role::User => {
+        //             let colors = cx.theme().colors();
+        //             v_flex()
+        //                 .id(("message-container", ix))
+        //                 .pt_2()
+        //                 .pl_2()
+        //                 .pr_2p5()
+        //                 .pb_4()
+        //                 .child(
+        //                     v_flex()
+        //                         .id(("user-message", ix))
+        //                         .bg(editor_bg_color)
+        //                         .rounded_lg()
+        //                         .shadow_md()
+        //                         .border_1()
+        //                         .border_color(colors.border)
+        //                         .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
+        //                         .child(
+        //                             v_flex()
+        //                                 .p_2p5()
+        //                                 .gap_1()
+        //                                 .children(message_content)
+        //                                 .when_some(editing_message_state, |this, state| {
+        //                                     let focus_handle = state.editor.focus_handle(cx).clone();
 
-        let styled_message = if message.ui_only {
-            self.render_ui_notification(message_content, ix, cx)
-        } else {
-            match message.role {
-                Role::User => {
-                    let colors = cx.theme().colors();
-                    v_flex()
-                        .id(("message-container", ix))
-                        .pt_2()
-                        .pl_2()
-                        .pr_2p5()
-                        .pb_4()
-                        .child(
-                            v_flex()
-                                .id(("user-message", ix))
-                                .bg(editor_bg_color)
-                                .rounded_lg()
-                                .shadow_md()
-                                .border_1()
-                                .border_color(colors.border)
-                                .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
-                                .child(
-                                    v_flex()
-                                        .p_2p5()
-                                        .gap_1()
-                                        .children(message_content)
-                                        .when_some(editing_message_state, |this, state| {
-                                            let focus_handle = state.editor.focus_handle(cx).clone();
+        //                                     this.child(
+        //                                         h_flex()
+        //                                             .w_full()
+        //                                             .gap_1()
+        //                                             .justify_between()
+        //                                             .flex_wrap()
+        //                                             .child(
+        //                                                 h_flex()
+        //                                                     .gap_1p5()
+        //                                                     .child(
+        //                                                         div()
+        //                                                             .opacity(0.8)
+        //                                                             .child(
+        //                                                                 Icon::new(IconName::Warning)
+        //                                                                     .size(IconSize::Indicator)
+        //                                                                     .color(Color::Warning)
+        //                                                             ),
+        //                                                     )
+        //                                                     .child(
+        //                                                         Label::new("Editing will restart the thread from this point.")
+        //                                                             .color(Color::Muted)
+        //                                                             .size(LabelSize::XSmall),
+        //                                                     ),
+        //                                             )
+        //                                             .child(
+        //                                                 h_flex()
+        //                                                     .gap_0p5()
+        //                                                     .child(
+        //                                                         IconButton::new(
+        //                                                             "cancel-edit-message",
+        //                                                             IconName::Close,
+        //                                                         )
+        //                                                         .shape(ui::IconButtonShape::Square)
+        //                                                         .icon_color(Color::Error)
+        //                                                         .icon_size(IconSize::Small)
+        //                                                         .tooltip({
+        //                                                             let focus_handle = focus_handle.clone();
+        //                                                             move |window, cx| {
+        //                                                                 Tooltip::for_action_in(
+        //                                                                     "Cancel Edit",
+        //                                                                     &menu::Cancel,
+        //                                                                     &focus_handle,
+        //                                                                     window,
+        //                                                                     cx,
+        //                                                                 )
+        //                                                             }
+        //                                                         })
+        //                                                         .on_click(cx.listener(Self::handle_cancel_click)),
+        //                                                     )
+        //                                                     .child(
+        //                                                         IconButton::new(
+        //                                                             "confirm-edit-message",
+        //                                                             IconName::Return,
+        //                                                         )
+        //                                                         .disabled(state.editor.read(cx).is_empty(cx))
+        //                                                         .shape(ui::IconButtonShape::Square)
+        //                                                         .icon_color(Color::Muted)
+        //                                                         .icon_size(IconSize::Small)
+        //                                                         .tooltip({
+        //                                                             let focus_handle = focus_handle.clone();
+        //                                                             move |window, cx| {
+        //                                                                 Tooltip::for_action_in(
+        //                                                                     "Regenerate",
+        //                                                                     &menu::Confirm,
+        //                                                                     &focus_handle,
+        //                                                                     window,
+        //                                                                     cx,
+        //                                                                 )
+        //                                                             }
+        //                                                         })
+        //                                                         .on_click(
+        //                                                             cx.listener(Self::handle_regenerate_click),
+        //                                                         ),
+        //                                                     ),
+        //                                             )
+        //                                     )
+        //                                 }),
+        //                         )
+        //                         .on_click(cx.listener({
+        //                             let message_creases = message.creases.clone();
+        //                             move |this, _, window, cx| {
+        //                                 if let Some(message_text) =
+        //                                     this.thread.read(cx).message(message_id).and_then(|message| {
+        //                                         message.segments.first().and_then(|segment| {
+        //                                             match segment {
+        //                                                 MessageSegment::Text(message_text) => {
+        //                                                     Some(Into::<Arc<str>>::into(message_text.as_str()))
+        //                                                 }
+        //                                                 _ => {
+        //                                                     None
+        //                                                 }
+        //                                             }
+        //                                         })
+        //                                     })
+        //                                 {
+        //                                     this.start_editing_message(
+        //                                         message_id,
+        //                                         message_text,
+        //                                         &message_creases,
+        //                                         window,
+        //                                         cx,
+        //                                     );
+        //                                 }
+        //                             }
+        //                         })),
+        //                 )
+        //         }
+        //         Role::Assistant => v_flex()
+        //             .id(("message-container", ix))
+        //             .px(RESPONSE_PADDING_X)
+        //             .gap_2()
+        //             .children(message_content)
+        //             .when(message.has_tool_calls(), |parent| {
+        //                 parent.children(message.tool_calls().into_iter().map(|tool_use| {
+        //                     self.render_tool_use(tool_use, window, workspace.clone(), cx)
+        //                 }))
+        //             }),
+        //         Role::System => {
+        //             let colors = cx.theme().colors();
+        //             div().id(("message-container", ix)).py_1().px_2().child(
+        //                 v_flex()
+        //                     .bg(colors.editor_background)
+        //                     .rounded_sm()
+        //                     .child(div().p_4().children(message_content)),
+        //             )
+        //         }
+        //     }
+        // };
 
-                                            this.child(
-                                                h_flex()
-                                                    .w_full()
-                                                    .gap_1()
-                                                    .justify_between()
-                                                    .flex_wrap()
-                                                    .child(
-                                                        h_flex()
-                                                            .gap_1p5()
-                                                            .child(
-                                                                div()
-                                                                    .opacity(0.8)
-                                                                    .child(
-                                                                        Icon::new(IconName::Warning)
-                                                                            .size(IconSize::Indicator)
-                                                                            .color(Color::Warning)
-                                                                    ),
-                                                            )
-                                                            .child(
-                                                                Label::new("Editing will restart the thread from this point.")
-                                                                    .color(Color::Muted)
-                                                                    .size(LabelSize::XSmall),
-                                                            ),
-                                                    )
-                                                    .child(
-                                                        h_flex()
-                                                            .gap_0p5()
-                                                            .child(
-                                                                IconButton::new(
-                                                                    "cancel-edit-message",
-                                                                    IconName::Close,
-                                                                )
-                                                                .shape(ui::IconButtonShape::Square)
-                                                                .icon_color(Color::Error)
-                                                                .icon_size(IconSize::Small)
-                                                                .tooltip({
-                                                                    let focus_handle = focus_handle.clone();
-                                                                    move |window, cx| {
-                                                                        Tooltip::for_action_in(
-                                                                            "Cancel Edit",
-                                                                            &menu::Cancel,
-                                                                            &focus_handle,
-                                                                            window,
-                                                                            cx,
-                                                                        )
-                                                                    }
-                                                                })
-                                                                .on_click(cx.listener(Self::handle_cancel_click)),
-                                                            )
-                                                            .child(
-                                                                IconButton::new(
-                                                                    "confirm-edit-message",
-                                                                    IconName::Return,
-                                                                )
-                                                                .disabled(state.editor.read(cx).is_empty(cx))
-                                                                .shape(ui::IconButtonShape::Square)
-                                                                .icon_color(Color::Muted)
-                                                                .icon_size(IconSize::Small)
-                                                                .tooltip({
-                                                                    let focus_handle = focus_handle.clone();
-                                                                    move |window, cx| {
-                                                                        Tooltip::for_action_in(
-                                                                            "Regenerate",
-                                                                            &menu::Confirm,
-                                                                            &focus_handle,
-                                                                            window,
-                                                                            cx,
-                                                                        )
-                                                                    }
-                                                                })
-                                                                .on_click(
-                                                                    cx.listener(Self::handle_regenerate_click),
-                                                                ),
-                                                            ),
-                                                    )
-                                            )
-                                        }),
-                                )
-                                .on_click(cx.listener({
-                                    let message_creases = message.creases.clone();
-                                    move |this, _, window, cx| {
-                                        if let Some(message_text) =
-                                            this.thread.read(cx).message(message_id).and_then(|message| {
-                                                message.segments.first().and_then(|segment| {
-                                                    match segment {
-                                                        MessageSegment::Text(message_text) => {
-                                                            Some(Into::<Arc<str>>::into(message_text.as_str()))
-                                                        }
-                                                        _ => {
-                                                            None
-                                                        }
-                                                    }
-                                                })
-                                            })
-                                        {
-                                            this.start_editing_message(
-                                                message_id,
-                                                message_text,
-                                                &message_creases,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    }
-                                })),
-                        )
-                }
-                Role::Assistant => v_flex()
-                    .id(("message-container", ix))
-                    .px(RESPONSE_PADDING_X)
-                    .gap_2()
-                    .children(message_content)
-                    .when(has_tool_uses, |parent| {
-                        parent.children(tool_uses.into_iter().map(|tool_use| {
-                            self.render_tool_use(tool_use, window, workspace.clone(), cx)
-                        }))
-                    }),
-                Role::System => {
-                    let colors = cx.theme().colors();
-                    div().id(("message-container", ix)).py_1().px_2().child(
-                        v_flex()
-                            .bg(colors.editor_background)
-                            .rounded_sm()
-                            .child(div().p_4().children(message_content)),
-                    )
-                }
-            }
-        };
+        // let after_editing_message = self
+        //     .editing_message
+        //     .as_ref()
+        //     .map_or(false, |(editing_message_id, _)| {
+        //         message_id > *editing_message_id
+        //     });
 
-        let after_editing_message = self
-            .editing_message
-            .as_ref()
-            .map_or(false, |(editing_message_id, _)| {
-                message_id > *editing_message_id
-            });
+        // let backdrop = div()
+        //     .id(("backdrop", ix))
+        //     .size_full()
+        //     .absolute()
+        //     .inset_0()
+        //     .bg(panel_bg)
+        //     .opacity(0.8)
+        //     .block_mouse_except_scroll()
+        //     .on_click(cx.listener(Self::handle_cancel_click));
 
-        let backdrop = div()
-            .id(("backdrop", ix))
-            .size_full()
-            .absolute()
-            .inset_0()
-            .bg(panel_bg)
-            .opacity(0.8)
-            .block_mouse_except_scroll()
-            .on_click(cx.listener(Self::handle_cancel_click));
+        // v_flex()
+        //     .w_full()
+        //     .map(|parent| {
+        //         if let Some(checkpoint) = checkpoint.filter(|_| !is_generating) {
+        //             let mut is_pending = false;
+        //             let mut error = None;
+        //             if let Some(last_restore_checkpoint) =
+        //                 self.thread.read(cx).last_restore_checkpoint()
+        //             {
+        //                 if last_restore_checkpoint.message_id() == message_id {
+        //                     match last_restore_checkpoint {
+        //                         LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+        //                         LastRestoreCheckpoint::Error { error: err, .. } => {
+        //                             error = Some(err.clone());
+        //                         }
+        //                     }
+        //                 }
+        //             }
 
-        v_flex()
-            .w_full()
-            .map(|parent| {
-                if let Some(checkpoint) = checkpoint.filter(|_| !is_generating) {
-                    let mut is_pending = false;
-                    let mut error = None;
-                    if let Some(last_restore_checkpoint) =
-                        self.thread.read(cx).last_restore_checkpoint()
-                    {
-                        if last_restore_checkpoint.message_id() == message_id {
-                            match last_restore_checkpoint {
-                                LastRestoreCheckpoint::Pending { .. } => is_pending = true,
-                                LastRestoreCheckpoint::Error { error: err, .. } => {
-                                    error = Some(err.clone());
-                                }
-                            }
-                        }
-                    }
+        //             let restore_checkpoint_button =
+        //                 Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+        //                     .icon(if error.is_some() {
+        //                         IconName::XCircle
+        //                     } else {
+        //                         IconName::Undo
+        //                     })
+        //                     .icon_size(IconSize::XSmall)
+        //                     .icon_position(IconPosition::Start)
+        //                     .icon_color(if error.is_some() {
+        //                         Some(Color::Error)
+        //                     } else {
+        //                         None
+        //                     })
+        //                     .label_size(LabelSize::XSmall)
+        //                     .disabled(is_pending)
+        //                     .on_click(cx.listener(move |this, _, _window, cx| {
+        //                         this.thread.update(cx, |thread, cx| {
+        //                             thread
+        //                                 .restore_checkpoint(checkpoint.clone(), cx)
+        //                                 .detach_and_log_err(cx);
+        //                         });
+        //                     }));
 
-                    let restore_checkpoint_button =
-                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                            .icon(if error.is_some() {
-                                IconName::XCircle
-                            } else {
-                                IconName::Undo
-                            })
-                            .icon_size(IconSize::XSmall)
-                            .icon_position(IconPosition::Start)
-                            .icon_color(if error.is_some() {
-                                Some(Color::Error)
-                            } else {
-                                None
-                            })
-                            .label_size(LabelSize::XSmall)
-                            .disabled(is_pending)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread
-                                        .restore_checkpoint(checkpoint.clone(), cx)
-                                        .detach_and_log_err(cx);
-                                });
-                            }));
+        //             let restore_checkpoint_button = if is_pending {
+        //                 restore_checkpoint_button
+        //                     .with_animation(
+        //                         ("pulsating-restore-checkpoint-button", ix),
+        //                         Animation::new(Duration::from_secs(2))
+        //                             .repeat()
+        //                             .with_easing(pulsating_between(0.6, 1.)),
+        //                         |label, delta| label.alpha(delta),
+        //                     )
+        //                     .into_any_element()
+        //             } else if let Some(error) = error {
+        //                 restore_checkpoint_button
+        //                     .tooltip(Tooltip::text(error.to_string()))
+        //                     .into_any_element()
+        //             } else {
+        //                 restore_checkpoint_button.into_any_element()
+        //             };
 
-                    let restore_checkpoint_button = if is_pending {
-                        restore_checkpoint_button
-                            .with_animation(
-                                ("pulsating-restore-checkpoint-button", ix),
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.6, 1.)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any_element()
-                    } else if let Some(error) = error {
-                        restore_checkpoint_button
-                            .tooltip(Tooltip::text(error.to_string()))
-                            .into_any_element()
-                    } else {
-                        restore_checkpoint_button.into_any_element()
-                    };
-
-                    parent.child(
-                        h_flex()
-                            .pt_2p5()
-                            .px_2p5()
-                            .w_full()
-                            .gap_1()
-                            .child(ui::Divider::horizontal())
-                            .child(restore_checkpoint_button)
-                            .child(ui::Divider::horizontal()),
-                    )
-                } else {
-                    parent
-                }
-            })
-            .when(is_first_message, |parent| {
-                parent.child(self.render_rules_item(cx))
-            })
-            .child(styled_message)
-            .children(loading_dots)
-            .when(show_feedback, move |parent| {
-                parent.child(feedback_items).when_some(
-                    self.open_feedback_editors.get(&message_id),
-                    move |parent, feedback_editor| {
-                        let focus_handle = feedback_editor.focus_handle(cx);
-                        parent.child(
-                            v_flex()
-                                .key_context("AgentFeedbackMessageEditor")
-                                .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
-                                    this.open_feedback_editors.remove(&message_id);
-                                    cx.notify();
-                                }))
-                                .on_action(cx.listener(move |this, _: &menu::Confirm, _, cx| {
-                                    this.submit_feedback_message(message_id, cx);
-                                    cx.notify();
-                                }))
-                                .on_action(cx.listener(Self::confirm_editing_message))
-                                .mb_2()
-                                .mx_4()
-                                .p_2()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_background)
-                                .child(feedback_editor.clone())
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .justify_end()
-                                        .child(
-                                            Button::new("dismiss-feedback-message", "Cancel")
-                                                .label_size(LabelSize::Small)
-                                                .key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        &menu::Cancel,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(rems_from_px(10.))),
-                                                )
-                                                .on_click(cx.listener(
-                                                    move |this, _, _window, cx| {
-                                                        this.open_feedback_editors
-                                                            .remove(&message_id);
-                                                        cx.notify();
-                                                    },
-                                                )),
-                                        )
-                                        .child(
-                                            Button::new(
-                                                "submit-feedback-message",
-                                                "Share Feedback",
-                                            )
-                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.))),
-                                            )
-                                            .on_click(
-                                                cx.listener(move |this, _, _window, cx| {
-                                                    this.submit_feedback_message(message_id, cx);
-                                                    cx.notify()
-                                                }),
-                                            ),
-                                        ),
-                                ),
-                        )
-                    },
-                )
-            })
-            .when(after_editing_message, |parent| {
-                // Backdrop to dim out the whole thread below the editing user message
-                parent.relative().child(backdrop)
-            })
-            .into_any()
+        //             parent.child(
+        //                 h_flex()
+        //                     .pt_2p5()
+        //                     .px_2p5()
+        //                     .w_full()
+        //                     .gap_1()
+        //                     .child(ui::Divider::horizontal())
+        //                     .child(restore_checkpoint_button)
+        //                     .child(ui::Divider::horizontal()),
+        //             )
+        //         } else {
+        //             parent
+        //         }
+        //     })
+        //     .when(is_first_message, |parent| {
+        //         parent.child(self.render_rules_item(cx))
+        //     })
+        //     .child(styled_message)
+        //     .children(loading_dots)
+        //     .when(show_feedback, move |parent| {
+        //         parent.child(feedback_items).when_some(
+        //             self.open_feedback_editors.get(&message_id),
+        //             move |parent, feedback_editor| {
+        //                 let focus_handle = feedback_editor.focus_handle(cx);
+        //                 parent.child(
+        //                     v_flex()
+        //                         .key_context("AgentFeedbackMessageEditor")
+        //                         .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
+        //                             this.open_feedback_editors.remove(&message_id);
+        //                             cx.notify();
+        //                         }))
+        //                         .on_action(cx.listener(move |this, _: &menu::Confirm, _, cx| {
+        //                             this.submit_feedback_message(message_id, cx);
+        //                             cx.notify();
+        //                         }))
+        //                         .on_action(cx.listener(Self::confirm_editing_message))
+        //                         .mb_2()
+        //                         .mx_4()
+        //                         .p_2()
+        //                         .rounded_md()
+        //                         .border_1()
+        //                         .border_color(cx.theme().colors().border)
+        //                         .bg(cx.theme().colors().editor_background)
+        //                         .child(feedback_editor.clone())
+        //                         .child(
+        //                             h_flex()
+        //                                 .gap_1()
+        //                                 .justify_end()
+        //                                 .child(
+        //                                     Button::new("dismiss-feedback-message", "Cancel")
+        //                                         .label_size(LabelSize::Small)
+        //                                         .key_binding(
+        //                                             KeyBinding::for_action_in(
+        //                                                 &menu::Cancel,
+        //                                                 &focus_handle,
+        //                                                 window,
+        //                                                 cx,
+        //                                             )
+        //                                             .map(|kb| kb.size(rems_from_px(10.))),
+        //                                         )
+        //                                         .on_click(cx.listener(
+        //                                             move |this, _, _window, cx| {
+        //                                                 this.open_feedback_editors
+        //                                                     .remove(&message_id);
+        //                                                 cx.notify();
+        //                                             },
+        //                                         )),
+        //                                 )
+        //                                 .child(
+        //                                     Button::new(
+        //                                         "submit-feedback-message",
+        //                                         "Share Feedback",
+        //                                     )
+        //                                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+        //                                     .label_size(LabelSize::Small)
+        //                                     .key_binding(
+        //                                         KeyBinding::for_action_in(
+        //                                             &menu::Confirm,
+        //                                             &focus_handle,
+        //                                             window,
+        //                                             cx,
+        //                                         )
+        //                                         .map(|kb| kb.size(rems_from_px(10.))),
+        //                                     )
+        //                                     .on_click(
+        //                                         cx.listener(move |this, _, _window, cx| {
+        //                                             this.submit_feedback_message(message_id, cx);
+        //                                             cx.notify()
+        //                                         }),
+        //                                     ),
+        //                                 ),
+        //                         ),
+        //                 )
+        //             },
+        //         )
+        //     })
+        //     .when(after_editing_message, |parent| {
+        //         // Backdrop to dim out the whole thread below the editing user message
+        //         parent.relative().child(backdrop)
+        //     })
+        //     .into_any()
     }
 
     fn render_message_content(
         &self,
-        message_id: MessageId,
-        rendered_message: &RenderedMessage,
-        has_tool_uses: bool,
+        message: &Message,
         workspace: WeakEntity<Workspace>,
         window: &Window,
         cx: &Context<Self>,
@@ -2388,136 +2145,116 @@ impl ActiveThread {
         let is_last_message = self.messages.last() == Some(&message_id);
         let is_generating = self.thread.read(cx).is_generating();
         let pending_thinking_segment_index = if is_generating && is_last_message && !has_tool_uses {
-            rendered_message
+            message
                 .segments
                 .iter()
                 .enumerate()
                 .next_back()
-                .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
+                .filter(|(_, segment)| matches!(segment, MessageSegment::Thinking { .. }))
                 .map(|(index, _)| index)
         } else {
             None
         };
 
-        let message_role = self
-            .thread
-            .read(cx)
-            .message(message_id)
-            .map(|m| m.role)
-            .unwrap_or(Role::User);
-
-        let is_assistant_message = message_role == Role::Assistant;
-        let is_user_message = message_role == Role::User;
-
         v_flex()
             .text_ui(cx)
             .gap_2()
-            .when(is_user_message, |this| this.text_xs())
-            .children(
-                rendered_message.segments.iter().enumerate().map(
-                    |(index, segment)| match segment {
-                        RenderedMessageSegment::Thinking {
-                            content,
-                            scroll_handle,
-                        } => self
-                            .render_message_thinking_segment(
-                                message_id,
-                                index,
-                                content.clone(),
-                                &scroll_handle,
-                                Some(index) == pending_thinking_segment_index,
-                                window,
-                                cx,
-                            )
-                            .into_any_element(),
-                        RenderedMessageSegment::Text(markdown) => {
-                            let markdown_element = MarkdownElement::new(
-                                markdown.clone(),
-                                if is_user_message {
-                                    let mut style = default_markdown_style(window, cx);
-                                    let mut text_style = window.text_style();
-                                    let theme_settings = ThemeSettings::get_global(cx);
+            .when(message.role == Role::User, |this| this.text_xs())
+            .children(message.segments.iter().enumerate().map(|(index, segment)| {
+                match segment {
+                    MessageSegment::Thinking(content) => self
+                        .render_message_thinking_segment(
+                            message_id,
+                            index,
+                            content.clone(),
+                            &scroll_handle,
+                            Some(index) == pending_thinking_segment_index,
+                            window,
+                            cx,
+                        )
+                        .into_any_element(),
+                    RenderedMessageSegment::Text(markdown) => {
+                        let markdown_element = MarkdownElement::new(
+                            markdown.clone(),
+                            if is_user_message {
+                                let mut style = default_markdown_style(window, cx);
+                                let mut text_style = window.text_style();
+                                let theme_settings = ThemeSettings::get_global(cx);
 
-                                    let buffer_font = theme_settings.buffer_font.family.clone();
-                                    let buffer_font_size = TextSize::Small.rems(cx);
+                                let buffer_font = theme_settings.buffer_font.family.clone();
+                                let buffer_font_size = TextSize::Small.rems(cx);
 
-                                    text_style.refine(&TextStyleRefinement {
-                                        font_family: Some(buffer_font),
-                                        font_size: Some(buffer_font_size.into()),
-                                        ..Default::default()
-                                    });
+                                text_style.refine(&TextStyleRefinement {
+                                    font_family: Some(buffer_font),
+                                    font_size: Some(buffer_font_size.into()),
+                                    ..Default::default()
+                                });
 
-                                    style.base_text_style = text_style;
-                                    style
-                                } else {
-                                    default_markdown_style(window, cx)
-                                },
-                            );
-
-                            let markdown_element = if is_assistant_message {
-                                markdown_element.code_block_renderer(
-                                    markdown::CodeBlockRenderer::Custom {
-                                        render: Arc::new({
-                                            let workspace = workspace.clone();
-                                            let active_thread = cx.entity();
-                                            move |kind,
-                                                  parsed_markdown,
-                                                  range,
-                                                  metadata,
-                                                  window,
-                                                  cx| {
-                                                render_markdown_code_block(
-                                                    message_id,
-                                                    range.start,
-                                                    kind,
-                                                    parsed_markdown,
-                                                    metadata,
-                                                    active_thread.clone(),
-                                                    workspace.clone(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        }),
-                                        transform: Some(Arc::new({
-                                            let active_thread = cx.entity();
-
-                                            move |element, range, _, _, cx| {
-                                                let is_expanded = active_thread
-                                                    .read(cx)
-                                                    .is_codeblock_expanded(message_id, range.start);
-
-                                                if is_expanded {
-                                                    return element;
-                                                }
-
-                                                element
-                                            }
-                                        })),
-                                    },
-                                )
+                                style.base_text_style = text_style;
+                                style
                             } else {
-                                markdown_element.code_block_renderer(
-                                    markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
-                                        copy_button_on_hover: false,
-                                        border: true,
-                                    },
-                                )
-                            };
+                                default_markdown_style(window, cx)
+                            },
+                        );
 
-                            div()
-                                .child(markdown_element.on_url_click({
-                                    let workspace = self.workspace.clone();
-                                    move |text, window, cx| {
-                                        open_markdown_link(text, workspace.clone(), window, cx);
-                                    }
-                                }))
-                                .into_any_element()
-                        }
-                    },
-                ),
-            )
+                        let markdown_element = if is_assistant_message {
+                            markdown_element.code_block_renderer(
+                                markdown::CodeBlockRenderer::Custom {
+                                    render: Arc::new({
+                                        let workspace = workspace.clone();
+                                        let active_thread = cx.entity();
+                                        move |kind, parsed_markdown, range, metadata, window, cx| {
+                                            render_markdown_code_block(
+                                                message_id,
+                                                range.start,
+                                                kind,
+                                                parsed_markdown,
+                                                metadata,
+                                                active_thread.clone(),
+                                                workspace.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    }),
+                                    transform: Some(Arc::new({
+                                        let active_thread = cx.entity();
+
+                                        move |element, range, _, _, cx| {
+                                            let is_expanded = active_thread
+                                                .read(cx)
+                                                .is_codeblock_expanded(message_id, range.start);
+
+                                            if is_expanded {
+                                                return element;
+                                            }
+
+                                            element
+                                        }
+                                    })),
+                                },
+                            )
+                        } else {
+                            markdown_element.code_block_renderer(
+                                markdown::CodeBlockRenderer::Default {
+                                    copy_button: false,
+                                    copy_button_on_hover: false,
+                                    border: true,
+                                },
+                            )
+                        };
+
+                        div()
+                            .child(markdown_element.on_url_click({
+                                let workspace = self.workspace.clone();
+                                move |text, window, cx| {
+                                    open_markdown_link(text, workspace.clone(), window, cx);
+                                }
+                            }))
+                            .into_any_element()
+                    }
+                }
+            }))
     }
 
     fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
@@ -2578,7 +2315,7 @@ impl ActiveThread {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_open = self
-            .expanded_thinking_segments
+            .thinking_segment_states
             .get(&(message_id, ix))
             .copied()
             .unwrap_or_default();
@@ -2615,7 +2352,7 @@ impl ActiveThread {
                                                 .on_click(cx.listener({
                                                     move |this, _event, _window, _cx| {
                                                         let is_open = this
-                                                            .expanded_thinking_segments
+                                                            .thinking_segment_states
                                                             .entry((message_id, ix))
                                                             .or_insert(false);
 
@@ -2738,7 +2475,7 @@ impl ActiveThread {
                                         .on_click(cx.listener({
                                             move |this, _event, _window, _cx| {
                                                 let is_open = this
-                                                    .expanded_thinking_segments
+                                                    .thinking_segment_states
                                                     .entry((message_id, ix))
                                                     .or_insert(false);
 

@@ -1,47 +1,37 @@
 use crate::{
     AgentThread, AgentThreadUserMessageChunk, MessageId, ThreadId,
     agent_profile::AgentProfile,
-    context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext},
+    context::{AgentContextHandle, LoadedContext},
     thread_store::{SharedProjectContext, ThreadStore},
 };
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
-use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use anyhow::Result;
+use assistant_tool::{ActionLog, AnyToolCard, Tool};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::{HashMap, HashSet};
-use feature_flags::{self, FeatureFlagAppExt};
-use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
+use futures::{FutureExt, channel::oneshot, future::Shared};
 use git::repository::DiffType;
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
-    WeakEntity, Window,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    Window,
 };
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, StopReason, TokenUsage,
+    ConfiguredModel, LanguageModelId, LanguageModelToolUseId, Role, StopReason, TokenUsage,
 };
+use markdown::Markdown;
 use postage::stream::Stream as _;
 use project::{
     Project,
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
 };
-use prompt_store::{ModelContext, PromptBuilder};
 use proto::Plan;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{
-    io::Write,
-    ops::Range,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, sync::Arc, time::Instant};
 use thiserror::Error;
-use util::{ResultExt as _, post_inc};
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+use util::ResultExt as _;
+use zed_llm_client::UsageLimit;
 
 /// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
 #[derive(Clone, Debug)]
@@ -53,7 +43,7 @@ pub struct MessageCrease {
     pub context: Option<AgentContextHandle>,
 }
 
-pub enum MessageTool {
+pub enum MessageToolCall {
     Pending {
         tool: Arc<dyn Tool>,
         input: serde_json::Value,
@@ -76,13 +66,27 @@ pub enum MessageTool {
 pub struct Message {
     pub id: MessageId,
     pub role: Role,
-    pub thinking: String,
-    pub text: String,
-    pub tools: Vec<MessageTool>,
+    pub segments: Vec<MessageSegment>,
     pub loaded_context: LoadedContext,
     pub creases: Vec<MessageCrease>,
-    pub is_hidden: bool,
-    pub ui_only: bool,
+    pub is_hidden: bool, // todo!("do we need this?")
+    pub ui_only: bool,   // todo!("do we need this?")
+}
+
+pub enum Message {
+    User {
+        text: String,
+        creases: Vec<MessageCrease>,
+    },
+    Assistant {
+        segments: Vec<MessageSegment>,
+    },
+}
+
+pub enum MessageSegment {
+    Text(Entity<Markdown>),
+    Thinking(Entity<Markdown>),
+    ToolCall(MessageToolCall),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -343,7 +347,7 @@ impl Thread {
         &self.title
     }
 
-    pub fn set_title(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
+    pub fn set_title(&mut self, new_title: impl Into<SharedString>, cx: &mut Context<Self>) {
         todo!()
         // let current_summary = match &self.summary {
         //     ThreadSummary::Pending | ThreadSummary::Generating => return,
@@ -374,15 +378,6 @@ impl Thread {
 
     pub fn set_completion_mode(&mut self, mode: CompletionMode) {
         self.completion_mode = mode;
-    }
-
-    pub fn message(&self, id: MessageId) -> Option<&Message> {
-        let index = self
-            .messages
-            .binary_search_by(|message| message.id.cmp(&id))
-            .ok()?;
-
-        self.messages.get(index)
     }
 
     pub fn messages(&self) -> &[Message] {
@@ -720,7 +715,7 @@ impl Thread {
     /// Returns the representation of this [`Thread`] in a textual form.
     ///
     /// This is the representation we use when attaching a thread as context to another thread.
-    pub fn text(&self) -> String {
+    pub fn text(&self, cx: &App) -> String {
         let mut text = String::new();
 
         for message in &self.messages {
@@ -732,9 +727,9 @@ impl Thread {
             text.push('\n');
 
             text.push_str("<think>");
-            text.push_str(&message.thinking);
+            text.push_str(message.thinking.read(cx).source());
             text.push_str("</think>");
-            text.push_str(&message.text);
+            text.push_str(message.text.read(cx).source());
 
             // todo!('what about tools?');
 
@@ -822,18 +817,18 @@ impl Thread {
             match detailed_summary_rx.recv().await? {
                 DetailedSummaryState::Generating { .. } => {}
                 DetailedSummaryState::NotGenerated => {
-                    return this.read_with(cx, |this, _cx| this.text().into()).ok();
+                    return this.read_with(cx, |this, cx| this.text(cx).into()).ok();
                 }
                 DetailedSummaryState::Generated { text, .. } => return Some(text),
             }
         }
     }
 
-    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+    pub fn latest_detailed_summary_or_text(&self, cx: &App) -> SharedString {
         self.detailed_summary_rx
             .borrow()
             .text()
-            .unwrap_or_else(|| self.text().into())
+            .unwrap_or_else(|| self.text(cx).into())
     }
 
     pub fn is_generating_detailed_summary(&self) -> bool {
@@ -1342,28 +1337,12 @@ pub enum ThreadError {
 pub enum ThreadEvent {
     ShowError(ThreadError),
     StreamedCompletion,
-    ReceivedTextChunk,
     NewRequest,
-    StreamedAssistantText(MessageId, String),
-    StreamedAssistantThinking(MessageId, String),
-    StreamedToolUse {
-        tool_use_id: LanguageModelToolUseId,
-        ui_text: Arc<str>,
-        input: serde_json::Value,
-    },
-    MissingToolUse {
-        tool_use_id: LanguageModelToolUseId,
-        ui_text: Arc<str>,
-    },
-    InvalidToolInput {
-        tool_use_id: LanguageModelToolUseId,
-        ui_text: Arc<str>,
-        invalid_input_json: Arc<str>,
-    },
     Stopped(Result<StopReason, Arc<anyhow::Error>>),
-    MessageAdded(MessageId),
-    MessageEdited(MessageId),
-    MessageDeleted(MessageId),
+    MessagesUpdated {
+        old_range: Range<usize>,
+        new_length: usize,
+    },
     SummaryGenerated,
     SummaryChanged,
     CheckpointChanged,
@@ -1378,12 +1357,6 @@ pub enum ThreadEvent {
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
-
-struct PendingCompletion {
-    id: usize,
-    queue_state: QueueState,
-    _task: Task<()>,
-}
 
 /// Resolves tool name conflicts by ensuring all tool names are unique.
 ///

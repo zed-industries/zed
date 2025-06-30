@@ -90,6 +90,12 @@ pub struct AgentThreadResponse {
     pub events: BoxStream<'static, Result<AgentThreadResponseEvent>>,
 }
 
+pub trait Agent {
+    fn create_thread();
+    fn list_threads();
+    fn load_thread();
+}
+
 pub trait AgentThread {
     fn id(&self) -> ThreadId;
     fn title(&self) -> BoxFuture<'static, Result<String>>;

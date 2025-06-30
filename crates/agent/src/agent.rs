@@ -12,8 +12,8 @@ pub use agent2::*;
 pub use context::{AgentContext, ContextId, ContextLoadResult};
 pub use context_store::ContextStore;
 pub use thread::{
-    LastRestoreCheckpoint, Message, MessageCrease, Thread, ThreadError, ThreadEvent,
-    ThreadFeedback, ThreadTitle, TokenUsageRatio,
+    LastRestoreCheckpoint, Message, MessageCrease, MessageSegment, Thread, ThreadError,
+    ThreadEvent, ThreadFeedback, ThreadTitle, TokenUsageRatio,
 };
 pub use thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 pub use zed_agent::*;
