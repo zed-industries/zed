@@ -1577,56 +1577,13 @@ impl ZedAgent {
         creases: Vec<MessageCrease>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        if !context_load_result.referenced_buffers.is_empty() {
-            self.thread
-                .read(cx)
-                .action_log
-                .clone()
-                .update(cx, |log, cx| {
-                    for buffer in context_load_result.referenced_buffers {
-                        log.buffer_read(buffer, cx);
-                    }
-                });
-        }
-
-        let text = text.into();
-
-        let mut request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![],
-            cache: false,
+        let params = UserMessageParams {
+            text: text.into(),
+            creases,
+            checkpoint: git_checkpoint,
+            context: context_load_result,
         };
-        context_load_result
-            .loaded_context
-            .add_to_request_message(&mut request_message);
-        request_message
-            .content
-            .push(MessageContent::Text(text.clone()));
-        self.messages.push(request_message);
-
-        let message_id = self.thread.update(cx, |thread, cx| {
-            thread.insert_message(
-                Role::User,
-                vec![MessageSegment::Text(text)],
-                context_load_result.loaded_context,
-                creases,
-                false,
-                cx,
-            )
-        });
-
-        if let Some(git_checkpoint) = git_checkpoint {
-            self.thread.update(cx, |thread, _cx| {
-                thread.pending_checkpoint = Some(ThreadCheckpoint {
-                    message_id,
-                    git_checkpoint,
-                })
-            });
-        }
-
-        self.auto_capture_telemetry(cx);
-
-        message_id
+        self.insert_user_message2(params, cx)
     }
 
     pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
@@ -1790,6 +1747,8 @@ impl ZedAgent {
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id = self.insert_user_message2(params, cx);
+        // todo!
+        // self.advance_prompt_id();
 
         let prev_turn = self.cancel();
         let (cancel_tx, cancel_rx) = oneshot::channel();
@@ -4811,11 +4770,16 @@ mod tests {
 
         // Insert user message with context
         let message_id = agent.update(cx, |agent, cx| {
-            agent.insert_user_message(
-                "Please explain this code",
-                loaded_context,
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Please explain this code".to_string(),
+                    creases: Vec::new(),
+                    checkpoint: None,
+                    context: loaded_context,
+                },
                 None,
-                Vec::new(),
                 cx,
             )
         });
@@ -4895,7 +4859,18 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message1_id = agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Message 1", loaded_context, None, Vec::new(), cx)
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Message 1".to_string(),
+                    creases: Vec::new(),
+                    checkpoint: None,
+                    context: loaded_context,
+                },
+                None,
+                cx,
+            )
         });
 
         // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
@@ -4910,7 +4885,18 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message2_id = agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Message 2", loaded_context, None, Vec::new(), cx)
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Message 2".to_string(),
+                    creases: Vec::new(),
+                    checkpoint: None,
+                    context: loaded_context,
+                },
+                None,
+                cx,
+            )
         });
 
         // Third message with all three contexts (contexts 1 and 2 should be skipped)
@@ -4926,7 +4912,18 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message3_id = agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Message 3", loaded_context, None, Vec::new(), cx)
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Message 3".to_string(),
+                    creases: Vec::new(),
+                    checkpoint: None,
+                    context: loaded_context,
+                },
+                None,
+                cx,
+            )
         });
 
         // Check what contexts are included in each message
@@ -5036,11 +5033,16 @@ fn main() {{
 
         // Insert user message without any context (empty context vector)
         let message_id = agent.update(cx, |agent, cx| {
-            agent.insert_user_message(
-                "What is the best way to learn Rust?",
-                ContextLoadResult::default(),
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "What is the best way to learn Rust?".to_string(),
+                    creases: Vec::new(),
+                    checkpoint: None,
+                    context: ContextLoadResult::default(),
+                },
                 None,
-                Vec::new(),
                 cx,
             )
         });
@@ -5072,11 +5074,16 @@ fn main() {{
 
         // Add second message, also without context
         let message2_id = agent.update(cx, |agent, cx| {
-            agent.insert_user_message(
-                "Are there any good books?",
-                ContextLoadResult::default(),
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Are there any good books?".to_string(),
+                    creases: Vec::new(),
+                    checkpoint: None,
+                    context: ContextLoadResult::default(),
+                },
                 None,
-                Vec::new(),
                 cx,
             )
         });
@@ -5381,14 +5388,18 @@ fn main() {{
 
         // Sending another message should not trigger another summarize request
         agent.update(cx, |agent, cx| {
-            agent.insert_user_message(
-                "How are you?",
-                ContextLoadResult::default(),
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "How are you?".to_string(),
+                    creases: vec![],
+                    checkpoint: None,
+                    context: ContextLoadResult::default(),
+                },
                 None,
-                vec![],
                 cx,
             );
-            agent.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -6612,7 +6623,18 @@ fn main() {{
 
         // Insert a regular user message
         agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Hello!".to_string(),
+                    creases: vec![],
+                    checkpoint: None,
+                    context: ContextLoadResult::default(),
+                },
+                None,
+                cx,
+            )
         });
 
         // Insert a UI-only message (like our retry notifications)
@@ -6634,13 +6656,18 @@ fn main() {{
 
         // Insert another regular message
         agent.update(cx, |agent, cx| {
-            agent.insert_user_message(
-                "How are you?",
-                ContextLoadResult::default(),
+            agent.send_to_model2(
+                model.clone(),
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "How are you?".to_string(),
+                    creases: vec![],
+                    checkpoint: None,
+                    context: ContextLoadResult::default(),
+                },
                 None,
-                vec![],
                 cx,
-            );
+            )
         });
 
         // Generate the completion request
