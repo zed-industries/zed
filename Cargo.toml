@@ -444,9 +444,7 @@ core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-# todo!
-# dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "b40956a7f4d1939da67429d941389ee306a3a308" }
-dap-types = { path = "../vendor/dap-types/dap-types" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "7f39295b441614ca9dbf44293e53c32f666897f9" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
