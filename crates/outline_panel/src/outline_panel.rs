@@ -794,8 +794,80 @@ impl OutlinePanel {
                             outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                         }
                     } else if &outline_panel_settings != new_settings {
+                        let old_expansion_depth =
+                            outline_panel_settings.default_outline_expansion_depth;
                         outline_panel_settings = *new_settings;
-                        cx.notify();
+
+                        // If the default expansion depth changed, update collapsed entries
+                        if old_expansion_depth != new_settings.default_outline_expansion_depth {
+                            outline_panel.collapsed_entries.clear();
+
+                            // Apply new expansion depth to existing outlines
+                            let new_depth = new_settings.default_outline_expansion_depth;
+                            if new_depth == 0 {
+                                // Collapse all outlines that have children
+                                for (buffer_id, excerpts) in &outline_panel.excerpts {
+                                    for (excerpt_id, excerpt) in excerpts {
+                                        if let ExcerptOutlines::Outlines(outlines) =
+                                            &excerpt.outlines
+                                        {
+                                            for outline in outlines.iter() {
+                                                let outline_entry = OutlineEntryOutline {
+                                                    buffer_id: *buffer_id,
+                                                    excerpt_id: *excerpt_id,
+                                                    outline: outline.clone(),
+                                                };
+                                                if outline_panel
+                                                    .has_outline_children(&outline_entry, cx)
+                                                {
+                                                    outline_panel.collapsed_entries.insert(
+                                                        CollapsedEntry::Outline(
+                                                            *buffer_id,
+                                                            *excerpt_id,
+                                                            outline.range.clone(),
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if new_depth < 9999 {
+                                // Apply selective expansion based on depth
+                                for (buffer_id, excerpts) in &outline_panel.excerpts {
+                                    for (excerpt_id, excerpt) in excerpts {
+                                        if let ExcerptOutlines::Outlines(outlines) =
+                                            &excerpt.outlines
+                                        {
+                                            for outline in outlines.iter() {
+                                                let outline_entry = OutlineEntryOutline {
+                                                    buffer_id: *buffer_id,
+                                                    excerpt_id: *excerpt_id,
+                                                    outline: outline.clone(),
+                                                };
+                                                if outline_panel
+                                                    .has_outline_children(&outline_entry, cx)
+                                                    && outline.depth >= new_depth
+                                                {
+                                                    outline_panel.collapsed_entries.insert(
+                                                        CollapsedEntry::Outline(
+                                                            *buffer_id,
+                                                            *excerpt_id,
+                                                            outline.range.clone(),
+                                                        ),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // else new_depth >= 9999, expand all (clear collapsed_entries)
+
+                            outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                        } else {
+                            cx.notify();
+                        }
                     }
                 });
 
@@ -2999,10 +3071,8 @@ impl OutlinePanel {
         // Apply default outline expansion depth for the new active editor
         let default_expansion_depth =
             OutlinePanelSettings::get_global(cx).default_outline_expansion_depth;
-        if default_expansion_depth > 0 {
-            // We'll apply the expansion depth after outlines are loaded
-            self.pending_default_expansion_depth = Some(default_expansion_depth);
-        }
+        // We'll apply the expansion depth after outlines are loaded
+        self.pending_default_expansion_depth = Some(default_expansion_depth);
 
         let buffer_search_subscription = cx.subscribe_in(
             &new_active_editor,
@@ -3333,23 +3403,30 @@ impl OutlinePanel {
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
 
                                     // Collect outlines to check for default expansion
-                                    let outlines_to_check = if let Some(default_depth) =
-                                        pending_default_depth
-                                    {
-                                        if let ExcerptOutlines::Outlines(outlines) =
-                                            &excerpt.outlines
-                                        {
-                                            outlines
-                                                .iter()
-                                                .filter(|outline| outline.depth >= default_depth)
-                                                .cloned()
-                                                .collect::<Vec<_>>()
+                                    let outlines_to_check =
+                                        if let Some(default_depth) = pending_default_depth {
+                                            if let ExcerptOutlines::Outlines(outlines) =
+                                                &excerpt.outlines
+                                            {
+                                                if default_depth == 0 {
+                                                    // For depth 0, collapse all outlines with children
+                                                    outlines.clone()
+                                                } else {
+                                                    // For other depths, collapse outlines at or below that depth
+                                                    outlines
+                                                        .iter()
+                                                        .filter(|outline| {
+                                                            outline.depth >= default_depth
+                                                        })
+                                                        .cloned()
+                                                        .collect::<Vec<_>>()
+                                                }
+                                            } else {
+                                                Vec::new()
+                                            }
                                         } else {
                                             Vec::new()
-                                        }
-                                    } else {
-                                        Vec::new()
-                                    };
+                                        };
 
                                     Some((debounce, outlines_to_check))
                                 } else {

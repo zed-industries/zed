@@ -109,7 +109,7 @@ pub struct OutlinePanelSettingsContent {
     /// Default depth to expand outline items when opening a file.
     /// Set to 0 to collapse all items by default.
     ///
-    /// Default: 1
+    /// Default: 9999
     pub default_outline_expansion_depth: Option<usize>,
 }
 

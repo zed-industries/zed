@@ -682,8 +682,8 @@
       "show": null
     },
     // Default depth to expand outline items when opening a file.
-    // Set to 0 to collapse all items by default.
-    "default_outline_expansion_depth": 0
+    // Set to 0 to collapse all items by default, or a high value like 9999 to expand all.
+    "default_outline_expansion_depth": 9999
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
