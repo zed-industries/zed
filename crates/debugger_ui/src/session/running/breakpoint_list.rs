@@ -1269,7 +1269,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .when(!has_condition && !self.is_selected, |this| this.invisible()),
             )
             .child(
-                div()                  .map(self.add_border(
+                div().map(self.add_border(
                     ActiveBreakpointStripMode::HitCondition,
                     supports_hit_condition,window, cx
                 ))
