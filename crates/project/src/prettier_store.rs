@@ -705,7 +705,6 @@ pub fn prettier_plugins_for_language(
         SelectedFormatter::Auto => Some(&language_settings.prettier.plugins),
 
         SelectedFormatter::List(list) => list
-            .as_ref()
             .contains(&Formatter::Prettier)
             .then_some(&language_settings.prettier.plugins),
     }

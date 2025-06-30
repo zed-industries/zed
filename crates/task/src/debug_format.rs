@@ -287,7 +287,8 @@ pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
     pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
-        let build_task_schema = schemars::schema_for!(BuildTaskDefinition);
+        let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
+        let build_task_schema = generator.root_schema_for::<BuildTaskDefinition>();
         let mut build_task_value =
             serde_json_lenient::to_value(&build_task_schema).unwrap_or_default();
 

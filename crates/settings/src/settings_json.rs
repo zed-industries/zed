@@ -1,11 +1,9 @@
-use std::{ops::Range, sync::LazyLock};
-
 use anyhow::Result;
-use schemars::schema::{
-    ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
-};
+use gpui::App;
+use schemars::{JsonSchema, Schema};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
 
@@ -14,70 +12,43 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub font_names: &'a [String],
 }
 
-impl SettingsJsonSchemaParams<'_> {
-    pub fn font_family_schema(&self) -> Schema {
-        let available_fonts: Vec<_> = self.font_names.iter().cloned().map(Value::String).collect();
-
-        SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        }
-        .into()
-    }
-
-    pub fn font_fallback_schema(&self) -> Schema {
-        SchemaObject {
-            instance_type: Some(SingleOrVec::Vec(vec![
-                InstanceType::Array,
-                InstanceType::Null,
-            ])),
-            array: Some(Box::new(ArrayValidation {
-                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    self.font_family_schema(),
-                ))),
-                unique_items: Some(true),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
-        .into()
-    }
+pub struct ParameterizedJsonSchema {
+    pub add_and_get_ref:
+        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams, &App) -> schemars::Schema,
 }
 
-type PropertyName<'a> = &'a str;
-type ReferencePath<'a> = &'a str;
+inventory::collect!(ParameterizedJsonSchema);
 
-/// Modifies the provided [`RootSchema`] by adding references to all of the specified properties.
-///
-/// # Examples
-///
-/// ```
-/// # let root_schema = RootSchema::default();
-/// add_references_to_properties(&mut root_schema, &[
-///     ("property_a", "#/definitions/DefinitionA"),
-///     ("property_b", "#/definitions/DefinitionB"),
-/// ])
-/// ```
-pub fn add_references_to_properties(
-    root_schema: &mut RootSchema,
-    properties_with_references: &[(PropertyName, ReferencePath)],
-) {
-    for (property, definition) in properties_with_references {
-        let Some(schema) = root_schema.schema.object().properties.get_mut(*property) else {
-            log::warn!("property '{property}' not found in JSON schema");
-            continue;
-        };
-
-        match schema {
-            Schema::Object(schema) => {
-                schema.reference = Some(definition.to_string());
-            }
-            Schema::Bool(_) => {
-                // Boolean schemas can't have references.
-            }
+pub fn replace_subschema<T: JsonSchema>(
+    generator: &mut schemars::SchemaGenerator,
+    schema: schemars::Schema,
+) -> schemars::Schema {
+    const DEFINITIONS_PATH: &str = "#/definitions/";
+    // The key in definitions may not match T::schema_name() if multiple types have the same name.
+    // This is a workaround for there being no straightforward way to get the key used for a type -
+    // see https://github.com/GREsau/schemars/issues/449
+    let ref_schema = generator.subschema_for::<T>();
+    if let Some(serde_json::Value::String(definition_pointer)) = ref_schema.get("$ref") {
+        if let Some(definition_name) = definition_pointer.strip_prefix(DEFINITIONS_PATH) {
+            generator
+                .definitions_mut()
+                .insert(definition_name.to_string(), schema.to_value());
+            return ref_schema;
+        } else {
+            log::error!(
+                "bug: expected `$ref` field to start with {DEFINITIONS_PATH}, \
+                got {definition_pointer}"
+            );
         }
+    } else {
+        log::error!("bug: expected `$ref` field in result of `subschema_for`");
     }
+    // fallback on just using the schema name, which could collide.
+    let schema_name = T::schema_name();
+    generator
+        .definitions_mut()
+        .insert(schema_name.to_string(), schema.to_value());
+    Schema::new_ref(format!("{DEFINITIONS_PATH}{schema_name}"))
 }
 
 pub fn update_value_in_json_text<'a>(

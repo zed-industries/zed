@@ -1405,7 +1405,7 @@ impl LocalLspStore {
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
+            (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_slice(),
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
                 match &settings.formatter {
                     SelectedFormatter::Auto => {
@@ -1417,7 +1417,7 @@ impl LocalLspStore {
                             std::slice::from_ref(&Formatter::LanguageServer { name: None })
                         }
                     }
-                    SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
+                    SelectedFormatter::List(formatter_list) => formatter_list.as_slice(),
                 }
             }
         };

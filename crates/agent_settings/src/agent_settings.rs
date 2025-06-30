@@ -6,9 +6,10 @@ use anyhow::{Result, bail};
 use collections::IndexMap;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
-use schemars::{JsonSchema, schema::Schema};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
 
@@ -321,29 +322,27 @@ pub struct LanguageModelSelection {
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "LanguageModelProviderSetting".into()
     }
 
-    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        schemars::schema::SchemaObject {
-            enum_values: Some(vec![
-                "anthropic".into(),
-                "amazon-bedrock".into(),
-                "google".into(),
-                "lmstudio".into(),
-                "ollama".into(),
-                "openai".into(),
-                "zed.dev".into(),
-                "copilot_chat".into(),
-                "deepseek".into(),
-                "openrouter".into(),
-                "mistral".into(),
-                "vercel".into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "enum": [
+                "anthropic",
+                "amazon-bedrock",
+                "google",
+                "lmstudio",
+                "ollama",
+                "openai",
+                "zed.dev",
+                "copilot_chat",
+                "deepseek",
+                "openrouter",
+                "mistral",
+                "vercel"
+            ]
+        })
     }
 }
 

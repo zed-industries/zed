@@ -3,7 +3,6 @@
 use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
-use core::slice;
 use ec4rs::{
     Properties as EditorconfigProperties,
     property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
@@ -11,17 +10,15 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::{
-    JsonSchema,
-    schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
-};
+use schemars::{JsonSchema, json_schema};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
-use serde_json::Value;
+
 use settings::{
-    Settings, SettingsLocation, SettingsSources, SettingsStore, add_references_to_properties,
+    ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    replace_subschema,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
@@ -306,11 +303,40 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    pub languages: HashMap<LanguageName, LanguageSettingsContent>,
+    pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
     pub file_types: HashMap<Arc<str>, Vec<String>>,
+}
+
+/// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language
+/// names in the keys.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsContent>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, params, _cx| {
+            let language_settings_content_ref = generator
+                .subschema_for::<LanguageSettingsContent>()
+                .to_value();
+            let schema = json_schema!({
+                "type": "object",
+                "properties": params
+                    .language_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            language_settings_content_ref.clone(),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+            });
+            replace_subschema::<LanguageToSettingsMap>(generator, schema)
+        }
+    }
 }
 
 /// Controls how completions are processed for this language.
@@ -648,45 +674,30 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
-    List(FormatterList),
+    List(Vec<Formatter>),
 }
 
 impl JsonSchema for FormatOnSave {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "OnSaveFormatter".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject::default();
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let formatter_schema = Formatter::json_schema(generator);
-        schema.instance_type = Some(
-            vec![
-                InstanceType::Object,
-                InstanceType::String,
-                InstanceType::Array,
+
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": formatter_schema
+                },
+                {
+                    "type": "string",
+                    "enum": ["on", "off", "prettier", "language_server"]
+                },
+                formatter_schema
             ]
-            .into(),
-        );
-
-        let valid_raw_values = SchemaObject {
-            enum_values: Some(vec![
-                Value::String("on".into()),
-                Value::String("off".into()),
-                Value::String("prettier".into()),
-                Value::String("language_server".into()),
-            ]),
-            ..Default::default()
-        };
-        let mut nested_values = SchemaObject::default();
-
-        nested_values.array().items = Some(formatter_schema.clone().into());
-
-        schema.subschemas().any_of = Some(vec![
-            nested_values.into(),
-            valid_raw_values.into(),
-            formatter_schema,
-        ]);
-        schema.into()
+        })
     }
 }
 
@@ -725,11 +736,11 @@ impl<'de> Deserialize<'de> for FormatOnSave {
                 } else if v == "off" {
                     Ok(Self::Value::Off)
                 } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList(
-                        Formatter::LanguageServer { name: None }.into(),
-                    )))
+                    Ok(Self::Value::List(vec![Formatter::LanguageServer {
+                        name: None,
+                    }]))
                 } else {
-                    let ret: Result<FormatterList, _> =
+                    let ret: Result<Vec<Formatter>, _> =
                         Deserialize::deserialize(v.into_deserializer());
                     ret.map(Self::Value::List)
                 }
@@ -738,7 +749,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
             where
                 A: MapAccess<'d>,
             {
-                let ret: Result<FormatterList, _> =
+                let ret: Result<Vec<Formatter>, _> =
                     Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
                 ret.map(Self::Value::List)
             }
@@ -746,7 +757,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
             where
                 A: SeqAccess<'d>,
             {
-                let ret: Result<FormatterList, _> =
+                let ret: Result<Vec<Formatter>, _> =
                     Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
                 ret.map(Self::Value::List)
             }
@@ -783,45 +794,30 @@ pub enum SelectedFormatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
-    List(FormatterList),
+    List(Vec<Formatter>),
 }
 
 impl JsonSchema for SelectedFormatter {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "Formatter".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        let mut schema = SchemaObject::default();
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let formatter_schema = Formatter::json_schema(generator);
-        schema.instance_type = Some(
-            vec![
-                InstanceType::Object,
-                InstanceType::String,
-                InstanceType::Array,
+
+        json_schema!({
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": formatter_schema
+                },
+                {
+                    "type": "string",
+                    "enum": ["auto", "prettier", "language_server"]
+                },
+                formatter_schema
             ]
-            .into(),
-        );
-
-        let valid_raw_values = SchemaObject {
-            enum_values: Some(vec![
-                Value::String("auto".into()),
-                Value::String("prettier".into()),
-                Value::String("language_server".into()),
-            ]),
-            ..Default::default()
-        };
-
-        let mut nested_values = SchemaObject::default();
-
-        nested_values.array().items = Some(formatter_schema.clone().into());
-
-        schema.subschemas().any_of = Some(vec![
-            nested_values.into(),
-            valid_raw_values.into(),
-            formatter_schema,
-        ]);
-        schema.into()
+        })
     }
 }
 
@@ -836,6 +832,7 @@ impl Serialize for SelectedFormatter {
         }
     }
 }
+
 impl<'de> Deserialize<'de> for SelectedFormatter {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -856,11 +853,11 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
                 if v == "auto" {
                     Ok(Self::Value::Auto)
                 } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList(
-                        Formatter::LanguageServer { name: None }.into(),
-                    )))
+                    Ok(Self::Value::List(vec![Formatter::LanguageServer {
+                        name: None,
+                    }]))
                 } else {
-                    let ret: Result<FormatterList, _> =
+                    let ret: Result<Vec<Formatter>, _> =
                         Deserialize::deserialize(v.into_deserializer());
                     ret.map(SelectedFormatter::List)
                 }
@@ -869,7 +866,7 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             where
                 A: MapAccess<'d>,
             {
-                let ret: Result<FormatterList, _> =
+                let ret: Result<Vec<Formatter>, _> =
                     Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
                 ret.map(SelectedFormatter::List)
             }
@@ -877,25 +874,12 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             where
                 A: SeqAccess<'d>,
             {
-                let ret: Result<FormatterList, _> =
+                let ret: Result<Vec<Formatter>, _> =
                     Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
                 ret.map(SelectedFormatter::List)
             }
         }
         deserializer.deserialize_any(FormatDeserializer)
-    }
-}
-/// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case", transparent)]
-pub struct FormatterList(pub SingleOrVec<Formatter>);
-
-impl AsRef<[Formatter]> for FormatterList {
-    fn as_ref(&self) -> &[Formatter] {
-        match &self.0 {
-            SingleOrVec::Single(single) => slice::from_ref(single),
-            SingleOrVec::Vec(v) => v,
-        }
     }
 }
 
@@ -1209,7 +1193,7 @@ impl settings::Settings for AllLanguageSettings {
             serde_json::from_value(serde_json::to_value(&default_value.defaults)?)?;
 
         let mut languages = HashMap::default();
-        for (language_name, settings) in &default_value.languages {
+        for (language_name, settings) in &default_value.languages.0 {
             let mut language_settings = defaults.clone();
             merge_settings(&mut language_settings, settings);
             languages.insert(language_name.clone(), language_settings);
@@ -1310,7 +1294,7 @@ impl settings::Settings for AllLanguageSettings {
             }
 
             // A user's language-specific settings override default language-specific settings.
-            for (language_name, user_language_settings) in &user_settings.languages {
+            for (language_name, user_language_settings) in &user_settings.languages.0 {
                 merge_settings(
                     languages
                         .entry(language_name.clone())
@@ -1364,51 +1348,6 @@ impl settings::Settings for AllLanguageSettings {
             languages,
             file_types,
         })
-    }
-
-    fn json_schema(
-        generator: &mut schemars::r#gen::SchemaGenerator,
-        params: &settings::SettingsJsonSchemaParams,
-        _: &App,
-    ) -> schemars::schema::RootSchema {
-        let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-
-        // Create a schema for a 'languages overrides' object, associating editor
-        // settings with specific languages.
-        assert!(
-            root_schema
-                .definitions
-                .contains_key("LanguageSettingsContent")
-        );
-
-        let languages_object_schema = SchemaObject {
-            instance_type: Some(InstanceType::Object.into()),
-            object: Some(Box::new(ObjectValidation {
-                properties: params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            Schema::new_ref("#/definitions/LanguageSettingsContent".into()),
-                        )
-                    })
-                    .collect(),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        root_schema
-            .definitions
-            .extend([("Languages".into(), languages_object_schema.into())]);
-
-        add_references_to_properties(
-            &mut root_schema,
-            &[("languages", "#/definitions/Languages")],
-        );
-
-        root_schema
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
@@ -1674,29 +1613,26 @@ mod tests {
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList(
-                Formatter::LanguageServer { name: None }.into()
-            )))
+            Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
+                name: None
+            }]))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList(
-                vec![Formatter::LanguageServer { name: None }].into()
-            )))
+            Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
+                name: None
+            }]))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(FormatterList(
-                vec![
-                    Formatter::LanguageServer { name: None },
-                    Formatter::Prettier
-                ]
-                .into()
-            )))
+            Some(SelectedFormatter::List(vec![
+                Formatter::LanguageServer { name: None },
+                Formatter::Prettier
+            ]))
         );
     }
 
