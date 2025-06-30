@@ -877,9 +877,29 @@ impl LineBreakpoint {
                 })
                 .cursor_pointer()
                 .child(
-                    Label::new(format!("{}:{}", self.name, self.line))
-                        .size(LabelSize::Small)
-                        .line_height_style(ui::LineHeightStyle::UiLabel),
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(format!("{}:{}", self.name, self.line))
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel),
+                        )
+                        .children(self.dir.as_ref().and_then(|dir| {
+                            let path_without_root = Path::new(dir.as_ref())
+                                .components()
+                                .skip(1)
+                                .collect::<PathBuf>();
+                            if path_without_root.components().next().is_none() {
+                                return None;
+                            }
+                            Some(
+                                Label::new(path_without_root.to_string_lossy().into_owned())
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .line_height_style(ui::LineHeightStyle::UiLabel)
+                                    .truncate(),
+                            )
+                        })),
                 )
                 .when_some(self.dir.as_ref(), |this, parent_dir| {
                     this.tooltip(Tooltip::text(format!("Worktree parent path: {parent_dir}")))
