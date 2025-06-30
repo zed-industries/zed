@@ -2144,8 +2144,8 @@ impl ZedAgent {
                         }
                     }
 
-                    let done = this.update(cx, |this, _cx| {
-                        if assistant_message.content.is_empty() {
+                    let done = this.update(cx, |this, cx| {
+                        let done = if assistant_message.content.is_empty() {
                             true
                         } else {
                             this.messages.push(assistant_message);
@@ -2155,7 +2155,16 @@ impl ZedAgent {
                                 this.messages.push(tool_results_message);
                                 false
                             }
+                        };
+
+                        let summary_pending =
+                            matches!(thread.read(cx).summary(), ThreadSummary::Pending);
+
+                        if summary_pending && (done || this.messages.len() > 6) {
+                            this.summarize(cx);
                         }
+
+                        done
                     })?;
 
                     if done {
@@ -5294,10 +5303,15 @@ fn main() {{
 
         // Send a message
         agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            agent.send_to_model(
+            agent.send_to_model2(
                 model.clone(),
-                CompletionIntent::ThreadSummarization,
+                CompletionIntent::UserPrompt,
+                UserMessageParams {
+                    text: "Hi".into(),
+                    creases: vec![],
+                    checkpoint: None,
+                    context: Default::default(),
+                },
                 None,
                 cx,
             );
@@ -6801,10 +6815,15 @@ fn main() {{
         cx: &mut TestAppContext,
     ) {
         agent.update(cx, |agent, cx| {
-            agent.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            agent.send_to_model(
+            agent.send_to_model2(
                 model.clone(),
                 CompletionIntent::ThreadSummarization,
+                UserMessageParams {
+                    text: "Hi".into(),
+                    creases: vec![],
+                    checkpoint: None,
+                    context: ContextLoadResult::default(),
+                },
                 None,
                 cx,
             );
