@@ -4,7 +4,10 @@ use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, actions, prelude::*};
 use settings_ui::SettingsUiFeatureFlag;
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::{
+    Workspace, WorkspaceId,
+    item::{Item, ItemEvent},
+};
 
 actions!(
     onboarding,
@@ -20,6 +23,71 @@ actions!(
         ResetOnboarding,
     ]
 );
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
+        workspace.register_action(|workspace, _: &ShowOnboarding, window, cx| {
+            let onboarding = cx.new(|cx| OnboardingUI::new(workspace, cx));
+            workspace.add_item_to_active_pane(Box::new(onboarding), None, true, window, cx);
+        });
+
+        workspace.register_action(|_workspace, _: &JumpToBasics, _window, _cx| {
+            // Jump to basics implementation
+        });
+
+        workspace.register_action(|_workspace, _: &JumpToEditing, _window, _cx| {
+            // Jump to editing implementation
+        });
+
+        workspace.register_action(|_workspace, _: &JumpToAiSetup, _window, _cx| {
+            // Jump to AI setup implementation
+        });
+
+        workspace.register_action(|_workspace, _: &JumpToWelcome, _window, _cx| {
+            // Jump to welcome implementation
+        });
+
+        workspace.register_action(|_workspace, _: &NextPage, _window, _cx| {
+            // Next page implementation
+        });
+
+        workspace.register_action(|_workspace, _: &PreviousPage, _window, _cx| {
+            // Previous page implementation
+        });
+
+        workspace.register_action(|_workspace, _: &ToggleFocus, _window, _cx| {
+            // Toggle focus implementation
+        });
+
+        workspace.register_action(|_workspace, _: &ResetOnboarding, _window, _cx| {
+            // Reset onboarding implementation
+        });
+    })
+    .detach();
+
+    feature_gate_onboarding_ui_actions(cx);
+}
+
+fn feature_gate_onboarding_ui_actions(cx: &mut App) {
+    const ONBOARDING_ACTION_NAMESPACE: &str = "onboarding";
+
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_namespace(ONBOARDING_ACTION_NAMESPACE);
+    });
+
+    cx.observe_flag::<SettingsUiFeatureFlag, _>({
+        move |is_enabled, cx| {
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                if is_enabled {
+                    filter.show_namespace(ONBOARDING_ACTION_NAMESPACE);
+                } else {
+                    filter.hide_namespace(ONBOARDING_ACTION_NAMESPACE);
+                }
+            });
+        }
+    })
+    .detach();
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnboardingPage {
@@ -60,10 +128,23 @@ pub struct OnboardingUI {
     current_page: OnboardingPage,
     current_focus: OnboardingFocus,
     completed_pages: [bool; 4],
+
+    // Page entities
     basics_page: Entity<BasicsPage>,
     editing_page: Entity<EditingPage>,
     ai_setup_page: Entity<AiSetupPage>,
     welcome_page: Entity<WelcomePage>,
+
+    // Workspace reference for Item trait
+    workspace: WeakEntity<Workspace>,
+}
+
+impl EventEmitter<ItemEvent> for OnboardingUI {}
+
+impl Focusable for OnboardingUI {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 pub struct BasicsPage {
@@ -93,18 +174,10 @@ pub enum OnboardingEvent {
 }
 
 // Implement EventEmitter for all entities
-impl EventEmitter<OnboardingEvent> for OnboardingUI {}
 impl EventEmitter<OnboardingEvent> for BasicsPage {}
 impl EventEmitter<OnboardingEvent> for EditingPage {}
 impl EventEmitter<OnboardingEvent> for AiSetupPage {}
 impl EventEmitter<OnboardingEvent> for WelcomePage {}
-
-// Implement Focusable for all entities
-impl Focusable for OnboardingUI {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
 
 impl Focusable for BasicsPage {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
@@ -138,6 +211,9 @@ impl Render for OnboardingUI {
         _cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
         h_flex()
+            .id("onboarding-ui")
+            .key_context("Onboarding")
+            .track_focus(&self.focus_handle)
             .w(px(904.))
             .h(px(500.))
             .gap(px(48.))
@@ -186,7 +262,7 @@ impl Render for WelcomePage {
 }
 
 impl OnboardingUI {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
         let parent_handle = cx.entity().downgrade();
 
         let basics_page = cx.new(|cx| BasicsPage {
@@ -218,6 +294,7 @@ impl OnboardingUI {
             editing_page,
             ai_setup_page,
             welcome_page,
+            workspace: workspace.weak_handle(),
         }
     }
 
@@ -277,66 +354,34 @@ impl OnboardingUI {
     }
 }
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(|_workspace, _: &ShowOnboarding, _window, _cx| {
-            // Show onboarding implementation will go here
-        });
+impl Item for OnboardingUI {
+    type Event = ItemEvent;
 
-        workspace.register_action(|_workspace, _: &JumpToBasics, _window, _cx| {
-            // Jump to basics implementation
-        });
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Onboarding".into()
+    }
 
-        workspace.register_action(|_workspace, _: &JumpToEditing, _window, _cx| {
-            // Jump to editing implementation
-        });
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        f(event.clone())
+    }
 
-        workspace.register_action(|_workspace, _: &JumpToAiSetup, _window, _cx| {
-            // Jump to AI setup implementation
-        });
+    fn show_toolbar(&self) -> bool {
+        false
+    }
 
-        workspace.register_action(|_workspace, _: &JumpToWelcome, _window, _cx| {
-            // Jump to welcome implementation
-        });
-
-        workspace.register_action(|_workspace, _: &NextPage, _window, _cx| {
-            // Next page implementation
-        });
-
-        workspace.register_action(|_workspace, _: &PreviousPage, _window, _cx| {
-            // Previous page implementation
-        });
-
-        workspace.register_action(|_workspace, _: &ToggleFocus, _window, _cx| {
-            // Toggle focus implementation
-        });
-
-        workspace.register_action(|_workspace, _: &ResetOnboarding, _window, _cx| {
-            // Reset onboarding implementation
-        });
-    })
-    .detach();
-
-    feature_gate_onboarding_ui_actions(cx);
-}
-
-fn feature_gate_onboarding_ui_actions(cx: &mut App) {
-    const ONBOARDING_ACTION_NAMESPACE: &str = "onboarding";
-
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_namespace(ONBOARDING_ACTION_NAMESPACE);
-    });
-
-    cx.observe_flag::<SettingsUiFeatureFlag, _>({
-        move |is_enabled, cx| {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                if is_enabled {
-                    filter.show_namespace(ONBOARDING_ACTION_NAMESPACE);
-                } else {
-                    filter.hide_namespace(ONBOARDING_ACTION_NAMESPACE);
-                }
-            });
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
+        let weak_workspace = self.workspace.clone();
+        if let Some(workspace) = weak_workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                Some(cx.new(|cx| OnboardingUI::new(workspace, cx)))
+            })
+        } else {
+            None
         }
-    })
-    .detach();
+    }
 }

@@ -20027,6 +20027,7 @@ dependencies = [
  "nix 0.29.0",
  "node_runtime",
  "notifications",
+ "onboarding_ui",
  "outline",
  "outline_panel",
  "parking_lot",

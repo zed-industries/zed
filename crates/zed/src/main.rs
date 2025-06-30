@@ -580,6 +580,7 @@ pub fn main() {
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
         jj_ui::init(cx);
+        onboarding_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         svg_preview::init(cx);
