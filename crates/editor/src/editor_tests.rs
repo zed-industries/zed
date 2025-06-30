@@ -5210,7 +5210,10 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     let markdown_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Markdown".into(),
-            rewrap_prefixes: vec![regex::Regex::new("\\d+\\.\\s+").unwrap()],
+            rewrap_prefixes: vec![
+                regex::Regex::new("\\d+\\.\\s+").unwrap(),
+                regex::Regex::new("[-*+]\\s+").unwrap(),
+            ],
             ..LanguageConfig::default()
         },
         None,
@@ -5377,23 +5380,76 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that rewrapping boundary works for Markdown documents
+    // Test that rewrapping boundary works and preserves relative indent for Markdown documents
     assert_rewrap(
         indoc! {"
-            «1. This is a numbered list item that is very long and needs to be wrapped properly.
-            2. This is a numbered list item that is very long and needs to be wrapped properly.
-            - This is an unordered list item that is also very long and should not merge with the numbered item.ˇ»
+            «   1. This is a numbered list item that is very long and needs to be wrapped properly.
+                2. This is a numbered list item that is very long and needs to be wrapped properly.
+                - This is an unordered list item that is also very long and should not merge with the numbered item.ˇ»
         "},
         indoc! {"
-            «1. This is a numbered list item that is
-            very long and needs to be wrapped
-            properly.
-            2. This is a numbered list item that is
-            very long and needs to be wrapped
-            properly.
-            - This is an unordered list item that is
-            also very long and should not merge with
-            the numbered item.ˇ»
+            «   1. This is a numbered list item that is
+                   very long and needs to be wrapped
+                   properly.
+                2. This is a numbered list item that is
+                   very long and needs to be wrapped
+                   properly.
+                - This is an unordered list item that is
+                  also very long and should not merge with
+                  the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping add indents for rewrapping boundary if not exists already.
+    assert_rewrap(
+        indoc! {"
+            «   1. This is a numbered list item that is
+                very long and needs to be wrapped
+                properly.
+                2. This is a numbered list item that is
+                very long and needs to be wrapped
+                properly.
+                - This is an unordered list item that is
+                also very long and should not merge with
+                the numbered item.ˇ»
+        "},
+        indoc! {"
+            «   1. This is a numbered list item that is
+                   very long and needs to be wrapped
+                   properly.
+                2. This is a numbered list item that is
+                   very long and needs to be wrapped
+                   properly.
+                - This is an unordered list item that is
+                  also very long and should not merge with
+                  the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping maintain indents even when they already exists.
+    assert_rewrap(
+        indoc! {"
+            «   1. This is a numbered list
+                   item that is very long and needs to be wrapped properly.
+                2. This is a numbered list
+                   item that is very long and needs to be wrapped properly.
+                - This is an unordered list item that is also very long and
+                  should not merge with the numbered item.ˇ»
+        "},
+        indoc! {"
+            «   1. This is a numbered list item that is
+                   very long and needs to be wrapped
+                   properly.
+                2. This is a numbered list item that is
+                   very long and needs to be wrapped
+                   properly.
+                - This is an unordered list item that is
+                  also very long and should not merge with
+                  the numbered item.ˇ»
         "},
         markdown_language.clone(),
         &mut cx,
