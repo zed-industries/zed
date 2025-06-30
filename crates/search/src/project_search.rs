@@ -2296,28 +2296,11 @@ impl Render for ProjectSearchBar {
         }
 
         let query_error_line = search.query_error.as_ref().map(|error| {
-            h_flex().gap_2().child(
-                h_flex()
-                    .child(
-                        IconButton::new("query-error-button", IconName::Close)
-                            .size(ButtonSize::Default)
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                if let Some(search) = &this.active_project_search {
-                                    search.update(cx, |search_view, cx| {
-                                        search_view.query_error = None;
-                                        cx.notify();
-                                    });
-                                }
-                            })),
-                    )
-                    .gap_1()
-                    .child(
-                        Label::new(error)
-                            .size(LabelSize::Default)
-                            .color(Color::Error),
-                    )
-                    .gap_2(),
-            )
+            Label::new(error)
+                .size(LabelSize::Small)
+                .color(Color::Error)
+                .mt_neg_1()
+                .ml_2()
         });
 
         v_flex()

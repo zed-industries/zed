@@ -470,24 +470,11 @@ impl Render for BufferSearchBar {
         });
 
         let query_error_line = self.query_error.as_ref().map(|error| {
-            h_flex().gap_2().child(
-                h_flex()
-                    .child(
-                        IconButton::new("query-error-button", IconName::Close)
-                            .size(ButtonSize::Default)
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.query_error = None;
-                                cx.notify();
-                            })),
-                    )
-                    .gap_1()
-                    .child(
-                        Label::new(error)
-                            .size(LabelSize::Default)
-                            .color(Color::Error),
-                    )
-                    .gap_2(),
-            )
+            Label::new(error)
+                .size(LabelSize::Small)
+                .color(Color::Error)
+                .mt_neg_1()
+                .ml_2()
         });
 
         v_flex()
