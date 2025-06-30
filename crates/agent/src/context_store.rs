@@ -73,7 +73,7 @@ impl ContextStore {
         let existing_context = thread
             .messages()
             .iter()
-            .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
+            .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id() != id))
             .flat_map(|message| {
                 message
                     .loaded_context

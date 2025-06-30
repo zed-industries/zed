@@ -87,13 +87,14 @@ pub enum AgentThreadAssistantMessageChunk {
 
 pub struct AgentThreadResponse {
     pub user_message_id: MessageId,
+    pub assistant_message_id: MessageId,
     pub events: BoxStream<'static, Result<AgentThreadResponseEvent>>,
 }
 
 pub trait Agent {
-    fn create_thread();
+    fn create_thread() -> BoxFuture<'static, Result<Arc<dyn AgentThread>>>;
     fn list_threads();
-    fn load_thread();
+    fn load_thread(&self, thread_id: ThreadId) -> BoxFuture<'static, Result<Arc<dyn AgentThread>>>;
 }
 
 pub trait AgentThread {

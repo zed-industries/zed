@@ -62,28 +62,29 @@ pub enum MessageToolCall {
     },
 }
 
-/// A message in a [`Thread`].
-pub struct Message {
-    pub id: MessageId,
-    pub role: Role,
-    pub segments: Vec<MessageSegment>,
-    pub loaded_context: LoadedContext,
-    pub creases: Vec<MessageCrease>,
-    pub is_hidden: bool, // todo!("do we need this?")
-    pub ui_only: bool,   // todo!("do we need this?")
-}
-
 pub enum Message {
     User {
+        id: MessageId,
         text: String,
         creases: Vec<MessageCrease>,
+        loaded_context: LoadedContext,
     },
     Assistant {
-        segments: Vec<MessageSegment>,
+        id: MessageId,
+        chunks: Vec<AssistantMessageChunk>,
     },
 }
 
-pub enum MessageSegment {
+impl Message {
+    pub fn id(&self) -> MessageId {
+        match self {
+            Message::User { id, .. } => *id,
+            Message::Assistant { id, .. } => *id,
+        }
+    }
+}
+
+pub enum AssistantMessageChunk {
     Text(Entity<Markdown>),
     Thinking(Entity<Markdown>),
     ToolCall(MessageToolCall),
@@ -504,12 +505,12 @@ impl Thread {
         let Some(message_ix) = self
             .messages
             .iter()
-            .rposition(|message| message.id == message_id)
+            .rposition(|message| message.id() == message_id)
         else {
             return;
         };
         for deleted_message in self.messages.drain(message_ix..) {
-            self.checkpoints_by_message.remove(&deleted_message.id);
+            self.checkpoints_by_message.remove(&deleted_message.id());
         }
         cx.notify();
     }
@@ -719,19 +720,29 @@ impl Thread {
         let mut text = String::new();
 
         for message in &self.messages {
-            text.push_str(match message.role {
-                language_model::Role::User => "User:",
-                language_model::Role::Assistant => "Agent:",
-                language_model::Role::System => "System:",
-            });
-            text.push('\n');
+            match message {
+                Message::User {
+                    id,
+                    text,
+                    creases,
+                    loaded_context,
+                } => todo!(),
+                Message::Assistant {
+                    id,
+                    chunks: segments,
+                } => todo!(),
+            }
+            // text.push_str(match message.role {
+            //     language_model::Role::User => "User:",
+            //     language_model::Role::Assistant => "Agent:",
+            //     language_model::Role::System => "System:",
+            // });
+            // text.push('\n');
 
-            text.push_str("<think>");
-            text.push_str(message.thinking.read(cx).source());
-            text.push_str("</think>");
-            text.push_str(message.text.read(cx).source());
-
-            // todo!('what about tools?');
+            // text.push_str("<think>");
+            // text.push_str(message.thinking.read(cx).source());
+            // text.push_str("</think>");
+            // text.push_str(message.text.read(cx).source());
 
             text.push('\n');
         }
@@ -757,7 +768,7 @@ impl Thread {
         thread_store: WeakEntity<ThreadStore>,
         cx: &mut Context<Self>,
     ) {
-        let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
+        let Some(last_message_id) = self.messages.last().map(|message| message.id()) else {
             return;
         };
 
