@@ -539,6 +539,20 @@ impl ProjectPanel {
                             let entry_id = entry.id;
                             let is_via_ssh = project.read(cx).is_via_ssh();
 
+                            if entry.is_symlink_broken {
+                                let _ = window.prompt(
+                                    gpui::PromptLevel::Critical,
+                                    "Broken Symlink",
+                                    Some(&format!(
+                                        "The file '{}' is a symlink that points to a missing or inaccessible target. Please check that the target file exists and you have permission to access it.",
+                                        entry.path.display()
+                                    )),
+                                    &[gpui::PromptButton::ok("OK")],
+                                    cx,
+                                );
+                                return;
+                            }
+
                             workspace
                                 .open_path_preview(
                                     ProjectPath {
@@ -1424,17 +1438,25 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
         allow_preview: bool,
-
         cx: &mut Context<Self>,
     ) {
-        if let Some((_, entry)) = self.selected_entry(cx) {
-            eprintln!("Opening entry: {:?}", entry);
-            if entry.is_symlink_broken {
-                // todo!: Raise system error when user tries to open a non symlinked file.
-                eprintln!("Cannot open broken symlink: {}", entry.path.display());
-                return;
-            }
-        }
+        // if let Some((_, entry)) = self.selected_entry(cx) {
+        //     if entry.is_symlink_broken {
+        //         let answer = window.prompt(
+        //             gpui::PromptLevel::Critical,
+        //             "Cannot open file",
+        //             Some(&format!(
+        //                 "'{}' is a broken symlink and cannot be opened.",
+        //                 entry.path.display()
+        //             )),
+        //             &[gpui::PromptButton::ok("OK")],
+        //             cx,
+        //         );
+        //         // Optionally, you can await the answer if you want to do something after the user closes the dialog.
+        //         // cx.spawn(async move |_| { answer.await.ok(); }).detach();
+        //         return;
+        //     }
+        // }
 
         cx.emit(Event::OpenedEntry {
             entry_id,
