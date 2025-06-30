@@ -180,7 +180,7 @@ impl ConfigurationSource {
 }
 
 fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)>) -> String {
-    let (name, path, args, env) = match existing {
+    let (name, command, args, env) = match existing {
         Some((id, cmd)) => {
             let args = serde_json::to_string(&cmd.args).unwrap();
             let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
@@ -198,14 +198,12 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         r#"{{
   /// The name of your MCP server
   "{name}": {{
-    "command": {{
-      /// The path to the executable
-      "path": "{path}",
-      /// The arguments to pass to the executable
-      "args": {args},
-      /// The environment variables to set for the executable
-      "env": {env}
-    }}
+    /// The command which runs the MCP server
+    "command": "{command}",
+    /// The arguments to pass to the MCP server
+    "args": {args},
+    /// The environment variables to set
+    "env": {env}
   }}
 }}"#
     )
@@ -439,8 +437,7 @@ fn parse_input(text: &str) -> Result<(ContextServerId, ContextServerCommand)> {
     let object = value.as_object().context("Expected object")?;
     anyhow::ensure!(object.len() == 1, "Expected exactly one key-value pair");
     let (context_server_name, value) = object.into_iter().next().unwrap();
-    let command = value.get("command").context("Expected command")?;
-    let command: ContextServerCommand = serde_json::from_value(command.clone())?;
+    let command: ContextServerCommand = serde_json::from_value(value.clone())?;
     Ok((ContextServerId(context_server_name.clone().into()), command))
 }
 
