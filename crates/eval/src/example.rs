@@ -10,7 +10,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::{ContextLoadResult, ThreadEvent, ZedAgent};
+use agent::{ThreadEvent, ZedAgent};
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -120,13 +120,7 @@ impl ExampleContext {
     pub fn push_user_message(&mut self, text: impl ToString) {
         self.app
             .update_entity(&self.agent_thread, |thread, cx| {
-                thread.insert_user_message(
-                    text.to_string(),
-                    ContextLoadResult::default(),
-                    None,
-                    Vec::new(),
-                    cx,
-                );
+                thread.insert_user_message(text.to_string(), cx);
             })
             .unwrap();
     }

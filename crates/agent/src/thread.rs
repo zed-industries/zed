@@ -1583,23 +1583,6 @@ impl ZedAgent {
         }
     }
 
-    pub fn insert_user_message(
-        &mut self,
-        text: impl Into<String>,
-        context_load_result: ContextLoadResult,
-        git_checkpoint: Option<GitStoreCheckpoint>,
-        creases: Vec<MessageCrease>,
-        cx: &mut Context<Self>,
-    ) -> MessageId {
-        let params = UserMessageParams {
-            text: text.into(),
-            creases,
-            checkpoint: git_checkpoint,
-            context: context_load_result,
-        };
-        self.insert_user_message2(params, cx)
-    }
-
     pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
         self.thread.update(cx, |thread, cx| {
             thread.insert_invisible_continue_message(cx)
@@ -1759,7 +1742,7 @@ impl ZedAgent {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        let message_id = self.insert_user_message2(params.into(), cx);
+        let message_id = self.insert_user_message(params.into(), cx);
         self.advance_prompt_id();
 
         let prev_turn = self.cancel();
@@ -1790,11 +1773,13 @@ impl ZedAgent {
         message_id
     }
 
-    fn insert_user_message2(
+    // todo! only used in eval. remove somehow?
+    pub fn insert_user_message(
         &mut self,
-        params: UserMessageParams,
+        params: impl Into<UserMessageParams>,
         cx: &mut Context<Self>,
     ) -> MessageId {
+        let params = params.into();
         if !params.context.referenced_buffers.is_empty() {
             self.thread
                 .read(cx)
@@ -2109,13 +2094,11 @@ impl ZedAgent {
                                         if !retry(Some(*retry_after)) {
                                             break;
                                         }
-                                        // todo!
                                     }
                                     LanguageModelCompletionError::Overloaded => {
                                         if !retry(None) {
                                             break;
                                         }
-                                        // todo!
                                     }
                                     LanguageModelCompletionError::ApiInternalServerError => {
                                         if !retry(None) {
