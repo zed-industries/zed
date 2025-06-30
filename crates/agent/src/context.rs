@@ -868,6 +868,85 @@ impl LoadedContext {
             }
         }
     }
+
+    /// Checks images against model size limits and returns information about rejected images
+    pub fn check_image_size_limits(
+        &self,
+        model: &Arc<dyn language_model::LanguageModel>,
+    ) -> Vec<RejectedImage> {
+        let mut rejected_images = Vec::new();
+
+        if !self.images.is_empty() {
+            let max_image_size = model.max_image_size();
+
+            for image in &self.images {
+                let image_size = image.len() as u64;
+                if image_size > max_image_size {
+                    rejected_images.push(RejectedImage {
+                        size: image_size,
+                        max_size: max_image_size,
+                        model_name: model.name().0.to_string(),
+                    });
+                }
+            }
+        }
+
+        rejected_images
+    }
+
+    pub fn add_to_request_message_with_validation<F>(
+        &self,
+        request_message: &mut LanguageModelRequestMessage,
+        model: &Arc<dyn language_model::LanguageModel>,
+        mut on_image_rejected: F,
+    ) where
+        F: FnMut(u64, u64, &str),
+    {
+        if !self.text.is_empty() {
+            request_message
+                .content
+                .push(MessageContent::Text(self.text.to_string()));
+        }
+
+        if !self.images.is_empty() {
+            let max_image_size = model.max_image_size();
+            let mut images_added = false;
+
+            for image in &self.images {
+                let image_size = image.len() as u64;
+                if image_size > max_image_size {
+                    on_image_rejected(image_size, max_image_size, &model.name().0);
+
+                    if max_image_size == 0 {
+                        log::warn!(
+                            "Skipping image attachment: model {:?} does not support images",
+                            model.name()
+                        );
+                    } else {
+                        log::warn!(
+                            "Skipping image attachment: size {} bytes exceeds model {:?} limit of {} bytes",
+                            image_size,
+                            model.name(),
+                            max_image_size
+                        );
+                    }
+                    continue;
+                }
+
+                // Some providers only support image parts after an initial text part
+                if !images_added && request_message.content.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text("Images attached by user:".to_string()));
+                }
+
+                request_message
+                    .content
+                    .push(MessageContent::Image(image.clone()));
+                images_added = true;
+            }
+        }
+    }
 }
 
 /// Loads and formats a collection of contexts.
@@ -1161,10 +1240,18 @@ impl Hash for AgentContextKey {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RejectedImage {
+    pub size: u64,
+    pub max_size: u64,
+    pub model_name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{AsyncApp, TestAppContext};
+    use language_model::{LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -1461,5 +1548,294 @@ mod tests {
         assert!(
             matches!(&request_message_no_images.content[0], MessageContent::Text(text) if text == "Some text")
         );
+    }
+
+    #[gpui::test]
+    async fn test_check_image_size_limits() {
+        use gpui::DevicePixels;
+        use language_model::LanguageModelImage;
+
+        // Create test images of various sizes
+        let tiny_image = LanguageModelImage {
+            source: "tiny".into(),
+            size: gpui::size(DevicePixels(10), DevicePixels(10)),
+        };
+
+        let small_image = LanguageModelImage {
+            source: "x".repeat(100_000).into(), // 100KB
+            size: gpui::size(DevicePixels(100), DevicePixels(100)),
+        };
+
+        let medium_image = LanguageModelImage {
+            source: "x".repeat(500_000).into(), // 500KB
+            size: gpui::size(DevicePixels(500), DevicePixels(500)),
+        };
+
+        let large_image = LanguageModelImage {
+            source: "x".repeat(1_048_576).into(), // 1MB
+            size: gpui::size(DevicePixels(1024), DevicePixels(1024)),
+        };
+
+        let huge_image = LanguageModelImage {
+            source: "x".repeat(5_242_880).into(), // 5MB
+            size: gpui::size(DevicePixels(2048), DevicePixels(2048)),
+        };
+
+        // Test with model that has 1MB limit
+        let model_1mb = Arc::new(TestModel1MB);
+        let loaded_context = LoadedContext {
+            contexts: vec![],
+            text: String::new(),
+            images: vec![
+                tiny_image.clone(),
+                small_image.clone(),
+                medium_image.clone(),
+                large_image.clone(),
+                huge_image.clone(),
+            ],
+        };
+
+        let rejected = loaded_context.check_image_size_limits(
+            &(model_1mb.clone() as Arc<dyn language_model::LanguageModel>),
+        );
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].size, 5_242_880);
+        assert_eq!(rejected[0].max_size, 1_048_576);
+        assert_eq!(rejected[0].model_name, "Test Model 1MB");
+
+        // Test with model that doesn't support images
+        let model_no_images = Arc::new(TestModelNoImages);
+        let rejected = loaded_context.check_image_size_limits(
+            &(model_no_images.clone() as Arc<dyn language_model::LanguageModel>),
+        );
+        assert_eq!(rejected.len(), 5); // All images rejected
+        for (_i, rejected_image) in rejected.iter().enumerate() {
+            assert_eq!(rejected_image.max_size, 0);
+            assert_eq!(rejected_image.model_name, "Test Model No Images");
+        }
+
+        // Test with empty image list
+        let empty_context = LoadedContext {
+            contexts: vec![],
+            text: String::new(),
+            images: vec![],
+        };
+        let rejected = empty_context.check_image_size_limits(
+            &(model_1mb.clone() as Arc<dyn language_model::LanguageModel>),
+        );
+        assert!(rejected.is_empty());
+
+        // Test with all images within limit
+        let small_context = LoadedContext {
+            contexts: vec![],
+            text: String::new(),
+            images: vec![tiny_image.clone(), small_image.clone()],
+        };
+        let rejected = small_context
+            .check_image_size_limits(&(model_1mb as Arc<dyn language_model::LanguageModel>));
+        assert!(rejected.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_add_to_request_message_with_validation() {
+        use gpui::DevicePixels;
+        use language_model::{LanguageModelImage, MessageContent, Role};
+
+        let small_image = LanguageModelImage {
+            source: "small".into(),
+            size: gpui::size(DevicePixels(10), DevicePixels(10)),
+        };
+
+        let large_image = LanguageModelImage {
+            source: "x".repeat(2_097_152).into(), // 2MB
+            size: gpui::size(DevicePixels(1024), DevicePixels(1024)),
+        };
+
+        let loaded_context = LoadedContext {
+            contexts: vec![],
+            text: "Test message".to_string(),
+            images: vec![small_image.clone(), large_image.clone()],
+        };
+
+        let model = Arc::new(TestModel1MB);
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: Vec::new(),
+            cache: false,
+        };
+
+        let mut rejected_count = 0;
+        let mut rejected_sizes = Vec::new();
+        let mut rejected_model_names = Vec::new();
+
+        loaded_context.add_to_request_message_with_validation(
+            &mut request_message,
+            &(model.clone() as Arc<dyn language_model::LanguageModel>),
+            |size, max_size, model_name| {
+                rejected_count += 1;
+                rejected_sizes.push((size, max_size));
+                rejected_model_names.push(model_name.to_string());
+            },
+        );
+
+        // Verify callback was called for the large image
+        assert_eq!(rejected_count, 1);
+        assert_eq!(rejected_sizes[0], (2_097_152, 1_048_576));
+        assert_eq!(rejected_model_names[0], "Test Model 1MB");
+
+        // Verify the request message contains text and only the small image
+        assert_eq!(request_message.content.len(), 2); // text + small image
+        assert!(
+            matches!(&request_message.content[0], MessageContent::Text(text) if text == "Test message")
+        );
+        assert!(matches!(
+            &request_message.content[1],
+            MessageContent::Image(_)
+        ));
+    }
+
+    // Helper test models
+    struct TestModel1MB;
+    impl language_model::LanguageModel for TestModel1MB {
+        fn id(&self) -> LanguageModelId {
+            LanguageModelId(SharedString::from("test-1mb"))
+        }
+        fn name(&self) -> LanguageModelName {
+            LanguageModelName(SharedString::from("Test Model 1MB"))
+        }
+        fn provider_id(&self) -> language_model::LanguageModelProviderId {
+            language_model::LanguageModelProviderId(SharedString::from("test"))
+        }
+        fn provider_name(&self) -> language_model::LanguageModelProviderName {
+            language_model::LanguageModelProviderName(SharedString::from("Test Provider"))
+        }
+        fn supports_tools(&self) -> bool {
+            false
+        }
+        fn supports_tool_choice(&self, _: language_model::LanguageModelToolChoice) -> bool {
+            false
+        }
+        fn max_image_size(&self) -> u64 {
+            1_048_576 // 1MB
+        }
+        fn telemetry_id(&self) -> String {
+            "test-1mb".to_string()
+        }
+        fn max_token_count(&self) -> u64 {
+            100_000
+        }
+        fn max_output_tokens(&self) -> Option<u64> {
+            Some(4096)
+        }
+        fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+            Some(LanguageModelCacheConfiguration {
+                max_cache_anchors: 0,
+                should_speculate: false,
+                min_total_token: 1024,
+            })
+        }
+        fn count_tokens(
+            &self,
+            _request: language_model::LanguageModelRequest,
+            _cx: &App,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<u64>> {
+            Box::pin(async { Ok(0) })
+        }
+        fn stream_completion(
+            &self,
+            _request: language_model::LanguageModelRequest,
+            _cx: &AsyncApp,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<
+                futures::stream::BoxStream<
+                    'static,
+                    Result<
+                        language_model::LanguageModelCompletionEvent,
+                        language_model::LanguageModelCompletionError,
+                    >,
+                >,
+                language_model::LanguageModelCompletionError,
+            >,
+        > {
+            use language_model::LanguageModelCompletionError;
+            Box::pin(async {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "Not implemented"
+                )))
+            })
+        }
+    }
+
+    struct TestModelNoImages;
+    impl language_model::LanguageModel for TestModelNoImages {
+        fn id(&self) -> LanguageModelId {
+            LanguageModelId(SharedString::from("test-no-images"))
+        }
+        fn name(&self) -> LanguageModelName {
+            LanguageModelName(SharedString::from("Test Model No Images"))
+        }
+        fn provider_id(&self) -> language_model::LanguageModelProviderId {
+            language_model::LanguageModelProviderId(SharedString::from("test"))
+        }
+        fn provider_name(&self) -> language_model::LanguageModelProviderName {
+            language_model::LanguageModelProviderName(SharedString::from("Test Provider"))
+        }
+        fn supports_tools(&self) -> bool {
+            false
+        }
+        fn supports_tool_choice(&self, _: language_model::LanguageModelToolChoice) -> bool {
+            false
+        }
+        fn max_image_size(&self) -> u64 {
+            0 // No image support
+        }
+        fn telemetry_id(&self) -> String {
+            "test-no-images".to_string()
+        }
+        fn max_token_count(&self) -> u64 {
+            100_000
+        }
+        fn max_output_tokens(&self) -> Option<u64> {
+            Some(4096)
+        }
+        fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
+            Some(LanguageModelCacheConfiguration {
+                max_cache_anchors: 0,
+                should_speculate: false,
+                min_total_token: 1024,
+            })
+        }
+        fn count_tokens(
+            &self,
+            _request: language_model::LanguageModelRequest,
+            _cx: &App,
+        ) -> futures::future::BoxFuture<'static, anyhow::Result<u64>> {
+            Box::pin(async { Ok(0) })
+        }
+        fn stream_completion(
+            &self,
+            _request: language_model::LanguageModelRequest,
+            _cx: &AsyncApp,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<
+                futures::stream::BoxStream<
+                    'static,
+                    Result<
+                        language_model::LanguageModelCompletionEvent,
+                        language_model::LanguageModelCompletionError,
+                    >,
+                >,
+                language_model::LanguageModelCompletionError,
+            >,
+        > {
+            use language_model::LanguageModelCompletionError;
+            Box::pin(async {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "Not implemented"
+                )))
+            })
+        }
     }
 }

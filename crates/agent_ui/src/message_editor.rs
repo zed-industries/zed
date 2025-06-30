@@ -27,6 +27,7 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
+use gpui::AsyncApp;
 use gpui::{
     Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
     WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
@@ -62,6 +63,7 @@ use agent::{
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };
+use workspace::{Toast, notifications::NotificationId};
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
@@ -380,10 +382,14 @@ impl MessageEditor {
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         let context_task = self.reload_context(cx);
         let window_handle = window.window_handle();
+        let workspace = self.workspace.clone();
 
         cx.spawn(async move |_this, cx| {
             let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
             let loaded_context = loaded_context.unwrap_or_default();
+
+            // Check for rejected images and show notifications
+            Self::notify_rejected_images(&loaded_context, &model, &workspace, &cx);
 
             thread
                 .update(cx, |thread, cx| {
@@ -410,6 +416,80 @@ impl MessageEditor {
                 .log_err();
         })
         .detach();
+    }
+
+    fn notify_rejected_images(
+        loaded_context: &agent::context::ContextLoadResult,
+        model: &Arc<dyn language_model::LanguageModel>,
+        workspace: &WeakEntity<Workspace>,
+        cx: &AsyncApp,
+    ) {
+        let rejected_images = loaded_context.loaded_context.check_image_size_limits(model);
+        if rejected_images.is_empty() {
+            return;
+        }
+
+        let workspace = workspace.clone();
+        let model_name = rejected_images[0].model_name.clone();
+        let max_size = model.max_image_size();
+        let count = rejected_images.len();
+        let rejected_images = rejected_images.clone();
+
+        cx.update(|cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    let message = if max_size == 0 {
+                        Self::format_unsupported_images_message(&model_name, count)
+                    } else {
+                        Self::format_size_limit_message(
+                            &model_name,
+                            count,
+                            max_size,
+                            &rejected_images,
+                        )
+                    };
+
+                    struct ImageRejectionToast;
+                    workspace.show_toast(
+                        Toast::new(NotificationId::unique::<ImageRejectionToast>(), message),
+                        cx,
+                    );
+                });
+            }
+        })
+        .log_err();
+    }
+
+    fn format_unsupported_images_message(model_name: &str, count: usize) -> String {
+        let plural = if count > 1 { "s" } else { "" };
+        format!(
+            "{} does not support image attachments. {} image{} will be excluded from your message.",
+            model_name, count, plural
+        )
+    }
+
+    fn format_size_limit_message(
+        model_name: &str,
+        count: usize,
+        max_size: u64,
+        rejected_images: &[agent::context::RejectedImage],
+    ) -> String {
+        let plural = if count > 1 { "s" } else { "" };
+        let max_size_mb = max_size as f64 / 1_048_576.0;
+
+        // If only one image, show its specific size
+        if count == 1 {
+            let image_size_mb = rejected_images[0].size as f64 / 1_048_576.0;
+            format!(
+                "Image ({:.1} MB) exceeds {}'s {:.1} MB size limit and will be excluded.",
+                image_size_mb, model_name, max_size_mb
+            )
+        } else {
+            format!(
+                "{} image{} exceeded {}'s {:.1} MB size limit and will be excluded.",
+                count, plural, model_name, max_size_mb
+            )
+        }
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {

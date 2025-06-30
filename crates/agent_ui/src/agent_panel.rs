@@ -4,6 +4,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use gpui::{Image, ImageFormat};
+
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
@@ -2932,29 +2934,215 @@ impl AgentPanel {
                 }),
             )
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
-                let tasks = paths
-                    .paths()
-                    .into_iter()
-                    .map(|path| {
-                        Workspace::project_path_for_path(this.project.clone(), &path, false, cx)
-                    })
-                    .collect::<Vec<_>>();
-                cx.spawn_in(window, async move |this, cx| {
-                    let mut paths = vec![];
-                    let mut added_worktrees = vec![];
-                    let opened_paths = futures::future::join_all(tasks).await;
-                    for entry in opened_paths {
-                        if let Some((worktree, project_path)) = entry.log_err() {
-                            added_worktrees.push(worktree);
-                            paths.push(project_path);
+                eprintln!("=== ON_DROP EXTERNAL_PATHS HANDLER ===");
+                eprintln!("Number of external paths: {}", paths.paths().len());
+                for (i, path) in paths.paths().iter().enumerate() {
+                    eprintln!("External path {}: {:?}", i, path);
+                }
+
+                match &this.active_view {
+                    ActiveView::Thread { thread, .. } => {
+                        eprintln!("In ActiveView::Thread branch");
+                        let thread = thread.clone();
+                        let paths = paths.paths();
+                        let workspace = this.workspace.clone();
+
+                        for path in paths {
+                            eprintln!("Processing path: {:?}", path);
+                            // Check if it's an image file by extension
+                            let is_image = path.extension()
+                                .and_then(|ext| ext.to_str())
+                                .map(|ext| {
+                                    matches!(
+                                        ext.to_lowercase().as_str(),
+                                        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "ico" | "svg" | "tiff" | "tif"
+                                    )
+                                })
+                                .unwrap_or(false);
+
+                            eprintln!("Is image: {}", is_image);
+
+                            if is_image {
+                                let path = path.to_path_buf();
+                                let thread = thread.clone();
+                                let workspace = workspace.clone();
+                                eprintln!("Spawning async task for image: {:?}", path);
+                                cx.spawn_in(window, async move |_, cx| {
+                                    eprintln!("=== INSIDE ASYNC IMAGE TASK ===");
+                                    eprintln!("Image path: {:?}", path);
+                                    // Get file metadata first
+                                    let metadata = smol::fs::metadata(&path).await;
+                                    eprintln!("Metadata result: {:?}", metadata.is_ok());
+
+                                    if let Ok(metadata) = metadata {
+                                        let file_size = metadata.len();
+                                        eprintln!("File size: {} bytes", file_size);
+
+                                        // Get model limits
+                                        let (max_image_size, model_name) = thread
+                                            .update_in(cx, |thread, _window, cx| {
+                                                let model = thread.thread().read(cx).configured_model();
+                                                let max_size = model
+                                                    .as_ref()
+                                                    .map(|m| m.model.max_image_size())
+                                                    .unwrap_or(10 * 1024 * 1024);
+                                                let name = model.as_ref().map(|m| m.model.name().0.to_string());
+                                                (max_size, name)
+                                            })
+                                            .ok()
+                                            .unwrap_or((10 * 1024 * 1024, None));
+
+                                        eprintln!("Max image size: {}, Model: {:?}", max_image_size, model_name);
+                                        eprintln!("File size: {:.2} MB, Limit: {:.2} MB",
+                                            file_size as f64 / 1_048_576.0,
+                                            max_image_size as f64 / 1_048_576.0);
+
+                                        if file_size > max_image_size {
+                                            eprintln!("FILE SIZE EXCEEDS LIMIT!");
+                                            let error_message = if let Some(model_name) = &model_name {
+                                                if max_image_size == 0 {
+                                                    format!("{} does not support image attachments", model_name)
+                                                } else {
+                                                    let size_mb = file_size as f64 / 1_048_576.0;
+                                                    let max_size_mb = max_image_size as f64 / 1_048_576.0;
+                                                    format!(
+                                                        "Image ({:.1} MB) exceeds {}'s {:.1} MB size limit",
+                                                        size_mb, model_name, max_size_mb
+                                                    )
+                                                }
+                                            } else {
+                                                let size_mb = file_size as f64 / 1_048_576.0;
+                                                format!("Image ({:.1} MB) exceeds the 10 MB size limit", size_mb)
+                                            };
+
+                                            eprintln!("Showing error toast: {}", error_message);
+
+                                            cx.update(|_, cx| {
+                                                eprintln!("Inside cx.update for toast");
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    eprintln!("Got workspace, showing toast!");
+                                                    let _ = workspace.update(cx, |workspace, cx| {
+                                                        use workspace::{Toast, notifications::NotificationId};
+
+                                                        struct ImageRejectionToast;
+                                                        workspace.show_toast(
+                                                            Toast::new(
+                                                                NotificationId::unique::<ImageRejectionToast>(),
+                                                                error_message,
+                                                            ),
+                                                            cx,
+                                                        );
+                                                    });
+                                                    eprintln!("Toast command issued!");
+                                                } else {
+                                                    eprintln!("FAILED to upgrade workspace!");
+                                                }
+                                            })
+                                            .log_err();
+                                        } else {
+                                            eprintln!("Image within size limits, loading file");
+                                            // Load the image file
+                                            match smol::fs::read(&path).await {
+                                                Ok(data) => {
+                                                    eprintln!("Successfully read {} bytes", data.len());
+                                                    // Determine image format from extension
+                                                    let format = path.extension()
+                                                        .and_then(|ext| ext.to_str())
+                                                        .and_then(|ext| {
+                                                            match ext.to_lowercase().as_str() {
+                                                                "png" => Some(ImageFormat::Png),
+                                                                "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+                                                                "gif" => Some(ImageFormat::Gif),
+                                                                "webp" => Some(ImageFormat::Webp),
+                                                                "bmp" => Some(ImageFormat::Bmp),
+                                                                "svg" => Some(ImageFormat::Svg),
+                                                                "tiff" | "tif" => Some(ImageFormat::Tiff),
+                                                                _ => None
+                                                            }
+                                                        })
+                                                        .unwrap_or(ImageFormat::Png); // Default to PNG if unknown
+
+                                                    // Create image from data
+                                                    let image = Image::from_bytes(format, data);
+                                                    let image_arc = Arc::new(image);
+
+                                                    // Add to context store
+                                                    thread
+                                                        .update_in(cx, |thread, _window, cx| {
+                                                            thread.context_store().update(cx, |store, cx| {
+                                                                store.add_image_instance(image_arc, cx);
+                                                            });
+                                                        })
+                                                        .log_err();
+                                                    eprintln!("Image added to context store!");
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to read image file: {}", e);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!("Failed to get file metadata!");
+                                    }
+                                })
+                                .detach();
+                                eprintln!("Image task detached");
+                            } else {
+                                eprintln!("Not an image, using project path logic");
+                                // For non-image files, use the existing project path logic
+                                let project = this.project.clone();
+                                let context_store = thread.read(cx).context_store().clone();
+                                let path = path.to_path_buf();
+                                cx.spawn_in(window, async move |_, cx| {
+                                    if let Some(task) = cx.update(|_, cx| {
+                                        Workspace::project_path_for_path(project.clone(), &path, false, cx)
+                                    }).ok() {
+                                        if let Some((_, project_path)) = task.await.log_err() {
+                                            context_store
+                                                .update(cx, |store, cx| {
+                                                    store.add_file_from_path(project_path, false, cx).detach();
+                                                })
+                                                .ok();
+                                        }
+                                    }
+                                })
+                                .detach();
+                            }
                         }
                     }
-                    this.update_in(cx, |this, window, cx| {
-                        this.handle_drop(paths, added_worktrees, window, cx);
-                    })
-                    .ok();
-                })
-                .detach();
+                    ActiveView::TextThread { .. } => {
+                        eprintln!("In ActiveView::TextThread branch");
+                        // Keep existing behavior for text threads
+                        let tasks = paths
+                            .paths()
+                            .into_iter()
+                            .map(|path| {
+                                Workspace::project_path_for_path(this.project.clone(), &path, false, cx)
+                            })
+                            .collect::<Vec<_>>();
+                        cx.spawn_in(window, async move |this, cx| {
+                            let mut paths = vec![];
+                            let mut added_worktrees = vec![];
+                            let opened_paths = futures::future::join_all(tasks).await;
+
+                            for entry in opened_paths {
+                                if let Some((worktree, project_path)) = entry.log_err() {
+                                    added_worktrees.push(worktree);
+                                    paths.push(project_path);
+                                }
+                            }
+
+                            this.update_in(cx, |this, window, cx| {
+                                this.handle_drop(paths, added_worktrees, window, cx);
+                            })
+                            .ok();
+                        })
+                        .detach();
+                    }
+                    _ => {
+                        eprintln!("In unknown ActiveView branch");
+                    }
+                }
             }))
     }
 
@@ -2965,20 +3153,47 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // This method is now only used for non-image files and text threads
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
                 let context_store = thread.read(cx).context_store().clone();
+
+                // All paths here should be non-image files
                 context_store.update(cx, move |context_store, cx| {
                     let mut tasks = Vec::new();
-                    for project_path in &paths {
-                        tasks.push(context_store.add_file_from_path(
-                            project_path.clone(),
-                            false,
-                            cx,
-                        ));
+                    for path in paths {
+                        tasks.push(context_store.add_file_from_path(path, false, cx));
                     }
-                    cx.background_spawn(async move {
-                        futures::future::join_all(tasks).await;
+
+                    cx.spawn(async move |_, cx| {
+                        let results = futures::future::join_all(tasks).await;
+
+                        // Show error toasts for any file errors
+                        for result in results {
+                            if let Err(err) = result {
+                                cx.update(|cx| {
+                                    if let Some(workspace) = cx
+                                        .active_window()
+                                        .and_then(|window| window.downcast::<Workspace>())
+                                    {
+                                        let _ = workspace.update(cx, |workspace, _, cx| {
+                                            use workspace::{Toast, notifications::NotificationId};
+
+                                            struct FileLoadErrorToast;
+                                            workspace.show_toast(
+                                                Toast::new(
+                                                    NotificationId::unique::<FileLoadErrorToast>(),
+                                                    err.to_string(),
+                                                ),
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                })
+                                .log_err();
+                            }
+                        }
+
                         // Need to hold onto the worktrees until they have already been used when
                         // opening the buffers.
                         drop(added_worktrees);

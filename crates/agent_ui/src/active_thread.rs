@@ -889,6 +889,46 @@ impl ActiveThread {
         &self.text_thread_store
     }
 
+    pub fn validate_image(&self, image: &Arc<gpui::Image>, cx: &App) -> Result<(), String> {
+        let image_size = image.bytes().len() as u64;
+
+        if let Some(model) = self.thread.read(cx).configured_model() {
+            let max_size = model.model.max_image_size();
+
+            if image_size > max_size {
+                if max_size == 0 {
+                    Err(format!(
+                        "{} does not support image attachments",
+                        model.model.name().0
+                    ))
+                } else {
+                    let size_mb = image_size as f64 / 1_048_576.0;
+                    let max_size_mb = max_size as f64 / 1_048_576.0;
+                    Err(format!(
+                        "Image ({:.1} MB) exceeds {}'s {:.1} MB size limit",
+                        size_mb,
+                        model.model.name().0,
+                        max_size_mb
+                    ))
+                }
+            } else {
+                Ok(())
+            }
+        } else {
+            // No model configured, use default 10MB limit
+            const DEFAULT_MAX_SIZE: u64 = 10 * 1024 * 1024;
+            if image_size > DEFAULT_MAX_SIZE {
+                let size_mb = image_size as f64 / 1_048_576.0;
+                Err(format!(
+                    "Image ({:.1} MB) exceeds the 10 MB size limit",
+                    size_mb
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     fn push_rendered_message(&mut self, id: MessageId, rendered_message: RenderedMessage) {
         let old_len = self.messages.len();
         self.messages.push(id);
@@ -1522,7 +1562,7 @@ impl ActiveThread {
     }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
-        attach_pasted_images_as_context(&self.context_store, cx);
+        attach_pasted_images_as_context_with_validation(&self.context_store, Some(self), cx);
     }
 
     fn cancel_editing_message(
@@ -3704,6 +3744,14 @@ pub(crate) fn attach_pasted_images_as_context(
     context_store: &Entity<ContextStore>,
     cx: &mut App,
 ) -> bool {
+    attach_pasted_images_as_context_with_validation(context_store, None, cx)
+}
+
+pub(crate) fn attach_pasted_images_as_context_with_validation(
+    context_store: &Entity<ContextStore>,
+    active_thread: Option<&ActiveThread>,
+    cx: &mut App,
+) -> bool {
     let images = cx
         .read_from_clipboard()
         .map(|item| {
@@ -3724,9 +3772,67 @@ pub(crate) fn attach_pasted_images_as_context(
     }
     cx.stop_propagation();
 
+    // Try to find the workspace for showing toasts
+    let workspace = cx
+        .active_window()
+        .and_then(|window| window.downcast::<Workspace>());
+
     context_store.update(cx, |store, cx| {
         for image in images {
-            store.add_image_instance(Arc::new(image), cx);
+            let image_arc = Arc::new(image);
+
+            // Validate image if we have an active thread
+            let should_add = if let Some(thread) = active_thread {
+                match thread.validate_image(&image_arc, cx) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        // Show error toast if we have a workspace
+                        if let Some(workspace) = workspace {
+                            let _ = workspace.update(cx, |workspace, _, cx| {
+                                use workspace::{Toast, notifications::NotificationId};
+
+                                struct ImageRejectionToast;
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<ImageRejectionToast>(),
+                                        err,
+                                    ),
+                                    cx,
+                                );
+                            });
+                        }
+                        false
+                    }
+                }
+            } else {
+                // No active thread, check against default limit
+                let image_size = image_arc.bytes().len() as u64;
+                const DEFAULT_MAX_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+                if image_size > DEFAULT_MAX_SIZE {
+                    let size_mb = image_size as f64 / 1_048_576.0;
+                    let err = format!("Image ({:.1} MB) exceeds the 10 MB size limit", size_mb);
+
+                    if let Some(workspace) = workspace {
+                        let _ = workspace.update(cx, |workspace, _, cx| {
+                            use workspace::{Toast, notifications::NotificationId};
+
+                            struct ImageRejectionToast;
+                            workspace.show_toast(
+                                Toast::new(NotificationId::unique::<ImageRejectionToast>(), err),
+                                cx,
+                            );
+                        });
+                    }
+                    false
+                } else {
+                    true
+                }
+            };
+
+            if should_add {
+                store.add_image_instance(image_arc, cx);
+            }
         }
     });
     true
