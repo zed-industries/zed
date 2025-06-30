@@ -1227,9 +1227,9 @@ impl RenderOnce for BreakpointOptionsStrip {
         };
 
         h_flex()
-            .gap_2()
+            .gap_1()
             .child(
-                div() .map(self.add_border(ActiveBreakpointStripMode::Log, supports_logs, window, cx))
+                div().map(self.add_border(ActiveBreakpointStripMode::Log, supports_logs, window, cx))
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
