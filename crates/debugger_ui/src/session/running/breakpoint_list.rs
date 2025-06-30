@@ -877,9 +877,27 @@ impl LineBreakpoint {
                 })
                 .cursor_pointer()
                 .child(
-                    Label::new(format!("{}:{}", self.name, self.line))
-                        .size(LabelSize::Small)
-                        .line_height_style(ui::LineHeightStyle::UiLabel),
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(format!("{}:{}", self.name, self.line))
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel),
+                        )
+                        .children(self.dir.as_ref().and_then(|dir| {
+                            let path_without_root = Path::new(dir.as_ref())
+                                .components()
+                                .skip(1)
+                                .collect::<PathBuf>();
+                            path_without_root.components().next()?;
+                            Some(
+                                Label::new(path_without_root.to_string_lossy().into_owned())
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .line_height_style(ui::LineHeightStyle::UiLabel)
+                                    .truncate(),
+                            )
+                        })),
                 )
                 .when_some(self.dir.as_ref(), |this, parent_dir| {
                     this.tooltip(Tooltip::text(format!("Worktree parent path: {parent_dir}")))
@@ -1227,14 +1245,15 @@ impl RenderOnce for BreakpointOptionsStrip {
         };
 
         h_flex()
-            .gap_2()
+            .gap_1()
             .child(
-                div() .map(self.add_border(ActiveBreakpointStripMode::Log, supports_logs, window, cx))
+                div().map(self.add_border(ActiveBreakpointStripMode::Log, supports_logs, window, cx))
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
                             IconName::ScrollText,
                         )
+                        .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
                         .icon_color(color_for_toggle(has_logs))
                         .disabled(!supports_logs)
@@ -1254,6 +1273,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-condition-toggle")),
                             IconName::SplitAlt,
                         )
+                        .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::Condition,
                             has_condition
@@ -1267,7 +1287,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .when(!has_condition && !self.is_selected, |this| this.invisible()),
             )
             .child(
-                div()                  .map(self.add_border(
+                div().map(self.add_border(
                     ActiveBreakpointStripMode::HitCondition,
                     supports_hit_condition,window, cx
                 ))
@@ -1276,6 +1296,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-hit-condition-toggle")),
                             IconName::ArrowDown10,
                         )
+                        .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::HitCondition,
                             has_hit_condition,
