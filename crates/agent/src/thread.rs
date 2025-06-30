@@ -1338,7 +1338,7 @@ impl Thread {
 
             message
                 .loaded_context
-                .add_to_request_message(&mut request_message);
+                .add_to_request_message_with_model(&mut request_message, &model);
 
             for segment in &message.segments {
                 match segment {
@@ -5397,5 +5397,193 @@ fn main() {{
         });
 
         Ok(buffer)
+    }
+
+    #[gpui::test]
+    async fn test_image_size_limit_in_thread(cx: &mut TestAppContext) {
+        use gpui::DevicePixels;
+        use language_model::{
+            LanguageModelImage,
+            fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
+        };
+
+        init_test_settings(cx);
+        let project = create_test_project(cx, serde_json::json!({})).await;
+        let (_, _, thread, _, _) = setup_test_environment(cx, project).await;
+
+        // Create a small image that's under the limit
+        let small_image = LanguageModelImage {
+            source: "small_data".into(),
+            size: gpui::size(DevicePixels(10), DevicePixels(10)),
+        };
+
+        // Create a large image that exceeds typical limits (10MB)
+        let large_image_source = "x".repeat(10_485_760); // 10MB
+        let large_image = LanguageModelImage {
+            source: large_image_source.into(),
+            size: gpui::size(DevicePixels(1024), DevicePixels(1024)),
+        };
+
+        // Create a loaded context with both images
+        let loaded_context = ContextLoadResult {
+            loaded_context: LoadedContext {
+                contexts: vec![],
+                text: "Test message".to_string(),
+                images: vec![small_image.clone(), large_image.clone()],
+            },
+            referenced_buffers: HashSet::default(),
+        };
+
+        // Insert a user message with the loaded context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Test with images", loaded_context, None, vec![], cx);
+        });
+
+        // Create a model with 500KB image size limit
+        let _provider = Arc::new(FakeLanguageModelProvider);
+        let model = Arc::new(FakeLanguageModel::default());
+        // Note: FakeLanguageModel doesn't support images by default (max_image_size returns 0)
+        // so we'll test that images are excluded when the model doesn't support them
+
+        // Generate the completion request
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // Verify that no images were included (because FakeLanguageModel doesn't support images)
+        let mut image_count = 0;
+        let mut has_text = false;
+        for message in &request.messages {
+            for content in &message.content {
+                match content {
+                    MessageContent::Text(text) => {
+                        if text.contains("Test message") {
+                            has_text = true;
+                        }
+                    }
+                    MessageContent::Image(_) => {
+                        image_count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(has_text, "Text content should be included");
+        assert_eq!(
+            image_count, 0,
+            "No images should be included when model doesn't support them"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_image_size_limit_with_anthropic_model(_cx: &mut TestAppContext) {
+        use gpui::{DevicePixels, SharedString};
+        use language_model::{
+            LanguageModelId, LanguageModelImage, LanguageModelName, LanguageModelProviderId,
+            LanguageModelProviderName,
+        };
+
+        // Test with a model that has specific size limits (like Anthropic's 5MB limit)
+        // We'll create a simple test to verify the logic works correctly
+
+        // Create test images
+        let small_image = LanguageModelImage {
+            source: "small".into(),
+            size: gpui::size(DevicePixels(100), DevicePixels(100)),
+        };
+
+        let large_image_source = "x".repeat(6_000_000); // 6MB - over Anthropic's 5MB limit
+        let large_image = LanguageModelImage {
+            source: large_image_source.into(),
+            size: gpui::size(DevicePixels(2000), DevicePixels(2000)),
+        };
+
+        let loaded_context = LoadedContext {
+            contexts: vec![],
+            text: "Test".to_string(),
+            images: vec![small_image.clone(), large_image.clone()],
+        };
+
+        // Test the add_to_request_message_with_model method directly
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+
+        // Use the test from context.rs as a guide - create a mock model with 5MB limit
+        struct TestModel5MB;
+        impl language_model::LanguageModel for TestModel5MB {
+            fn id(&self) -> LanguageModelId {
+                LanguageModelId(SharedString::from("test"))
+            }
+            fn name(&self) -> LanguageModelName {
+                LanguageModelName(SharedString::from("Test 5MB"))
+            }
+            fn provider_id(&self) -> LanguageModelProviderId {
+                LanguageModelProviderId(SharedString::from("test"))
+            }
+            fn provider_name(&self) -> LanguageModelProviderName {
+                LanguageModelProviderName(SharedString::from("Test"))
+            }
+            fn supports_tools(&self) -> bool {
+                false
+            }
+            fn supports_tool_choice(&self, _: language_model::LanguageModelToolChoice) -> bool {
+                false
+            }
+            fn max_image_size(&self) -> u64 {
+                5_242_880 // 5MB like Anthropic
+            }
+            fn telemetry_id(&self) -> String {
+                "test".to_string()
+            }
+            fn max_token_count(&self) -> u64 {
+                100_000
+            }
+            fn count_tokens(
+                &self,
+                _request: language_model::LanguageModelRequest,
+                _cx: &App,
+            ) -> futures::future::BoxFuture<'static, anyhow::Result<u64>> {
+                Box::pin(async { Ok(0) })
+            }
+            fn stream_completion(
+                &self,
+                _request: language_model::LanguageModelRequest,
+                _cx: &gpui::AsyncApp,
+            ) -> futures::future::BoxFuture<
+                'static,
+                Result<
+                    futures::stream::BoxStream<
+                        'static,
+                        Result<
+                            language_model::LanguageModelCompletionEvent,
+                            language_model::LanguageModelCompletionError,
+                        >,
+                    >,
+                    language_model::LanguageModelCompletionError,
+                >,
+            > {
+                Box::pin(async {
+                    Err(language_model::LanguageModelCompletionError::Other(
+                        anyhow::anyhow!("Not implemented"),
+                    ))
+                })
+            }
+        }
+
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(TestModel5MB);
+        loaded_context.add_to_request_message_with_model(&mut request_message, &model);
+
+        // Should have text and only the small image
+        let mut image_count = 0;
+        for content in &request_message.content {
+            if matches!(content, MessageContent::Image(_)) {
+                image_count += 1;
+            }
+        }
+        assert_eq!(image_count, 1, "Only the small image should be included");
     }
 }

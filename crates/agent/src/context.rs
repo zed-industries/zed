@@ -819,6 +819,55 @@ impl LoadedContext {
             }
         }
     }
+
+    pub fn add_to_request_message_with_model(
+        &self,
+        request_message: &mut LanguageModelRequestMessage,
+        model: &Arc<dyn language_model::LanguageModel>,
+    ) {
+        if !self.text.is_empty() {
+            request_message
+                .content
+                .push(MessageContent::Text(self.text.to_string()));
+        }
+
+        if !self.images.is_empty() {
+            let max_image_size = model.max_image_size();
+            let mut images_added = false;
+
+            for image in &self.images {
+                let image_size = image.len() as u64;
+                if image_size > max_image_size {
+                    if max_image_size == 0 {
+                        log::warn!(
+                            "Skipping image attachment: model {:?} does not support images",
+                            model.name()
+                        );
+                    } else {
+                        log::warn!(
+                            "Skipping image attachment: size {} bytes exceeds model {:?} limit of {} bytes",
+                            image_size,
+                            model.name(),
+                            max_image_size
+                        );
+                    }
+                    continue;
+                }
+
+                // Some providers only support image parts after an initial text part
+                if !images_added && request_message.content.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text("Images attached by user:".to_string()));
+                }
+
+                request_message
+                    .content
+                    .push(MessageContent::Image(image.clone()));
+                images_added = true;
+            }
+        }
+    }
 }
 
 /// Loads and formats a collection of contexts.
@@ -1221,5 +1270,196 @@ mod tests {
                 }
             })
             .expect("Should have found a file context")
+    }
+
+    #[gpui::test]
+    async fn test_image_size_limit_filtering(_cx: &mut TestAppContext) {
+        use futures::stream::BoxStream;
+        use gpui::{AsyncApp, DevicePixels, SharedString};
+        use language_model::{
+            LanguageModelId, LanguageModelImage, LanguageModelName, LanguageModelProviderId,
+            LanguageModelProviderName, Role,
+        };
+        use std::sync::Arc;
+
+        // Create a mock image that's 10 bytes
+        let small_image = LanguageModelImage {
+            source: "small_data".into(),
+            size: gpui::size(DevicePixels(10), DevicePixels(10)),
+        };
+
+        // Create a mock image that's 1MB
+        let large_image_source = "x".repeat(1_048_576);
+        let large_image = LanguageModelImage {
+            source: large_image_source.into(),
+            size: gpui::size(DevicePixels(1024), DevicePixels(1024)),
+        };
+
+        let loaded_context = LoadedContext {
+            contexts: vec![],
+            text: "Some text".to_string(),
+            images: vec![small_image.clone(), large_image.clone()],
+        };
+
+        // Test with a model that supports images with 500KB limit
+        struct TestModel500KB;
+        impl language_model::LanguageModel for TestModel500KB {
+            fn id(&self) -> LanguageModelId {
+                LanguageModelId(SharedString::from("test-500kb"))
+            }
+            fn name(&self) -> LanguageModelName {
+                LanguageModelName(SharedString::from("Test Model 500KB"))
+            }
+            fn provider_id(&self) -> LanguageModelProviderId {
+                LanguageModelProviderId(SharedString::from("test"))
+            }
+            fn provider_name(&self) -> LanguageModelProviderName {
+                LanguageModelProviderName(SharedString::from("Test Provider"))
+            }
+            fn supports_tools(&self) -> bool {
+                false
+            }
+            fn supports_tool_choice(&self, _: language_model::LanguageModelToolChoice) -> bool {
+                false
+            }
+            fn max_image_size(&self) -> u64 {
+                512_000
+            } // 500KB
+            fn telemetry_id(&self) -> String {
+                "test-500kb".to_string()
+            }
+            fn max_token_count(&self) -> u64 {
+                100_000
+            }
+            fn count_tokens(
+                &self,
+                _request: language_model::LanguageModelRequest,
+                _cx: &App,
+            ) -> futures::future::BoxFuture<'static, anyhow::Result<u64>> {
+                Box::pin(async { Ok(0) })
+            }
+            fn stream_completion(
+                &self,
+                _request: language_model::LanguageModelRequest,
+                _cx: &AsyncApp,
+            ) -> futures::future::BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<
+                            language_model::LanguageModelCompletionEvent,
+                            language_model::LanguageModelCompletionError,
+                        >,
+                    >,
+                    language_model::LanguageModelCompletionError,
+                >,
+            > {
+                use language_model::LanguageModelCompletionError;
+                Box::pin(async {
+                    Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "Not implemented"
+                    )))
+                })
+            }
+        }
+
+        let model_500kb: Arc<dyn language_model::LanguageModel> = Arc::new(TestModel500KB);
+        let mut request_message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+
+        loaded_context.add_to_request_message_with_model(&mut request_message, &model_500kb);
+
+        // Should have text and only the small image
+        assert_eq!(request_message.content.len(), 2); // text + small image
+        assert!(
+            matches!(&request_message.content[0], MessageContent::Text(text) if text == "Some text")
+        );
+        assert!(matches!(
+            &request_message.content[1],
+            MessageContent::Image(_)
+        ));
+
+        // Test with a model that doesn't support images
+        struct TestModelNoImages;
+        impl language_model::LanguageModel for TestModelNoImages {
+            fn id(&self) -> LanguageModelId {
+                LanguageModelId(SharedString::from("test-no-images"))
+            }
+            fn name(&self) -> LanguageModelName {
+                LanguageModelName(SharedString::from("Test Model No Images"))
+            }
+            fn provider_id(&self) -> LanguageModelProviderId {
+                LanguageModelProviderId(SharedString::from("test"))
+            }
+            fn provider_name(&self) -> LanguageModelProviderName {
+                LanguageModelProviderName(SharedString::from("Test Provider"))
+            }
+            fn supports_tools(&self) -> bool {
+                false
+            }
+            fn supports_tool_choice(&self, _: language_model::LanguageModelToolChoice) -> bool {
+                false
+            }
+            fn max_image_size(&self) -> u64 {
+                0
+            } // No image support
+            fn telemetry_id(&self) -> String {
+                "test-no-images".to_string()
+            }
+            fn max_token_count(&self) -> u64 {
+                100_000
+            }
+            fn count_tokens(
+                &self,
+                _request: language_model::LanguageModelRequest,
+                _cx: &App,
+            ) -> futures::future::BoxFuture<'static, anyhow::Result<u64>> {
+                Box::pin(async { Ok(0) })
+            }
+            fn stream_completion(
+                &self,
+                _request: language_model::LanguageModelRequest,
+                _cx: &AsyncApp,
+            ) -> futures::future::BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<
+                            language_model::LanguageModelCompletionEvent,
+                            language_model::LanguageModelCompletionError,
+                        >,
+                    >,
+                    language_model::LanguageModelCompletionError,
+                >,
+            > {
+                use language_model::LanguageModelCompletionError;
+                Box::pin(async {
+                    Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "Not implemented"
+                    )))
+                })
+            }
+        }
+
+        let model_no_images: Arc<dyn language_model::LanguageModel> = Arc::new(TestModelNoImages);
+        let mut request_message_no_images = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![],
+            cache: false,
+        };
+
+        loaded_context
+            .add_to_request_message_with_model(&mut request_message_no_images, &model_no_images);
+
+        // Should have only text, no images
+        assert_eq!(request_message_no_images.content.len(), 1);
+        assert!(
+            matches!(&request_message_no_images.content[0], MessageContent::Text(text) if text == "Some text")
+        );
     }
 }
