@@ -159,8 +159,8 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
             }
 
             fn action_json_schema(
-                _generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
+                _generator: &mut gpui::private::schemars::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::Schema> {
                 #json_schema_fn_body
             }
 

@@ -14,8 +14,7 @@ use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
     language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-        language_settings,
+        AllLanguageSettings, Formatter, PrettierSettings, SelectedFormatter, language_settings,
     },
     tree_sitter_typescript,
 };
@@ -505,9 +504,10 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::LanguageServer { name: None }].into(),
-                )));
+                file.defaults.formatter =
+                    Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
+                        name: None,
+                    }]));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
