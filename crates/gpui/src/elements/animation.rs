@@ -104,41 +104,7 @@ impl<E> AnimationElement<E> {
         self
     }
 
-    /// Set the animation chain to repeat when it finishes.
-    ///
-    /// When enabled, after the last animation in the chain completes,
-    /// the entire chain will restart from the beginning. This is different
-    /// from calling `.repeat()` on individual animations, which would repeat
-    /// each animation individually.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // A pulsing animation that fades in and out repeatedly
-    /// element
-    ///     .with_animations(
-    ///         "pulsing_animation",
-    ///         vec![
-    ///             Animation::new(Duration::from_millis(500)).with_easing(ease_in_out),
-    ///             Animation::new(Duration::from_millis(500)).with_easing(ease_in_out),
-    ///         ],
-    ///         |el, idx, progress| {
-    ///             match idx {
-    ///                 0 => el.opacity(progress),     // Fade in
-    ///                 1 => el.opacity(1.0 - progress), // Fade out
-    ///                 _ => el,
-    ///             }
-    ///         }
-    ///     )
-    ///     .repeat() // The fade in -> fade out sequence repeats indefinitely
-    /// ```
-    ///
-    /// # Behavior
-    ///
-    /// - Individual animations in the chain can still use `.repeat()` to loop themselves
-    /// - Chain repetition only applies after all animations in the chain complete
-    /// - If any animation in the chain has `.repeat()`, the chain will not advance
-    ///   until that animation is changed to be oneshot
+    /// Set the animation chain to repeat when it finishes
     pub fn repeat(mut self) -> Self {
         self.repeat = true;
         self
@@ -192,7 +158,6 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 if self.animations[animation_ix].oneshot {
                     if animation_ix >= self.animations.len() - 1 {
                         if self.repeat {
-                            // Restart the entire chain
                             state.start = Instant::now();
                             state.animation_ix = 0;
                         } else {
@@ -313,17 +278,14 @@ mod tests {
     use crate::div;
 
     #[test]
-    fn test_animation_chain_repeat() {
-        // Test that repeat flag is properly set
-        let animation1 = Animation::new(Duration::from_millis(100));
-        let animation2 = Animation::new(Duration::from_millis(200));
+    fn test_animation_repeat() {
+        let animations = vec![
+            Animation::new(Duration::from_millis(100)),
+            Animation::new(Duration::from_millis(200)),
+        ];
 
         let element = div()
-            .with_animations(
-                "test_chain",
-                vec![animation1, animation2],
-                |el, _idx, _progress| el,
-            )
+            .with_animations("test_multiple", animations, |el, _, _| el)
             .repeat();
 
         assert!(element.repeat);
@@ -331,10 +293,9 @@ mod tests {
 
     #[test]
     fn test_animation_no_repeat() {
-        // Test that repeat defaults to false
         let animation = Animation::new(Duration::from_millis(100));
 
-        let element = div().with_animation("test_single", animation, |el, _progress| el);
+        let element = div().with_animation("test_single", animation, |el, _| el);
 
         assert!(!element.repeat);
     }

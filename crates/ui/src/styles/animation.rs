@@ -31,7 +31,6 @@ pub enum AnimationDirection {
     FromTop,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnimationOptions {
     pub animation_type: AnimationDirection,
     pub fade_in: bool,
@@ -62,57 +61,55 @@ pub trait DefaultAnimations: Styled + Sized {
             AnimationDirection::FromTop => "animate_from_top",
         };
 
-        // Create animation chain: main animation + delay
-        let animations = vec![
+        let mut animations = vec![
             gpui::Animation::new(AnimationDuration::Slow.into()).with_easing(ease_out_quint()),
-            gpui::Animation::new(Duration::from_secs(1)), // 1 second delay
         ];
+
+        if options.repeat {
+            animations.push(gpui::Animation::new(Duration::from_secs(1)));
+        }
 
         let animation_element = self.with_animations(
             animation_name,
             animations,
-            move |mut this, animation_idx, delta| {
-                match animation_idx {
-                    0 => {
-                        // Main animation
-                        let start_opacity = 0.4;
-                        let start_pos = 0.0;
-                        let end_pos = 40.0;
+            move |mut this, animation_idx, delta| match animation_idx {
+                0 => {
+                    let start_opacity = 0.4;
+                    let start_pos = 0.0;
+                    let end_pos = 40.0;
 
-                        if options.fade_in {
-                            this = this.opacity(start_opacity + delta * (1.0 - start_opacity));
+                    if options.fade_in {
+                        this = this.opacity(start_opacity + delta * (1.0 - start_opacity));
+                    }
+
+                    match options.animation_type {
+                        AnimationDirection::FromBottom => {
+                            this.bottom(px(start_pos + delta * (end_pos - start_pos)))
                         }
-
-                        match options.animation_type {
-                            AnimationDirection::FromBottom => {
-                                this.bottom(px(start_pos + delta * (end_pos - start_pos)))
-                            }
-                            AnimationDirection::FromLeft => {
-                                this.left(px(start_pos + delta * (end_pos - start_pos)))
-                            }
-                            AnimationDirection::FromRight => {
-                                this.right(px(start_pos + delta * (end_pos - start_pos)))
-                            }
-                            AnimationDirection::FromTop => {
-                                this.top(px(start_pos + delta * (end_pos - start_pos)))
-                            }
+                        AnimationDirection::FromLeft => {
+                            this.left(px(start_pos + delta * (end_pos - start_pos)))
+                        }
+                        AnimationDirection::FromRight => {
+                            this.right(px(start_pos + delta * (end_pos - start_pos)))
+                        }
+                        AnimationDirection::FromTop => {
+                            this.top(px(start_pos + delta * (end_pos - start_pos)))
                         }
                     }
-                    1 => {
-                        // Delay phase - maintain final state
-                        if options.fade_in {
-                            this = this.opacity(1.0);
-                        }
-
-                        match options.animation_type {
-                            AnimationDirection::FromBottom => this.bottom(px(40.0)),
-                            AnimationDirection::FromLeft => this.left(px(40.0)),
-                            AnimationDirection::FromRight => this.right(px(40.0)),
-                            AnimationDirection::FromTop => this.top(px(40.0)),
-                        }
-                    }
-                    _ => this,
                 }
+                1 => {
+                    if options.fade_in {
+                        this = this.opacity(1.0);
+                    }
+
+                    match options.animation_type {
+                        AnimationDirection::FromBottom => this.bottom(px(40.0)),
+                        AnimationDirection::FromLeft => this.left(px(40.0)),
+                        AnimationDirection::FromRight => this.right(px(40.0)),
+                        AnimationDirection::FromTop => this.top(px(40.0)),
+                    }
+                }
+                _ => this,
             },
         );
 
