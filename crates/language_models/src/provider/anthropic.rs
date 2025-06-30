@@ -528,6 +528,11 @@ pub fn into_anthropic(
                     .into_iter()
                     .filter_map(|content| match content {
                         MessageContent::Text(text) => {
+                            let text = if text.chars().last().map_or(false, |c| c.is_whitespace()) {
+                                text.trim_end().to_string()
+                            } else {
+                                text
+                            };
                             if !text.is_empty() {
                                 Some(anthropic::RequestContent::Text {
                                     text,
