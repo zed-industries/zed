@@ -1,4 +1,4 @@
-use crate::display_map::inlay_map::InlayChunk;
+use crate::{InlayId, display_map::inlay_map::InlayChunk};
 
 use super::{
     Highlights,
@@ -277,13 +277,16 @@ impl FoldMapWriter<'_> {
 
     pub(crate) fn update_fold_widths(
         &mut self,
-        new_widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        new_widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();
         let buffer = &inlay_snapshot.buffer;
 
         for (id, new_width) in new_widths {
+            let ChunkRendererId::Fold(id) = id else {
+                continue;
+            };
             if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
                 if Some(new_width) != metadata.width {
                     let buffer_start = metadata.range.start.to_offset(buffer);
@@ -529,7 +532,7 @@ impl FoldMap {
                                 placeholder: Some(TransformPlaceholder {
                                     text: ELLIPSIS,
                                     renderer: ChunkRenderer {
-                                        id: fold.id,
+                                        id: ChunkRendererId::Fold(fold.id),
                                         render: Arc::new(move |cx| {
                                             (fold.placeholder.render)(
                                                 fold_id,
@@ -1267,11 +1270,17 @@ pub struct Chunk<'a> {
     pub renderer: Option<ChunkRenderer>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ChunkRendererId {
+    Fold(FoldId),
+    Inlay(InlayId),
+}
+
 /// A recipe for how the chunk should be presented.
 #[derive(Clone)]
 pub struct ChunkRenderer {
-    /// The id of the fold associated with this chunk.
-    pub id: FoldId,
+    /// The id of the renderer associated with this chunk.
+    pub id: ChunkRendererId,
     /// Creates a custom element to represent this chunk.
     pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of the text.
