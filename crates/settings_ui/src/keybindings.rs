@@ -238,14 +238,6 @@ impl KeymapEditor {
         dispatch_context.add("KeymapEditor");
         dispatch_context.add("menu");
 
-        // todo! track key context in keybind edit modal
-        // let identifier = if self.keymap_editor.focus_handle(cx).is_focused(window) {
-        //     "editing"
-        // } else {
-        //     "not_editing"
-        // };
-        // dispatch_context.add(identifier);
-
         dispatch_context
     }
 
@@ -493,12 +485,6 @@ impl KeybindingEditorModal {
         cx: &mut App,
     ) -> Self {
         let keybind_editor = cx.new(|cx| KeybindInput::new(cx));
-        // todo!
-        // cx.subscribe(
-        //     &keybind_editor,
-        //     |editor, event: &editor::EditorEvent, cx| match event {
-        //     },
-        // );
         Self {
             editing_keybind,
             fs,
