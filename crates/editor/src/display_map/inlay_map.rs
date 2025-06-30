@@ -1,4 +1,4 @@
-use crate::{ChunkRenderer, HighlightStyles, InlayId, display_map::FoldId};
+use crate::{ChunkRenderer, HighlightStyles, InlayId};
 use collections::BTreeSet;
 use gpui::{Hsla, Rgba};
 use language::{Chunk, Edit, Point, TextSummary};
@@ -14,7 +14,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
-use super::{Highlights, custom_highlights::CustomHighlightsChunks};
+use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -338,10 +338,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
-                    InlayId::Color(id) => {
+                    InlayId::Color(_) => {
                         if let Some(color) = inlay.color {
                             renderer = Some(ChunkRenderer {
-                                id: FoldId(id),
+                                id: ChunkRendererId::Inlay(inlay.id),
                                 render: Arc::new(move |cx| {
                                     div()
                                         .w_4()

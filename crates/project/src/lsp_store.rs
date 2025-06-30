@@ -170,6 +170,7 @@ pub struct LocalLspStore {
     _subscription: gpui::Subscription,
     lsp_tree: Entity<LanguageServerTree>,
     registered_buffers: HashMap<BufferId, usize>,
+    buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
     buffer_pull_diagnostics_result_ids: HashMap<LanguageServerId, HashMap<PathBuf, Option<String>>>,
 }
 
@@ -2546,6 +2547,10 @@ impl LocalLspStore {
                     vec![snapshot]
                 });
 
+            self.buffers_opened_in_servers
+                .entry(buffer_id)
+                .or_default()
+                .insert(server.server_id());
             cx.emit(LspStoreEvent::LanguageServerUpdate {
                 language_server_id: server.server_id(),
                 name: None,
@@ -3208,6 +3213,9 @@ impl LocalLspStore {
             self.language_servers.remove(server_id_to_remove);
             self.buffer_pull_diagnostics_result_ids
                 .remove(server_id_to_remove);
+            for buffer_servers in self.buffers_opened_in_servers.values_mut() {
+                buffer_servers.remove(server_id_to_remove);
+            }
             cx.emit(LspStoreEvent::LanguageServerRemoved(*server_id_to_remove));
         }
         servers_to_remove.into_keys().collect()
@@ -3787,6 +3795,7 @@ impl LspStore {
                 }),
                 lsp_tree: LanguageServerTree::new(manifest_tree, languages.clone(), cx),
                 registered_buffers: HashMap::default(),
+                buffers_opened_in_servers: HashMap::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
             }),
             last_formatting_failure: None,
@@ -4159,6 +4168,7 @@ impl LspStore {
                         lsp_store.lsp_data.remove(&buffer_id);
                         let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
+                        local.buffers_opened_in_servers.remove(&buffer_id);
                         if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
                             local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
                         }
@@ -6235,21 +6245,31 @@ impl LspStore {
             } => {
                 if let Some(cached_data) = self.lsp_data.get(&buffer_id) {
                     if !version_queried_for.changed_since(&cached_data.colors_for_version) {
-                        if Some(cached_data.cache_version) == known_cache_version {
-                            return None;
-                        } else {
-                            return Some(
-                                Task::ready(Ok(DocumentColors {
-                                    colors: cached_data
-                                        .colors
-                                        .values()
-                                        .flatten()
-                                        .cloned()
-                                        .collect(),
-                                    cache_version: Some(cached_data.cache_version),
-                                }))
-                                .shared(),
-                            );
+                        let has_different_servers = self.as_local().is_some_and(|local| {
+                            local
+                                .buffers_opened_in_servers
+                                .get(&buffer_id)
+                                .cloned()
+                                .unwrap_or_default()
+                                != cached_data.colors.keys().copied().collect()
+                        });
+                        if !has_different_servers {
+                            if Some(cached_data.cache_version) == known_cache_version {
+                                return None;
+                            } else {
+                                return Some(
+                                    Task::ready(Ok(DocumentColors {
+                                        colors: cached_data
+                                            .colors
+                                            .values()
+                                            .flatten()
+                                            .cloned()
+                                            .collect(),
+                                        cache_version: Some(cached_data.cache_version),
+                                    }))
+                                    .shared(),
+                                );
+                            }
                         }
                     }
                 }
@@ -7522,6 +7542,14 @@ impl LspStore {
                         .unwrap_or(true)
                 })
                 .map(|(_, server)| server.server_id())
+                .filter(|server_id| {
+                    self.as_local().is_none_or(|local| {
+                        local
+                            .buffers_opened_in_servers
+                            .get(&snapshot.remote_id())
+                            .is_some_and(|servers| servers.contains(server_id))
+                    })
+                })
                 .collect::<Vec<_>>()
         });
 
@@ -10084,6 +10112,7 @@ impl LspStore {
         }
 
         // Tell the language server about every open buffer in the worktree that matches the language.
+        let mut buffer_paths_registered = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
             for buffer_handle in buffer_store.buffers() {
                 let buffer = buffer_handle.read(cx);
@@ -10142,6 +10171,12 @@ impl LspStore {
                         version,
                         initial_snapshot.text(),
                     );
+                    buffer_paths_registered.push(file.abs_path(cx));
+                    local
+                        .buffers_opened_in_servers
+                        .entry(buffer.remote_id())
+                        .or_default()
+                        .insert(server_id);
                 }
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
@@ -10162,6 +10197,18 @@ impl LspStore {
                 });
             }
         });
+
+        for abs_path in buffer_paths_registered {
+            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                language_server_id: server_id,
+                name: Some(adapter.name()),
+                message: proto::update_language_server::Variant::RegisteredForBuffer(
+                    proto::RegisteredForBuffer {
+                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                    },
+                ),
+            });
+        }
 
         cx.notify();
     }
@@ -10612,6 +10659,9 @@ impl LspStore {
         }
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
+            for buffer_servers in local.buffers_opened_in_servers.values_mut() {
+                buffer_servers.remove(&for_server);
+            }
         }
     }
 
