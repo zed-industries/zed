@@ -4,7 +4,6 @@ use editor::{
     Anchor, Bias, DisplayPoint, Editor, MultiBuffer,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
-    scroll::Autoscroll,
 };
 use gpui::{Context, Entity, EntityId, UpdateGlobal, Window};
 use language::SelectionGoal;
@@ -116,7 +115,7 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_anchor_ranges(ranges)
                 });
             })
@@ -169,7 +168,7 @@ impl Vim {
                                 }
                             })
                             .collect();
-                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
                             s.select_ranges(points.into_iter().map(|p| p..p))
                         })
                     })
@@ -251,7 +250,7 @@ impl Vim {
                 }
 
                 if !should_jump && !ranges.is_empty() {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_anchor_ranges(ranges)
                     });
                 }

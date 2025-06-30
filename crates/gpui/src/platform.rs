@@ -151,7 +151,7 @@ pub fn guess_compositor() -> &'static str {
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(
         WindowsPlatform::new()
-            .inspect_err(|err| show_error("Error: Zed failed to launch", err.to_string()))
+            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
 }

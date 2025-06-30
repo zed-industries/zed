@@ -18,7 +18,7 @@ Zed supports a variety of debug adapters for different programming languages out
 
 - Python ([debugpy](https://github.com/microsoft/debugpy.git)): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
 
-- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for Rust, C, C++, and some other compiled languages, offering low-level debugging features and support for Apple platforms. (For Swift, [see below](#swift).)
+- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for Rust, C, C++, and some other compiled languages, offering low-level debugging features and support for Apple platforms.
 
 - GDB ([GDB](https://sourceware.org/gdb/)): The GNU Debugger, which supports debugging for multiple programming languages including C, C++, Go, and Rust, across various platforms.
 
@@ -375,21 +375,6 @@ You might find yourself needing to connect to an existing instance of Delve that
 ```
 
 In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that _there will be no terminal_ in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
-
-#### Swift
-
-Out-of-the-box support for debugging Swift programs will be provided by the Swift extension for Zed in the near future. In the meantime, the builtin CodeLLDB adapter can be used with some customization. On macOS, you'll need to locate the `lldb-dap` binary that's part of Apple's LLVM toolchain by running `which lldb-dap`, then point Zed to it in your project's `.zed/settings.json`:
-
-```json
-{
-  "dap": {
-    "CodeLLDB": {
-      "binary": "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb-dap", // example value, may vary between systems
-      "args": []
-    }
-  }
-}
-```
 
 #### Ruby
 

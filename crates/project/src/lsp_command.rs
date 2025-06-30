@@ -107,9 +107,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     }
 
     /// When false, `to_lsp_params_or_response` default implementation will return the default response.
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
-        true
-    }
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool;
 
     fn to_lsp(
         &self,
@@ -275,6 +273,16 @@ impl LspCommand for PrepareRename {
 
     fn display_name(&self) -> &str {
         "Prepare rename"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .rename_provider
+            .is_some_and(|capability| match capability {
+                OneOf::Left(enabled) => enabled,
+                OneOf::Right(options) => options.prepare_provider.unwrap_or(false),
+            })
     }
 
     fn to_lsp_params_or_response(
@@ -459,6 +467,16 @@ impl LspCommand for PerformRename {
         "Rename"
     }
 
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .rename_provider
+            .is_some_and(|capability| match capability {
+                OneOf::Left(enabled) => enabled,
+                OneOf::Right(_options) => true,
+            })
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -583,7 +601,10 @@ impl LspCommand for GetDefinition {
         capabilities
             .server_capabilities
             .definition_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -682,7 +703,11 @@ impl LspCommand for GetDeclaration {
         capabilities
             .server_capabilities
             .declaration_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                lsp::DeclarationCapability::Simple(supported) => supported,
+                lsp::DeclarationCapability::RegistrationOptions(..) => true,
+                lsp::DeclarationCapability::Options(..) => true,
+            })
     }
 
     fn to_lsp(
@@ -775,6 +800,16 @@ impl LspCommand for GetImplementation {
 
     fn display_name(&self) -> &str {
         "Get implementation"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .implementation_provider
+            .is_some_and(|capability| match capability {
+                lsp::ImplementationProviderCapability::Simple(enabled) => enabled,
+                lsp::ImplementationProviderCapability::Options(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -1437,7 +1472,10 @@ impl LspCommand for GetDocumentHighlights {
         capabilities
             .server_capabilities
             .document_highlight_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -1590,7 +1628,10 @@ impl LspCommand for GetDocumentSymbols {
         capabilities
             .server_capabilities
             .document_symbol_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                OneOf::Left(supported) => supported,
+                OneOf::Right(_options) => true,
+            })
     }
 
     fn to_lsp(
@@ -2114,6 +2155,13 @@ impl LspCommand for GetCompletions {
 
     fn display_name(&self) -> &str {
         "Get completion"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .completion_provider
+            .is_some()
     }
 
     fn to_lsp(
@@ -4161,7 +4209,11 @@ impl LspCommand for GetDocumentColor {
         server_capabilities
             .server_capabilities
             .color_provider
-            .is_some()
+            .is_some_and(|capability| match capability {
+                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::ColorProvider(..) => true,
+                lsp::ColorProviderCapability::Options(..) => true,
+            })
     }
 
     fn to_lsp(

@@ -1,4 +1,4 @@
-use editor::{Anchor, Editor, ExcerptId, scroll::Autoscroll};
+use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
@@ -340,7 +340,7 @@ impl Render for SyntaxTreeView {
                                                 mem::swap(&mut range.start, &mut range.end);
 
                                                 editor.change_selections(
-                                                    Some(Autoscroll::newest()),
+                                                    SelectionEffects::scroll(Autoscroll::newest()),
                                                     window, cx,
                                                     |selections| {
                                                         selections.select_ranges(vec![range]);

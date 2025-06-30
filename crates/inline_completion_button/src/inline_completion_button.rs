@@ -2,7 +2,7 @@ use anyhow::Result;
 use client::{UserStore, zed_urls};
 use copilot::{Copilot, Status};
 use editor::{
-    Editor,
+    Editor, SelectionEffects,
     actions::{ShowEditPrediction, ToggleEditPrediction},
     scroll::Autoscroll,
 };
@@ -929,9 +929,14 @@ async fn open_disabled_globs_setting_in_editor(
                     .map(|inner_match| inner_match.start()..inner_match.end())
             });
             if let Some(range) = range {
-                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_ranges(vec![range]);
-                });
+                item.change_selections(
+                    SelectionEffects::scroll(Autoscroll::newest()),
+                    window,
+                    cx,
+                    |selections| {
+                        selections.select_ranges(vec![range]);
+                    },
+                );
             }
         })?;
 

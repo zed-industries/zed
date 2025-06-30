@@ -632,7 +632,7 @@ impl From<Timestamp> for SystemTime {
 
 impl From<SystemTime> for Timestamp {
     fn from(time: SystemTime) -> Self {
-        let duration = time.duration_since(UNIX_EPOCH).unwrap();
+        let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
         Self {
             seconds: duration.as_secs(),
             nanos: duration.subsec_nanos(),

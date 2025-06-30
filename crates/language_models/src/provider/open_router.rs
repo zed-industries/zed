@@ -11,8 +11,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
@@ -372,6 +372,15 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tool_calls()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        let model_id = self.model.id().trim().to_lowercase();
+        if model_id.contains("gemini") {
+            LanguageModelToolSchemaFormat::JsonSchemaSubset
+        } else {
+            LanguageModelToolSchemaFormat::JsonSchema
+        }
     }
 
     fn telemetry_id(&self) -> String {

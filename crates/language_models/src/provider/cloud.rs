@@ -695,7 +695,7 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
-    fn supports_max_mode(&self) -> bool {
+    fn supports_burn_mode(&self) -> bool {
         self.model.supports_max_mode
     }
 
