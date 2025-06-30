@@ -37,7 +37,9 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{
+    ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
+};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -538,7 +540,7 @@ impl DisplayMap {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
