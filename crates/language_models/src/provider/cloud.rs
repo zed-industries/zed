@@ -699,6 +699,16 @@ impl LanguageModel for CloudLanguageModel {
         self.model.supports_max_mode
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_images {
+            // Use a conservative limit that works across all providers
+            // Anthropic has the smallest limit at 5 MiB
+            5_242_880 // 5 MiB
+        } else {
+            0
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id)
     }

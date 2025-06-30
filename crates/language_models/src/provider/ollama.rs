@@ -365,6 +365,14 @@ impl LanguageModel for OllamaLanguageModel {
         self.model.supports_vision.unwrap_or(false)
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_vision.unwrap_or(false) {
+            104_857_600 // 100 MB - Ollama's documented API limit
+        } else {
+            0
+        }
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto => false,

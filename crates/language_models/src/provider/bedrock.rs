@@ -504,6 +504,10 @@ impl LanguageModel for BedrockModel {
         false
     }
 
+    fn max_image_size(&self) -> u64 {
+        0 // Bedrock models don't currently support images in this implementation
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {

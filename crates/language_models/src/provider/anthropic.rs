@@ -437,6 +437,10 @@ impl LanguageModel for AnthropicModel {
         true
     }
 
+    fn max_image_size(&self) -> u64 {
+        5_242_880 // 5 MiB - Anthropic's stated maximum
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

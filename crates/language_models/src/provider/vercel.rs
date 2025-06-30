@@ -305,6 +305,10 @@ impl LanguageModel for VercelLanguageModel {
         true
     }
 
+    fn max_image_size(&self) -> u64 {
+        20_971_520 // 20 MB - Default limit for Vercel AI SDK
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

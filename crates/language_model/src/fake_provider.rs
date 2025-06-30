@@ -165,6 +165,10 @@ impl LanguageModel for FakeLanguageModel {
         false
     }
 
+    fn max_image_size(&self) -> u64 {
+        0 // No image support
+    }
+
     fn telemetry_id(&self) -> String {
         "fake".to_string()
     }

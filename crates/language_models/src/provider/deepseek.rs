@@ -302,6 +302,10 @@ impl LanguageModel for DeepSeekLanguageModel {
         false
     }
 
+    fn max_image_size(&self) -> u64 {
+        0 // DeepSeek models don't currently support images
+    }
+
     fn telemetry_id(&self) -> String {
         format!("deepseek/{}", self.model.id())
     }

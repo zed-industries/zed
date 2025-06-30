@@ -284,8 +284,13 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    /// Whether this model supports images
-    fn supports_images(&self) -> bool;
+    /// Whether this model supports images. This is determined by whether self.max_image_size() is positive.
+    fn supports_images(&self) -> bool {
+        self.max_image_size() > 0
+    }
+
+    /// The maximum image size the model accepts, in bytes. (Zero means images are unsupported.)
+    fn max_image_size(&self) -> u64;
 
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;

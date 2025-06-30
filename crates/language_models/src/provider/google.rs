@@ -349,6 +349,14 @@ impl LanguageModel for GoogleLanguageModel {
         self.model.supports_images()
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_images() {
+            20_971_520 // 20 MB - Google Gemini's file API limit
+        } else {
+            0
+        }
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

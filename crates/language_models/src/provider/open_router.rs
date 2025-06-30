@@ -407,6 +407,14 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_images.unwrap_or(false)
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_images.unwrap_or(false) {
+            20_971_520 // 20 MB - OpenRouter's default limit
+        } else {
+            0
+        }
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

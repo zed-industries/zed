@@ -4108,6 +4108,10 @@ fn main() {{
             self.inner.supports_images()
         }
 
+        fn max_image_size(&self) -> u64 {
+            self.inner.max_image_size()
+        }
+
         fn telemetry_id(&self) -> String {
             self.inner.telemetry_id()
         }
@@ -4617,6 +4621,10 @@ fn main() {{
                 self.inner.supports_images()
             }
 
+            fn max_image_size(&self) -> u64 {
+                self.inner.max_image_size()
+            }
+
             fn telemetry_id(&self) -> String {
                 self.inner.telemetry_id()
             }
@@ -4782,6 +4790,10 @@ fn main() {{
                 self.inner.supports_images()
             }
 
+            fn max_image_size(&self) -> u64 {
+                self.inner.max_image_size()
+            }
+
             fn telemetry_id(&self) -> String {
                 self.inner.telemetry_id()
             }
@@ -4937,6 +4949,10 @@ fn main() {{
 
             fn supports_images(&self) -> bool {
                 self.inner.supports_images()
+            }
+
+            fn max_image_size(&self) -> u64 {
+                self.inner.max_image_size()
             }
 
             fn telemetry_id(&self) -> String {

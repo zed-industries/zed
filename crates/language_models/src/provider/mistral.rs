@@ -317,6 +317,14 @@ impl LanguageModel for MistralLanguageModel {
         self.model.supports_images()
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_images() {
+            52_428_800 // 50 MB - Mistral's OCR API limit
+        } else {
+            0
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }

@@ -216,6 +216,14 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.supports_vision()
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_vision() {
+            20_971_520 // 20 MB - GitHub Copilot uses OpenAI models
+        } else {
+            0
+        }
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.vendor() {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {

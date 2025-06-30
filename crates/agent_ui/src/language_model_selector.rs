@@ -656,6 +656,10 @@ mod tests {
             false
         }
 
+        fn max_image_size(&self) -> u64 {
+            0
+        }
+
         fn telemetry_id(&self) -> String {
             format!("{}/{}", self.provider_id.0, self.name.0)
         }

@@ -410,6 +410,14 @@ impl LanguageModel for LmStudioLanguageModel {
         self.model.supports_images
     }
 
+    fn max_image_size(&self) -> u64 {
+        if self.model.supports_images {
+            20_971_520 // 20 MB - Default limit for local models
+        } else {
+            0
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("lmstudio/{}", self.model.id())
     }
