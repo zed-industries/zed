@@ -618,7 +618,7 @@ impl SettingsStore {
         ));
     }
 
-    fn json_tab_size(&self) -> usize {
+    pub fn json_tab_size(&self) -> usize {
         const DEFAULT_JSON_TAB_SIZE: usize = 2;
 
         if let Some((setting_type_id, callback)) = &self.tab_size_callback {

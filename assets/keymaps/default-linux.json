@@ -1067,5 +1067,12 @@
       "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivatePreviousItem"
     }
+  },
+  {
+    "context": "KeymapEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-f": "search::FocusSearch"
+    }
   }
 ]
