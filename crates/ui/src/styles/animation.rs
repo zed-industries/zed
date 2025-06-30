@@ -44,34 +44,60 @@ pub trait DefaultAnimations: Styled + Sized {
             AnimationDirection::FromTop => "animate_from_top",
         };
 
-        self.with_animation(
-            animation_name,
+        // Create animation chain: main animation + delay
+        let animations = vec![
             gpui::Animation::new(AnimationDuration::Fast.into()).with_easing(ease_out_quint()),
-            move |mut this, delta| {
-                let start_opacity = 0.4;
-                let start_pos = 0.0;
-                let end_pos = 40.0;
+            gpui::Animation::new(Duration::from_secs(1)), // 1 second delay
+        ];
 
-                if fade_in {
-                    this = this.opacity(start_opacity + delta * (1.0 - start_opacity));
-                }
+        self.with_animations(
+            animation_name,
+            animations,
+            move |mut this, animation_idx, delta| {
+                match animation_idx {
+                    0 => {
+                        // Main animation
+                        let start_opacity = 0.4;
+                        let start_pos = 0.0;
+                        let end_pos = 40.0;
 
-                match animation_type {
-                    AnimationDirection::FromBottom => {
-                        this.bottom(px(start_pos + delta * (end_pos - start_pos)))
+                        if fade_in {
+                            this = this.opacity(start_opacity + delta * (1.0 - start_opacity));
+                        }
+
+                        match animation_type {
+                            AnimationDirection::FromBottom => {
+                                this.bottom(px(start_pos + delta * (end_pos - start_pos)))
+                            }
+                            AnimationDirection::FromLeft => {
+                                this.left(px(start_pos + delta * (end_pos - start_pos)))
+                            }
+                            AnimationDirection::FromRight => {
+                                this.right(px(start_pos + delta * (end_pos - start_pos)))
+                            }
+                            AnimationDirection::FromTop => {
+                                this.top(px(start_pos + delta * (end_pos - start_pos)))
+                            }
+                        }
                     }
-                    AnimationDirection::FromLeft => {
-                        this.left(px(start_pos + delta * (end_pos - start_pos)))
+                    1 => {
+                        // Delay phase - maintain final state
+                        if fade_in {
+                            this = this.opacity(1.0);
+                        }
+
+                        match animation_type {
+                            AnimationDirection::FromBottom => this.bottom(px(40.0)),
+                            AnimationDirection::FromLeft => this.left(px(40.0)),
+                            AnimationDirection::FromRight => this.right(px(40.0)),
+                            AnimationDirection::FromTop => this.top(px(40.0)),
+                        }
                     }
-                    AnimationDirection::FromRight => {
-                        this.right(px(start_pos + delta * (end_pos - start_pos)))
-                    }
-                    AnimationDirection::FromTop => {
-                        this.top(px(start_pos + delta * (end_pos - start_pos)))
-                    }
+                    _ => this,
                 }
             },
         )
+        .repeat_chain()
     }
 
     fn animate_in_from_bottom(self, fade: bool) -> AnimationElement<Self> {
