@@ -5,7 +5,7 @@ use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
 use crate::{AgentPanel, ModelUsageContext};
-use agent::thread::{Thread, ToolUseSegment};
+use agent::thread::{Thread, ToolUseSegment, UserMessageParams};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
     ThreadError, ThreadEvent, ThreadFeedback, ThreadStore, ThreadSummary, ZedAgent,
@@ -56,7 +56,6 @@ use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, debug_panic};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
-use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
@@ -1703,32 +1702,24 @@ impl ActiveThread {
                     futures::future::join(load_context_task, checkpoint).await;
                 let _ = this
                     .update_in(cx, |this, window, cx| {
-                        this.agent.update(cx, |thread, cx| {
-                            thread.edit_message(
-                                message_id,
-                                Role::User,
-                                vec![MessageSegment::Text(edited_text)],
-                                creases,
-                                Some(context.loaded_context),
-                                checkpoint.ok(),
-                                cx,
-                            );
-                            for message_id in this.messages_after(message_id) {
-                                thread.delete_message(*message_id, cx);
-                            }
-                        });
-
                         this.agent.update(cx, |agent, cx| {
-                            agent.advance_prompt_id();
-                            agent.cancel_last_completion(Some(window.window_handle()), cx);
-                            agent.send_to_model(
+                            agent.truncate(message_id, cx);
+                            agent.send_message(
+                                UserMessageParams {
+                                    text: edited_text,
+                                    creases,
+                                    checkpoint: checkpoint.ok(),
+                                    context,
+                                },
                                 model.model,
-                                CompletionIntent::UserPrompt,
                                 Some(window.window_handle()),
                                 cx,
                             );
                         });
+
+                        // todo! do we need this?
                         this._load_edited_message_context_task = None;
+
                         cx.notify();
                     })
                     .log_err();
@@ -1741,14 +1732,6 @@ impl ActiveThread {
                 }
             });
         }
-    }
-
-    fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
-        self.messages
-            .iter()
-            .position(|id| *id == message_id)
-            .map(|index| &self.messages[index + 1..])
-            .unwrap_or(&[])
     }
 
     fn handle_cancel_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {

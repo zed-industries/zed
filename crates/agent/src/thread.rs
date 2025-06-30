@@ -1572,34 +1572,6 @@ impl ZedAgent {
         })
     }
 
-    pub fn edit_message(
-        &mut self,
-        id: MessageId,
-        new_role: Role,
-        new_segments: Vec<MessageSegment>,
-        creases: Vec<MessageCrease>,
-        loaded_context: Option<LoadedContext>,
-        checkpoint: Option<GitStoreCheckpoint>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.thread.update(cx, |thread, cx| {
-            thread.edit_message(
-                id,
-                new_role,
-                new_segments,
-                creases,
-                loaded_context,
-                checkpoint,
-                cx,
-            )
-        })
-    }
-
-    pub fn delete_message(&mut self, id: MessageId, cx: &mut Context<Self>) -> bool {
-        self.thread
-            .update(cx, |thread, cx| thread.delete_message(id, cx))
-    }
-
     pub fn text(&self, cx: &App) -> String {
         self.thread.read(cx).text()
     }
@@ -1705,6 +1677,16 @@ impl ZedAgent {
             turn.cancel_tx.send(()).ok();
             turn.task
         })
+    }
+
+    pub fn truncate(&mut self, old_message_id: MessageId, cx: &mut Context<Self>) {
+        self.thread.update(cx, |thread, cx| {
+            thread.truncate(old_message_id, cx);
+        });
+
+        if let Some(old_message_ix) = self.thread_user_messages.remove(&old_message_id) {
+            self.messages.truncate(old_message_ix);
+        }
     }
 
     pub fn send_message(
@@ -2861,27 +2843,28 @@ impl ZedAgent {
                                     //
                                     // https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals#reset-context-after-refusal
                                     {
-                                        let mut messages_to_remove = Vec::new();
+                                        // todo! move this to turn_loop
+                                        // let mut messages_to_remove = Vec::new();
 
-                                        for (ix, message) in this.thread.read(cx).messages().enumerate().rev() {
-                                            messages_to_remove.push(message.id);
+                                        // for (ix, message) in this.thread.read(cx).messages().enumerate().rev() {
+                                        //     messages_to_remove.push(message.id);
 
-                                            if message.role == Role::User {
-                                                if ix == 0 {
-                                                    break;
-                                                }
+                                        //     if message.role == Role::User {
+                                        //         if ix == 0 {
+                                        //             break;
+                                        //         }
 
-                                                if let Some(prev_message) = this.thread.read(cx).messages.get(ix - 1) {
-                                                    if prev_message.role == Role::Assistant {
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        //         if let Some(prev_message) = this.thread.read(cx).messages.get(ix - 1) {
+                                        //             if prev_message.role == Role::Assistant {
+                                        //                 break;
+                                        //             }
+                                        //         }
+                                        //     }
+                                        // }
 
-                                        for message_id in messages_to_remove {
-                                            this.delete_message(message_id, cx);
-                                        }
+                                        // for message_id in messages_to_remove {
+                                        //     this.delete_message(message_id, cx);
+                                        // }
                                     }
 
                                     cx.emit(ThreadEvent::ShowError(ThreadError::Message {
@@ -6135,5 +6118,74 @@ fn main() {{
         });
 
         Ok(buffer)
+    }
+
+    #[gpui::test]
+    async fn test_truncate(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_workspace, _thread_store, agent, thread, _context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Send first message
+        let message_id_1 = agent.update(cx, |agent, cx| {
+            agent.send_message("First message", model.clone(), None, cx)
+        });
+
+        cx.run_until_parked();
+
+        let fake_model = model.as_fake();
+        fake_model.stream_last_completion_response("First response");
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        // Send second message
+        let message_id_2 = agent.update(cx, |agent, cx| {
+            agent.send_message("Second message", model.clone(), None, cx)
+        });
+
+        cx.run_until_parked();
+        fake_model.stream_last_completion_response("Second response");
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        // Send third message
+        agent.update(cx, |agent, cx| {
+            agent.send_message("Third message", model.clone(), None, cx)
+        });
+
+        // Wait for completion to be registered
+        cx.run_until_parked();
+        fake_model.stream_last_completion_response("Third response");
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        // Verify we have 6 messages (3 user + 3 assistant)
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages.len(), 6);
+        });
+
+        // Truncate at the second user message
+        agent.update(cx, |agent, cx| {
+            agent.truncate(message_id_2, cx);
+        });
+
+        // Verify truncation
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages.len(), 2);
+            assert_eq!(thread.messages[0].id, message_id_1);
+            assert_eq!(thread.messages[0].role, Role::User);
+            assert_eq!(thread.messages[1].role, Role::Assistant);
+
+            // Verify the truncated messages are gone
+            assert!(thread.message(message_id_2).is_none());
+        });
+
+        // Verify internal state is consistent
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.messages.len(), 2); // Both user messages are in the messages vec
+            assert!(!agent.thread_user_messages.contains_key(&message_id_2));
+        });
     }
 }
