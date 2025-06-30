@@ -61,7 +61,7 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(move |this, _, value| animator(this, value)),
             animations: smallvec::smallvec![animation],
-            repeat_chain: false,
+            repeat: false,
         }
     }
 
@@ -80,7 +80,7 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(animator),
             animations: animations.into(),
-            repeat_chain: false,
+            repeat: false,
         }
     }
 }
@@ -93,7 +93,7 @@ pub struct AnimationElement<E> {
     element: Option<E>,
     animations: SmallVec<[Animation; 1]>,
     animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
-    repeat_chain: bool,
+    repeat: bool,
 }
 
 impl<E> AnimationElement<E> {
@@ -130,7 +130,7 @@ impl<E> AnimationElement<E> {
     ///             }
     ///         }
     ///     )
-    ///     .repeat_chain() // The fade in -> fade out sequence repeats indefinitely
+    ///     .repeat() // The fade in -> fade out sequence repeats indefinitely
     /// ```
     ///
     /// # Behavior
@@ -139,8 +139,8 @@ impl<E> AnimationElement<E> {
     /// - Chain repetition only applies after all animations in the chain complete
     /// - If any animation in the chain has `.repeat()`, the chain will not advance
     ///   until that animation is changed to be oneshot
-    pub fn repeat_chain(mut self) -> Self {
-        self.repeat_chain = true;
+    pub fn repeat(mut self) -> Self {
+        self.repeat = true;
         self
     }
 }
@@ -191,7 +191,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             if delta > 1.0 {
                 if self.animations[animation_ix].oneshot {
                     if animation_ix >= self.animations.len() - 1 {
-                        if self.repeat_chain {
+                        if self.repeat {
                             // Restart the entire chain
                             state.start = Instant::now();
                             state.animation_ix = 0;
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_animation_chain_repeat() {
-        // Test that repeat_chain flag is properly set
+        // Test that repeat flag is properly set
         let animation1 = Animation::new(Duration::from_millis(100));
         let animation2 = Animation::new(Duration::from_millis(200));
 
@@ -324,18 +324,18 @@ mod tests {
                 vec![animation1, animation2],
                 |el, _idx, _progress| el,
             )
-            .repeat_chain();
+            .repeat();
 
-        assert!(element.repeat_chain);
+        assert!(element.repeat);
     }
 
     #[test]
     fn test_animation_no_repeat() {
-        // Test that repeat_chain defaults to false
+        // Test that repeat defaults to false
         let animation = Animation::new(Duration::from_millis(100));
 
         let element = div().with_animation("test_single", animation, |el, _progress| el);
 
-        assert!(!element.repeat_chain);
+        assert!(!element.repeat);
     }
 }

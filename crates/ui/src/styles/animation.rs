@@ -46,7 +46,7 @@ pub trait DefaultAnimations: Styled + Sized {
 
         // Create animation chain: main animation + delay
         let animations = vec![
-            gpui::Animation::new(AnimationDuration::Fast.into()).with_easing(ease_out_quint()),
+            gpui::Animation::new(AnimationDuration::Slow.into()).with_easing(ease_out_quint()),
             gpui::Animation::new(Duration::from_secs(1)), // 1 second delay
         ];
 
@@ -97,7 +97,7 @@ pub trait DefaultAnimations: Styled + Sized {
                 }
             },
         )
-        .repeat_chain()
+        .repeat()
     }
 
     fn animate_in_from_bottom(self, fade: bool) -> AnimationElement<Self> {
