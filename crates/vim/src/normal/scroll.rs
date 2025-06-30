@@ -153,6 +153,7 @@ fn scroll_editor(
                 let mut head = selection.head();
                 let top = top_anchor.to_display_point(map);
                 let max_point = map.max_point();
+                let starting_column = head.column();
 
                 let vertical_scroll_margin =
                     (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
@@ -222,9 +223,9 @@ fn scroll_editor(
                 // area, otherwise clip it at either the left or right edge of
                 // the visible area.
                 let new_column = match (min_column, max_column) {
-                    (min_column, _) if head.column() < min_column => min_column,
-                    (_, max_column) if head.column() > max_column => max_column,
-                    _ => head.column(),
+                    (min_column, _) if starting_column < min_column => min_column,
+                    (_, max_column) if starting_column > max_column => max_column,
+                    _ => starting_column,
                 };
 
                 let new_head = map.clip_point(DisplayPoint::new(new_row, new_column), Bias::Left);
