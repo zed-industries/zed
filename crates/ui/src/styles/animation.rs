@@ -31,6 +31,7 @@ pub enum AnimationDirection {
     FromTop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnimationOptions {
     pub animation_type: AnimationDirection,
     pub fade_in: bool,
