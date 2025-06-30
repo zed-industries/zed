@@ -741,10 +741,12 @@ impl Thread {
                     });
 
                     *status = match &result {
-                        Ok(content) => {
-                            // todo!
-                            ToolUseStatus::Finished("".into())
-                        }
+                        Ok(content) => ToolUseStatus::Finished(
+                            content
+                                .to_str()
+                                .map(|str| str.to_owned().into())
+                                .unwrap_or_default(),
+                        ),
                         Err(err) => ToolUseStatus::Error(err.to_string().into()),
                     };
                     *output = Some(result.map_err(Arc::new));
