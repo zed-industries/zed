@@ -7,8 +7,8 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, Subscription,
-    WeakEntity, actions, div,
+    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ReadGlobal, ScrollStrategy,
+    Subscription, WeakEntity, actions, div,
 };
 use settings::KeybindSource;
 use util::ResultExt;
@@ -555,12 +555,14 @@ impl Render for KeybindingEditorModal {
                                         cx.notify();
                                         return;
                                     }
+                                    let tab_size =
+                                        cx.global::<settings::SettingsStore>().json_tab_size();
                                     cx.spawn(async move |this, cx| {
                                         if let Err(err) = save_keybinding_update(
                                             existing_keybind,
                                             &new_keystrokes,
                                             &fs,
-                                            cx,
+                                            tab_size,
                                         )
                                         .await
                                         {
@@ -593,7 +595,7 @@ async fn save_keybinding_update(
     existing: ProcessedKeybinding,
     new_keystrokes: &[Keystroke],
     fs: &Arc<dyn Fs>,
-    _cx: &mut AsyncApp,
+    tab_size: usize,
 ) -> Result<(), String> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
@@ -625,11 +627,11 @@ async fn save_keybinding_update(
             },
         }
     } else {
-        todo!("Add binding")
+        return Err(
+            "Not Implemented: Creating new bindings from unbound actions is not supported yet."
+                .to_string(),
+        );
     };
-    // LanguageSettings::get_global()
-    let tab_size = 2; // todo! get actual tab size from settings
-    // todo! import anyhow
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
             .map_err(|err| format!("Failed to update keybinding: {}", err))?;
