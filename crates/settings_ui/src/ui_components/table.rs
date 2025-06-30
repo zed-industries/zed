@@ -702,7 +702,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                     interaction_state.hide_scrollbars(window, cx);
                                 }
                             })
-                            .ok(); // todo! handle error?
+                            .ok();
                     }
                 })
                 .into_any_element()

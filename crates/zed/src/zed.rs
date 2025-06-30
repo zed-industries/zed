@@ -1429,7 +1429,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
         "New Window",
         workspace::NewWindow,
     )]);
-    // todo! nicer api here
+    // todo: nicer api here?
     settings_ui::keybindings::KeymapEventChannel::trigger_keymap_changed(cx);
 }
 
