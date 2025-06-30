@@ -889,9 +889,7 @@ impl LineBreakpoint {
                                 .components()
                                 .skip(1)
                                 .collect::<PathBuf>();
-                            if path_without_root.components().next().is_none() {
-                                return None;
-                            }
+                            path_without_root.components().next()?;
                             Some(
                                 Label::new(path_without_root.to_string_lossy().into_owned())
                                     .color(Color::Muted)
