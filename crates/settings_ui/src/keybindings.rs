@@ -3,6 +3,7 @@ use std::{ops::Range, sync::Arc};
 use collections::HashSet;
 use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
+use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -20,6 +21,7 @@ use ui::{
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
 use crate::{
+    SettingsUiFeatureFlag,
     keybindings::persistence::KEYBINDING_EDITORS,
     ui_components::table::{Table, TableInteractionState},
 };
@@ -30,12 +32,42 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else { return };
+
         workspace.register_action(|workspace, _: &OpenKeymapEditor, window, cx| {
             let open_keymap_editor =
                 cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
             workspace.add_item_to_center(Box::new(open_keymap_editor), window, cx);
         });
+
+        let keymap_ui_actions = [std::any::TypeId::of::<OpenKeymapEditor>()];
+
+        command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.hide_action_types(&keymap_ui_actions);
+        });
+
+        cx.observe_flag::<SettingsUiFeatureFlag, _>(
+            window,
+            move |is_enabled, _workspace, _, cx| {
+                if is_enabled {
+                    command_palette_hooks::CommandPaletteFilter::update_global(
+                        cx,
+                        |filter, _cx| {
+                            filter.show_action_types(keymap_ui_actions.iter());
+                        },
+                    );
+                } else {
+                    command_palette_hooks::CommandPaletteFilter::update_global(
+                        cx,
+                        |filter, _cx| {
+                            filter.hide_action_types(&keymap_ui_actions);
+                        },
+                    );
+                }
+            },
+        )
+        .detach();
     })
     .detach();
 
