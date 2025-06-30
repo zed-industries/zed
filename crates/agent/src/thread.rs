@@ -1151,10 +1151,16 @@ impl ZedAgent {
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
+        let DeserializedToolUse {
+            tool_use_metadata_by_id,
+            tool_uses_by_assistant_message,
+            tool_result_cards,
+            tool_results,
+        } = DeserializedToolUse::new(&serialized.messages, &project, &tools, window, cx);
+
         let messages = serialized
             .messages
-            .iter()
-            .cloned() // todo!() remove clone
+            .into_iter()
             .map(|message| Message {
                 id: message.id,
                 role: message.role,
@@ -1211,7 +1217,7 @@ impl ZedAgent {
             cx.emit(event.clone())
         });
 
-        let mut this = Self {
+        Self {
             thread,
             _thread_subscription: subscription,
             pending_turn: None,
@@ -1244,89 +1250,10 @@ impl ZedAgent {
             profile: AgentProfile::new(profile_id, tools),
 
             pending_tool_uses_by_id: Default::default(),
-            tool_use_metadata_by_id: Default::default(),
-            tool_uses_by_assistant_message: Default::default(),
-            tool_result_cards: Default::default(),
-            tool_results: Default::default(),
-        };
-
-        this.deserialize_tool_use(&serialized.messages, project, window, cx);
-
-        this
-    }
-
-    fn deserialize_tool_use(
-        &mut self,
-        messages: &[SerializedMessage],
-        project: Entity<Project>,
-        window: Option<&mut Window>, // None in headless mode
-        cx: &mut App,
-    ) {
-        let mut window = window;
-        let mut tool_names_by_id = HashMap::default();
-
-        for message in messages {
-            match message.role {
-                Role::Assistant => {
-                    if !message.tool_uses.is_empty() {
-                        let tool_uses = message
-                            .tool_uses
-                            .iter()
-                            .map(|tool_use| LanguageModelToolUse {
-                                id: tool_use.id.clone(),
-                                name: tool_use.name.clone().into(),
-                                raw_input: tool_use.input.to_string(),
-                                input: tool_use.input.clone(),
-                                is_input_complete: true,
-                            })
-                            .collect::<Vec<_>>();
-
-                        tool_names_by_id.extend(
-                            tool_uses
-                                .iter()
-                                .map(|tool_use| (tool_use.id.clone(), tool_use.name.clone())),
-                        );
-
-                        self.tool_uses_by_assistant_message
-                            .insert(message.id, tool_uses);
-
-                        for tool_result in &message.tool_results {
-                            let tool_use_id = tool_result.tool_use_id.clone();
-                            let Some(tool_use) = tool_names_by_id.get(&tool_use_id) else {
-                                log::warn!("no tool name found for tool use: {tool_use_id:?}");
-                                continue;
-                            };
-
-                            self.tool_results.insert(
-                                tool_use_id.clone(),
-                                LanguageModelToolResult {
-                                    tool_use_id: tool_use_id.clone(),
-                                    tool_name: tool_use.clone(),
-                                    is_error: tool_result.is_error,
-                                    content: tool_result.content.clone(),
-                                    output: tool_result.output.clone(),
-                                },
-                            );
-
-                            if let Some(window) = &mut window {
-                                if let Some(tool) = self.tools.read(cx).tool(tool_use, cx) {
-                                    if let Some(output) = tool_result.output.clone() {
-                                        if let Some(card) = tool.deserialize_card(
-                                            output,
-                                            project.clone(),
-                                            window,
-                                            cx,
-                                        ) {
-                                            self.tool_result_cards.insert(tool_use_id, card);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Role::System | Role::User => {}
-            }
+            tool_use_metadata_by_id,
+            tool_uses_by_assistant_message,
+            tool_result_cards,
+            tool_results,
         }
     }
 
@@ -4506,6 +4433,96 @@ struct PendingCompletion {
     id: usize,
     queue_state: QueueState,
     _task: Task<()>,
+}
+
+/// Helper for extracting tool use related state from serialized messages
+#[derive(Default)]
+struct DeserializedToolUse {
+    tool_use_metadata_by_id: HashMap<LanguageModelToolUseId, ToolUseMetadata>,
+    tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
+    tool_result_cards: HashMap<LanguageModelToolUseId, AnyToolCard>,
+    tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
+}
+
+impl DeserializedToolUse {
+    fn new(
+        messages: &[SerializedMessage],
+        project: &Entity<Project>,
+        tools: &Entity<ToolWorkingSet>,
+        window: Option<&mut Window>, // None in headless mode
+        cx: &mut App,
+    ) -> Self {
+        let mut this = Self::default();
+
+        let mut window = window;
+        let mut tool_names_by_id = HashMap::default();
+
+        for message in messages {
+            match message.role {
+                Role::Assistant => {
+                    if !message.tool_uses.is_empty() {
+                        let tool_uses = message
+                            .tool_uses
+                            .iter()
+                            .map(|tool_use| LanguageModelToolUse {
+                                id: tool_use.id.clone(),
+                                name: tool_use.name.clone().into(),
+                                raw_input: tool_use.input.to_string(),
+                                input: tool_use.input.clone(),
+                                is_input_complete: true,
+                            })
+                            .collect::<Vec<_>>();
+
+                        tool_names_by_id.extend(
+                            tool_uses
+                                .iter()
+                                .map(|tool_use| (tool_use.id.clone(), tool_use.name.clone())),
+                        );
+
+                        this.tool_uses_by_assistant_message
+                            .insert(message.id, tool_uses);
+
+                        for tool_result in &message.tool_results {
+                            let tool_use_id = tool_result.tool_use_id.clone();
+                            let Some(tool_use) = tool_names_by_id.get(&tool_use_id) else {
+                                log::warn!("no tool name found for tool use: {tool_use_id:?}");
+                                continue;
+                            };
+
+                            this.tool_results.insert(
+                                tool_use_id.clone(),
+                                LanguageModelToolResult {
+                                    tool_use_id: tool_use_id.clone(),
+                                    tool_name: tool_use.clone(),
+                                    is_error: tool_result.is_error,
+                                    content: tool_result.content.clone(),
+                                    output: tool_result.output.clone(),
+                                },
+                            );
+
+                            if let Some(window) = &mut window {
+                                if let Some(tool) = tools.read(cx).tool(tool_use, cx) {
+                                    if let Some(output) = tool_result.output.clone() {
+                                        if let Some(card) = tool.deserialize_card(
+                                            output,
+                                            project.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            this.tool_result_cards.insert(tool_use_id, card);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Role::System | Role::User => {}
+            }
+        }
+
+        this
+    }
 }
 
 /// Resolves tool name conflicts by ensuring all tool names are unique.
