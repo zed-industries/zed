@@ -102,6 +102,7 @@ members = [
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
+    "crates/onboarding_ui",
     "crates/open_ai",
     "crates/open_router",
     "crates/outline",
@@ -314,6 +315,7 @@ multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
+onboarding_ui = { path = "crates/onboarding_ui" }
 open_ai = { path = "crates/open_ai" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
