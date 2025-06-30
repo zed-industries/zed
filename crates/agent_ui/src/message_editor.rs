@@ -49,7 +49,6 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
-use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -392,16 +391,14 @@ impl MessageEditor {
 
             agent
                 .update(cx, |thread, cx| {
-                    // thread.advance_prompt_id();
-                    thread.send_to_model2(
-                        model,
-                        CompletionIntent::UserPrompt,
+                    thread.send_message(
                         UserMessageParams {
                             text: user_message,
                             creases: user_message_creases,
                             checkpoint: checkpoint.ok(),
                             context: loaded_context,
                         },
+                        model,
                         Some(window_handle),
                         cx,
                     );

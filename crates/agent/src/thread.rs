@@ -199,13 +199,6 @@ pub struct Message {
     pub ui_only: bool,
 }
 
-pub struct UserMessageParams {
-    pub text: String,
-    pub creases: Vec<MessageCrease>,
-    pub checkpoint: Option<GitStoreCheckpoint>,
-    pub context: ContextLoadResult,
-}
-
 impl Message {
     /// Returns whether the message contains any meaningful text that should be displayed
     /// The model sometimes runs tool without producing any text or just a marker ([`USING_TOOL_MARKER`])
@@ -1000,6 +993,24 @@ pub struct ExceededWindowError {
     token_count: u64,
 }
 
+pub struct UserMessageParams {
+    pub text: String,
+    pub creases: Vec<MessageCrease>,
+    pub checkpoint: Option<GitStoreCheckpoint>,
+    pub context: ContextLoadResult,
+}
+
+impl<T: Into<String>> From<T> for UserMessageParams {
+    fn from(text: T) -> Self {
+        UserMessageParams {
+            text: text.into(),
+            creases: Vec::new(),
+            checkpoint: None,
+            context: ContextLoadResult::default(),
+        }
+    }
+}
+
 impl ZedAgent {
     pub fn new(
         project: Entity<Project>,
@@ -1285,6 +1296,7 @@ impl ZedAgent {
     }
 
     pub fn advance_prompt_id(&mut self) {
+        // todo! remove fn
         self.last_prompt_id = PromptId::new();
     }
 
@@ -1331,7 +1343,9 @@ impl ZedAgent {
     }
 
     pub fn is_generating(&self) -> bool {
-        !self.pending_completions.is_empty() || !self.all_tools_finished()
+        self.pending_turn.is_some()
+            || !self.pending_completions.is_empty()
+            || !self.all_tools_finished()
     }
 
     pub fn queue_state(&self) -> Option<QueueState> {
@@ -1738,17 +1752,15 @@ impl ZedAgent {
         })
     }
 
-    pub fn send_to_model2(
+    pub fn send_message(
         &mut self,
+        params: impl Into<UserMessageParams>,
         model: Arc<dyn LanguageModel>,
-        intent: CompletionIntent,
-        params: UserMessageParams,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        let message_id = self.insert_user_message2(params, cx);
-        // todo!
-        // self.advance_prompt_id();
+        let message_id = self.insert_user_message2(params.into(), cx);
+        self.advance_prompt_id();
 
         let prev_turn = self.cancel();
         let (cancel_tx, cancel_rx) = oneshot::channel();
@@ -1758,7 +1770,17 @@ impl ZedAgent {
                     prev_turn.await?;
                 }
 
-                Self::run_turn(&this, model, intent, cancel_rx, window, cx).await?;
+                Self::run_turn(
+                    &this,
+                    model,
+                    CompletionIntent::UserPrompt,
+                    cancel_rx,
+                    window,
+                    cx,
+                )
+                .await?;
+
+                this.update(cx, |this, _cx| this.pending_turn.take()).ok();
 
                 Ok(())
             }),
@@ -4615,18 +4637,7 @@ mod tests {
             setup_test_environment(cx, project.clone()).await;
 
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "Hello".to_string(),
-                    context: Default::default(),
-                    checkpoint: None,
-                    creases: Vec::new(),
-                },
-                None,
-                cx,
-            );
+            agent.send_message("Hello", model.clone(), None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -4641,9 +4652,12 @@ mod tests {
             request.messages[1].content[0],
             MessageContent::Text("Hello".into()),
         );
+        assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), true);
 
         simulate_successful_response(&fake_model, cx);
         cx.run_until_parked();
+
+        assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), false);
 
         thread.read_with(cx, |thread, _cx| {
             assert_eq!(thread.messages[0].role, Role::User);
@@ -4679,22 +4693,13 @@ mod tests {
         });
 
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "Read foo.txt".to_string(),
-                    context: Default::default(),
-                    checkpoint: None,
-                    creases: Vec::new(),
-                },
-                None,
-                cx,
-            );
+            agent.send_message("Read foo.txt", model.clone(), None, cx);
         });
 
         let fake_model = model.as_fake();
         cx.run_until_parked();
+
+        assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), true);
 
         let pending_completions = fake_model.pending_completions();
         let request = pending_completions.last().unwrap();
@@ -4716,6 +4721,8 @@ mod tests {
         });
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
+
+        assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), true);
 
         let pending_completions = fake_model.pending_completions();
         let request = pending_completions.last().unwrap();
@@ -4752,6 +4759,13 @@ mod tests {
                 &LanguageModelToolResultContent::Text("the lazy dog...".into())
             );
         });
+
+        assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), true);
+
+        fake_model.stream_last_completion_response("Great!");
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+        assert_eq!(agent.read_with(cx, |agent, _| agent.is_generating()), false);
     }
 
     #[gpui::test]
@@ -4779,15 +4793,14 @@ mod tests {
 
         // Insert user message with context
         let message_id = agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
+            agent.send_message(
                 UserMessageParams {
                     text: "Please explain this code".to_string(),
                     creases: Vec::new(),
                     checkpoint: None,
                     context: loaded_context,
                 },
+                model.clone(),
                 None,
                 cx,
             )
@@ -4868,15 +4881,14 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message1_id = agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
+            agent.send_message(
                 UserMessageParams {
                     text: "Message 1".to_string(),
                     creases: Vec::new(),
                     checkpoint: None,
                     context: loaded_context,
                 },
+                model.clone(),
                 None,
                 cx,
             )
@@ -4894,15 +4906,14 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message2_id = agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
+            agent.send_message(
                 UserMessageParams {
                     text: "Message 2".to_string(),
                     creases: Vec::new(),
                     checkpoint: None,
                     context: loaded_context,
                 },
+                model.clone(),
                 None,
                 cx,
             )
@@ -4921,15 +4932,14 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message3_id = agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
+            agent.send_message(
                 UserMessageParams {
                     text: "Message 3".to_string(),
                     creases: Vec::new(),
                     checkpoint: None,
                     context: loaded_context,
                 },
+                model.clone(),
                 None,
                 cx,
             )
@@ -5042,15 +5052,9 @@ fn main() {{
 
         // Insert user message without any context (empty context vector)
         let message_id = agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
+            agent.send_message(
+                "What is the best way to learn Rust?",
                 model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "What is the best way to learn Rust?".to_string(),
-                    creases: Vec::new(),
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
                 None,
                 cx,
             )
@@ -5083,18 +5087,7 @@ fn main() {{
 
         // Add second message, also without context
         let message2_id = agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "Are there any good books?".to_string(),
-                    creases: Vec::new(),
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
-                None,
-                cx,
-            )
+            agent.send_message("Are there any good books?", model.clone(), None, cx)
         });
 
         let message2 = thread.read_with(cx, |thread, _cx| {
@@ -5303,18 +5296,7 @@ fn main() {{
 
         // Send a message
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "Hi".into(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: Default::default(),
-                },
-                None,
-                cx,
-            );
+            agent.send_message("Hi", model.clone(), None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -5402,18 +5384,7 @@ fn main() {{
 
         // Sending another message should not trigger another summarize request
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "How are you?".to_string(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
-                None,
-                cx,
-            );
+            agent.send_message("How are you?", model.clone(), None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -6637,18 +6608,7 @@ fn main() {{
 
         // Insert a regular user message
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "Hello!".to_string(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
-                None,
-                cx,
-            )
+            agent.send_message("Hello!", model.clone(), None, cx)
         });
 
         // Insert a UI-only message (like our retry notifications)
@@ -6670,18 +6630,7 @@ fn main() {{
 
         // Insert another regular message
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "How are you?".to_string(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
-                None,
-                cx,
-            )
+            agent.send_message("How are you?", model.clone(), None, cx)
         });
 
         // Generate the completion request
@@ -6815,18 +6764,7 @@ fn main() {{
         cx: &mut TestAppContext,
     ) {
         agent.update(cx, |agent, cx| {
-            agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::ThreadSummarization,
-                UserMessageParams {
-                    text: "Hi".into(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
-                None,
-                cx,
-            );
+            agent.send_message("Hi", model.clone(), None, cx);
         });
 
         let fake_model = model.as_fake();

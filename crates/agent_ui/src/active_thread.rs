@@ -3950,15 +3950,9 @@ mod tests {
 
         // Insert user message without any context (empty context vector)
         thread.update(cx, |thread, cx| {
-            thread.send_to_model2(
+            thread.send_message(
+                "What is the best way to learn Rust?",
                 model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "What is the best way to learn Rust?".to_string(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
                 None,
                 cx,
             )
@@ -4017,15 +4011,14 @@ mod tests {
         }];
 
         let message = thread.update(cx, |agent, cx| {
-            let message_id = agent.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
+            let message_id = agent.send_message(
                 UserMessageParams {
                     text: "Tell me about @foo.txt".to_string(),
                     creases,
                     checkpoint: None,
                     context: ContextLoadResult::default(),
                 },
+                model.clone(),
                 None,
                 cx,
             );
@@ -4128,18 +4121,8 @@ mod tests {
 
         // Insert a user message and start streaming a response
         let message = thread.update(cx, |thread, cx| {
-            let message_id = thread.send_to_model2(
-                model.clone(),
-                CompletionIntent::UserPrompt,
-                UserMessageParams {
-                    text: "Hello, how are you?".to_string(),
-                    creases: vec![],
-                    checkpoint: None,
-                    context: ContextLoadResult::default(),
-                },
-                cx.active_window(),
-                cx,
-            );
+            let message_id =
+                thread.send_message("Hello, how are you?", model.clone(), cx.active_window(), cx);
             thread.message(message_id, cx).cloned().unwrap()
         });
 
