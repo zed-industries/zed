@@ -1882,4 +1882,65 @@ mod tests {
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
     }
+
+    #[gpui::test]
+    fn test_inlay_utf8_boundary_panic(cx: &mut App) {
+        init_test(cx);
+
+        // This test reproduces the panic where we try to split a string at a byte index
+        // that's in the middle of a multi-byte UTF-8 character (the '…' ellipsis character).
+        let buffer = MultiBuffer::build_simple("fn main() {}\n", cx);
+        let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
+
+        // Create an inlay with text that contains a multi-byte character
+        // The string "SortingDirec…" contains an ellipsis character '…' which is 3 bytes (E2 80 A6)
+        let inlay_text = "SortingDirec…";
+
+        // Create the inlay at a specific position
+        let inlay = Inlay {
+            id: InlayId::Hint(0),
+            position: buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 5)),
+            text: text::Rope::from(inlay_text),
+            color: None,
+        };
+
+        // Splice the inlay into the map
+        let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
+
+        // Create highlights that will cause a split at byte 13, which is in the middle
+        // of the '…' character (bytes 12..15 since '…' is 3 bytes starting at byte 12)
+        let mut inlay_highlights = TreeMap::default();
+        let mut type_highlights = TreeMap::default();
+        type_highlights.insert(
+            InlayId::Hint(0),
+            (
+                HighlightStyle::default(),
+                InlayHighlight {
+                    inlay: InlayId::Hint(0),
+                    range: 0..13, // This will try to split at byte 13
+                    inlay_position: buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 5)),
+                },
+            ),
+        );
+        inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
+
+        let highlights = crate::display_map::Highlights {
+            text_highlights: None,
+            inlay_highlights: Some(&inlay_highlights),
+            styles: crate::display_map::HighlightStyles::default(),
+        };
+
+        // Create chunks iterator with the highlights - this should trigger the panic
+        let mut chunks = inlay_snapshot.chunks(
+            InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
+            false,
+            highlights,
+        );
+
+        // Force iteration through chunks to trigger the panic
+        while let Some(chunk) = chunks.next() {
+            // The panic should occur during iteration
+            let _ = chunk;
+        }
+    }
 }
