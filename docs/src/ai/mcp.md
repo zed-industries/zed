@@ -44,7 +44,7 @@ You can connect them by adding their commands directly to your `settings.json`, 
       "source": "custom",
       "command": "some-command",
       "args": ["arg-1", "arg-2"],
-      "env": {},
+      "env": {}
     }
   }
 }
