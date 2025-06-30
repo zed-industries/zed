@@ -1,14 +1,16 @@
-use std::{fmt::Write as _, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use collections::HashSet;
 use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
+use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    ScrollStrategy, Subscription, WeakEntity, actions, div,
+    AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, Subscription,
+    WeakEntity, actions, div,
 };
+use settings::KeybindSource;
 use util::ResultExt;
 
 use ui::{
@@ -175,7 +177,7 @@ impl KeymapEditor {
                 .map(|predicate| predicate.to_string())
                 .unwrap_or_else(|| "<global>".to_string());
 
-            let source = source.map(|source| source.name().into());
+            let source = source.map(|source| (source, source.name().into()));
 
             let action_name = key_binding.action().name();
             unmapped_action_names.remove(&action_name);
@@ -331,11 +333,11 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // todo! how to map keybinds to how to update/edit them
         self.workspace
             .update(cx, |workspace, cx| {
+                let fs = workspace.app_state().fs.clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let modal = KeybindingEditorModal::new(keybind, window, cx);
+                    let modal = KeybindingEditorModal::new(keybind, fs, window, cx);
                     window.focus(&modal.focus_handle(cx));
                     modal
                 });
@@ -371,7 +373,7 @@ struct ProcessedKeybinding {
     action: SharedString,
     action_input: Option<SharedString>,
     context: SharedString,
-    source: Option<SharedString>,
+    source: Option<(KeybindSource, SharedString)>,
 }
 
 impl Item for KeymapEditor {
@@ -448,7 +450,11 @@ impl Render for KeymapEditor {
                                         IntoElement::into_any_element,
                                     );
                                     let context = binding.context.clone();
-                                    let source = binding.source.clone().unwrap_or_default();
+                                    let source = binding
+                                        .source
+                                        .clone()
+                                        .map(|(_source, name)| name)
+                                        .unwrap_or_default();
                                     Some([
                                         action.into_any_element(),
                                         keystrokes,
@@ -466,6 +472,7 @@ impl Render for KeymapEditor {
 struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
     keybind_editor: Entity<KeybindInput>,
+    fs: Arc<dyn Fs>,
 }
 
 impl ModalView for KeybindingEditorModal {}
@@ -479,7 +486,12 @@ impl Focusable for KeybindingEditorModal {
 }
 
 impl KeybindingEditorModal {
-    pub fn new(editing_keybind: ProcessedKeybinding, window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(
+        editing_keybind: ProcessedKeybinding,
+        fs: Arc<dyn Fs>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         let keybind_editor = cx.new(|cx| KeybindInput::new(cx));
         // todo!
         // cx.subscribe(
@@ -489,6 +501,7 @@ impl KeybindingEditorModal {
         // );
         Self {
             editing_keybind,
+            fs,
             keybind_editor,
         }
     }
@@ -534,13 +547,78 @@ impl Render for KeybindingEditorModal {
                     )),
             )
             .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_center()
-                    .child(Button::new("save-btn", "Save").label_size(LabelSize::Large)),
+                h_flex().w_full().items_center().justify_center().child(
+                    Button::new("save-btn", "Save")
+                        .label_size(LabelSize::Large)
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            let existing_keybind = this.editing_keybind.clone();
+                            let fs = this.fs.clone();
+                            let new_keystrokes = this
+                                .keybind_editor
+                                .read_with(cx, |editor, _| editor.keystrokes.clone());
+                            if new_keystrokes.is_empty() {
+                                todo!("Warn and don't update");
+                            }
+                            cx.spawn(async move |_this, cx| {
+                                save_keybinding_update(existing_keybind, &new_keystrokes, &fs, cx)
+                                    .await
+                                // todo! save error
+                            })
+                            .detach();
+                        })),
+                ),
             );
     }
+}
+
+async fn save_keybinding_update(
+    existing: ProcessedKeybinding,
+    new_keystrokes: &[Keystroke],
+    fs: &Arc<dyn Fs>,
+    _cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
+        .await
+        .map_err(|err| format!("Failed to load keymap file: {}", err))?;
+    let existing_keystrokes = existing
+        .ui_key_binding
+        .as_ref()
+        .map(|keybinding| keybinding.key_binding.keystrokes())
+        .unwrap_or_default();
+    let operation = if existing.ui_key_binding.is_some() {
+        settings::KeybindUpdateOperation::Replace {
+            target: settings::KeybindUpdateTarget {
+                context: Some(existing.context.as_ref()).filter(|context| !context.is_empty()),
+                keystrokes: existing_keystrokes,
+                action_name: &existing.action,
+                use_key_equivalents: false,
+                input: existing.action_input.as_ref().map(|input| input.as_ref()),
+            },
+            target_source: existing
+                .source
+                .map(|(source, _name)| source)
+                .unwrap_or(KeybindSource::User),
+            source: settings::KeybindUpdateTarget {
+                context: Some(existing.context.as_ref()).filter(|context| !context.is_empty()),
+                keystrokes: new_keystrokes,
+                action_name: &existing.action,
+                use_key_equivalents: false,
+                input: existing.action_input.as_ref().map(|input| input.as_ref()),
+            },
+        }
+    } else {
+        todo!("Add binding")
+    };
+    // LanguageSettings::get_global()
+    let tab_size = 2; // todo! get actual tab size from settings
+    // todo! import anyhow
+    let updated_keymap_contents =
+        settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
+            .map_err(|err| format!("Failed to update keybinding: {}", err))?;
+    fs.atomic_write(paths::keymap_file().clone(), updated_keymap_contents)
+        .await
+        .map_err(|err| format!("Failed to write keymap file: {}", err))?;
+    Ok(())
 }
 
 struct KeybindInput {
@@ -560,7 +638,7 @@ impl KeybindInput {
     fn on_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(last) = self.keystrokes.last_mut()
@@ -585,7 +663,7 @@ impl KeybindInput {
     fn on_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if event.is_held {
@@ -602,7 +680,12 @@ impl KeybindInput {
         cx.notify();
     }
 
-    fn on_key_up(&mut self, event: &gpui::KeyUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_up(
+        &mut self,
+        event: &gpui::KeyUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(last) = self.keystrokes.last_mut()
             && !last.key.is_empty()
             && last.modifiers == event.keystroke.modifiers
@@ -625,7 +708,7 @@ impl Focusable for KeybindInput {
 }
 
 impl Render for KeybindInput {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
         return div()
             .track_focus(&self.focus_handle)

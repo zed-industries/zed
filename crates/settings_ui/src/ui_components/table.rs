@@ -3,8 +3,8 @@ use std::{ops::Range, rc::Rc, time::Duration};
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
     AppContext, Axis, Context, Entity, FocusHandle, FontWeight, Length,
-    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Stateful, Task,
-    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
+    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Task, UniformListScrollHandle,
+    WeakEntity, transparent_black, uniform_list,
 };
 use settings::Settings as _;
 use ui::{
