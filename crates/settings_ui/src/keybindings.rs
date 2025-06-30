@@ -96,6 +96,10 @@ impl KeymapEventChannel {
     }
 
     pub fn trigger_keymap_changed(cx: &mut App) {
+        let Some(_event_channel) = cx.try_global::<Self>() else {
+            // don't panic if no global defined. This usually happens in tests
+            return;
+        };
         cx.update_global(|_event_channel: &mut Self, _| {
             /* triggers observers in KeymapEditors */
         });
