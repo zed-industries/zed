@@ -10,7 +10,9 @@ use dap::{
 
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
-use std::{env::consts, ffi::OsStr, path::PathBuf, sync::OnceLock};
+use log::warn;
+use serde_json::Value;
+use std::{env::consts, ffi::OsStr, path::PathBuf, str::FromStr, sync::OnceLock};
 use task::TcpArgumentsTemplate;
 use util;
 
@@ -437,18 +439,43 @@ impl DebugAdapter for GoDebugAdapter {
             adapter_path.join("dlv").to_string_lossy().to_string()
         };
 
-        let cwd = task_definition
+        let cwd = Some(
+            task_definition
+                .config
+                .get("cwd")
+                .and_then(|s| s.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf()),
+        );
+
+        let mut envs = HashMap::default();
+        if let Some(env_file) = task_definition
             .config
-            .get("cwd")
-            .and_then(|s| s.as_str())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf());
+            .get("envFile")
+            .and_then(Value::as_str)
+        {
+            if let Ok(path) = PathBuf::from_str(env_file)
+                && let Ok(content) = delegate.fs().load(&path).await
+            {
+                envs = content
+                    .lines()
+                    .filter_map(|l| {
+                        (!l.starts_with("#"))
+                            .then(|| l.split_once("=").map(|(k, v)| (k.to_owned(), v.to_owned())))
+                            .flatten()
+                    })
+                    .collect();
+            } else {
+                warn!("")
+            }
+        }
 
         let arguments;
         let command;
         let connection;
 
         let mut configuration = task_definition.config.clone();
+
         if let Some(configuration) = configuration.as_object_mut() {
             configuration
                 .entry("cwd")
@@ -494,8 +521,8 @@ impl DebugAdapter for GoDebugAdapter {
         Ok(DebugAdapterBinary {
             command,
             arguments,
-            cwd: Some(cwd),
-            envs: HashMap::default(),
+            cwd,
+            envs,
             connection,
             request_args: StartDebuggingRequestArguments {
                 configuration,
