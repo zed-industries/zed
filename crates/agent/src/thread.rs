@@ -682,10 +682,10 @@ impl Thread {
                         ));
                     }
                     MessageSegment::ToolUse(_) => {
-                        cx.emit(dbg!(ThreadEvent::StreamedToolUse2 {
+                        cx.emit(ThreadEvent::StreamedToolUse2 {
                             message_id: last_message.id,
                             segment_index: last_message.segments.len(),
-                        }));
+                        });
                     }
                 }
                 last_message.push(segment);
@@ -732,7 +732,6 @@ impl Thread {
     ) {
         if let Some(last_message) = self.messages.last_mut() {
             if last_message.role == Role::Assistant {
-                dbg!(&last_message.segments);
                 if let Some(MessageSegment::ToolUse(ToolUseSegment { output, status, .. })) =
                     last_message.segments.get_mut(segment_index)
                 {
@@ -2037,7 +2036,7 @@ impl ZedAgent {
                                                 this.project.clone(),
                                                 this.action_log(cx),
                                                 model.clone(),
-                                                window.clone(),
+                                                window,
                                                 cx,
                                             )
                                         })?;
@@ -2289,7 +2288,7 @@ impl ZedAgent {
         intent: CompletionIntent,
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
-        let mode = if model.supports_max_mode() {
+        let mode = if model.supports_burn_mode() {
             Some(self.completion_mode.into())
         } else {
             Some(CompletionMode::Normal.into())
@@ -3705,11 +3704,6 @@ impl ZedAgent {
                 name, tool_list
             );
             Err(anyhow!(error_message))
-            // todo!("what do we wanna do here?")
-            // cx.emit(ThreadEvent::MissingToolUse {
-            //     tool_use_id: tool_use_id.clone(),
-            //     ui_text: error_message.into(),
-            // });
         }
     }
 
