@@ -296,7 +296,7 @@ impl TableInteractionState {
         parent.child(child)
     }
 
-    fn render_horizantal_scrollbar_track(
+    fn render_horizontal_scrollbar_track(
         this: &Entity<Self>,
         parent: Div,
         scroll_track_size: Pixels,
@@ -664,7 +664,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                 width.and(interaction_state.as_ref()),
                 |this, interaction_state| {
                     this.map(|this| {
-                        TableInteractionState::render_horizantal_scrollbar_track(
+                        TableInteractionState::render_horizontal_scrollbar_track(
                             interaction_state,
                             this,
                             scroll_track_size,
