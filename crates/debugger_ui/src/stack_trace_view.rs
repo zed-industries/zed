@@ -4,7 +4,7 @@ use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
     Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    RowHighlightOptions, ToPoint, scroll::Autoscroll,
+    RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
     AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
@@ -99,10 +99,11 @@ impl StackTraceView {
                             if frame_anchor.excerpt_id
                                 != editor.selections.newest_anchor().head().excerpt_id
                             {
-                                let auto_scroll =
-                                    Some(Autoscroll::center().for_anchor(frame_anchor));
+                                let effects = SelectionEffects::scroll(
+                                    Autoscroll::center().for_anchor(frame_anchor),
+                                );
 
-                                editor.change_selections(auto_scroll, window, cx, |selections| {
+                                editor.change_selections(effects, window, cx, |selections| {
                                     let selection_id = selections.new_selection_id();
 
                                     let selection = Selection {

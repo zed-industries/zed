@@ -18,7 +18,7 @@ use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
-use editor::{Editor, MultiBuffer, scroll::Autoscroll};
+use editor::{Editor, MultiBuffer};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
@@ -30,7 +30,7 @@ use gpui::{
     px, retain_all,
 };
 use image_viewer::ImageInfo;
-use language_tools::lsp_tool::LspTool;
+use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
@@ -294,20 +294,18 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let popover_menu_handle = PopoverMenuHandle::default();
-
+        let inline_completion_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                popover_menu_handle.clone(),
+                inline_completion_menu_handle.clone(),
                 cx,
             )
         });
-
         workspace.register_action({
             move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
-                popover_menu_handle.toggle(window, cx);
+                inline_completion_menu_handle.toggle(window, cx);
             }
         });
 
@@ -326,7 +324,15 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
-        let lsp_tool = cx.new(|cx| LspTool::new(workspace, window, cx));
+
+        let lsp_tool_menu_handle = PopoverMenuHandle::default();
+        let lsp_tool =
+            cx.new(|cx| LspTool::new(workspace, lsp_tool_menu_handle.clone(), window, cx));
+        workspace.register_action({
+            move |_, _: &lsp_tool::ToggleMenu, window, cx| {
+                lsp_tool_menu_handle.toggle(window, cx);
+            }
+        });
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
@@ -1119,7 +1125,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
 
                         editor.update(cx, |editor, cx| {
                             let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(Some(
                                     last_multi_buffer_offset..last_multi_buffer_offset,
                                 ));
@@ -1768,7 +1774,7 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{DisplayPoint, Editor, display_map::DisplayRow, scroll::Autoscroll};
+    use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
@@ -3342,7 +3348,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(10), 0)
                             ..DisplayPoint::new(DisplayRow(10), 0)])
                     });
@@ -3372,7 +3378,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor3.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(12), 0)
                             ..DisplayPoint::new(DisplayRow(12), 0)])
                     });
@@ -3587,7 +3593,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(15), 0)
                             ..DisplayPoint::new(DisplayRow(15), 0)])
                     })
@@ -3598,7 +3604,7 @@ mod tests {
             workspace
                 .update(cx, |_, window, cx| {
                     editor1.update(cx, |editor, cx| {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(3), 0)
                                 ..DisplayPoint::new(DisplayRow(3), 0)])
                         });
@@ -3609,7 +3615,7 @@ mod tests {
             workspace
                 .update(cx, |_, window, cx| {
                     editor1.update(cx, |editor, cx| {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(13), 0)
                                 ..DisplayPoint::new(DisplayRow(13), 0)])
                         })
@@ -3621,7 +3627,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
                     editor.transact(window, cx, |editor, window, cx| {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(2), 0)
                                 ..DisplayPoint::new(DisplayRow(14), 0)])
                         });
@@ -3634,7 +3640,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(1), 0)
                             ..DisplayPoint::new(DisplayRow(1), 0)])
                     })
@@ -4323,6 +4329,7 @@ mod tests {
                 "search",
                 "snippets",
                 "supermaven",
+                "svg",
                 "tab_switcher",
                 "task",
                 "terminal",

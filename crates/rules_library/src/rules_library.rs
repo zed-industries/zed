@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use editor::CompletionProvider;
+use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
@@ -895,10 +895,15 @@ impl RulesLibrary {
             }
             EditorEvent::Blurred => {
                 title_editor.update(cx, |title_editor, cx| {
-                    title_editor.change_selections(None, window, cx, |selections| {
-                        let cursor = selections.oldest_anchor().head();
-                        selections.select_anchor_ranges([cursor..cursor]);
-                    });
+                    title_editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = selections.oldest_anchor().head();
+                            selections.select_anchor_ranges([cursor..cursor]);
+                        },
+                    );
                 });
             }
             _ => {}
@@ -920,10 +925,15 @@ impl RulesLibrary {
             }
             EditorEvent::Blurred => {
                 body_editor.update(cx, |body_editor, cx| {
-                    body_editor.change_selections(None, window, cx, |selections| {
-                        let cursor = selections.oldest_anchor().head();
-                        selections.select_anchor_ranges([cursor..cursor]);
-                    });
+                    body_editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = selections.oldest_anchor().head();
+                            selections.select_anchor_ranges([cursor..cursor]);
+                        },
+                    );
                 });
             }
             _ => {}

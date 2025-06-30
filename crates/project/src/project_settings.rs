@@ -97,9 +97,8 @@ pub enum ContextServerSettings {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
         enabled: bool,
-        /// The command to run this context server.
-        ///
-        /// This will override the command set by an extension.
+
+        #[serde(flatten)]
         command: ContextServerCommand,
     },
     Extension {

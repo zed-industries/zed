@@ -2538,7 +2538,7 @@ impl ZedAgent {
         }
 
         request.tools = available_tools;
-        request.mode = if model.supports_max_mode() {
+        request.mode = if model.supports_burn_mode() {
             Some(self.completion_mode.into())
         } else {
             Some(CompletionMode::Normal.into())

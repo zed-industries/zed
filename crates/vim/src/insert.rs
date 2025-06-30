@@ -1,5 +1,5 @@
 use crate::{Vim, state::Mode};
-use editor::{Bias, Editor, scroll::Autoscroll};
+use editor::{Bias, Editor};
 use gpui::{Action, Context, Window, actions};
 use language::SelectionGoal;
 use settings::Settings;
@@ -34,7 +34,7 @@ impl Vim {
                 editor.dismiss_menus_and_popups(false, window, cx);
 
                 if !HelixModeSetting::get_global(cx).0 {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_cursors_with(|map, mut cursor, _| {
                             *cursor.column_mut() = cursor.column().saturating_sub(1);
                             (map.clip_point(cursor, Bias::Left), SelectionGoal::None)

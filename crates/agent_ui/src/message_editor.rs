@@ -554,7 +554,7 @@ impl MessageEditor {
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.agent.read(cx);
         let model = thread.configured_model();
-        if !model?.model.supports_max_mode() {
+        if !model?.model.supports_burn_mode() {
             return None;
         }
 

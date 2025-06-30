@@ -4,7 +4,7 @@ use std::{ops::Range, path::PathBuf};
 
 use anyhow::Result;
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent};
+use editor::{Editor, EditorEvent, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
@@ -17,10 +17,9 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
-use crate::OpenPreviewToTheSide;
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::{
-    OpenFollowingPreview, OpenPreview,
+    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -36,7 +35,6 @@ pub struct MarkdownPreviewView {
     contents: Option<ParsedMarkdown>,
     selected_block: usize,
     list_state: ListState,
-    tab_content_text: Option<SharedString>,
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
@@ -173,7 +171,6 @@ impl MarkdownPreviewView {
             editor,
             workspace_handle,
             language_registry,
-            None,
             window,
             cx,
         )
@@ -192,7 +189,6 @@ impl MarkdownPreviewView {
             editor,
             workspace_handle,
             language_registry,
-            None,
             window,
             cx,
         )
@@ -203,7 +199,6 @@ impl MarkdownPreviewView {
         active_editor: Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
-        tab_content_text: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -324,7 +319,6 @@ impl MarkdownPreviewView {
                 workspace: workspace.clone(),
                 contents: None,
                 list_state,
-                tab_content_text,
                 language_registry,
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
@@ -405,12 +399,6 @@ impl MarkdownPreviewView {
             },
         );
 
-        let tab_content = editor.read(cx).tab_content_text(0, cx);
-
-        if self.tab_content_text.is_none() {
-            self.tab_content_text = Some(format!("Preview {}", tab_content).into());
-        }
-
         self.active_editor = Some(EditorState {
             editor,
             _subscription: subscription,
@@ -480,9 +468,12 @@ impl MarkdownPreviewView {
     ) {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::center()), window, cx, |selections| {
-                    selections.select_ranges(vec![selection])
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |selections| selections.select_ranges(vec![selection]),
+                );
                 window.focus(&editor.focus_handle(cx));
             });
         }
@@ -547,21 +538,28 @@ impl Focusable for MarkdownPreviewView {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreviewEvent {}
-
-impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
+impl EventEmitter<()> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
-    type Event = PreviewEvent;
+    type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        self.tab_content_text
-            .clone()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        self.active_editor
+            .as_ref()
+            .and_then(|editor_state| {
+                let buffer = editor_state.editor.read(cx).buffer().read(cx);
+                let buffer = buffer.as_singleton()?;
+                let file = buffer.read(cx).file()?;
+                let local_file = file.as_local()?;
+                local_file
+                    .abs_path(cx)
+                    .file_name()
+                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+            })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 

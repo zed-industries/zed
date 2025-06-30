@@ -1032,32 +1032,39 @@ impl GitRepository for RealGitRepository {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        let executor = self.executor.clone();
+        let branch = self.executor.spawn(async move {
+            let repo = repo.lock();
+            let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
+                branch
+            } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
+                let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
+                let revision = revision.get();
+                let branch_commit = revision.peel_to_commit()?;
+                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                branch.set_upstream(Some(&name))?;
+                branch
+            } else {
+                anyhow::bail!("Branch not found");
+            };
+
+            Ok(branch
+                .name()?
+                .context("cannot checkout anonymous branch")?
+                .to_string())
+        });
+
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
-                    branch
-                } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
-                    let (_, branch_name) =
-                        name.split_once("/").context("Unexpected branch format")?;
-                    let revision = revision.get();
-                    let branch_commit = revision.peel_to_commit()?;
-                    let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
-                    branch.set_upstream(Some(&name))?;
-                    branch
-                } else {
-                    anyhow::bail!("Branch not found");
-                };
+                let branch = branch.await?;
 
-                let revision = branch.get();
-                let as_tree = revision.peel_to_tree()?;
-                repo.checkout_tree(as_tree.as_object(), None)?;
-                repo.set_head(
-                    revision
-                        .name()
-                        .context("Branch name could not be retrieved")?,
-                )?;
-                Ok(())
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["checkout", &branch])
+                    .await?;
+
+                anyhow::Ok(())
             })
             .boxed()
     }

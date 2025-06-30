@@ -930,8 +930,8 @@ impl MentionLink {
         format!(
             "[@{} ({}-{})]({}:{}:{}-{})",
             file_name,
-            line_range.start,
-            line_range.end,
+            line_range.start + 1,
+            line_range.end + 1,
             Self::SELECTION,
             full_path,
             line_range.start,

@@ -4310,6 +4310,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "bitflags 2.9.0",
  "client",
  "collections",
  "command_palette_hooks",
@@ -15527,6 +15528,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0193cc4331cfd2f3d2011ef287590868599a2f33c3e69bc22c1a3d3acf9e02fb"
 
 [[package]]
+name = "svg_preview"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "file_icons",
+ "gpui",
+ "ui",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "svgtypes"
 version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20021,6 +20034,7 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "supermaven",
+ "svg_preview",
  "sysinfo",
  "tab_switcher",
  "task",

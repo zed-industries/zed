@@ -1,7 +1,7 @@
 use auto_update::AutoUpdater;
 use client::proto::UpdateNotification;
 use editor::{Editor, MultiBuffer};
-use gpui::{App, Context, DismissEvent, Entity, SharedString, Window, actions, prelude::*};
+use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -94,7 +94,6 @@ fn view_release_notes_locally(
 
                             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-                            let tab_content = Some(SharedString::from(body.title.to_string()));
                             let editor = cx.new(|cx| {
                                 Editor::for_multibuffer(buffer, Some(project), window, cx)
                             });
@@ -105,7 +104,6 @@ fn view_release_notes_locally(
                                     editor,
                                     workspace_handle,
                                     language_registry,
-                                    tab_content,
                                     window,
                                     cx,
                                 );
