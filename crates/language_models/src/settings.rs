@@ -16,6 +16,7 @@ use crate::provider::{
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
     open_router::OpenRouterSettings,
+    pollinations::PollinationsSettings,
     vercel::VercelSettings,
 };
 
@@ -30,6 +31,8 @@ pub struct AllLanguageModelSettings {
     pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
+    pub pollinations: PollinationsSettings,
+
     pub open_router: OpenRouterSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
@@ -47,6 +50,8 @@ pub struct AllLanguageModelSettingsContent {
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
+    pub pollinations: Option<PollinationsSettingsContent>,
+
     pub open_router: Option<OpenRouterSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
@@ -100,6 +105,70 @@ pub struct MistralSettingsContent {
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
+}
+
+// Pollinations
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum PollinationsSettingsContent {
+    Versioned(VersionedPollinationsSettingsContent),
+    Legacy(LegacyPollinationsSettingsContent),
+}
+
+impl PollinationsSettingsContent {
+    pub fn upgrade(self) -> (PollinationsSettingsContentV1, bool) {
+        match self {
+            PollinationsSettingsContent::Legacy(content) => (
+                PollinationsSettingsContentV1 {
+                    api_url: content.api_url,
+                    available_models: content.available_models.map(|models| {
+                        models
+                            .into_iter()
+                            .filter_map(|model| match model {
+                                pollinations::Model::Custom {
+                                    name,
+                                    display_name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                    max_completion_tokens,
+                                } => Some(provider::pollinations::AvailableModel {
+                                    name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                    display_name,
+                                    max_completion_tokens,
+                                }),
+                                _ => None,
+                            })
+                            .collect()
+                    }),
+                },
+                true,
+            ),
+            PollinationsSettingsContent::Versioned(content) => match content {
+                VersionedPollinationsSettingsContent::V1(content) => (content, false),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct LegacyPollinationsSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<pollinations::Model>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(tag = "version")]
+pub enum VersionedPollinationsSettingsContent {
+    #[serde(rename = "1")]
+    V1(PollinationsSettingsContentV1),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct PollinationsSettingsContentV1 {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::pollinations::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -219,6 +288,17 @@ impl settings::Settings for AllLanguageModelSettings {
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
 
+            // OpenAI
+            let openai = value.openai.clone();
+            merge(
+                &mut settings.openai.api_url,
+                openai.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.openai.available_models,
+                openai.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
             // Vercel
             let vercel = value.vercel.clone();
             merge(
@@ -269,6 +349,26 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.open_router.available_models,
                 open_router
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
+
+            // Pollinations
+            let (pollinations, upgraded) = match value.pollinations.clone().map(|s| s.upgrade()) {
+                Some((content, upgraded)) => (Some(content), upgraded),
+                None => (None, false),
+            };
+
+            if upgraded {
+                settings.pollinations.needs_setting_migration = true;
+            }
+            merge(
+                &mut settings.pollinations.api_url,
+                pollinations.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.pollinations.available_models,
+                pollinations
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );

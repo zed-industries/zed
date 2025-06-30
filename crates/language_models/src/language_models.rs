@@ -19,6 +19,7 @@ use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
+use crate::provider::pollinations::PollinationsLanguageModelProvider;
 use crate::provider::vercel::VercelLanguageModelProvider;
 pub use crate::settings::*;
 
@@ -79,6 +80,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         VercelLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        PollinationsLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
