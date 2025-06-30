@@ -1440,24 +1440,6 @@ impl ProjectPanel {
         allow_preview: bool,
         cx: &mut Context<Self>,
     ) {
-        // if let Some((_, entry)) = self.selected_entry(cx) {
-        //     if entry.is_symlink_broken {
-        //         let answer = window.prompt(
-        //             gpui::PromptLevel::Critical,
-        //             "Cannot open file",
-        //             Some(&format!(
-        //                 "'{}' is a broken symlink and cannot be opened.",
-        //                 entry.path.display()
-        //             )),
-        //             &[gpui::PromptButton::ok("OK")],
-        //             cx,
-        //         );
-        //         // Optionally, you can await the answer if you want to do something after the user closes the dialog.
-        //         // cx.spawn(async move |_| { answer.await.ok(); }).detach();
-        //         return;
-        //     }
-        // }
-
         cx.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,

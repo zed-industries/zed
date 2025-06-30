@@ -210,7 +210,7 @@ async fn test_broken_symlink(cx: &mut TestAppContext) {
     });
 
     // Delete the target file, making the symlink broken
-    fs.remove_file(
+    fs.trash_file(
         "/root/target_dir/file_to_be_symlinked.txt".as_ref(),
         Default::default(),
     )
