@@ -4149,6 +4149,7 @@ dependencies = [
  "collections",
  "dap",
  "dotenvy",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "json_dotpath",
