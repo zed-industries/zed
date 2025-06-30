@@ -11541,42 +11541,55 @@ impl Editor {
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
+            let indent_and_prefix_for_row =
+                |row: u32| -> (IndentSize, Option<String>, Option<String>) {
+                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                    let (comment_prefix, rewrap_prefix) =
+                        if let Some(language_scope) = &language_scope {
+                            let indent_end = Point::new(row, indent.len);
+                            let comment_prefix = language_scope
+                                .line_comment_prefixes()
+                                .iter()
+                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                .map(|prefix| prefix.to_string());
+                            let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                            let line_text_after_indent = buffer
+                                .text_for_range(indent_end..line_end)
+                                .collect::<String>();
+                            let rewrap_prefix =
+                                language_scope
+                                    .rewrap_prefixes()
+                                    .iter()
+                                    .find_map(|prefix_regex| {
+                                        prefix_regex
+                                            .find_at(&line_text_after_indent, 0)
+                                            .map(|mat| mat.as_str().to_string())
+                                    });
+                            (comment_prefix, rewrap_prefix)
+                        } else {
+                            (None, None)
+                        };
+                    (indent, comment_prefix, rewrap_prefix)
+                };
+
             let mut ranges = Vec::new();
             let mut current_range_start = first_row;
             let from_empty_selection = selection.is_empty();
 
             let mut prev_row = first_row;
-            let mut prev_indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
-            let mut prev_comment_prefix = if let Some(language_scope) = &language_scope {
-                let indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
-                let indent_end = Point::new(first_row, indent.len);
-                language_scope
-                    .line_comment_prefixes()
-                    .iter()
-                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                    .cloned()
-            } else {
-                None
-            };
+            let (mut prev_indent, mut prev_comment_prefix, mut prev_rewrap_prefix) =
+                indent_and_prefix_for_row(first_row);
 
             for row in non_blank_rows_iter.skip(1) {
                 let has_paragraph_break = row > prev_row + 1;
 
-                let row_indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                let row_comment_prefix = if let Some(language_scope) = &language_scope {
-                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                    let indent_end = Point::new(row, indent.len);
-                    language_scope
-                        .line_comment_prefixes()
-                        .iter()
-                        .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                        .cloned()
-                } else {
-                    None
-                };
+                let (row_indent, row_comment_prefix, row_rewrap_prefix) =
+                    indent_and_prefix_for_row(row);
 
-                let has_boundary_change =
-                    row_indent != prev_indent || row_comment_prefix != prev_comment_prefix;
+                let has_boundary_change = row_indent != prev_indent
+                    || row_comment_prefix != prev_comment_prefix
+                    || row_rewrap_prefix.is_some()
+                    || prev_rewrap_prefix.is_some();
 
                 if has_paragraph_break || has_boundary_change {
                     ranges.push((
@@ -11593,6 +11606,7 @@ impl Editor {
                 prev_row = row;
                 prev_indent = row_indent;
                 prev_comment_prefix = row_comment_prefix;
+                prev_rewrap_prefix = row_rewrap_prefix;
             }
 
             ranges.push((
