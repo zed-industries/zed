@@ -111,6 +111,8 @@ async fn perform_web_search(
             token = llm_api_token.refresh(&client).await?;
             retries_remaining -= 1;
         } else {
+            // For now we will only retry if the LLM token is expired,
+            // not if the request failed for any other reason.
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
             anyhow::bail!(
