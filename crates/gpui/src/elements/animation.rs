@@ -61,6 +61,7 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(move |this, _, value| animator(this, value)),
             animations: smallvec::smallvec![animation],
+            repeat_chain: false,
         }
     }
 
@@ -79,6 +80,7 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(animator),
             animations: animations.into(),
+            repeat_chain: false,
         }
     }
 }
@@ -91,6 +93,7 @@ pub struct AnimationElement<E> {
     element: Option<E>,
     animations: SmallVec<[Animation; 1]>,
     animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
+    repeat_chain: bool,
 }
 
 impl<E> AnimationElement<E> {
@@ -98,6 +101,46 @@ impl<E> AnimationElement<E> {
     /// to the element being animated.
     pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> AnimationElement<E> {
         self.element = self.element.map(f);
+        self
+    }
+
+    /// Set the animation chain to repeat when it finishes.
+    ///
+    /// When enabled, after the last animation in the chain completes,
+    /// the entire chain will restart from the beginning. This is different
+    /// from calling `.repeat()` on individual animations, which would repeat
+    /// each animation individually.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // A pulsing animation that fades in and out repeatedly
+    /// element
+    ///     .with_animations(
+    ///         "pulsing_animation",
+    ///         vec![
+    ///             Animation::new(Duration::from_millis(500)).with_easing(ease_in_out),
+    ///             Animation::new(Duration::from_millis(500)).with_easing(ease_in_out),
+    ///         ],
+    ///         |el, idx, progress| {
+    ///             match idx {
+    ///                 0 => el.opacity(progress),     // Fade in
+    ///                 1 => el.opacity(1.0 - progress), // Fade out
+    ///                 _ => el,
+    ///             }
+    ///         }
+    ///     )
+    ///     .repeat_chain() // The fade in -> fade out sequence repeats indefinitely
+    /// ```
+    ///
+    /// # Behavior
+    ///
+    /// - Individual animations in the chain can still use `.repeat()` to loop themselves
+    /// - Chain repetition only applies after all animations in the chain complete
+    /// - If any animation in the chain has `.repeat()`, the chain will not advance
+    ///   until that animation is changed to be oneshot
+    pub fn repeat_chain(mut self) -> Self {
+        self.repeat_chain = true;
         self
     }
 }
@@ -148,7 +191,13 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             if delta > 1.0 {
                 if self.animations[animation_ix].oneshot {
                     if animation_ix >= self.animations.len() - 1 {
-                        done = true;
+                        if self.repeat_chain {
+                            // Restart the entire chain
+                            state.start = Instant::now();
+                            state.animation_ix = 0;
+                        } else {
+                            done = true;
+                        }
                     } else {
                         state.start = Instant::now();
                         state.animation_ix += 1;
@@ -255,5 +304,38 @@ mod easing {
 
             min + (normalized_alpha * range)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::div;
+
+    #[test]
+    fn test_animation_chain_repeat() {
+        // Test that repeat_chain flag is properly set
+        let animation1 = Animation::new(Duration::from_millis(100));
+        let animation2 = Animation::new(Duration::from_millis(200));
+
+        let element = div()
+            .with_animations(
+                "test_chain",
+                vec![animation1, animation2],
+                |el, _idx, _progress| el,
+            )
+            .repeat_chain();
+
+        assert!(element.repeat_chain);
+    }
+
+    #[test]
+    fn test_animation_no_repeat() {
+        // Test that repeat_chain defaults to false
+        let animation = Animation::new(Duration::from_millis(100));
+
+        let element = div().with_animation("test_single", animation, |el, _progress| el);
+
+        assert!(!element.repeat_chain);
     }
 }
