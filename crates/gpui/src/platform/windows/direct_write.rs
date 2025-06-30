@@ -25,6 +25,8 @@ use windows_numerics::Vector2;
 
 use crate::*;
 
+const MEASURING_MODE: DWRITE_MEASURING_MODE = DWRITE_MEASURING_MODE_NATURAL;
+
 #[derive(Debug)]
 struct FontInfo {
     font_family: String,
@@ -44,12 +46,7 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
-    render_context: GlyphRenderContext,
-}
-
-struct GlyphRenderContext {
-    params: IDWriteRenderingParams3,
-    dc_target: ID2D1DeviceContext4,
+    render_params: IDWriteRenderingParams3,
 }
 
 struct DirectWriteState {
@@ -86,7 +83,24 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
-            let render_context = GlyphRenderContext::new(&factory, &d2d1_factory)?;
+
+            let default_params: IDWriteRenderingParams3 =
+                factory.CreateRenderingParams()?.cast()?;
+            let gamma = default_params.GetGamma();
+            let enhanced_contrast = default_params.GetEnhancedContrast();
+            let gray_contrast = default_params.GetGrayscaleEnhancedContrast();
+            let cleartype_level = default_params.GetClearTypeLevel();
+            let grid_fit_mode = default_params.GetGridFitMode();
+
+            let render_params = factory.CreateCustomRenderingParams(
+                gamma,
+                enhanced_contrast,
+                gray_contrast,
+                cleartype_level,
+                DWRITE_PIXEL_GEOMETRY_RGB,
+                DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
+                grid_fit_mode,
+            )?;
 
             Ok(DirectWriteComponent {
                 locale,
@@ -96,43 +110,8 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 text_renderer,
-                render_context,
+                render_params,
             })
-        }
-    }
-}
-
-impl GlyphRenderContext {
-    pub fn new(factory: &IDWriteFactory5, d2d1_factory: &ID2D1Factory) -> Result<Self> {
-        unsafe {
-            let default_params: IDWriteRenderingParams3 =
-                factory.CreateRenderingParams()?.cast()?;
-            let gamma = default_params.GetGamma();
-            let enhanced_contrast = default_params.GetEnhancedContrast();
-            let gray_contrast = default_params.GetGrayscaleEnhancedContrast();
-            let cleartype_level = default_params.GetClearTypeLevel();
-            let grid_fit_mode = default_params.GetGridFitMode();
-
-            let params = factory.CreateCustomRenderingParams(
-                gamma,
-                enhanced_contrast,
-                gray_contrast,
-                cleartype_level,
-                DWRITE_PIXEL_GEOMETRY_RGB,
-                DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-                grid_fit_mode,
-            )?;
-            let dc_target = {
-                let target = d2d1_factory.CreateDCRenderTarget(&get_render_target_property(
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    D2D1_ALPHA_MODE_PREMULTIPLIED,
-                ))?;
-                let target = target.cast::<ID2D1DeviceContext4>()?;
-                target.SetTextRenderingParams(&params);
-                target
-            };
-
-            Ok(Self { params, dc_target })
         }
     }
 }
@@ -649,11 +628,6 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let render_target = &self.components.render_context.dc_target;
-        unsafe {
-            render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
-            render_target.SetDpi(96.0 * params.scale_factor, 96.0 * params.scale_factor);
-        }
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
         let advance = [0.0f32];
@@ -668,25 +642,42 @@ impl DirectWriteState {
             isSideways: BOOL(0),
             bidiLevel: 0,
         };
-        let bounds = unsafe {
-            render_target.GetGlyphRunWorldBounds(
-                Vector2 { X: 0.0, Y: 0.0 },
-                &glyph_run,
-                DWRITE_MEASURING_MODE_NATURAL,
-            )?
+
+        let subpixel_shift = params
+            .subpixel_variant
+            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+
+        let glyph_analysis = unsafe {
+            let rendering_mode = self.components.render_params.GetRenderingMode1();
+            let grid_fit_mode = self.components.render_params.GetGridFitMode();
+
+            self.components
+                .factory
+                .CreateGlyphRunAnalysis(
+                    &glyph_run,
+                    Some(&DWRITE_MATRIX {
+                        m11: params.scale_factor,
+                        m12: 0.,
+                        m21: 0.,
+                        m22: params.scale_factor,
+                        dx: subpixel_shift.x,
+                        dy: subpixel_shift.y,
+                    }),
+                    rendering_mode,
+                    MEASURING_MODE,
+                    grid_fit_mode,
+                    DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                    0.,
+                    0.,
+                )
+                .unwrap()
         };
-        // todo(windows)
-        // This is a walkaround, deleted when figured out.
-        let y_offset;
-        let extra_height;
-        if params.is_emoji {
-            y_offset = 0;
-            extra_height = 0;
-        } else {
-            // make some room for scaler.
-            y_offset = -1;
-            extra_height = 2;
-        }
+
+        let bounds = unsafe {
+            glyph_analysis
+                .GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)
+                .unwrap()
+        };
 
         if bounds.right < bounds.left {
             Ok(Bounds {
@@ -695,15 +686,10 @@ impl DirectWriteState {
             })
         } else {
             Ok(Bounds {
-                origin: point(
-                    ((bounds.left * params.scale_factor).ceil() as i32).into(),
-                    ((bounds.top * params.scale_factor).ceil() as i32 + y_offset).into(),
-                ),
+                origin: point(bounds.left.into(), bounds.top.into()),
                 size: size(
-                    (((bounds.right - bounds.left) * params.scale_factor).ceil() as i32).into(),
-                    (((bounds.bottom - bounds.top) * params.scale_factor).ceil() as i32
-                        + extra_height)
-                        .into(),
+                    (bounds.right - bounds.left).into(),
+                    (bounds.bottom - bounds.top).into(),
                 ),
             })
         }
@@ -749,78 +735,59 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
+        let mut size = glyph_bounds.size;
         // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
-        let mut bitmap_size = glyph_bounds.size;
         if params.subpixel_variant.x > 0 {
-            bitmap_size.width += DevicePixels(1);
+            size.width += DevicePixels(1);
         }
         if params.subpixel_variant.y > 0 {
-            bitmap_size.height += DevicePixels(1);
+            size.height += DevicePixels(1);
         }
-        let bitmap_size = bitmap_size;
 
-        let total_bytes;
-        let bitmap_format;
-        let render_target_property;
-        let bitmap_width;
-        let bitmap_height;
-        let bitmap_stride;
-        let bitmap_dpi;
+        let subpixel_shift = params
+            .subpixel_variant
+            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+
+        let bytes_per_pixel = if params.is_emoji { 4 } else { 1 };
+        let total_bytes = bytes_per_pixel * (size.width.0 * size.height.0) as usize;
+        let mut buffer = vec![0; total_bytes];
+
         if params.is_emoji {
-            total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
-            bitmap_format = &GUID_WICPixelFormat32bppPBGRA;
-            render_target_property = get_render_target_property(
-                DXGI_FORMAT_B8G8R8A8_UNORM,
-                D2D1_ALPHA_MODE_PREMULTIPLIED,
-            );
-            bitmap_width = bitmap_size.width.0 as u32;
-            bitmap_height = bitmap_size.height.0 as u32;
-            bitmap_stride = bitmap_size.width.0 as u32 * 4;
-            bitmap_dpi = 96.0;
-        } else {
-            total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize;
-            bitmap_format = &GUID_WICPixelFormat8bppAlpha;
-            render_target_property =
-                get_render_target_property(DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_STRAIGHT);
-            bitmap_width = bitmap_size.width.0 as u32 * 2;
-            bitmap_height = bitmap_size.height.0 as u32 * 2;
-            bitmap_stride = bitmap_size.width.0 as u32;
-            bitmap_dpi = 192.0;
-        }
+            let bitmap_factory = self.components.bitmap_factory.resolve()?;
 
-        let bitmap_factory = self.components.bitmap_factory.resolve()?;
-        unsafe {
-            let bitmap = bitmap_factory.CreateBitmap(
-                bitmap_width,
-                bitmap_height,
-                bitmap_format,
-                WICBitmapCacheOnLoad,
-            )?;
-            let render_target = self
-                .components
-                .d2d1_factory
-                .CreateWicBitmapRenderTarget(&bitmap, &render_target_property)?;
-            let brush = render_target.CreateSolidColorBrush(&BRUSH_COLOR, None)?;
-            let subpixel_shift = params
-                .subpixel_variant
-                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             let baseline_origin = Vector2 {
                 X: subpixel_shift.x / params.scale_factor,
                 Y: subpixel_shift.y / params.scale_factor,
             };
 
-            // This `cast()` action here should never fail since we are running on Win10+, and
-            // ID2D1DeviceContext4 requires Win8+
-            let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
-            render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
-            render_target.SetDpi(
-                bitmap_dpi * params.scale_factor,
-                bitmap_dpi * params.scale_factor,
-            );
-            render_target.SetTextRenderingParams(&self.components.render_context.params);
-            render_target.BeginDraw();
+            unsafe {
+                let bitmap = bitmap_factory.CreateBitmap(
+                    size.width.0 as u32,
+                    size.height.0 as u32,
+                    &GUID_WICPixelFormat32bppPBGRA,
+                    WICBitmapCacheOnLoad,
+                )?;
 
-            if params.is_emoji {
+                let render_target_property = get_render_target_property(
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    D2D1_ALPHA_MODE_PREMULTIPLIED,
+                );
+
+                let render_target = self
+                    .components
+                    .d2d1_factory
+                    .CreateWicBitmapRenderTarget(&bitmap, &render_target_property)?;
+
+                let brush = render_target.CreateSolidColorBrush(&BRUSH_COLOR, None)?;
+
+                // This `cast()` action here should never fail since we are running on Win10+, and
+                // ID2D1DeviceContext4 requires Win8+
+                let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
+                render_target.SetUnitMode(D2D1_UNIT_MODE_DIPS);
+                render_target.SetDpi(96. * params.scale_factor, 96. * params.scale_factor);
+                render_target.SetTextRenderingParams(&self.components.render_params);
+                render_target.BeginDraw();
+
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun(
                     baseline_origin,
@@ -831,17 +798,20 @@ impl DirectWriteState {
                         | DWRITE_GLYPH_IMAGE_FORMATS_PNG
                         | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
                         | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
-                    DWRITE_MEASURING_MODE_NATURAL,
+                    MEASURING_MODE,
                     None,
                     0,
                 )?;
+
                 while enumerator.MoveNext().is_ok() {
                     let Ok(color_glyph) = enumerator.GetCurrentRun() else {
                         break;
                     };
+
                     let color_glyph = &*color_glyph;
                     let brush_color = translate_color(&color_glyph.Base.runColor);
                     brush.SetColor(&brush_color);
+
                     match color_glyph.glyphImageFormat {
                         DWRITE_GLYPH_IMAGE_FORMATS_PNG
                         | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
@@ -870,39 +840,64 @@ impl DirectWriteState {
                         ),
                     }
                 }
-            } else {
-                render_target.DrawGlyphRun(
-                    baseline_origin,
-                    &glyph_run,
-                    None,
-                    &brush,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-            }
-            render_target.EndDraw(None, None)?;
 
-            let mut raw_data = vec![0u8; total_bytes];
-            if params.is_emoji {
-                bitmap.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
-                // Convert from BGRA with premultiplied alpha to BGRA with straight alpha.
-                for pixel in raw_data.chunks_exact_mut(4) {
-                    let a = pixel[3] as f32 / 255.;
-                    pixel[0] = (pixel[0] as f32 / a) as u8;
-                    pixel[1] = (pixel[1] as f32 / a) as u8;
-                    pixel[2] = (pixel[2] as f32 / a) as u8;
-                }
-            } else {
-                let scaler = bitmap_factory.CreateBitmapScaler()?;
-                scaler.Initialize(
-                    &bitmap,
-                    bitmap_size.width.0 as u32,
-                    bitmap_size.height.0 as u32,
-                    WICBitmapInterpolationModeHighQualityCubic,
+                render_target.EndDraw(None, None)?;
+                bitmap.CopyPixels(
+                    std::ptr::null() as _,
+                    (size.width.0 * 4) as u32,
+                    &mut buffer,
                 )?;
-                scaler.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
+            };
+
+            // Convert from BGRA with premultiplied alpha to BGRA with straight alpha.
+            for pixel in buffer.chunks_exact_mut(4) {
+                let a = pixel[3] as f32 / 255.;
+                pixel[0] = (pixel[0] as f32 / a) as u8;
+                pixel[1] = (pixel[1] as f32 / a) as u8;
+                pixel[2] = (pixel[2] as f32 / a) as u8;
             }
-            Ok((bitmap_size, raw_data))
+        } else {
+            let glyph_analysis = unsafe {
+                let rendering_mode = self.components.render_params.GetRenderingMode1();
+                let grid_fit_mode = self.components.render_params.GetGridFitMode();
+
+                self.components
+                    .factory
+                    .CreateGlyphRunAnalysis(
+                        &glyph_run,
+                        Some(&DWRITE_MATRIX {
+                            m11: params.scale_factor,
+                            m12: 0.,
+                            m21: 0.,
+                            m22: params.scale_factor,
+                            dx: subpixel_shift.x,
+                            dy: subpixel_shift.y,
+                        }),
+                        rendering_mode,
+                        MEASURING_MODE,
+                        grid_fit_mode,
+                        DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+                        0.,
+                        0.,
+                    )
+                    .unwrap()
+            };
+
+            let bounds = RECT {
+                left: 0,
+                top: 0,
+                right: size.width.0,
+                bottom: size.height.0,
+            };
+
+            unsafe {
+                glyph_analysis
+                    .CreateAlphaTexture(DWRITE_TEXTURE_ALIASED_1x1, &bounds, &mut buffer)
+                    .log_err();
+            };
         }
+
+        Ok((size, buffer))
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
@@ -1552,7 +1547,7 @@ fn is_color_glyph(
                 | DWRITE_GLYPH_IMAGE_FORMATS_PNG
                 | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
                 | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
-            DWRITE_MEASURING_MODE_NATURAL,
+            MEASURING_MODE,
             None,
             0,
         )
