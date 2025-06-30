@@ -66,7 +66,7 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
     agent: Entity<ZedAgent>,
-    thread: Entity<Thread>,
+    // thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     save_thread_task: Option<Task<()>>,
@@ -885,7 +885,6 @@ impl ActiveThread {
             text_thread_store,
             context_store,
             agent: agent.clone(),
-            thread: thread.clone(),
             project,
             workspace,
             save_thread_task: None,
@@ -932,10 +931,6 @@ impl ActiveThread {
         this
     }
 
-    pub fn thread(&self) -> &Entity<Thread> {
-        &self.thread
-    }
-
     pub fn agent(&self) -> &Entity<ZedAgent> {
         &self.agent
     }
@@ -945,7 +940,7 @@ impl ActiveThread {
     }
 
     pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
-        self.thread.read(cx).summary()
+        self.agent.read(cx).summary(cx)
     }
 
     pub fn regenerate_summary(&self, cx: &mut App) {
@@ -1125,8 +1120,8 @@ impl ActiveThread {
                 segment_index,
             } => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    self.thread.update(cx, |thread, cx| {
-                        if let Some(message) = thread.message(*message_id) {
+                    self.agent.update(cx, |agent, cx| {
+                        if let Some(message) = agent.message(*message_id, cx) {
                             let MessageSegment::ToolUse(tool_use) =
                                 &message.segments[*segment_index]
                             else {
@@ -1140,8 +1135,8 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
-                if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
-                    thread.message(*message_id).map(|message| {
+                if let Some(rendered_message) = self.agent.update(cx, |agent, cx| {
+                    agent.message(*message_id, cx).map(|message| {
                         RenderedMessage::from_segments(
                             &message.segments,
                             self.language_registry.clone(),
@@ -1157,8 +1152,8 @@ impl ActiveThread {
             }
             ThreadEvent::MessageEdited(message_id) => {
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
-                    if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
-                        thread.message(*message_id).map(|message| {
+                    if let Some(rendered_message) = self.agent.update(cx, |agent, cx| {
+                        agent.message(*message_id, cx).map(|message| {
                             let mut rendered_message = RenderedMessage {
                                 language_registry: self.language_registry.clone(),
                                 segments: Vec::with_capacity(message.segments.len()),
@@ -1300,7 +1295,7 @@ impl ActiveThread {
             return;
         }
 
-        let title = self.thread.read(cx).summary().unwrap_or("Agent Panel");
+        let title = self.agent.read(cx).summary(cx).unwrap_or("Agent Panel");
 
         match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -1524,7 +1519,7 @@ impl ActiveThread {
         };
 
         let editor = state.editor.clone();
-        let thread = self.thread.clone();
+        let agent = self.agent.clone();
         let message_id = *message_id;
 
         state._update_token_count_task = Some(cx.spawn(async move |this, cx| {
@@ -1536,7 +1531,7 @@ impl ActiveThread {
 
             let token_count = if let Some(task) = cx
                 .update(|cx| {
-                    let Some(message) = thread.read(cx).message(message_id) else {
+                    let Some(message) = agent.read(cx).message(message_id) else {
                         log::error!("Message that was being edited no longer exists");
                         return None;
                     };
@@ -1684,7 +1679,7 @@ impl ActiveThread {
         let creases = state.editor.update(cx, extract_message_creases);
 
         let new_context = self.context_store.read(cx).new_context_for_thread(
-            self.thread.read(cx),
+            self.agent.read(cx),
             Some(message_id),
             cx,
         );
@@ -1899,18 +1894,17 @@ impl ActiveThread {
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let workspace = self.workspace.clone();
-        let thread = self.thread.read(cx);
         let agent = self.agent.read(cx);
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let Some(message) = thread.message(message_id) else {
+        let Some(message) = agent.message(message_id, cx) else {
             return Empty.into_any();
         };
 
         let is_generating = agent.is_generating();
-        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
+        let is_generating_stale = agent.is_generation_stale(cx).unwrap_or(false);
 
         let loading_dots = (is_generating && is_last_message).then(|| {
             h_flex()
@@ -1927,9 +1921,9 @@ impl ActiveThread {
         };
 
         // Get all the data we need from thread before we start using it in closures
-        let checkpoint = thread.checkpoint_for_message(message_id);
+        let checkpoint = agent.checkpoint_for_message(message_id);
         let configured_model = agent.configured_model().map(|m| m.model);
-        let added_context = thread
+        let added_context = agent
             .context_for_message(message_id)
             .map(|context| AddedContext::new_attached(context, configured_model.as_ref(), cx))
             .collect::<Vec<_>>();
@@ -2319,7 +2313,7 @@ impl ActiveThread {
                     let mut is_pending = false;
                     let mut error = None;
                     if let Some(last_restore_checkpoint) =
-                        self.thread.read(cx).last_restore_checkpoint()
+                        self.agent.read(cx).last_restore_checkpoint()
                     {
                         if last_restore_checkpoint.message_id() == message_id {
                             match last_restore_checkpoint {
@@ -2500,9 +2494,9 @@ impl ActiveThread {
         };
 
         let message_role = self
-            .thread
+            .agent
             .read(cx)
-            .message(message_id)
+            .message(message_id, cx)
             .map(|m| m.role)
             .unwrap_or(Role::User);
 
@@ -3913,6 +3907,7 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use workspace::CollaboratorId;
+    use zed_llm_client::CompletionIntent;
 
     #[gpui::test]
     async fn test_agent_is_unfollowed_after_cancelling_completion(cx: &mut TestAppContext) {

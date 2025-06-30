@@ -1321,10 +1321,27 @@ impl ZedAgent {
         self.thread.read(cx).message(id)
     }
 
+    pub fn messages<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl ExactSizeIterator<Item = &'a Message> + DoubleEndedIterator + 'a {
+        self.thread.read(cx).messages.iter()
+    }
+
     pub fn is_generating(&self) -> bool {
         self.pending_turn.is_some()
             || !self.pending_completions.is_empty()
             || !self.all_tools_finished()
+    }
+
+    /// Indicates whether streaming of language model events is stale.
+    pub fn is_generation_stale(&self, cx: &App) -> Option<bool> {
+        const STALE_THRESHOLD: u128 = 250;
+        let thread = self.thread.read(cx);
+
+        thread
+            .last_received_chunk_at
+            .map(|instant| instant.elapsed().as_millis() > STALE_THRESHOLD)
     }
 
     pub fn queue_state(&self) -> Option<QueueState> {
@@ -4864,7 +4881,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None, cx)
+            store.new_context_for_thread(agent.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4889,7 +4906,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None, cx)
+            store.new_context_for_thread(agent.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4915,7 +4932,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), None, cx)
+            store.new_context_for_thread(agent.read(cx), None, cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -4981,7 +4998,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 3);
         let loaded_context = cx
@@ -4997,7 +5014,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file4.rs
             store.remove_context(&loaded_context.contexts[2].handle(), cx);
-            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 2);
         let loaded_context = cx
@@ -5013,7 +5030,7 @@ fn main() {{
         let new_contexts = context_store.update(cx, |store, cx| {
             // Remove file3.rs
             store.remove_context(&loaded_context.contexts[1].handle(), cx);
-            store.new_context_for_thread(thread.read(cx), Some(message2_id), cx)
+            store.new_context_for_thread(agent.read(cx), Some(message2_id), cx)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx

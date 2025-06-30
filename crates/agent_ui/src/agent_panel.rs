@@ -274,11 +274,11 @@ impl ActiveView {
                     cx.notify();
                 }
             }),
-            cx.subscribe_in(&active_thread.read(cx).thread().clone(), window, {
+            cx.subscribe_in(&active_thread.read(cx).agent().clone(), window, {
                 let editor = editor.clone();
-                move |_, thread, event, window, cx| match event {
+                move |_, agent, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary().or_default();
+                        let summary = agent.read(cx).summary(cx).or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);

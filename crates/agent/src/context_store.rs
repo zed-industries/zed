@@ -66,12 +66,12 @@ impl ContextStore {
 
     pub fn new_context_for_thread(
         &self,
-        thread: &Thread,
+        thread: &ZedAgent,
         exclude_messages_from_id: Option<MessageId>,
-        _cx: &App,
+        cx: &App,
     ) -> Vec<AgentContextHandle> {
         let existing_context = thread
-            .messages()
+            .messages(cx)
             .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
             .flat_map(|message| {
                 message
