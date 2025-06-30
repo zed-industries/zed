@@ -18,6 +18,7 @@ use serde::{
 
 use settings::{
     ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    replace_subschema,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
@@ -316,12 +317,11 @@ pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsConte
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        name: || LanguageToSettingsMap::schema_name(),
-        schema: |generator, params, _cx| {
+        add_and_get_ref: |generator, params, _cx| {
             let language_settings_content_ref = generator
                 .subschema_for::<LanguageSettingsContent>()
                 .to_value();
-            json_schema!({
+            let schema = json_schema!({
                 "type": "object",
                 "properties": params
                     .language_names
@@ -333,7 +333,8 @@ inventory::submit! {
                         )
                     })
                     .collect::<serde_json::Map<_, _>>()
-            })
+            });
+            replace_subschema::<LanguageToSettingsMap>(generator, schema)
         }
     }
 }

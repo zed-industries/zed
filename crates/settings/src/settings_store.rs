@@ -989,14 +989,7 @@ impl SettingsStore {
         }
 
         for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
-            let schema_name = (parameterized_json_schema.name)().to_string();
-            // only insert parameterized schemas for things that are referenced
-            if generator.definitions().contains_key(&schema_name) {
-                let schema = (parameterized_json_schema.schema)(&mut generator, schema_params, cx);
-                generator
-                    .definitions_mut()
-                    .insert(schema_name, schema.to_value());
-            }
+            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
         }
 
         const ZED_SETTINGS: &str = "ZedSettings";
