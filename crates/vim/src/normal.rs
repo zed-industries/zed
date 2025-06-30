@@ -24,9 +24,9 @@ use crate::{
 };
 use collections::BTreeSet;
 use convert::ConvertTarget;
-use editor::Bias;
 use editor::Editor;
 use editor::{Anchor, SelectionEffects};
+use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
@@ -63,6 +63,7 @@ actions!(
         ShowLocation,
         Undo,
         Redo,
+        UndoLastLine,
     ]
 );
 
@@ -165,6 +166,79 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, window, cx);
             }
+        });
+    });
+    Vim::action(editor, cx, |vim, _: &UndoLastLine, window, cx| {
+        Vim::take_forced_motion(cx);
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            let Some(last_change) = editor.change_list.last() else {
+                return;
+            };
+            let anchors = last_change.iter().cloned().collect::<Vec<_>>();
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let mut last_row = None;
+            let ranges: Vec<_> = anchors
+                .iter()
+                .filter_map(|anchor| {
+                    let point = anchor.to_point(&snapshot);
+                    if last_row == Some(point.row) {
+                        return None;
+                    }
+                    last_row = Some(point.row);
+                    let line_range = Point::new(point.row, 0)
+                        ..Point::new(point.row, snapshot.line_len(MultiBufferRow(point.row)));
+                    Some((
+                        snapshot.anchor_before(line_range.start)
+                            ..snapshot.anchor_after(line_range.end),
+                        line_range,
+                    ))
+                })
+                .collect();
+
+            let edits = editor.buffer().update(cx, |buffer, cx| {
+                buffer.undo(cx);
+                let edits = ranges
+                    .into_iter()
+                    .map(|(anchors, mut points)| {
+                        let mut old_text = buffer
+                            .snapshot(cx)
+                            .text_for_range(anchors.clone())
+                            .collect::<String>();
+                        let new_text = snapshot.text_for_range(anchors.clone()).collect::<String>();
+                        let common_suffix_starts_at = old_text
+                            .char_indices()
+                            .rev()
+                            .zip(new_text.chars())
+                            .find_map(
+                                |((i, a), b)| {
+                                    if a != b { Some(i + a.len_utf8()) } else { None }
+                                },
+                            )
+                            .unwrap_or(old_text.len());
+                        points.end.column -= (old_text.len() - common_suffix_starts_at) as u32;
+                        old_text = old_text.split_at(common_suffix_starts_at).0.to_string();
+                        let common_prefix_len = old_text
+                            .char_indices()
+                            .zip(new_text.chars())
+                            .find_map(|((i, a), b)| if a != b { Some(i) } else { None })
+                            .unwrap_or(0);
+                        points.start.column = common_prefix_len as u32;
+                        old_text = old_text.split_at(common_prefix_len).1.to_string();
+
+                        (points, old_text)
+                    })
+                    .collect::<Vec<_>>();
+                buffer.redo(cx);
+                edits
+            });
+            editor.finalize_last_transaction(cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.edit(edits, cx);
+                editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                    s.select_anchor_ranges(anchors.into_iter().map(|a| a..a));
+                })
+            });
+            editor.finalize_last_transaction(cx);
         });
     });
 
@@ -1848,5 +1922,78 @@ mod test {
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-o").await;
         cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_undo_last_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇfn a() { }
+            fn a() { }
+            fn a() { }
+        "})
+            .await;
+        // do a jump to reset vim's undo grouping
+        cx.simulate_shared_keystrokes("shift-g").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("r a").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("g g shift-u").await;
+        cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_undo_last_line_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇfn a() { }
+            fn a() { }
+            fn a() { }
+        "})
+            .await;
+        // do a jump to reset vim's undo grouping
+        cx.simulate_shared_keystrokes("shift-g k").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("o h e l l o escape").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+    }
+
+    #[gpui::test]
+    async fn test_undo_last_line_multicursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            ˇone two ˇone
+            two ˇone two
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("3 r a");
+        cx.assert_state(
+            indoc! {"
+            aaˇa two aaˇa
+            two aaˇa two
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("escape escape");
+        cx.simulate_keystrokes("shift-u");
+        cx.set_state(
+            indoc! {"
+            onˇe two onˇe
+            two onˇe two
+        "},
+            Mode::Normal,
+        );
     }
 }
