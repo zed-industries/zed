@@ -1,12 +1,16 @@
 #![allow(unused, dead_code)]
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, actions, prelude::*};
 use settings_ui::SettingsUiFeatureFlag;
-use ui::prelude::*;
+use std::sync::Arc;
+use ui::{KeyBinding, ListItem, Vector, VectorName, prelude::*};
+use util::ResultExt;
 use workspace::{
     Workspace, WorkspaceId,
     item::{Item, ItemEvent},
+    notifications::NotifyResultExt,
 };
 
 actions!(
@@ -27,40 +31,9 @@ actions!(
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &ShowOnboarding, window, cx| {
-            let onboarding = cx.new(|cx| OnboardingUI::new(workspace, cx));
+            let client = workspace.client().clone();
+            let onboarding = cx.new(|cx| OnboardingUI::new(workspace, client, cx));
             workspace.add_item_to_active_pane(Box::new(onboarding), None, true, window, cx);
-        });
-
-        workspace.register_action(|_workspace, _: &JumpToBasics, _window, _cx| {
-            // Jump to basics implementation
-        });
-
-        workspace.register_action(|_workspace, _: &JumpToEditing, _window, _cx| {
-            // Jump to editing implementation
-        });
-
-        workspace.register_action(|_workspace, _: &JumpToAiSetup, _window, _cx| {
-            // Jump to AI setup implementation
-        });
-
-        workspace.register_action(|_workspace, _: &JumpToWelcome, _window, _cx| {
-            // Jump to welcome implementation
-        });
-
-        workspace.register_action(|_workspace, _: &NextPage, _window, _cx| {
-            // Next page implementation
-        });
-
-        workspace.register_action(|_workspace, _: &PreviousPage, _window, _cx| {
-            // Previous page implementation
-        });
-
-        workspace.register_action(|_workspace, _: &ToggleFocus, _window, _cx| {
-            // Toggle focus implementation
-        });
-
-        workspace.register_action(|_workspace, _: &ResetOnboarding, _window, _cx| {
-            // Reset onboarding implementation
         });
     })
     .detach();
@@ -131,6 +104,7 @@ pub struct OnboardingUI {
 
     // Workspace reference for Item trait
     workspace: WeakEntity<Workspace>,
+    client: Arc<Client>,
 }
 
 impl EventEmitter<ItemEvent> for OnboardingUI {}
@@ -152,26 +126,47 @@ impl Render for OnboardingUI {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
-        h_flex()
-            .id("onboarding-ui")
-            .key_context("Onboarding")
-            .track_focus(&self.focus_handle)
-            .w(px(904.))
-            .h(px(500.))
-            .gap(px(48.))
-            .child(v_flex().h_full().w(px(256.)).child("nav"))
-            .child(self.render_active_page(window, cx))
+        div()
+            .bg(cx.theme().colors().editor_background)
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .id("onboarding-ui")
+                    .key_context("Onboarding")
+                    .track_focus(&self.focus_handle)
+                    .on_action(cx.listener(Self::handle_jump_to_basics))
+                    .on_action(cx.listener(Self::handle_jump_to_editing))
+                    .on_action(cx.listener(Self::handle_jump_to_ai_setup))
+                    .on_action(cx.listener(Self::handle_jump_to_welcome))
+                    .on_action(cx.listener(Self::handle_next_page))
+                    .on_action(cx.listener(Self::handle_previous_page))
+                    .w(px(904.))
+                    .h(px(500.))
+                    .gap(px(48.))
+                    .child(self.render_navigation(window, cx))
+                    .child(
+                        v_flex()
+                            .h_full()
+                            .flex_1()
+                            .child(div().flex_1().child(self.render_active_page(window, cx))),
+                    ),
+            )
     }
 }
 
 impl OnboardingUI {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: &Workspace, client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             current_page: OnboardingPage::Basics,
             current_focus: OnboardingFocus::Page,
             completed_pages: [false; 4],
             workspace: workspace.weak_handle(),
+            client,
         }
     }
 
@@ -182,6 +177,7 @@ impl OnboardingUI {
         cx: &mut Context<Self>,
     ) {
         self.current_page = page;
+        cx.emit(ItemEvent::UpdateTab);
         cx.notify();
     }
 
@@ -230,11 +226,142 @@ impl OnboardingUI {
         cx.notify();
     }
 
+    fn handle_jump_to_basics(
+        &mut self,
+        _: &JumpToBasics,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump_to_page(OnboardingPage::Basics, window, cx);
+    }
+
+    fn handle_jump_to_editing(
+        &mut self,
+        _: &JumpToEditing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump_to_page(OnboardingPage::Editing, window, cx);
+    }
+
+    fn handle_jump_to_ai_setup(
+        &mut self,
+        _: &JumpToAiSetup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump_to_page(OnboardingPage::AiSetup, window, cx);
+    }
+
+    fn handle_jump_to_welcome(
+        &mut self,
+        _: &JumpToWelcome,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.jump_to_page(OnboardingPage::Welcome, window, cx);
+    }
+
+    fn handle_next_page(&mut self, _: &NextPage, window: &mut Window, cx: &mut Context<Self>) {
+        self.next_page(window, cx);
+    }
+
+    fn handle_previous_page(
+        &mut self,
+        _: &PreviousPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.previous_page(window, cx);
+    }
+
+    fn render_navigation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl gpui::IntoElement {
+        v_flex()
+            .h_full()
+            .w(px(256.))
+            .gap_2()
+            .justify_between()
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_px()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .child(Vector::new(VectorName::ZedLogo, rems(2.), rems(2.)))
+                            .child(self.render_sign_in_button(cx)),
+                    )
+                    .child(self.render_nav_item(OnboardingPage::Basics, "The Basics", "1", cx))
+                    .child(self.render_nav_item(
+                        OnboardingPage::Editing,
+                        "Editing Experience",
+                        "2",
+                        cx,
+                    ))
+                    .child(self.render_nav_item(OnboardingPage::AiSetup, "AI Setup", "3", cx))
+                    .child(self.render_nav_item(OnboardingPage::Welcome, "Welcome", "4", cx)),
+            )
+            .child(self.render_bottom_controls(window, cx))
+    }
+
+    fn render_nav_item(
+        &mut self,
+        page: OnboardingPage,
+        label: impl Into<SharedString>,
+        shortcut: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> impl gpui::IntoElement {
+        let selected = self.current_page == page;
+        let label = label.into();
+        let shortcut = shortcut.into();
+
+        ListItem::new(label.clone())
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new(label.clone()))
+                    .child(Label::new(format!("⌘{}", shortcut.clone())).color(Color::Muted)),
+            )
+            .selectable(true)
+            .toggle_state(selected)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.jump_to_page(page, window, cx);
+            }))
+    }
+
+    fn render_bottom_controls(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> impl gpui::IntoElement {
+        h_flex().w_full().p_4().child(
+            Button::new(
+                "next",
+                if self.current_page == OnboardingPage::Welcome {
+                    "Get Started"
+                } else {
+                    "Next"
+                },
+            )
+            .style(ButtonStyle::Filled)
+            .key_binding(KeyBinding::for_action(&NextPage, window, cx))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.next_page(window, cx);
+            })),
+        )
+    }
+
     fn render_active_page(
         &mut self,
         _window: &mut gpui::Window,
         _cx: &mut Context<Self>,
-    ) -> impl gpui::IntoElement {
+    ) -> AnyElement {
         match self.current_page {
             OnboardingPage::Basics => self.render_basics_page(),
             OnboardingPage::Editing => self.render_editing_page(),
@@ -243,20 +370,54 @@ impl OnboardingUI {
         }
     }
 
-    fn render_basics_page(&self) -> impl gpui::IntoElement {
-        v_flex().h_full().w_full().child("Basics Page")
+    fn render_basics_page(&self) -> AnyElement {
+        v_flex()
+            .h_full()
+            .w_full()
+            .child("Basics Page")
+            .into_any_element()
     }
 
-    fn render_editing_page(&self) -> impl gpui::IntoElement {
-        v_flex().h_full().w_full().child("Editing Page")
+    fn render_editing_page(&self) -> AnyElement {
+        v_flex()
+            .h_full()
+            .w_full()
+            .child("Editing Page")
+            .into_any_element()
     }
 
-    fn render_ai_setup_page(&self) -> impl gpui::IntoElement {
-        v_flex().h_full().w_full().child("AI Setup Page")
+    fn render_ai_setup_page(&self) -> AnyElement {
+        v_flex()
+            .h_full()
+            .w_full()
+            .child("AI Setup Page")
+            .into_any_element()
     }
 
-    fn render_welcome_page(&self) -> impl gpui::IntoElement {
-        v_flex().h_full().w_full().child("Welcome Page")
+    fn render_welcome_page(&self) -> AnyElement {
+        v_flex()
+            .h_full()
+            .w_full()
+            .child("Welcome Page")
+            .into_any_element()
+    }
+
+    fn render_sign_in_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let client = self.client.clone();
+        Button::new("sign_in", "Sign in")
+            .label_size(LabelSize::Small)
+            .on_click(cx.listener(move |_, _, window, cx| {
+                let client = client.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        client
+                            .authenticate_and_connect(true, &cx)
+                            .await
+                            .into_response()
+                            .notify_async_err(cx);
+                    })
+                    .detach();
+            }))
     }
 }
 
@@ -282,9 +443,10 @@ impl Item for OnboardingUI {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
         let weak_workspace = self.workspace.clone();
+        let client = self.client.clone();
         if let Some(workspace) = weak_workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                Some(cx.new(|cx| OnboardingUI::new(workspace, cx)))
+                Some(cx.new(|cx| OnboardingUI::new(workspace, client, cx)))
             })
         } else {
             None
