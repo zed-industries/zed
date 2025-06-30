@@ -1056,18 +1056,22 @@ mod tests {
         },
         "custom_server": {
             "source": "custom",
-            "command": "foo",
-            "args": ["bar"],
-            "env": {
-                "FOO": "BAR"
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
             }
         },
         "invalid_server": {
             "source": "custom",
-            "command": "foo",
-            "args": ["bar"],
-            "env": {
-                "FOO": "BAR"
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
             },
             "settings": {
                 "foo": "bar"
@@ -1075,7 +1079,14 @@ mod tests {
         }
     }
 }"#;
-        assert_migrate_settings(settings, None);
+        assert_migrate_settings_with_migrations(
+            &[(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
+            settings,
+            None,
+        );
     }
 
     #[test]
