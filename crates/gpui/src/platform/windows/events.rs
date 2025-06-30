@@ -1155,18 +1155,19 @@ fn handle_system_settings_changed(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    // System setting change checks for taskbar position and auto-hide status
-    // Which is made with SHAppBarMessage that apparently sends a message to our window
-    // And that causes this function to be called again.
-    // We need to check if the state is borrowed mutably before updating it.
-    // If it is borrowed immutably, we log a message and return early because
-    // other functions also would try to borrow the state.
-    // see issue #33520
-    if let Ok(mut state) = state_ptr.state.try_borrow_mut() {
-        let display = state.display;
-        state.system_settings.update(display);
-        state.click_state.system_update();
-        state.border_offset.update(handle).log_err();
+    // system_settings.update(display) checks for taskbar position and auto-hide status
+    // This check uses SHAppBarMessage that apparently syncronously sends a message to our window
+    // And that causes window procedure to call handle_system_settings_changed again.
+    // We need to check if the state can be borrowed mutably before updating it.
+    // If it is already borrowed that means we are entering here for the second time,
+    // we log a message and return early because we can't borrow the state.
+    // handle_system_theme_changed also would try to borrow the state.
+    if let Ok(mut lock) = state_ptr.state.try_borrow_mut() {
+        let display = lock.display;
+        lock.system_settings.update(display);
+        lock.click_state.system_update();
+        lock.border_offset.update(handle).log_err();
+        drop(lock);
     } else {
         log::info!("System settings changed (re-entrant) – skipping");
         return Some(0);
