@@ -35,6 +35,7 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
+use jj::JujutsuRepository;
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
@@ -279,9 +280,15 @@ impl std::ops::Deref for Repository {
 }
 
 #[derive(Clone)]
+pub enum ScmBackend {
+    Git(Arc<dyn GitRepository>),
+    Jj(Arc<dyn JujutsuRepository>),
+}
+
+#[derive(Clone)]
 pub enum RepositoryState {
     Local {
-        backend: Arc<dyn GitRepository>,
+        backend: ScmBackend,
         environment: Arc<HashMap<String, String>>,
     },
     Remote {
