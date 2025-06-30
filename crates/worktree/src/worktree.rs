@@ -4380,6 +4380,7 @@ impl BackgroundScanner {
                     Err(err) => {
                         log::warn!("broken symlink {child_abs_path:?}: {err:#}");
                         child_entry.is_symlink_broken = true;
+                        child_entry.canonical_path = None;
                     }
                 }
             }

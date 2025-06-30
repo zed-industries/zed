@@ -168,27 +168,21 @@ async fn test_broken_symlink(cx: &mut TestAppContext) {
         "/root",
         json!({
             "target_dir": {
-                "actual_file.txt": "hello"
-            },
-            "symlink_to_file": {
-                "type": "symlink",
-                "target": "../target_dir/actual_file.txt"
-            },
-            "broken_symlink_to_file": {
-                "type": "symlink",
-                "target": "../target_dir/nonexistent_file.txt"
-            },
-            "symlink_to_dir": {
-                "type": "symlink",
-                "target": "../target_dir"
-            },
-            "broken_symlink_to_dir": {
-                "type": "symlink",
-                "target": "../nonexistent_dir"
+                "actual_file.txt": "",
+                "file_to_be_symlinked.txt": "hello"
             }
         }),
     )
     .await;
+
+    fs.create_symlink(
+        "/root/target_dir/actual_file.txt".as_ref(),
+        "/root/target_dir/file_to_be_symlinked.txt".into(),
+    )
+    .await
+    .unwrap();
+
+    cx.executor().run_until_parked();
 
     let tree = Worktree::local(
         Path::new("/root"),
@@ -204,21 +198,46 @@ async fn test_broken_symlink(cx: &mut TestAppContext) {
         .await;
 
     tree.read_with(cx, |tree, _| {
-        let valid_symlink_file = tree.entry_for_path("symlink_to_file").unwrap();
-        assert!(!valid_symlink_file.is_symlink_broken);
-        assert!(valid_symlink_file.canonical_path.is_some());
+        let symlink_entry = tree.entry_for_path("target_dir/actual_file.txt").unwrap();
+        assert!(
+            !symlink_entry.is_symlink_broken,
+            "Symlink should be valid initially"
+        );
+        assert!(
+            symlink_entry.canonical_path.is_some(),
+            "Canonical path should be present for valid symlink"
+        );
+    });
 
-        let broken_symlink_file = tree.entry_for_path("broken_symlink_to_file").unwrap();
-        assert!(broken_symlink_file.is_symlink_broken);
-        assert!(broken_symlink_file.canonical_path.is_none());
+    // Delete the target file, making the symlink broken
+    fs.remove_file(
+        "/root/target_dir/file_to_be_symlinked.txt".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
 
-        let valid_symlink_dir = tree.entry_for_path("symlink_to_dir").unwrap();
-        assert!(!valid_symlink_dir.is_symlink_broken);
-        assert!(valid_symlink_dir.canonical_path.is_some());
+    cx.executor().run_until_parked();
+    // Refresh the symlink entry
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("target_dir").into()])
+    })
+    .recv()
+    .await;
 
-        let broken_symlink_dir = tree.entry_for_path("broken_symlink_to_dir").unwrap();
-        assert!(broken_symlink_dir.is_symlink_broken);
-        assert!(broken_symlink_dir.canonical_path.is_none());
+    // After refresh: symlink should be broken
+    tree.read_with(cx, |tree, _| {
+        let symlink_entry = tree.entry_for_path("target_dir/actual_file.txt").unwrap();
+        assert!(
+            symlink_entry.is_symlink_broken,
+            "Symlink should be broken after target is deleted"
+        );
+        assert!(
+            symlink_entry.canonical_path.is_none(),
+            "Canonical path should be None for broken symlink"
+        );
     });
 }
 
