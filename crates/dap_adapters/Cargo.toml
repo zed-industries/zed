@@ -25,6 +25,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 dap.workspace = true
+dotenvy.workspace = true
 futures.workspace = true
 gpui.workspace = true
 json_dotpath.workspace = true

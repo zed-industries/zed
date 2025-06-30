@@ -448,33 +448,34 @@ impl DebugAdapter for GoDebugAdapter {
                 .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf()),
         );
 
-        let mut envs = HashMap::default();
-        if let Some(env_file) = task_definition
-            .config
-            .get("envFile")
-            .and_then(Value::as_str)
-        {
-            if let Ok(path) = PathBuf::from_str(env_file)
-                && let Ok(content) = delegate.fs().load(&path).await
-            {
-                envs = content
-                    .lines()
-                    .filter_map(|l| {
-                        (!l.starts_with("#"))
-                            .then(|| l.split_once("=").map(|(k, v)| (k.to_owned(), v.to_owned())))
-                            .flatten()
-                    })
-                    .collect();
-            } else {
-                warn!("Couldn't read env file: {env_file}");
-            }
-        }
-
         let arguments;
         let command;
         let connection;
 
         let mut configuration = task_definition.config.clone();
+
+        let mut envs = HashMap::default();
+        if let Some(env_file) = configuration.get("envFile").and_then(Value::as_str) {
+            if let Some(path) = {
+                if env_file.starts_with('/') {
+                    PathBuf::from_str(env_file).ok()
+                } else {
+                    cwd.as_ref().map(|p| p.clone().join(env_file))
+                }
+            } && let Ok(file) = delegate.fs().open_sync(&path).await
+            {
+                envs = dotenvy::from_read_iter(file)
+                    .filter_map(Result::ok)
+                    .collect();
+            } else {
+                warn!("Couldn't read env file: {env_file}");
+            }
+
+            // remove envFile now that it's been handled
+            if let Some(configuration) = configuration.as_object_mut() {
+                configuration.remove("entry");
+            }
+        }
 
         if let Some(configuration) = configuration.as_object_mut() {
             configuration
@@ -518,7 +519,7 @@ impl DebugAdapter for GoDebugAdapter {
                 ]
             };
         }
-        Ok(DebugAdapterBinary {
+        Ok(dbg!(DebugAdapterBinary {
             command,
             arguments,
             cwd,
@@ -528,6 +529,6 @@ impl DebugAdapter for GoDebugAdapter {
                 configuration,
                 request: self.request_kind(&task_definition.config).await?,
             },
-        })
+        }))
     }
 }
