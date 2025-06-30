@@ -13,7 +13,9 @@ pub use component::{
 pub use ui_macros::RegisterComponent;
 
 pub use crate::DynamicSpacing;
-pub use crate::animation::{AnimationDirection, AnimationDuration, DefaultAnimations};
+pub use crate::animation::{
+    AnimationDirection, AnimationDuration, AnimationOptions, DefaultAnimations,
+};
 pub use crate::styles::{PlatformStyle, StyledTypography, TextSize, rems_from_px, vh, vw};
 pub use crate::traits::clickable::*;
 pub use crate::traits::disableable::*;
