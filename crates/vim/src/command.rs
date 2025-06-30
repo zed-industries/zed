@@ -1072,6 +1072,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("delm", "arks"), ArgumentRequired)
             .bang(DeleteMarks::AllLocal)
             .args(|_, args| Some(DeleteMarks::Marks(args).boxed_clone())),
+        // TODO: add SortLinesByLength here as well?
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
