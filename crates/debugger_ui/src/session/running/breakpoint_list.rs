@@ -1235,6 +1235,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-log-toggle")),
                             IconName::ScrollText,
                         )
+                        .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
                         .icon_color(color_for_toggle(has_logs))
                         .disabled(!supports_logs)
@@ -1254,6 +1255,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-condition-toggle")),
                             IconName::SplitAlt,
                         )
+                        .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::Condition,
                             has_condition
@@ -1276,6 +1278,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                             SharedString::from(format!("{id}-hit-condition-toggle")),
                             IconName::ArrowDown10,
                         )
+                        .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(
                             ActiveBreakpointStripMode::HitCondition,
                             has_hit_condition,
