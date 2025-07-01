@@ -1,4 +1,4 @@
-use crate::{AcpThread, AgentThreadEntryContent, MessageChunk, Role, ThreadEntryId, ThreadId};
+use crate::{AcpThread, AgentThreadEntryContent, ThreadEntryId, ThreadId};
 use agentic_coding_protocol as acp;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -42,7 +42,7 @@ impl AcpClientDelegate {
         &self,
         thread_id: &ThreadId,
         cx: &mut App,
-        callback: impl FnMut(&mut AcpThread, &mut Context<AcpThread>) -> R,
+        callback: impl FnOnce(&mut AcpThread, &mut Context<AcpThread>) -> R,
     ) -> Option<R> {
         let thread = self.threads.lock().get(&thread_id)?.clone();
         let Some(thread) = thread.upgrade() else {
@@ -80,18 +80,11 @@ impl acp::Client for AcpClientDelegate {
         &self,
         params: acp::StreamMessageChunkParams,
     ) -> Result<acp::StreamMessageChunkResponse> {
-        dbg!();
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
             self.update_thread(&params.thread_id.into(), cx, |thread, cx| {
-                let acp::MessageChunk::Text { chunk } = &params.chunk;
-                thread.push_assistant_chunk(
-                    MessageChunk::Text {
-                        chunk: chunk.into(),
-                    },
-                    cx,
-                )
+                thread.push_assistant_chunk(params.chunk, cx)
             });
         })?;
 
@@ -186,7 +179,10 @@ impl acp::Client for AcpClientDelegate {
         })
     }
 
-    async fn glob_search(&self, request: acp::GlobSearchParams) -> Result<acp::GlobSearchResponse> {
+    async fn glob_search(
+        &self,
+        _request: acp::GlobSearchParams,
+    ) -> Result<acp::GlobSearchResponse> {
         todo!()
     }
 }
@@ -238,31 +234,13 @@ impl AcpServer {
     pub async fn send_message(
         &self,
         thread_id: ThreadId,
-        message: crate::Message,
-        cx: &mut AsyncApp,
+        message: acp::Message,
+        _cx: &mut AsyncApp,
     ) -> Result<()> {
         self.connection
             .request(acp::SendMessageParams {
                 thread_id: thread_id.clone().into(),
-                message: acp::Message {
-                    role: match message.role {
-                        Role::User => acp::Role::User,
-                        Role::Assistant => acp::Role::Assistant,
-                    },
-                    chunks: message
-                        .chunks
-                        .into_iter()
-                        .map(|chunk| match chunk {
-                            MessageChunk::Text { chunk } => acp::MessageChunk::Text {
-                                chunk: chunk.into(),
-                            },
-                            MessageChunk::File { .. } => todo!(),
-                            MessageChunk::Directory { .. } => todo!(),
-                            MessageChunk::Symbol { .. } => todo!(),
-                            MessageChunk::Fetch { .. } => todo!(),
-                        })
-                        .collect(),
-                },
+                message,
             })
             .await?;
         Ok(())

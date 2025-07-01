@@ -1,11 +1,15 @@
 mod server;
 mod thread_view;
 
+use agentic_coding_protocol::{self as acp, Role};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use gpui::{Context, Entity, SharedString, Task};
+use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use language::LanguageRegistry;
+use markdown::Markdown;
 use project::Project;
 use std::{ops::Range, path::PathBuf, sync::Arc};
+use ui::App;
 
 pub use server::AcpServer;
 pub use thread_view::AcpThreadView;
@@ -30,23 +34,29 @@ pub struct FileContent {
     pub content: SharedString,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Role {
-    User,
-    Assistant,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Message {
-    pub role: Role,
+    pub role: acp::Role,
     pub chunks: Vec<MessageChunk>,
+}
+
+impl Message {
+    fn into_acp(self, cx: &App) -> acp::Message {
+        acp::Message {
+            role: self.role,
+            chunks: self
+                .chunks
+                .into_iter()
+                .map(|chunk| chunk.into_acp(cx))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessageChunk {
     Text {
-        // todo! should it be shared string? what about streaming?
-        chunk: String,
+        chunk: Entity<Markdown>,
     },
     File {
         content: FileContent,
@@ -68,10 +78,36 @@ pub enum MessageChunk {
     },
 }
 
-impl From<&str> for MessageChunk {
-    fn from(chunk: &str) -> Self {
+impl MessageChunk {
+    pub fn from_acp(
+        chunk: acp::MessageChunk,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        match chunk {
+            acp::MessageChunk::Text { chunk } => MessageChunk::Text {
+                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            },
+        }
+    }
+
+    pub fn into_acp(self, cx: &App) -> acp::MessageChunk {
+        match self {
+            MessageChunk::Text { chunk } => acp::MessageChunk::Text {
+                chunk: chunk.read(cx).source().to_string(),
+            },
+            MessageChunk::File { .. } => todo!(),
+            MessageChunk::Directory { .. } => todo!(),
+            MessageChunk::Symbol { .. } => todo!(),
+            MessageChunk::Fetch { .. } => todo!(),
+        }
+    }
+
+    pub fn from_str(chunk: &str, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> Self {
         MessageChunk::Text {
-            chunk: chunk.to_string().into(),
+            chunk: cx.new(|cx| {
+                Markdown::new(chunk.to_owned().into(), Some(language_registry), None, cx)
+            }),
         }
     }
 }
@@ -156,7 +192,7 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry)
     }
 
-    pub fn push_assistant_chunk(&mut self, chunk: MessageChunk, cx: &mut Context<Self>) {
+    pub fn push_assistant_chunk(&mut self, chunk: acp::MessageChunk, cx: &mut Context<Self>) {
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntryContent::Message(Message {
                 ref mut chunks,
@@ -167,33 +203,46 @@ impl AcpThread {
 
             if let (
                 Some(MessageChunk::Text { chunk: old_chunk }),
-                MessageChunk::Text { chunk: new_chunk },
+                acp::MessageChunk::Text { chunk: new_chunk },
             ) = (chunks.last_mut(), &chunk)
             {
-                old_chunk.push_str(&new_chunk);
+                old_chunk.update(cx, |old_chunk, cx| {
+                    old_chunk.append(&new_chunk, cx);
+                });
             } else {
-                chunks.push(chunk);
-                return cx.notify();
+                chunks.push(MessageChunk::from_acp(
+                    chunk,
+                    self.project.read(cx).languages().clone(),
+                    cx,
+                ));
             }
 
             return;
         }
+
+        let chunk = MessageChunk::from_acp(chunk, self.project.read(cx).languages().clone(), cx);
 
         self.push_entry(
             AgentThreadEntryContent::Message(Message {
                 role: Role::Assistant,
                 chunks: vec![chunk],
             }),
-        });
-        cx.notify();
+            cx,
+        );
     }
 
-    pub fn send(&mut self, message: Message, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn send(&mut self, message: &str, cx: &mut Context<Self>) -> Task<Result<()>> {
         let agent = self.server.clone();
         let id = self.id.clone();
+        let chunk = MessageChunk::from_str(message, self.project.read(cx).languages().clone(), cx);
+        let message = Message {
+            role: Role::User,
+            chunks: vec![chunk],
+        };
         self.push_entry(AgentThreadEntryContent::Message(message.clone()), cx);
+        let acp_message = message.into_acp(cx);
         cx.spawn(async move |_, cx| {
-            agent.send_message(id, message, cx).await?;
+            agent.send_message(id, acp_message, cx).await?;
             Ok(())
         })
     }
@@ -237,13 +286,7 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.send(
-                    Message {
-                        role: Role::User,
-                        chunks: vec![
-                            "Read the '/private/tmp/foo' file and output all of its contents."
-                                .into(),
-                        ],
-                    },
+                    "Read the '/private/tmp/foo' file and output all of its contents.",
                     cx,
                 )
             })

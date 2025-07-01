@@ -1,18 +1,21 @@
+use std::rc::Rc;
+
 use anyhow::Result;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    App, Empty, Entity, Focusable, ListState, SharedString, Subscription, Window, div, list,
-    prelude::*,
+    App, EdgesRefinement, Empty, Entity, Focusable, ListState, SharedString, StyleRefinement,
+    Subscription, TextStyleRefinement, UnderlineStyle, Window, div, list, prelude::*,
 };
 use gpui::{FocusHandle, Task};
 use language::Buffer;
+use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
+use settings::Settings as _;
+use theme::ThemeSettings;
 use ui::Tooltip;
 use ui::prelude::*;
 use zed_actions::agent::Chat;
 
-use crate::{
-    AcpThread, AcpThreadEvent, AgentThreadEntryContent, Message, MessageChunk, Role, ThreadEntry,
-};
+use crate::{AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry};
 
 pub struct AcpThreadView {
     thread: Entity<AcpThread>,
@@ -93,13 +96,7 @@ impl AcpThreadView {
             return;
         }
 
-        let task = self.thread.update(cx, |thread, cx| {
-            let message = Message {
-                role: Role::User,
-                chunks: vec![MessageChunk::Text { chunk: text.into() }],
-            };
-            thread.send(message, cx)
-        });
+        let task = self.thread.update(cx, |thread, cx| thread.send(&text, cx));
 
         self.send_task = Some(cx.spawn(async move |this, cx| {
             task.await?;
@@ -117,16 +114,21 @@ impl AcpThreadView {
     fn render_entry(
         &self,
         entry: &ThreadEntry,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         match &entry.content {
             AgentThreadEntryContent::Message(message) => {
+                let style = if message.role == Role::User {
+                    user_message_markdown_style(window, cx)
+                } else {
+                    default_markdown_style(window, cx)
+                };
                 let message_body = div()
                     .children(message.chunks.iter().map(|chunk| match chunk {
                         MessageChunk::Text { chunk } => {
-                            // todo! markdown
-                            Label::new(chunk.clone())
+                            // todo!() open link
+                            MarkdownElement::new(chunk.clone(), style.clone())
                         }
                         _ => todo!(),
                     }))
@@ -134,7 +136,8 @@ impl AcpThreadView {
 
                 match message.role {
                     Role::User => div()
-                        .my_1()
+                        .text_xs()
+                        .m_1()
                         .p_2()
                         .bg(cx.theme().colors().editor_background)
                         .rounded_lg()
@@ -143,7 +146,12 @@ impl AcpThreadView {
                         .border_color(cx.theme().colors().border)
                         .child(message_body)
                         .into_any(),
-                    Role::Assistant => message_body,
+                    Role::Assistant => div()
+                        .text_ui(cx)
+                        .px_2()
+                        .py_4()
+                        .child(message_body)
+                        .into_any(),
                 }
             }
             AgentThreadEntryContent::ReadFile { path, content: _ } => {
@@ -235,5 +243,123 @@ impl Render for AcpThreadView {
                             })
                     }),
             )
+    }
+}
+
+fn user_message_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let mut style = default_markdown_style(window, cx);
+    let mut text_style = window.text_style();
+    let theme_settings = ThemeSettings::get_global(cx);
+
+    let buffer_font = theme_settings.buffer_font.family.clone();
+    let buffer_font_size = TextSize::Small.rems(cx);
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(buffer_font),
+        font_size: Some(buffer_font_size.into()),
+        ..Default::default()
+    });
+
+    style.base_text_style = text_style;
+    style
+}
+
+fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let colors = cx.theme().colors();
+    let ui_font_size = TextSize::Default.rems(cx);
+    let buffer_font_size = TextSize::Small.rems(cx);
+    let mut text_style = window.text_style();
+    let line_height = buffer_font_size * 1.75;
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.ui_font.family.clone()),
+        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+        font_features: Some(theme_settings.ui_font.features.clone()),
+        font_size: Some(ui_font_size.into()),
+        line_height: Some(line_height.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style: text_style.clone(),
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: cx.theme().colors().element_selection_background,
+        code_block_overflow_x_scroll: true,
+        table_overflow_x_scroll: true,
+        heading_level_styles: Some(HeadingLevelStyles {
+            h1: Some(TextStyleRefinement {
+                font_size: Some(rems(1.15).into()),
+                ..Default::default()
+            }),
+            h2: Some(TextStyleRefinement {
+                font_size: Some(rems(1.1).into()),
+                ..Default::default()
+            }),
+            h3: Some(TextStyleRefinement {
+                font_size: Some(rems(1.05).into()),
+                ..Default::default()
+            }),
+            h4: Some(TextStyleRefinement {
+                font_size: Some(rems(1.).into()),
+                ..Default::default()
+            }),
+            h5: Some(TextStyleRefinement {
+                font_size: Some(rems(0.95).into()),
+                ..Default::default()
+            }),
+            h6: Some(TextStyleRefinement {
+                font_size: Some(rems(0.875).into()),
+                ..Default::default()
+            }),
+        }),
+        code_block: StyleRefinement {
+            padding: EdgesRefinement {
+                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+            },
+            background: Some(colors.editor_background.into()),
+            text: Some(TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
+                font_size: Some(buffer_font_size.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        inline_code: TextStyleRefinement {
+            font_family: Some(theme_settings.buffer_font.family.clone()),
+            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+            font_features: Some(theme_settings.buffer_font.features.clone()),
+            font_size: Some(buffer_font_size.into()),
+            background_color: Some(colors.editor_foreground.opacity(0.08)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            background_color: Some(colors.editor_foreground.opacity(0.025)),
+            underline: Some(UnderlineStyle {
+                color: Some(colors.text_accent.opacity(0.5)),
+                thickness: px(1.),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        link_callback: Some(Rc::new(move |_url, _cx| {
+            // todo!()
+            // if MentionLink::is_valid(url) {
+            //     let colors = cx.theme().colors();
+            //     Some(TextStyleRefinement {
+            //         background_color: Some(colors.element_background),
+            //         ..Default::default()
+            //     })
+            // } else {
+            None
+            // }
+        })),
+        ..Default::default()
     }
 }
