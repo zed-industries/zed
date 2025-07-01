@@ -461,9 +461,21 @@ impl RunningMode {
                     }
                 })?;
 
-                this.send_exception_breakpoints(exception_filters, supports_exception_filters)
-                    .await
-                    .ok();
+                /// From spec (on initialization sequence):
+                /// client sends a setExceptionBreakpoints request if one or more exceptionBreakpointFilters have been defined (or if supportsConfigurationDoneRequest is not true)
+                ///
+                /// Thus we should send setExceptionBreakpoints even if `exceptionFilters` variable is empty (as long as there were some options in the first place).
+                let should_send_exception_breakpoints = capabilities
+                    .exception_breakpoint_filters
+                    .as_ref()
+                    .map_or(false, |filters| !filters.is_empty())
+                    || !configuration_done_supported;
+                if should_send_exception_breakpoints {
+                    this.send_exception_breakpoints(exception_filters, supports_exception_filters)
+                        .await
+                        .ok();
+                }
+
                 let ret = if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
