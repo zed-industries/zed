@@ -1,7 +1,7 @@
 use std::{ops::Range, sync::Arc};
 
+use anyhow::{Context as _, anyhow};
 use collections::HashSet;
-use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
@@ -305,13 +305,6 @@ impl KeymapEditor {
         workspace: WeakEntity<Workspace>,
         cx: &mut AsyncApp,
     ) -> Arc<Language> {
-        let default = Arc::new(Language::new(
-            LanguageConfig {
-                name: "JSON".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_json::LANGUAGE.into()),
-        ));
         let json_language_task = workspace
             .read_with(cx, |workspace, cx| {
                 workspace
@@ -320,16 +313,21 @@ impl KeymapEditor {
                     .languages()
                     .language_for_name("JSON")
             })
-            // todo: anyhow context
+            .context("Failed to load JSON language")
             .log_err();
-        let Some(json_language_task) = json_language_task else {
-            return default;
+        let json_language = match json_language_task {
+            Some(task) => task.await.context("Failed to load JSON language").log_err(),
+            None => None,
         };
-        // todo: anyhow context
-        let Some(json_language) = json_language_task.await.log_err() else {
-            return default;
-        };
-        return json_language;
+        return json_language.unwrap_or_else(|| {
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "JSON".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_json::LANGUAGE.into()),
+            ))
+        });
     }
 
     fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
