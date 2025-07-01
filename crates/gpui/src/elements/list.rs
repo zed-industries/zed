@@ -1140,4 +1140,54 @@ mod test {
         assert_eq!(state.logical_scroll_top().item_ix, 0);
         assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
     }
+
+    #[gpui::test]
+    fn test_offset_by_positive_and_negative_distance(cx: &mut TestAppContext) {
+        use crate::{
+            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
+            list, point, px, size,
+        };
+
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _, _| {
+            div().h(px(20.)).w_full().into_any()
+        });
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone()).w_full().h_full()
+            }
+        }
+
+        // Paint
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone()))
+        });
+
+        let start_offset = gpui::ListOffset {
+            item_ix: 1,
+            offset_in_item: px(5.0),
+        };
+
+        // Test positive distance: start at item 1, move forward 30px
+        let positive_result = state.offset_by(&start_offset, px(30.0));
+
+        // Should move to item 2 (1 + 1), with offset 15px (5 + 30 - 20)
+        assert_eq!(positive_result.item_ix, 2);
+        assert_eq!(positive_result.offset_in_item, px(15.0));
+
+        // Test negative distance: start at item 2, move backward 30px
+        let negative_result = state.offset_by(&positive_result, px(-30.0));
+
+        // Should move back to item 1, with offset 5px (15 - 30 + 20)
+        assert_eq!(negative_result.item_ix, 1);
+        assert_eq!(negative_result.offset_in_item, px(5.0));
+
+        // Test zero distance
+        let zero_result = state.offset_by(&start_offset, px(0.0));
+        assert_eq!(zero_result.item_ix, start_offset.item_ix);
+        assert_eq!(zero_result.offset_in_item, start_offset.offset_in_item);
+    }
 }
