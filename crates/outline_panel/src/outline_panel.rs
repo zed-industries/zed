@@ -1,19 +1,5 @@
 mod outline_panel_settings;
 
-use std::{
-    cmp,
-    collections::BTreeMap,
-    hash::Hash,
-    ops::Range,
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
-    sync::{
-        Arc, OnceLock,
-        atomic::{self, AtomicBool},
-    },
-    time::Duration,
-    u32,
-};
-
 use anyhow::Context as _;
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
@@ -38,6 +24,19 @@ use gpui::{
 use itertools::Itertools;
 use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use std::{
+    cmp,
+    collections::BTreeMap,
+    hash::Hash,
+    ops::Range,
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
+    sync::{
+        Arc, OnceLock,
+        atomic::{self, AtomicBool},
+    },
+    time::Duration,
+    u32,
+};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
@@ -3350,9 +3349,25 @@ impl OutlinePanel {
                                         || buffer_language.as_ref()
                                             == buffer_snapshot.language_at(outline.range.start)
                                 });
-                                outlines
+
+                                let mut outlines_with_children = HashSet::default();
+                                for i in 0..outlines.len() {
+                                    if let Some(next_outline) = outlines.get(i + 1) {
+                                        if next_outline.depth > outlines[i].depth {
+                                            outlines_with_children.insert((
+                                                outlines[i].range.clone(),
+                                                outlines[i].depth,
+                                            ));
+                                        }
+                                    }
+                                }
+
+                                (outlines, outlines_with_children)
                             })
                             .await;
+
+                        let (fetched_outlines, outlines_with_children) = fetched_outlines;
+
                         outline_panel
                             .update_in(cx, |outline_panel, window, cx| {
                                 let pending_default_depth =
@@ -3372,6 +3387,7 @@ impl OutlinePanel {
                                     } else {
                                         Some(UPDATE_DEBOUNCE)
                                     };
+
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
 
                                     // Collect outlines to check for default expansion
@@ -3405,15 +3421,10 @@ impl OutlinePanel {
                                     None
                                 };
 
-                                // Now check which outlines have children and should be collapsed
                                 if let Some((debounce, outlines_to_check)) = outlines_to_check {
                                     for outline in outlines_to_check {
-                                        let outline_entry = OutlineEntryOutline {
-                                            buffer_id,
-                                            excerpt_id,
-                                            outline: outline.clone(),
-                                        };
-                                        if outline_panel.has_outline_children(&outline_entry, cx) {
+                                        let outline_key = (outline.range.clone(), outline.depth);
+                                        if outlines_with_children.contains(&outline_key) {
                                             outline_panel.collapsed_entries.insert(
                                                 CollapsedEntry::Outline(
                                                     buffer_id,
