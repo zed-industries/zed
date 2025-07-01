@@ -46,6 +46,7 @@ use std::{
     sync::Arc,
 };
 use telemetry_events::LocationData;
+use thiserror::Error;
 use util::ResultExt;
 
 pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
@@ -526,6 +527,22 @@ pub fn execute_run(
     Ok(())
 }
 
+#[derive(Debug, Error)]
+pub(crate) enum ServerPathError {
+    #[error("Failed to create server_dir `{path}`")]
+    CreateServerDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+    #[error("Failed to create logs_dir `{path}`")]
+    CreateLogsDir {
+        #[source]
+        source: std::io::Error,
+        path: PathBuf,
+    },
+}
+
 #[derive(Clone, Debug)]
 struct ServerPaths {
     log_file: PathBuf,
@@ -536,10 +553,19 @@ struct ServerPaths {
 }
 
 impl ServerPaths {
-    fn new(identifier: &str) -> Result<Self> {
+    fn new(identifier: &str) -> Result<Self, ServerPathError> {
         let server_dir = paths::remote_server_state_dir().join(identifier);
-        std::fs::create_dir_all(&server_dir)?;
-        std::fs::create_dir_all(&logs_dir())?;
+        std::fs::create_dir_all(&server_dir).map_err(|source| {
+            ServerPathError::CreateServerDir {
+                source,
+                path: server_dir.clone(),
+            }
+        })?;
+        let log_dir = logs_dir();
+        std::fs::create_dir_all(log_dir).map_err(|source| ServerPathError::CreateLogsDir {
+            source: source,
+            path: log_dir.clone(),
+        })?;
 
         let pid_file = server_dir.join("server.pid");
         let stdin_socket = server_dir.join("stdin.sock");
