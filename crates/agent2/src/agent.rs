@@ -4,17 +4,17 @@ mod templates;
 mod tests;
 mod tools;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{channel::mpsc, future};
 use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
-    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    Role, StopReason,
+    CompletionIntent, CompletionMode, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use project::Project;
-use schemars::{schema::RootSchema, JsonSchema};
+use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
@@ -35,6 +35,7 @@ trait Prompt {
 
 pub struct Agent {
     messages: Vec<AgentMessage>,
+    completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
@@ -50,11 +51,16 @@ impl Agent {
     pub fn new(templates: Arc<Templates>) -> Self {
         Self {
             messages: Vec::new(),
+            completion_mode: CompletionMode::Normal,
             system_prompts: Vec::new(),
             running_turn: None,
             tools: BTreeMap::default(),
             templates,
         }
+    }
+
+    pub fn set_mode(&mut self, mode: CompletionMode) {
+        self.completion_mode = mode;
     }
 
     pub fn messages(&self) -> &[AgentMessage] {
@@ -92,9 +98,11 @@ impl Agent {
         self.running_turn = Some(cx.spawn(async move |thread, cx| {
             let turn_result = async {
                 // Perform one request, then keep looping if the model makes tool calls.
+                let mut completion_intent = CompletionIntent::UserPrompt;
                 loop {
-                    let request =
-                        thread.update(cx, |thread, cx| thread.build_completion_request(cx))?;
+                    let request = thread.update(cx, |thread, cx| {
+                        thread.build_completion_request(completion_intent, cx)
+                    })?;
 
                     // println!(
                     //     "request: {}",
@@ -141,6 +149,7 @@ impl Agent {
                             });
                         })
                         .ok();
+                    completion_intent = CompletionIntent::ToolResults;
                 }
 
                 Ok(())
@@ -185,7 +194,9 @@ impl Agent {
 
         match event {
             Text(new_text) => self.handle_text_event(new_text, cx),
-            Thinking { .. } => {}
+            Thinking { text, signature } => {
+                todo!()
+            }
             ToolUse(tool_use) => {
                 return self.handle_tool_use_event(tool_use, cx);
             }
@@ -197,6 +208,14 @@ impl Agent {
             }
             UsageUpdate(_) => {}
             Stop(stop_reason) => self.handle_stop_event(stop_reason),
+            StatusUpdate(_completion_request_status) => {}
+            RedactedThinking { data } => todo!(),
+            ToolUseJsonParseError {
+                id,
+                tool_name,
+                raw_input,
+                json_parse_error,
+            } => todo!(),
         }
 
         None
@@ -206,6 +225,7 @@ impl Agent {
         match stop_reason {
             StopReason::EndTurn | StopReason::ToolUse => {}
             StopReason::MaxTokens => todo!(),
+            StopReason::Refusal => todo!(),
         }
     }
 
@@ -259,22 +279,28 @@ impl Agent {
                         tool_use_id: tool_use.id,
                         tool_name: tool_use.name,
                         is_error: false,
-                        content: Arc::from(tool_output),
+                        content: LanguageModelToolResultContent::Text(Arc::from(tool_output)),
+                        output: None,
                     },
                     Err(error) => LanguageModelToolResult {
                         tool_use_id: tool_use.id,
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: Arc::from(error.to_string()),
+                        content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
+                        output: None,
                     },
                 }
             }))
         } else {
             Some(Task::ready(LanguageModelToolResult {
-                content: Arc::from(format!("No tool named {} exists", tool_use.name)),
+                content: LanguageModelToolResultContent::Text(Arc::from(format!(
+                    "No tool named {} exists",
+                    tool_use.name
+                ))),
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
+                output: None,
             }))
         }
     }
@@ -294,10 +320,16 @@ impl Agent {
         self.messages.last_mut().unwrap()
     }
 
-    fn build_completion_request(&self, cx: &mut App) -> LanguageModelRequest {
+    fn build_completion_request(
+        &self,
+        completion_intent: CompletionIntent,
+        cx: &mut App,
+    ) -> LanguageModelRequest {
         LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: Some(completion_intent),
+            mode: Some(self.completion_mode),
             messages: self.build_request_messages(),
             tools: self
                 .tools
@@ -312,6 +344,7 @@ impl Agent {
                     })
                 })
                 .collect(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: None,
         }
@@ -336,17 +369,18 @@ where
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
     fn name(&self) -> SharedString;
-    fn description(&self, cx: &mut App) -> SharedString {
+    fn description(&self, _cx: &mut App) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
-        schema
-            .schema
-            .metadata
-            .and_then(|md| md.description.map(Into::into))
-            .unwrap_or_default()
+        SharedString::new(
+            schema
+                .get("description")
+                .and_then(|description| description.as_str())
+                .unwrap_or_default(),
+        )
     }
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> RootSchema {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Schema {
         assistant_tools::root_schema_for::<Self::Input>(format)
     }
 

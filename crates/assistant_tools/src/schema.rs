@@ -22,7 +22,7 @@ fn schema_to_json(
     Ok(value)
 }
 
-fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
+pub fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
     let mut generator = match format {
         LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07().into_generator(),
         // TODO: Gemini docs mention using a subset of OpenAPI 3, so this may benefit from using

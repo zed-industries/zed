@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::SharedString;
 use handlebars::Handlebars;
 use rust_embed::RustEmbed;
 use serde::Serialize;

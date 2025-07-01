@@ -12,7 +12,7 @@ use gpui::{
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
-use zed_llm_client::{CompletionIntent, CompletionMode};
+pub use zed_llm_client::{CompletionIntent, CompletionMode};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct LanguageModelImage {

@@ -4,6 +4,7 @@ members = [
     "crates/activity_indicator",
     "crates/agent_ui",
     "crates/agent",
+    "crates/agent2",
     "crates/agent_settings",
     "crates/anthropic",
     "crates/askpass",

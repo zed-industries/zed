@@ -1,5 +1,5 @@
 use super::*;
-use client::{proto::language_server_prompt_request, Client, UserStore};
+use client::{Client, UserStore, proto::language_server_prompt_request};
 use fs::FakeFs;
 use gpui::{AppContext, TestAppContext};
 use language_model::LanguageModelRegistry;
@@ -69,19 +69,21 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         vec![StopReason::ToolUse, StopReason::EndTurn]
     );
     agent.update(cx, |agent, _cx| {
-        assert!(agent
-            .messages
-            .last()
-            .unwrap()
-            .content
-            .iter()
-            .any(|content| {
-                if let MessageContent::Text(text) = content {
-                    text.contains("Ding")
-                } else {
-                    false
-                }
-            }));
+        assert!(
+            agent
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .iter()
+                .any(|content| {
+                    if let MessageContent::Text(text) = content {
+                        text.contains("Ding")
+                    } else {
+                        false
+                    }
+                })
+        );
     });
 }
 
@@ -220,7 +222,7 @@ async fn setup(cx: &mut TestAppContext) -> AgentTest {
             let client = Client::production(cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+            language_models::init(user_store.clone(), client.clone(), cx);
 
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
