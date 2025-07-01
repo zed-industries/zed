@@ -5306,6 +5306,7 @@ impl LspStore {
                     .collect::<Result<Vec<Vec<_>>>>()?
                     .into_iter()
                     .flatten()
+                    .dedup()
                     .collect())
             })
         } else {
@@ -5320,6 +5321,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flat_map(|(_, definition)| definition)
+                    .dedup()
                     .collect())
             })
         }
@@ -5377,6 +5379,7 @@ impl LspStore {
                     .collect::<Result<Vec<Vec<_>>>>()?
                     .into_iter()
                     .flatten()
+                    .dedup()
                     .collect())
             })
         } else {
@@ -5391,6 +5394,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flat_map(|(_, declaration)| declaration)
+                    .dedup()
                     .collect())
             })
         }
@@ -5448,6 +5452,7 @@ impl LspStore {
                     .collect::<Result<Vec<Vec<_>>>>()?
                     .into_iter()
                     .flatten()
+                    .dedup()
                     .collect())
             })
         } else {
@@ -5462,6 +5467,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flat_map(|(_, type_definition)| type_definition)
+                    .dedup()
                     .collect())
             })
         }
@@ -5519,6 +5525,7 @@ impl LspStore {
                     .collect::<Result<Vec<Vec<_>>>>()?
                     .into_iter()
                     .flatten()
+                    .dedup()
                     .collect())
             })
         } else {
@@ -5533,6 +5540,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flat_map(|(_, implementation)| implementation)
+                    .dedup()
                     .collect())
             })
         }
@@ -5590,6 +5598,7 @@ impl LspStore {
                     .collect::<Result<Vec<Vec<_>>>>()?
                     .into_iter()
                     .flatten()
+                    .dedup()
                     .collect())
             })
         } else {
@@ -5604,6 +5613,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flat_map(|(_, references)| references)
+                    .dedup()
                     .collect())
             })
         }

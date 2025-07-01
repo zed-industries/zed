@@ -695,7 +695,7 @@ pub struct MarkupContent {
     pub value: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LocationLink {
     pub origin: Option<Location>,
     pub target: Location,
