@@ -2000,7 +2000,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_inlay_utf8_boundaries_comprehensive(cx: &mut App) {
+    fn test_inlay_utf8_boundaries(cx: &mut App) {
         init_test(cx);
 
         struct TestCase {
