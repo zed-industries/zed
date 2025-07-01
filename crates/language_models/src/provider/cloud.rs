@@ -269,13 +269,17 @@ impl State {
         llm_api_token: LlmApiToken,
     ) -> Result<ListModelsResponse> {
         let http_client = &client.http_client();
-        let token = llm_api_token.acquire(&client).await?;
 
-        let request = http_client::Request::builder()
+        // token is optional here, it's provided because some models are conditionally available
+        let token = llm_api_token.acquire(&client).await.ok();
+
+        let mut request = http_client::Request::builder()
             .method(Method::GET)
-            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
-            .header("Authorization", format!("Bearer {token}"))
-            .body(AsyncBody::empty())?;
+            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref());
+        if let Some(token) = token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+        let request = request.body(AsyncBody::empty())?;
         let mut response = http_client
             .send(request)
             .await
