@@ -17,8 +17,8 @@ use settings::KeybindSource;
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render, SharedString, Styled as _,
-    Window, prelude::*,
+    ActiveTheme as _, App, BorrowAppContext, ContextMenu, ParentElement as _, Render, SharedString,
+    Styled as _, Window, prelude::*, right_click_menu,
 };
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
@@ -514,21 +514,6 @@ impl Render for KeymapEditor {
                     .striped()
                     .column_widths([rems(16.), rems(16.), rems(16.), rems(32.), rems(8.)])
                     .header(["Action", "Arguments", "Keystrokes", "Context", "Source"])
-                    .map_row(
-                        cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
-                            let is_selected = this.selected_index == Some(row_index);
-                            row.id(("keymap-table-row", row_index))
-                                .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                    this.selected_index = Some(row_index);
-                                }))
-                                .border_2()
-                                .border_color(transparent_black())
-                                .when(is_selected, |row| {
-                                    row.border_color(cx.theme().colors().panel_focused_border)
-                                })
-                                .into_any_element()
-                        }),
-                    )
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
@@ -559,6 +544,31 @@ impl Render for KeymapEditor {
                                     Some([action, action_input, keystrokes, context, source])
                                 })
                                 .collect()
+                        }),
+                    )
+                    .map_row(
+                        cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
+                            let is_selected = this.selected_index == Some(row_index);
+                            let row = row
+                                .id(("keymap-table-row", row_index))
+                                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                    this.selected_index = Some(row_index);
+                                }))
+                                .border_2()
+                                .border_color(transparent_black())
+                                .when(is_selected, |row| {
+                                    row.border_color(cx.theme().colors().panel_focused_border)
+                                });
+
+                            let this = cx.entity();
+                            right_click_menu(("keymap-table-row-menu", row_index))
+                                .trigger(|_| row)
+                                .menu(|window, cx| {
+                                    ContextMenu::build(window, cx, |menu, _window, _cx| {
+                                        menu.header("Context Menu")
+                                    })
+                                })
+                                .into_any_element()
                         }),
                     ),
             )
