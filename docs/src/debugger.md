@@ -127,64 +127,21 @@ See the [TypeScript language documentation](languages/typescript.md#debugging) f
 
 #### Python
 
-##### Debug Active File
+See the [Python language documentation](languages/python.md#debugging) for examples.
 
-```json
-[
-  {
-    "label": "Python Active File",
-    "adapter": "Debugpy",
-    "program": "$ZED_FILE",
-    "request": "launch"
-  }
-]
-```
+#### Rust
 
-##### Flask App
+See the [Rust language documentation](languages/rust.md#debugging) for examples.
 
-For a common Flask Application with a file structure similar to the following:
+#### C
 
-```
-.venv/
-app/
-  init.py
-  main.py
-  routes.py
-templates/
-  index.html
-static/
-  style.css
-requirements.txt
-```
+See the [C language documentation](languages/c.md#debugging) for examples.
 
-…the following configuration can be used:
+#### C++
 
-```json
-[
-  {
-    "label": "Python: Flask",
-    "adapter": "Debugpy",
-    "request": "launch",
-    "module": "app",
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "env": {
-      "FLASK_APP": "app",
-      "FLASK_DEBUG": "1"
-    },
-    "args": [
-      "run",
-      "--reload", // Enables Flask reloader that watches for file changes
-      "--debugger" // Enables Flask debugger
-    ],
-    "autoReload": {
-      "enable": true
-    },
-    "jinja": true,
-    "justMyCode": true
-  }
-]
-```
+See the [C++ language documentation](languages/cpp.md#debugging) for examples.
 
+<<<<<<< HEAD
 #### Rust/C++/C
 
 > For CodeLLDB, you might want to set `sourceLanguages` in your launch configuration based on the source code language.
@@ -202,38 +159,8 @@ requirements.txt
 ]
 ```
 
-##### Build binary then debug
-
-```json
-[
-  {
-    "label": "Build & Debug native binary",
-    "build": {
-      "command": "cargo",
-      "args": ["build"]
-    },
-    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
-    "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
-  }
-]
-```
-
-##### Automatically locate a debug target based on build command
-
-```json
-[
-  {
-    "label": "Build & Debug native binary",
-    "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
-    // Zed can infer the path to a debuggee based on the build command
-    "build": {
-      "command": "cargo",
-      "args": ["build"]
-    },
-  }
-]
-```
+=======
+>>>>>>> 0f70f846dc (move out c/c++/rust)
 
 #### Go
 
