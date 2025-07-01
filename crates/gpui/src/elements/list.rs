@@ -1171,17 +1171,17 @@ mod test {
             offset_in_item: px(5.0),
         };
 
-        // Test positive distance: start at item 1, move forward 30px
+        // Test positive distance: start at item 1, move down 30px
         let positive_result = state.offset_by(&start_offset, px(30.0));
 
-        // Should move to item 2 (1 + 1), with offset 15px (5 + 30 - 20)
+        // Should move to item 2
         assert_eq!(positive_result.item_ix, 2);
         assert_eq!(positive_result.offset_in_item, px(15.0));
 
-        // Test negative distance: start at item 2, move backward 30px
+        // Test negative distance: start at item 2, move up 30px
         let negative_result = state.offset_by(&positive_result, px(-30.0));
 
-        // Should move back to item 1, with offset 5px (15 - 30 + 20)
+        // Should move back to item 1
         assert_eq!(negative_result.item_ix, 1);
         assert_eq!(negative_result.offset_in_item, px(5.0));
 
