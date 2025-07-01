@@ -1404,6 +1404,9 @@ async fn sync_model_request_usage_with_stripe(
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
+    log::info!("Stripe usage sync: Starting");
+    let started_at = Utc::now();
+
     let staff_users = app.db.get_staff_users().await?;
     let staff_user_ids = staff_users
         .iter()
@@ -1447,6 +1450,10 @@ async fn sync_model_request_usage_with_stripe(
     let claude_3_7_sonnet_max = stripe_billing
         .find_price_by_lookup_key("claude-3-7-sonnet-requests-max")
         .await?;
+
+    let usage_meter_count = usage_meters.len();
+
+    log::info!("Stripe usage sync: Syncing {usage_meter_count} usage meters");
 
     for (usage_meter, usage) in usage_meters {
         maybe!(async {
@@ -1503,6 +1510,11 @@ async fn sync_model_request_usage_with_stripe(
         .await
         .log_err();
     }
+
+    log::info!(
+        "Stripe usage sync: Synced {usage_meter_count} usage meters in {:?}",
+        Utc::now() - started_at
+    );
 
     Ok(())
 }
