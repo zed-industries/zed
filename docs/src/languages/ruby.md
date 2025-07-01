@@ -49,10 +49,10 @@ You can skip step 1 and force using the system executable by setting `use_bundle
   "lsp": {
     "<SERVER_NAME>": {
       "settings": {
-        "use_bundler": false,
-      },
-    },
-  },
+        "use_bundler": false
+      }
+    }
+  }
 }
 ```
 
@@ -357,8 +357,8 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
     "adapter": "rdbg",
     "request": "launch",
     "script": "$ZED_FILE",
-    "cwd": "$ZED_WORKTREE_ROOT",
-  },
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
 ]
 ```
 
@@ -374,8 +374,8 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
     "args": ["server"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "env": {
-      "RUBY_DEBUG_OPEN": "true",
-    },
-  },
+      "RUBY_DEBUG_OPEN": "true"
+    }
+  }
 ]
 ```

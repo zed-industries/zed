@@ -1946,7 +1946,7 @@ Example:
 
 ```json
 {
-  "multi_cursor_modifier": "alt",
+  "multi_cursor_modifier": "alt"
 }
 ```
 
@@ -1954,7 +1954,7 @@ Example:
 
 ```json
 {
-  "multi_cursor_modifier": "cmd_or_ctrl", // alias: "cmd", "ctrl"
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
 ```
 

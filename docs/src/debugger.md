@@ -13,21 +13,22 @@ and more, in a consistent manner across different programming languages and runt
 
 ## Supported Languages
 
-To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](extensions/debugger-extensions.md). The following languages currently have debug adapters available:
+To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
 
 <!-- keep this sorted -->
-- [C](languages/c.md#debugging) (built-in)
-- [C++](languages/cpp.md#debugging) (built-in)
-- [Go](languages/go.md#debugging) (built-in)
-- [JavaScript](languages/javascript.md#debugging) (built-in)
-- [PHP](languages/php.md#debugging) (built-in)
-- [Python](languages/python.md#debugging) (built-in)
-- [Ruby](languages/ruby.md#debugging) (provided by extension)
-- [Rust](languages/rust.md#debugging) (built-in)
-- [Swift](languages/swift.md#debugging) (provided by extension)
-- [TypeScript](languages/typescript.md#debugging) (built-in)
 
-> If your language isn't listed, you can contribute by adding a debug adapter for it. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
+- [C](./languages/c.md#debugging) (built-in)
+- [C++](./languages/cpp.md#debugging) (built-in)
+- [Go](./languages/go.md#debugging) (built-in)
+- [JavaScript](./languages/javascript.md#debugging) (built-in)
+- [PHP](./languages/php.md#debugging) (built-in)
+- [Python](./languages/python.md#debugging) (built-in)
+- [Ruby](./languages/ruby.md#debugging) (provided by extension)
+- [Rust](./languages/rust.md#debugging) (built-in)
+- [Swift](./languages/swift.md#debugging) (provided by extension)
+- [TypeScript](./languages/typescript.md#debugging) (built-in)
+
+> If your language isn't listed, you can contribute by adding a debug adapter for it. Check out our [debugger extensions](./extensions/debugger-extensions.md) documentation for more information.
 
 Follow those links for language- and adapter-specific information and examples, or read on for more about Zed's general debugging features that apply to all adapters.
 
