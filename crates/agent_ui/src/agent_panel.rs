@@ -2598,7 +2598,7 @@ impl AgentPanel {
                         Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
                             parent.child(Banner::new().severity(ui::Severity::Warning).child(
                                 h_flex().w_full().children(provider.render_accept_terms(
-                                    LanguageModelProviderTosView::ThreadtEmptyState,
+                                    LanguageModelProviderTosView::ThreadEmptyState,
                                     cx,
                                 )),
                             ))
