@@ -441,11 +441,9 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
 fn render_accept_terms(
     view_kind: LanguageModelProviderTosView,
-    accept_terms_in_progress: bool,
+    accept_terms_of_service_in_progress: bool,
     accept_terms_callback: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let accept_terms_disabled = accept_terms_in_progress;
-
     let thread_fresh_start = matches!(view_kind, LanguageModelProviderTosView::ThreadFreshStart);
     let thread_empty_state = matches!(view_kind, LanguageModelProviderTosView::ThreadEmptyState);
 
@@ -470,7 +468,7 @@ fn render_accept_terms(
                 this.style(ButtonStyle::Tinted(TintColor::Warning))
                     .label_size(LabelSize::Small)
             })
-            .disabled(accept_terms_disabled)
+            .disabled(accept_terms_of_service_in_progress)
             .on_click(move |_, window, cx| (accept_terms_callback)(window, cx)),
     );
 
@@ -1147,13 +1145,13 @@ impl RenderOnce for ZedAIConfiguration {
 
 struct ConfigurationView {
     state: Entity<State>,
-    accept_terms_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+    accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl ConfigurationView {
     fn new(state: Entity<State>) -> Self {
-        let accept_terms_callback = Arc::new({
+        let accept_terms_of_service_callback = Arc::new({
             let state = state.clone();
             move |_window: &mut Window, cx: &mut App| {
                 state.update(cx, |state, cx| {
@@ -1173,7 +1171,7 @@ impl ConfigurationView {
 
         Self {
             state,
-            accept_terms_callback,
+            accept_terms_of_service_callback,
             sign_in_callback,
         }
     }
@@ -1182,21 +1180,16 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
-        let is_connected = !state.is_signed_out();
         let user_store = state.user_store.read(cx);
-        let plan = user_store.current_plan();
-        let subscription_period = user_store.subscription_period();
-        let eligible_for_trial = user_store.trial_started_at().is_none();
-        let has_accepted_terms_of_service = state.has_accepted_terms_of_service(cx);
 
         ZedAIConfiguration {
-            is_connected,
-            plan,
-            subscription_period,
-            eligible_for_trial,
-            has_accepted_terms_of_service,
+            is_connected: !state.is_signed_out(),
+            plan: user_store.current_plan(),
+            subscription_period: user_store.subscription_period(),
+            eligible_for_trial: user_store.trial_started_at().is_none(),
+            has_accepted_terms_of_service: state.has_accepted_terms_of_service(cx),
             accept_terms_of_service_in_progress: state.accept_terms_of_service_task.is_some(),
-            accept_terms_of_service_callback: self.accept_terms_callback.clone(),
+            accept_terms_of_service_callback: self.accept_terms_of_service_callback.clone(),
             sign_in_callback: self.sign_in_callback.clone(),
         }
     }
