@@ -7,11 +7,11 @@ use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, Subscription,
-    WeakEntity, actions, div,
+    AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText,
+    Subscription, WeakEntity, actions, div,
 };
-use language::{HighlightId, Language, LanguageConfig};
+use language::{Language, LanguageConfig};
 use settings::KeybindSource;
 
 use util::ResultExt;
@@ -169,53 +169,53 @@ impl KeymapEditor {
         this
     }
 
-    fn update_matches(&mut self, cx: &mut Context<Self>) {
-        let query = self.filter_editor.read(cx).text(cx);
-        let string_match_candidates = self.string_match_candidates.clone();
-        let executor = cx.background_executor().clone();
-        let keybind_count = self.keybindings.len();
-        let query = command_palette::normalize_action_query(&query);
-        let fuzzy_match = cx.background_spawn(async move {
-            fuzzy::match_strings(
-                &string_match_candidates,
-                &query,
-                true,
-                true,
-                keybind_count,
-                &Default::default(),
-                executor,
-            )
-            .await
-        });
+    fn current_query(&self, cx: &mut Context<Self>) -> String {
+        self.filter_editor.read(cx).text(cx)
+    }
 
-        cx.spawn(async move |this, cx| {
-            let matches = fuzzy_match.await;
-            this.update(cx, |this, cx| {
-                this.selected_index.take();
-                this.scroll_to_item(0, ScrollStrategy::Top, cx);
-                this.matches = matches;
-                cx.notify();
-            })
+    fn update_matches(&self, cx: &mut Context<Self>) {
+        let query = self.current_query(cx);
+
+        cx.spawn(async move |this, cx| Self::process_query(this, query, cx).await)
+            .detach();
+    }
+
+    async fn process_query(
+        this: WeakEntity<Self>,
+        query: String,
+        cx: &mut AsyncApp,
+    ) -> Result<(), db::anyhow::Error> {
+        let query = command_palette::normalize_action_query(&query);
+        let (string_match_candidates, keybind_count) = this.read_with(cx, |this, _| {
+            (this.string_match_candidates.clone(), this.keybindings.len())
+        })?;
+        let executor = cx.background_executor().clone();
+        let matches = fuzzy::match_strings(
+            &string_match_candidates,
+            &query,
+            true,
+            true,
+            keybind_count,
+            &Default::default(),
+            executor,
+        )
+        .await;
+        this.update(cx, |this, cx| {
+            this.selected_index.take();
+            this.scroll_to_item(0, ScrollStrategy::Top, cx);
+            this.matches = matches;
+            cx.notify();
         })
-        .detach();
     }
 
     fn process_bindings(
+        json_language: Arc<Language>,
         cx: &mut Context<Self>,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
         let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names());
-
-        // Create JSON language for syntax highlighting
-        let json_language = Arc::new(Language::new(
-            LanguageConfig {
-                name: "JSON".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_json::LANGUAGE.into()),
-        ));
 
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
@@ -273,24 +273,63 @@ impl KeymapEditor {
         (processed_bindings, string_match_candidates)
     }
 
-    fn update_keybindings(self: &mut KeymapEditor, cx: &mut Context<KeymapEditor>) {
-        let (key_bindings, string_match_candidates) = Self::process_bindings(cx);
-        self.keybindings = key_bindings;
-        self.string_match_candidates = Arc::new(string_match_candidates);
-        self.matches = self
-            .string_match_candidates
-            .iter()
-            .enumerate()
-            .map(|(ix, candidate)| StringMatch {
-                candidate_id: ix,
-                score: 0.0,
-                positions: vec![],
-                string: candidate.string.clone(),
-            })
-            .collect();
+    fn update_keybindings(&mut self, cx: &mut Context<KeymapEditor>) {
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let json_language = Self::load_json_language(workspace, cx).await;
+            let query = this.update(cx, |this, cx| {
+                let (key_bindings, string_match_candidates) =
+                    Self::process_bindings(json_language.clone(), cx);
+                this.keybindings = key_bindings;
+                this.string_match_candidates = Arc::new(string_match_candidates);
+                this.matches = this
+                    .string_match_candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, candidate)| StringMatch {
+                        candidate_id: ix,
+                        score: 0.0,
+                        positions: vec![],
+                        string: candidate.string.clone(),
+                    })
+                    .collect();
+                this.current_query(cx)
+            })?;
+            // calls cx.notify
+            Self::process_query(this, query, cx).await
+        })
+        .detach_and_log_err(cx);
+    }
 
-        self.update_matches(cx);
-        cx.notify();
+    async fn load_json_language(
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncApp,
+    ) -> Arc<Language> {
+        let default = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JSON".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_json::LANGUAGE.into()),
+        ));
+        let json_language_task = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .languages()
+                    .language_for_name("JSON")
+            })
+            // todo: anyhow context
+            .log_err();
+        let Some(json_language_task) = json_language_task else {
+            return default;
+        };
+        // todo: anyhow context
+        let Some(json_language) = json_language_task.await.log_err() else {
+            return default;
+        };
+        return json_language;
     }
 
     fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
