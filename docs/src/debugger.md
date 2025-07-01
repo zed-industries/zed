@@ -26,8 +26,6 @@ Zed supports a variety of debug adapters for different programming languages out
 
 - PHP ([Xdebug](https://xdebug.org/)): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
 
-- Ruby ([rdbg](https://github.com/ruby/debug)): Provides debugging for Ruby.
-
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
 
 > Is your desired debugger not listed? You can install a [Debug Adapter extension](https://zed.dev/extensions?filter=debug-adapters) to add support for your favorite debugger.
@@ -141,136 +139,13 @@ See the [C language documentation](languages/c.md#debugging) for examples.
 
 See the [C++ language documentation](languages/cpp.md#debugging) for examples.
 
-
 #### Go
 
-Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications.
-Zed will automatically create debug scenarios for `func main` in your main packages, and also
-for any tests, so you can use the Play button in the gutter to debug these without configuration.
-
-##### Debug Go Packages
-
-To debug a specific package, you can do so by setting the Delve mode to "debug". In this case "program" should be set to the package name.
-
-```json
-[
-  {
-    "label": "Go (Delve)",
-    "adapter": "Delve",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "mode": "debug"
-  }
-]
-```
-
-```json
-[
-  {
-    "label": "Run server",
-    "adapter": "Delve",
-    "request": "launch",
-    "mode": "debug",
-    // For Delve, the program can be a package name
-    "program": "./cmd/server"
-    // "args": [],
-    // "buildFlags": [],
-  }
-]
-```
-
-##### Debug Go Tests
-
-To debug the tests for a package, set the Delve mode to "test".
-The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
-
-```json
-[
-  {
-    "label": "Run integration tests",
-    "adapter": "Delve",
-    "request": "launch",
-    "mode": "test",
-    "program": ".",
-    "buildFlags": ["-tags", "integration"]
-    // To filter down to just the test your cursor is in:
-    // "args": ["-test.run", "$ZED_SYMBOL"]
-  }
-]
-```
-
-##### Build and debug separately
-
-If you need to build your application with a specific command, you can use the "exec" mode of Delve. In this case "program" should point to an executable,
-and the "build" command should build that.
-
-```json
-{
-  "label": "Debug Prebuilt Unit Tests",
-  "adapter": "Delve",
-  "request": "launch",
-  "mode": "exec",
-  "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
-  "args": ["-test.v", "-test.run=${ZED_SYMBOL}"],
-  "build": {
-    "command": "go",
-    "args": [
-      "test",
-      "-c",
-      "-tags",
-      "unit",
-      "-gcflags\"all=-N -l\"",
-      "-o",
-      "__debug_unit",
-      "./pkg/..."
-    ]
-  }
-}
-```
-
-##### Attaching to an existing instance of Delve
-
-You might find yourself needing to connect to an existing instance of Delve that's not necessarily running on your machine; in such case, you can use `tcp_arguments` to instrument Zed's connection to Delve.
-
-```
-{
-  "adapter": "Delve",
-  "label": "Connect to a running Delve instance",
-  "program": "/Users/zed/Projects/language_repositories/golang/hello/hello",
-  "cwd": "/Users/zed/Projects/language_repositories/golang/hello",
-  "args": [],
-  "env": {},
-  "request": "launch",
-  "mode": "exec",
-  "stopOnEntry": false,
-  "tcp_connection": { "host": "123.456.789.012", "port": 53412 }
-}
-```
-
-In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that _there will be no terminal_ in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
+See the [Go language documentation](languages/go.md#debugging) for examples.
 
 #### Ruby
 
-To run a ruby task in the debugger, you will need to configure it in the `.zed/debug.json` file in your project. We don't yet have automatic detection of ruby tasks, nor do we support connecting to an existing process.
-
-The configuration should look like this:
-
-```json
-[
-  {
-    "adapter": "Ruby",
-    "label": "Run CLI",
-    "script": "cli.rb"
-    // If you want to customize how the script is run (for example using bundle exec)
-    // use "command" instead.
-    // "command": "bundle exec cli.rb"
-    //
-    // "args": []
-    // "env": {}
-    // "cwd": ""
-  }
-]
-```
+See the [Ruby language documentation](languages/ruby.md#debugging) for examples.
 
 ## Breakpoints
 

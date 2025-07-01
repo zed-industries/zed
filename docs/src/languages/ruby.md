@@ -9,6 +9,7 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-ex
   - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
   - [solargraph](https://github.com/castwide/solargraph)
   - [rubocop](https://github.com/rubocop/rubocop)
+- Debug Adapter: [`rdbg`](https://github.com/ruby/debug)
 
 The Ruby extension also provides support for ERB files.
 
