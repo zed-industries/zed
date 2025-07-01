@@ -100,15 +100,23 @@ impl OnboardingPage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnboardingFocus {
-    Navigation,
-    Page,
+pub enum NavigationFocusItem {
+    SignIn,
+    Basics,
+    Editing,
+    AiSetup,
+    Welcome,
+    Next,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageFocusItem(pub usize);
 
 pub struct OnboardingUI {
     focus_handle: FocusHandle,
     current_page: OnboardingPage,
-    current_focus: OnboardingFocus,
+    nav_focus: NavigationFocusItem,
+    page_focus: [PageFocusItem; 4],
     completed_pages: [bool; 4],
 
     // Workspace reference for Item trait
@@ -173,7 +181,7 @@ impl OnboardingUI {
         Self {
             focus_handle: cx.focus_handle(),
             current_page: OnboardingPage::Basics,
-            current_focus: OnboardingFocus::Page,
+            current_focus: OnboardingFocus::default(),
             completed_pages: [false; 4],
             workspace: workspace.weak_handle(),
             workspace_id: workspace.database_id(),
@@ -324,10 +332,15 @@ impl OnboardingUI {
                             .py(px(24.))
                             .pl(px(24.))
                             .pr(px(12.))
-                            .child(Vector::new(VectorName::ZedLogo, rems(2.), rems(2.)))
+                            .child(
+                                Vector::new(VectorName::ZedLogo, rems(2.), rems(2.))
+                                    .color(Color::Custom(cx.theme().colors().icon.opacity(0.5))),
+                            )
                             .child(
                                 Button::new("sign_in", "Sign in")
+                                    .color(Color::Muted)
                                     .label_size(LabelSize::Small)
+                                    .size(ButtonSize::Compact)
                                     .on_click(cx.listener(move |_, _, window, cx| {
                                         let client = client.clone();
                                         window
@@ -346,6 +359,7 @@ impl OnboardingUI {
                         v_flex()
                             .gap_px()
                             .py(px(16.))
+                            .gap(px(12.))
                             .child(self.render_nav_item(
                                 OnboardingPage::Basics,
                                 "The Basics",
@@ -416,7 +430,7 @@ impl OnboardingUI {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
-        h_flex().w_full().p_4().child(
+        h_flex().w_full().p(px(12.)).pl(px(24.)).child(
             Button::new(
                 "next",
                 if self.current_page == OnboardingPage::Welcome {
