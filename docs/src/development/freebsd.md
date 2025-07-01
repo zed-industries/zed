@@ -40,11 +40,9 @@ cargo run -p cli
 
 ### WebRTC Notice
 
-Currently, building `webrtc-sys` on FreeBSD fails due to missing upstream support and unavailable prebuilt binaries. As a result, some collaboration features that depend on WebRTC are temporarily disabled.
+Currently, building `webrtc-sys` on FreeBSD fails due to missing upstream support and unavailable prebuilt binaries. As a result, some collaboration features (audio calls and screensharing) that depend on WebRTC are temporarily disabled.
 
-This workaround has been merged via PR #33162, which temporarily disables LiveKit/WebRTC support to allow Zed to build successfully on FreeBSD.
-
-More progress and discussion can be found in #15309 , #29500 .
+See [Issue #15309: FreeBSD Support] and [Discussion #29550: Unofficial FreeBSD port for Zed] for more.
 
 ## Troubleshooting
 
