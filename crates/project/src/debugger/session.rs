@@ -1479,6 +1479,28 @@ impl Session {
             }
             Events::Capabilities(event) => {
                 self.capabilities = self.capabilities.merge(event.capabilities);
+
+                // The adapter might've enabled new exception breakpoints (or disabled existing ones).
+                let recent_filters = self
+                    .capabilities
+                    .exception_breakpoint_filters
+                    .iter()
+                    .flatten()
+                    .map(|filter| (filter.filter.clone(), filter.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                for filter in recent_filters.values() {
+                    let default = filter.default.unwrap_or_default();
+                    self.exception_breakpoints
+                        .entry(filter.filter.clone())
+                        .or_insert_with(|| (filter.clone(), default));
+                }
+                self.exception_breakpoints
+                    .retain(|k, _| recent_filters.contains_key(k));
+                if self.is_started() {
+                    self.send_exception_breakpoints(cx);
+                }
+
+                // Remove the ones that no longer exist.
                 cx.notify();
             }
             Events::Memory(_) => {}
