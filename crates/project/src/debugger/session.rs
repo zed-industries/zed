@@ -1496,6 +1496,10 @@ impl Session {
                 }
                 self.exception_breakpoints
                     .retain(|k, _| recent_filters.contains_key(k));
+                if self.is_started() {
+                    self.send_exception_breakpoints(cx);
+                }
+
                 // Remove the ones that no longer exist.
                 cx.notify();
             }

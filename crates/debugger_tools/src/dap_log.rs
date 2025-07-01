@@ -434,9 +434,14 @@ impl LogStore {
 
     fn clean_sessions(&mut self, cx: &mut Context<Self>) {
         self.projects.values_mut().for_each(|project| {
-            project
-                .debug_sessions
-                .retain(|_, session| !session.is_terminated);
+            let mut allowed_terminated_sessions = 10u32;
+            project.debug_sessions.retain(|_, session| {
+                if !session.is_terminated {
+                    return true;
+                }
+                allowed_terminated_sessions = allowed_terminated_sessions.saturating_sub(1);
+                allowed_terminated_sessions > 0
+            });
         });
 
         cx.notify();

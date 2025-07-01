@@ -900,7 +900,7 @@ impl RunningState {
 
 
             let config_is_valid = request_type.is_ok();
-
+            let mut extra_config = Value::Null;
             let build_output = if let Some(build) = build {
                 let (task_template, locator_name) = match build {
                     BuildTaskDefinition::Template {
@@ -930,6 +930,7 @@ impl RunningState {
                 };
 
                 let locator_name = if let Some(locator_name) = locator_name {
+                    extra_config = config.clone();
                     debug_assert!(!config_is_valid);
                     Some(locator_name)
                 } else if !config_is_valid {
@@ -945,6 +946,7 @@ impl RunningState {
                         });
                     if let Ok(t) = task {
                         t.await.and_then(|scenario| {
+                            extra_config = scenario.config;
                             match scenario.build {
                                 Some(BuildTaskDefinition::Template {
                                     locator_name, ..
@@ -1008,13 +1010,13 @@ impl RunningState {
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
-                Some((task.resolved.clone(), locator_name))
+                Some((task.resolved.clone(), locator_name, extra_config))
             } else {
                 None
             };
 
             if config_is_valid {
-            } else if let Some((task, locator_name)) = build_output {
+            } else if let Some((task, locator_name, extra_config)) = build_output {
                 let locator_name =
                     locator_name.with_context(|| {
                         format!("Could not find a valid locator for a build task and configure is invalid with error: {}", request_type.err()
@@ -1039,6 +1041,8 @@ impl RunningState {
                     .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
 .await?;
                 config = scenario.config;
+                util::merge_non_null_json_value_into(extra_config, &mut config);
+
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
                 let Err(e) = request_type else {
