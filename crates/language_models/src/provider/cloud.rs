@@ -1106,10 +1106,17 @@ impl RenderOnce for ZedAIConfiguration {
                         .on_click(|_, _, cx| cx.open_url(ZED_PRICING_URL)),
                 )
                 .child(
-                    Button::new("upgrade", "Upgrade")
-                        .style(ButtonStyle::Subtle)
-                        .color(Color::Accent)
-                        .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                    Button::new(
+                        "upgrade",
+                        if self.plan.is_none() && self.eligible_for_trial {
+                            "Start Trial"
+                        } else {
+                            "Upgrade"
+                        },
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .color(Color::Accent)
+                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
                 )
         };
 
