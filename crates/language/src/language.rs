@@ -39,7 +39,7 @@ use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServer
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
-use schemars::{JsonSchema, json_schema};
+use schemars::{JsonSchema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -730,6 +730,13 @@ pub struct LanguageConfig {
     /// Starting and closing characters of a block comment.
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
+    /// A list of additional regex patterns that should be treated as prefixes
+    /// for creating boundaries during rewrapping, ensuring content from one
+    /// prefixed section doesn't merge with another (e.g., markdown list items).
+    /// By default, Zed treats as paragraph and comment prefixes as boundaries.
+    #[serde(default, deserialize_with = "deserialize_regex_vec")]
+    #[schemars(schema_with = "regex_vec_json_schema")]
+    pub rewrap_prefixes: Vec<Regex>,
     /// A list of language servers that are allowed to run on subranges of a given language.
     #[serde(default)]
     pub scope_opt_in_language_servers: Vec<LanguageServerName>,
@@ -909,6 +916,7 @@ impl Default for LanguageConfig {
             autoclose_before: Default::default(),
             line_comments: Default::default(),
             block_comment: Default::default(),
+            rewrap_prefixes: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
             word_characters: Default::default(),
@@ -953,6 +961,22 @@ where
         Some(regex) => serializer.serialize_str(regex.as_str()),
         None => serializer.serialize_none(),
     }
+}
+
+fn deserialize_regex_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Regex>, D::Error> {
+    let sources = Vec::<String>::deserialize(d)?;
+    let mut regexes = Vec::new();
+    for source in sources {
+        regexes.push(regex::Regex::new(&source).map_err(de::Error::custom)?);
+    }
+    Ok(regexes)
+}
+
+fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
+    json_schema!({
+        "type": "array",
+        "items": { "type": "string" }
+    })
 }
 
 #[doc(hidden)]
@@ -1829,6 +1853,14 @@ impl LanguageScope {
             self.language.config.block_comment.as_ref(),
         )
         .map(|e| (&e.0, &e.1))
+    }
+
+    /// Returns additional regex patterns that act as prefix markers for creating
+    /// boundaries during rewrapping.
+    ///
+    /// By default, Zed treats as paragraph and comment prefixes as boundaries.
+    pub fn rewrap_prefixes(&self) -> &[Regex] {
+        &self.language.config.rewrap_prefixes
     }
 
     /// Returns a list of language-specific word characters.

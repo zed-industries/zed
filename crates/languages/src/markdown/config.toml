@@ -13,6 +13,12 @@ brackets = [
     { start = "'", end = "'", close = false, newline = false },
     { start = "`", end = "`", close = false, newline = false },
 ]
+rewrap_prefixes = [
+    "[-*+]\\s+",
+    "\\d+\\.\\s+",
+    ">\\s*",
+    "[-*+]\\s+\\[[\\sx]\\]\\s+"
+]
 
 auto_indent_on_paste = false
 auto_indent_using_last_non_empty_line = false

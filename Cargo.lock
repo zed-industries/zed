@@ -4813,6 +4813,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "schemars",
