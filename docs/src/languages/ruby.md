@@ -9,6 +9,7 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-ex
   - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
   - [solargraph](https://github.com/castwide/solargraph)
   - [rubocop](https://github.com/rubocop/rubocop)
+- Debug Adapter: [`rdbg`](https://github.com/ruby/debug)
 
 The Ruby extension also provides support for ERB files.
 
@@ -43,15 +44,15 @@ For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `s
 
 You can skip step 1 and force using the system executable by setting `use_bundler` to `false` in your settings:
 
-```jsonc
+```json
 {
   "lsp": {
     "<SERVER_NAME>": {
       "settings": {
-        "use_bundler": false,
-      },
-    },
-  },
+        "use_bundler": false
+      }
+    }
+  }
 }
 ```
 
@@ -349,21 +350,21 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug a Ruby script
 
-```jsonc
+```json
 [
   {
     "label": "Debug current file",
     "adapter": "rdbg",
     "request": "launch",
     "script": "$ZED_FILE",
-    "cwd": "$ZED_WORKTREE_ROOT",
-  },
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
 ]
 ```
 
 #### Debug Rails server
 
-```jsonc
+```json
 [
   {
     "label": "Debug Rails server",
@@ -373,8 +374,8 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
     "args": ["server"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "env": {
-      "RUBY_DEBUG_OPEN": "true",
-    },
-  },
+      "RUBY_DEBUG_OPEN": "true"
+    }
+  }
 ]
 ```
