@@ -10828,13 +10828,15 @@ dependencies = [
  "gpui",
  "menu",
  "project",
+ "serde_json",
  "settings",
  "settings_ui",
  "theme",
  "ui",
  "util",
+ "vim_mode_setting",
+ "welcome",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 

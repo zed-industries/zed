@@ -1,20 +1,27 @@
 #![allow(unused, dead_code)]
 mod persistence;
+mod theme_preview;
 
-use client::Client;
+use client::{Client, TelemetrySettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
-    Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, WeakEntity, actions, prelude::*,
+    Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, UpdateGlobal, WeakEntity,
+    actions, prelude::*, svg,
 };
 use menu;
 use persistence::ONBOARDING_DB;
 
 use project::Project;
+use serde_json;
+use settings::{Settings, SettingsStore};
 use settings_ui::SettingsUiFeatureFlag;
 use std::sync::Arc;
-use ui::{ListItem, Vector, VectorName, prelude::*};
+use theme::{Theme, ThemeRegistry, ThemeSettings};
+use ui::{ListItem, ToggleState, Vector, VectorName, prelude::*};
 use util::ResultExt;
+use vim_mode_setting::VimModeSetting;
+use welcome::BaseKeymap;
 use workspace::{
     Workspace, WorkspaceId,
     item::{Item, ItemEvent, SerializableItem},
@@ -132,6 +139,8 @@ pub struct OnboardingUI {
     workspace_id: Option<WorkspaceId>,
     client: Arc<Client>,
 }
+
+impl OnboardingUI {}
 
 impl EventEmitter<ItemEvent> for OnboardingUI {}
 
@@ -286,7 +295,7 @@ impl OnboardingUI {
                 };
                 // Bounds checking for page items
                 let max_items = match self.current_page {
-                    OnboardingPage::Basics => 3,  // 3 buttons
+                    OnboardingPage::Basics => 14, // 4 themes + 7 keymaps + 3 checkboxes
                     OnboardingPage::Editing => 3, // 3 buttons
                     OnboardingPage::AiSetup => 2, // Will have 2 items
                     OnboardingPage::Welcome => 1, // Will have 1 item
@@ -329,7 +338,7 @@ impl OnboardingUI {
                 };
                 // Bounds checking for page items
                 let max_items = match self.current_page {
-                    OnboardingPage::Basics => 3,  // 3 buttons
+                    OnboardingPage::Basics => 14, // 4 themes + 7 keymaps + 3 checkboxes
                     OnboardingPage::Editing => 3, // 3 buttons
                     OnboardingPage::AiSetup => 2, // Will have 2 items
                     OnboardingPage::Welcome => 1, // Will have 1 item
@@ -390,16 +399,16 @@ impl OnboardingUI {
                 match self.current_page {
                     OnboardingPage::Basics => {
                         match item_index {
-                            0 => {
-                                // Open file action
+                            0..=3 => {
+                                // Theme selection
                                 cx.notify();
                             }
-                            1 => {
-                                // Create project action
+                            4..=10 => {
+                                // Keymap selection
                                 cx.notify();
                             }
-                            2 => {
-                                // Explore UI action
+                            11..=13 => {
+                                // Checkbox toggles (handled by their own listeners)
                                 cx.notify();
                             }
                             _ => {}
@@ -688,59 +697,362 @@ impl OnboardingUI {
         let focused_item = self.page_focus[page_index].0;
         let is_page_focused = self.focus_area == FocusArea::PageContent;
 
+        use theme_preview::ThemePreviewTile;
+
+        // Get available themes
+        let theme_registry = ThemeRegistry::default_global(cx);
+        let theme_names = theme_registry.list_names();
+        let current_theme = cx.theme().clone();
+
+        // For demo, we'll show 4 themes
+
         v_flex()
+            .id("theme-selector")
             .h_full()
             .w_full()
-            .items_center()
-            .justify_center()
-            .gap_4()
-            .child(
-                Label::new("Welcome to Zed!")
-                    .size(LabelSize::Large)
-                    .color(Color::Default),
-            )
-            .child(
-                Label::new("Let's get you started with the basics")
-                    .size(LabelSize::Default)
-                    .color(Color::Muted),
-            )
+            .p_6()
+            .gap_6()
+            .overflow_y_scroll()
+            // Theme selector section
             .child(
                 v_flex()
-                    .gap_2()
-                    .mt_4()
+                    .gap_3()
                     .child(
-                        Button::new("open_file", "Open a File")
-                            .style(ButtonStyle::Filled)
-                            .when(is_page_focused && focused_item == 0, |this| {
-                                this.color(Color::Accent)
-                            })
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                // TODO: Trigger open file action
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .justify_between()
+                            .child(Label::new("Pick a Theme").size(LabelSize::Large))
+                            .child(
+                                Button::new("more_themes", "More Themes")
+                                    .style(ButtonStyle::Subtle)
+                                    .color(Color::Muted)
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        // TODO: Open theme selector
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                     .child(
-                        Button::new("create_project", "Create a Project")
-                            .style(ButtonStyle::Filled)
-                            .when(is_page_focused && focused_item == 1, |this| {
-                                this.color(Color::Accent)
-                            })
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                // TODO: Trigger create project action
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("explore_ui", "Explore the UI")
-                            .style(ButtonStyle::Filled)
-                            .when(is_page_focused && focused_item == 2, |this| {
-                                this.color(Color::Accent)
-                            })
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                // TODO: Trigger explore UI action
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .gap_3()
+                            .children(
+                                vec![
+                                    ("One Dark", "one-dark"),
+                                    ("Gruvbox Dark", "gruvbox-dark"),
+                                    ("One Light", "one-light"),
+                                    ("Gruvbox Light", "gruvbox-light"),
+                                ]
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, (label, theme_name))| {
+                                    let is_selected = current_theme.name == *theme_name;
+                                    let is_focused = is_page_focused && focused_item == i;
+
+                                    v_flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .id("theme-item")
+                                                .when(is_focused, |this| {
+                                                    this.border_2().border_color(
+                                                        cx.theme().colors().border_focused,
+                                                    )
+                                                })
+                                                .rounded_md()
+                                                .p_1()
+                                                .id(("theme", i))
+                                                .child(
+                                                    if let Ok(theme) =
+                                                        theme_registry.get(theme_name)
+                                                    {
+                                                        ThemePreviewTile::new(
+                                                            theme,
+                                                            is_selected,
+                                                            0.5,
+                                                        )
+                                                        .into_any_element()
+                                                    } else {
+                                                        div()
+                                                            .w(px(200.))
+                                                            .h(px(120.))
+                                                            .bg(cx
+                                                                .theme()
+                                                                .colors()
+                                                                .surface_background)
+                                                            .rounded_md()
+                                                            .into_any_element()
+                                                    },
+                                                )
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        SettingsStore::update_global(cx, move |store, cx| {
+                                                            let mut settings = store.raw_user_settings().clone();
+                                                            settings["theme"] = serde_json::json!(theme_name);
+                                                            store.set_user_settings(&settings.to_string(), cx).ok();
+                                                        });
+                                                        cx.notify();
+                                                    },
+                                                )),
+                                        )
+                                        .child(Label::new(label).size(LabelSize::Small).color(
+                                            if is_selected {
+                                                Color::Default
+                                            } else {
+                                                Color::Muted
+                                            },
+                                        ))
+                                },
+                            )),
                     ),
+            )
+            // Keymap selector section
+            .child(
+                v_flex()
+                    .gap_3()
+                    .mt_4()
+                    .child(Label::new("Pick a Keymap").size(LabelSize::Large))
+                    .child(
+                        h_flex().gap_2().children(
+                            vec![
+                                ("Zed", VectorName::ZedLogo, 4),
+                                ("Atom", VectorName::ZedLogo, 5),
+                                ("JetBrains", VectorName::ZedLogo, 6),
+                                ("Sublime", VectorName::ZedLogo, 7),
+                                ("VSCode", VectorName::ZedLogo, 8),
+                                ("Emacs", VectorName::ZedLogo, 9),
+                                ("TextMate", VectorName::ZedLogo, 10),
+                            ]
+                            .into_iter()
+                            .map(|(label, icon, index)| {
+                                let is_focused = is_page_focused && focused_item == index;
+                                let current_keymap = BaseKeymap::get_global(cx).to_string();
+                                let is_selected = current_keymap == label;
+
+                                v_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .id(("keymap", index))
+                                            .p_3()
+                                            .rounded_md()
+                                            .bg(cx.theme().colors().element_background)
+                                            .border_1()
+                                            .border_color(if is_selected {
+                                                cx.theme().colors().border_selected
+                                            } else {
+                                                cx.theme().colors().border
+                                            })
+                                            .when(is_focused, |this| {
+                                                this.border_color(
+                                                    cx.theme().colors().border_focused,
+                                                )
+                                            })
+                                            .when(is_selected, |this| {
+                                                this.bg(cx.theme().colors().element_selected)
+                                            })
+                                            .hover(|this| {
+                                                this.bg(cx.theme().colors().element_hover)
+                                            })
+                                            .child(
+                                                Vector::new(icon, rems(2.), rems(2.))
+                                                    .color(Color::Muted),
+                                            )
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                SettingsStore::update_global(cx, move |store, cx| {
+                                                    let base_keymap = match label {
+                                                        "Zed" => "None",
+                                                        "Atom" => "Atom",
+                                                        "JetBrains" => "JetBrains",
+                                                        "Sublime" => "SublimeText",
+                                                        "VSCode" => "VSCode",
+                                                        "Emacs" => "Emacs",
+                                                        "TextMate" => "TextMate",
+                                                        _ => "VSCode",
+                                                    };
+                                                    let mut settings = store.raw_user_settings().clone();
+                                                    settings["base_keymap"] = serde_json::json!(base_keymap);
+                                                    store.set_user_settings(&settings.to_string(), cx).ok();
+                                                });
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        Label::new(label)
+                                            .size(LabelSize::Small)
+                                            .color(if is_selected {
+                                                Color::Default
+                                            } else {
+                                                Color::Muted
+                                            }),
+                                    )
+                            })
+                        ),
+                    ),
+            )
+            // Settings checkboxes
+            .child(
+                v_flex()
+                    .gap_3()
+                    .mt_6()
+                    .child({
+                        let vim_enabled = VimModeSetting::get_global(cx).0;
+                        h_flex()
+                            .id("vim_mode_container")
+                            .gap_2()
+                            .items_center()
+                            .p_1()
+                            .rounded_md()
+                            .when(is_page_focused && focused_item == 11, |this| {
+                                this.border_2()
+                                    .border_color(cx.theme().colors().border_focused)
+                            })
+                            .child(
+                                div()
+                                    .id("vim_mode_checkbox")
+                                    .w_4()
+                                    .h_4()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .when(vim_enabled, |this| {
+                                        this.bg(cx.theme().colors().element_selected)
+                                            .border_color(cx.theme().colors().border_selected)
+                                    })
+                                    .hover(|this| this.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        div().when(vim_enabled, |this| {
+                                            this.size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    svg()
+                                                        .path("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
+                                                        .size_3()
+                                                        .text_color(cx.theme().colors().icon),
+                                                )
+                                        })
+                                    ),
+                            )
+                            .child(Label::new("Enable Vim Mode"))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                let current = VimModeSetting::get_global(cx).0;
+                                SettingsStore::update_global(cx, move |store, cx| {
+                                    let mut settings = store.raw_user_settings().clone();
+                                    settings["vim_mode"] = serde_json::json!(!current);
+                                    store.set_user_settings(&settings.to_string(), cx).ok();
+                                });
+                            }))
+                    })
+                    .child({
+                        let crash_reports_enabled = TelemetrySettings::get_global(cx).diagnostics;
+                        h_flex()
+                            .id("crash_reports_container")
+                            .gap_2()
+                            .items_center()
+                            .p_1()
+                            .rounded_md()
+                            .when(is_page_focused && focused_item == 12, |this| {
+                                this.border_2()
+                                    .border_color(cx.theme().colors().border_focused)
+                            })
+                            .child(
+                                div()
+                                    .id("crash_reports_checkbox")
+                                    .w_4()
+                                    .h_4()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .when(crash_reports_enabled, |this| {
+                                        this.bg(cx.theme().colors().element_selected)
+                                            .border_color(cx.theme().colors().border_selected)
+                                    })
+                                    .hover(|this| this.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        div().when(crash_reports_enabled, |this| {
+                                            this.size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    svg()
+                                                        .path("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
+                                                        .size_3()
+                                                        .text_color(cx.theme().colors().icon),
+                                                )
+                                        })
+                                    ),
+                            )
+                            .child(Label::new("Send Crash Reports"))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                let current = TelemetrySettings::get_global(cx).diagnostics;
+                                SettingsStore::update_global(cx, move |store, cx| {
+                                    let mut settings = store.raw_user_settings().clone();
+                                    if settings.get("telemetry").is_none() {
+                                        settings["telemetry"] = serde_json::json!({});
+                                    }
+                                    settings["telemetry"]["diagnostics"] = serde_json::json!(!current);
+                                    store.set_user_settings(&settings.to_string(), cx).ok();
+                                });
+                            }))
+                    })
+                    .child({
+                        let telemetry_enabled = TelemetrySettings::get_global(cx).metrics;
+                        h_flex()
+                            .id("telemetry_container")
+                            .gap_2()
+                            .items_center()
+                            .p_1()
+                            .rounded_md()
+                            .when(is_page_focused && focused_item == 13, |this| {
+                                this.border_2()
+                                    .border_color(cx.theme().colors().border_focused)
+                            })
+                            .child(
+                                div()
+                                    .id("telemetry_checkbox")
+                                    .w_4()
+                                    .h_4()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .when(telemetry_enabled, |this| {
+                                        this.bg(cx.theme().colors().element_selected)
+                                            .border_color(cx.theme().colors().border_selected)
+                                    })
+                                    .hover(|this| this.bg(cx.theme().colors().element_hover))
+                                    .child(
+                                        div().when(telemetry_enabled, |this| {
+                                            this.size_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(
+                                                    svg()
+                                                        .path("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
+                                                        .size_3()
+                                                        .text_color(cx.theme().colors().icon),
+                                                )
+                                        })
+                                    ),
+                            )
+                            .child(Label::new("Send Telemetry"))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                let current = TelemetrySettings::get_global(cx).metrics;
+                                SettingsStore::update_global(cx, move |store, cx| {
+                                    let mut settings = store.raw_user_settings().clone();
+                                    if settings.get("telemetry").is_none() {
+                                        settings["telemetry"] = serde_json::json!({});
+                                    }
+                                    settings["telemetry"]["metrics"] = serde_json::json!(!current);
+                                    store.set_user_settings(&settings.to_string(), cx).ok();
+                                });
+                            }))
+                    }),
             )
             .into_any_element()
     }

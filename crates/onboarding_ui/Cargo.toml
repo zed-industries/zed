@@ -16,6 +16,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+welcome.workspace = true
 client.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -24,12 +25,13 @@ feature_flags.workspace = true
 gpui.workspace = true
 menu.workspace = true
 project.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 settings_ui.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
+vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
