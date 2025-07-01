@@ -11657,11 +11657,15 @@ impl Editor {
 
             let tab_size = language_settings.tab_size;
 
-            let mut line_prefix = indent_size.chars().collect::<String>();
+            let indent_prefix = indent_size.chars().collect::<String>();
+            let mut line_prefix = indent_prefix.clone();
             let mut inside_comment = false;
             if let Some(prefix) = &comment_prefix {
                 line_prefix.push_str(prefix);
                 inside_comment = true;
+            }
+            if let Some(prefix) = &rewrap_prefix {
+                line_prefix.push_str(prefix);
             }
 
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
@@ -11728,8 +11732,15 @@ impl Editor {
                     .preferred_line_length as usize
             });
 
+            let subsequent_lines_prefix = if let Some(rewrap_prefix_str) = &rewrap_prefix {
+                format!("{}{}", indent_prefix, " ".repeat(rewrap_prefix_str.len()))
+            } else {
+                line_prefix.clone()
+            };
+
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
+                subsequent_lines_prefix,
                 lines_without_prefixes.join("\n"),
                 wrap_column,
                 tab_size,
@@ -21231,18 +21242,22 @@ fn test_word_breaking_tokenizer() {
 }
 
 fn wrap_with_prefix(
-    line_prefix: String,
+    first_line_prefix: String,
+    subsequent_lines_prefix: String,
     unwrapped_text: String,
     wrap_column: usize,
     tab_size: NonZeroU32,
     preserve_existing_whitespace: bool,
 ) -> String {
-    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let first_line_prefix_len = char_len_with_expanded_tabs(0, &first_line_prefix, tab_size);
+    let subsequent_lines_prefix_len =
+        char_len_with_expanded_tabs(0, &subsequent_lines_prefix, tab_size);
     let mut wrapped_text = String::new();
-    let mut current_line = line_prefix.clone();
+    let mut current_line = first_line_prefix.clone();
+    let mut is_first_line = true;
 
     let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
-    let mut current_line_len = line_prefix_len;
+    let mut current_line_len = first_line_prefix_len;
     let mut in_whitespace = false;
     for token in tokenizer {
         let have_preceding_whitespace = in_whitespace;
@@ -21252,13 +21267,19 @@ fn wrap_with_prefix(
                 grapheme_len,
             } => {
                 in_whitespace = false;
+                let current_prefix_len = if is_first_line {
+                    first_line_prefix_len
+                } else {
+                    subsequent_lines_prefix_len
+                };
                 if current_line_len + grapheme_len > wrap_column
-                    && current_line_len != line_prefix_len
+                    && current_line_len != current_prefix_len
                 {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
                 }
                 current_line.push_str(token);
                 current_line_len += grapheme_len;
@@ -21275,32 +21296,46 @@ fn wrap_with_prefix(
                     token = " ";
                     grapheme_len = 1;
                 }
+                let current_prefix_len = if is_first_line {
+                    first_line_prefix_len
+                } else {
+                    subsequent_lines_prefix_len
+                };
                 if current_line_len + grapheme_len > wrap_column {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
+                } else if current_line_len != current_prefix_len || preserve_existing_whitespace {
                     current_line.push_str(token);
                     current_line_len += grapheme_len;
                 }
             }
             WordBreakToken::Newline => {
                 in_whitespace = true;
+                let current_prefix_len = if is_first_line {
+                    first_line_prefix_len
+                } else {
+                    subsequent_lines_prefix_len
+                };
                 if preserve_existing_whitespace {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
                 } else if have_preceding_whitespace {
                     continue;
-                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
+                } else if current_line_len + 1 > wrap_column
+                    && current_line_len != current_prefix_len
                 {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if current_line_len != line_prefix_len {
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
+                } else if current_line_len != current_prefix_len {
                     current_line.push(' ');
                     current_line_len += 1;
                 }
@@ -21319,6 +21354,7 @@ fn test_wrap_with_prefix() {
     assert_eq!(
         wrap_with_prefix(
             "# ".to_string(),
+            "# ".to_string(),
             "abcdefg".to_string(),
             4,
             NonZeroU32::new(4).unwrap(),
@@ -21328,6 +21364,7 @@ fn test_wrap_with_prefix() {
     );
     assert_eq!(
         wrap_with_prefix(
+            "".to_string(),
             "".to_string(),
             "\thello world".to_string(),
             8,
@@ -21339,6 +21376,7 @@ fn test_wrap_with_prefix() {
     assert_eq!(
         wrap_with_prefix(
             "// ".to_string(),
+            "// ".to_string(),
             "xx \nyy zz aa bb cc".to_string(),
             12,
             NonZeroU32::new(4).unwrap(),
@@ -21348,6 +21386,7 @@ fn test_wrap_with_prefix() {
     );
     assert_eq!(
         wrap_with_prefix(
+            String::new(),
             String::new(),
             "这是什么 \n 钢笔".to_string(),
             3,
