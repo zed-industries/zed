@@ -406,6 +406,23 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
         }
 
         /// Sets the box shadow of the element.
+        ///
+        /// A hairline shadow is a very thin shadow that is often used
+        /// to create a subtle depth effect under an element.
+        #visibility fn shadow_hairline(mut self) -> Self {
+            use gpui::{BoxShadow, hsla, point, px};
+            use std::vec;
+
+            self.style().box_shadow = Some(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.16),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(0.),
+                spread_radius: px(0.),
+            }]);
+            self
+        }
+
+        /// Sets the box shadow of the element.
         /// [Docs](https://tailwindcss.com/docs/box-shadow)
         #visibility fn shadow_sm(mut self) -> Self {
             use gpui::{BoxShadow, hsla, point, px};
