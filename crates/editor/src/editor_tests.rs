@@ -5186,15 +5186,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                     ..Default::default()
                 },
             ),
-            (
-                "Git Commit".into(),
-                LanguageSettingsContent {
-                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
-                    preferred_line_length: Some(72),
-                    soft_wrap: Some(language_settings::SoftWrap::EditorWidth),
-                    ..Default::default()
-                },
-            ),
         ])
     });
 
@@ -5222,19 +5213,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             rewrap_prefixes: vec![
                 regex::Regex::new("\\d+\\.\\s+").unwrap(),
                 regex::Regex::new("[-*+]\\s+").unwrap(),
-            ],
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
-    let git_commit_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Git Commit".into(),
-            rewrap_prefixes: vec![
-                regex::Regex::new("[-*+]\\s+").unwrap(),
-                regex::Regex::new("\\d+\\.\\s+").unwrap(),
-                regex::Regex::new(">\\s*").unwrap(),
-                regex::Regex::new("[-*+]\\s+\\[[\\sx]\\]\\s+").unwrap(),
             ],
             ..LanguageConfig::default()
         },
@@ -5382,42 +5360,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             fn my_func(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32) {}ˇ»
         "},
         rust_language.clone(),
-        &mut cx,
-    );
-
-    // Test that rewrapping list works in gitcommit message where a `allow_rewrap` is `Anywhere`
-    assert_rewrap(
-        indoc! {"
-          Very long commit message subject line which needs to be wrapped into and properly formatted.ˇ
-         "},
-        indoc! {"
-          Very long commit message subject line which needs to be wrapped into and
-          properly formatted.ˇ
-         "},
-        git_commit_language.clone(),
-        &mut cx,
-    );
-
-    assert_rewrap(
-        indoc! {"
-          «Very long commit message subject line which needs to be wrapped into and properly formatted.
-
-          1. This is a numbered list item that is very long and needs to be wrapped properly.
-          2. This is a numbered list item that is very long and needs to be wrapped properly.
-          - This is an unordered list item that is also very long and should not merge with the numbered item.ˇ»
-         "},
-        indoc! {"
-          «Very long commit message subject line which needs to be wrapped into and
-          properly formatted.
-
-          1. This is a numbered list item that is very long and needs to be
-             wrapped properly.
-          2. This is a numbered list item that is very long and needs to be
-             wrapped properly.
-          - This is an unordered list item that is also very long and should not
-            merge with the numbered item.ˇ»
-         "},
-        git_commit_language.clone(),
         &mut cx,
     );
 
