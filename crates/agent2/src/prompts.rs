@@ -1,4 +1,10 @@
-use super::*;
+use crate::{
+    templates::{BaseTemplate, Template, Templates, WorktreeData},
+    thread::Prompt,
+};
+use anyhow::Result;
+use gpui::{App, Entity};
+use project::Project;
 
 struct BasePrompt {
     project: Entity<Project>,

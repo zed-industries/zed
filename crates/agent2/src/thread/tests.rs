@@ -1,12 +1,16 @@
 use super::*;
-use client::{Client, UserStore, proto::language_server_prompt_request};
+use client::{proto::language_server_prompt_request, Client, UserStore};
 use fs::FakeFs;
-use gpui::{AppContext, TestAppContext};
-use language_model::LanguageModelRegistry;
+use gpui::{AppContext, Entity, TestAppContext};
+use language_model::{
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRegistry, MessageContent, StopReason,
+};
 use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use smol::stream::StreamExt;
+use std::{sync::Arc, time::Duration};
 
 mod test_tools;
 use test_tools::*;
@@ -69,21 +73,19 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         vec![StopReason::ToolUse, StopReason::EndTurn]
     );
     agent.update(cx, |agent, _cx| {
-        assert!(
-            agent
-                .messages
-                .last()
-                .unwrap()
-                .content
-                .iter()
-                .any(|content| {
-                    if let MessageContent::Text(text) = content {
-                        text.contains("Ding")
-                    } else {
-                        false
-                    }
-                })
-        );
+        assert!(agent
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .iter()
+            .any(|content| {
+                if let MessageContent::Text(text) = content {
+                    text.contains("Ding")
+                } else {
+                    false
+                }
+            }));
     });
 }
 
@@ -200,7 +202,7 @@ fn stop_events(
 
 struct AgentTest {
     model: Arc<dyn LanguageModel>,
-    agent: Entity<Agent>,
+    agent: Entity<Thread>,
 }
 
 async fn setup(cx: &mut TestAppContext) -> AgentTest {
@@ -210,7 +212,7 @@ async fn setup(cx: &mut TestAppContext) -> AgentTest {
     // let project = Project::test(fs.clone(), [], cx).await;
     // let action_log = cx.new(|_| ActionLog::new(project.clone()));
     let templates = Templates::new();
-    let agent = cx.new(|_| Agent::new(templates));
+    let agent = cx.new(|_| Thread::new(templates));
 
     let model = cx
         .update(|cx| {

@@ -1,24 +1,17 @@
-mod prompts;
-mod templates;
-#[cfg(test)]
-mod tests;
-mod tools;
-
-use anyhow::{Result, anyhow};
+use crate::templates::Templates;
+use anyhow::{anyhow, Result};
 use futures::{channel::mpsc, future};
-use gpui::{App, Context, Entity, SharedString, Task};
+use gpui::{App, Context, SharedString, Task};
 use language_model::{
     CompletionIntent, CompletionMode, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, Role, StopReason,
 };
-use project::Project;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
-use templates::{BaseTemplate, Template, Templates, WorktreeData};
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -29,11 +22,11 @@ pub struct AgentMessage {
 
 pub type AgentResponseEvent = LanguageModelCompletionEvent;
 
-trait Prompt {
+pub trait Prompt {
     fn render(&self, prompts: &Templates, cx: &App) -> Result<String>;
 }
 
-pub struct Agent {
+pub struct Thread {
     messages: Vec<AgentMessage>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -47,7 +40,7 @@ pub struct Agent {
     // action_log: Entity<ActionLog>,
 }
 
-impl Agent {
+impl Thread {
     pub fn new(templates: Arc<Templates>) -> Self {
         Self {
             messages: Vec::new(),

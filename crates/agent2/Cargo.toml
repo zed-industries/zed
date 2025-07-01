@@ -6,7 +6,7 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [lib]
-path = "src/agent.rs"
+path = "src/agent2.rs"
 
 [lints]
 workspace = true

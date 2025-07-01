@@ -9,7 +9,7 @@ use worktree::Snapshot as WorktreeSnapshot;
 
 use crate::{
     templates::{GlobTemplate, Template, Templates},
-    AgentTool,
+    thread::AgentTool,
 };
 
 // Description is dynamic, see `fn description` below
