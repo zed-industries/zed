@@ -1784,7 +1784,8 @@
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from
-  // environment variables.
+  // environment variables. If certain hosts should not be proxied,
+  // set the `no_proxy` environment variable and provide a comma-separated list.
   //
   // Examples:
   //   - "proxy": "socks5h://localhost:10808"
