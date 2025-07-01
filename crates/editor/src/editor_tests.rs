@@ -25,8 +25,8 @@ use language::{
     DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
     LanguageName, Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, LspInsertMode, PrettierSettings,
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, FormatterList,
+        LanguageSettingsContent, LspInsertMode, PrettierSettings, SelectedFormatter,
     },
     tree_sitter_python,
 };
@@ -10012,9 +10012,9 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
             Formatter::LanguageServer { name: None },
-        ]))
+        )))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10141,7 +10141,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
             Formatter::LanguageServer { name: None },
             Formatter::CodeActions(
                 [
@@ -10151,7 +10151,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                 .into_iter()
                 .collect(),
             ),
-        ]))
+        ])))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10403,9 +10403,9 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
             Formatter::LanguageServer { name: None },
-        ]))
+        ])))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10611,7 +10611,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(SelectedFormatter::Auto)
     });
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -15878,9 +15878,9 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(vec![
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
             Formatter::Prettier,
-        ]))
+        )))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -15950,7 +15950,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     );
 
     update_test_language_settings(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(SelectedFormatter::Auto)
     });
     let format = editor.update_in(cx, |editor, window, cx| {
         editor.perform_format(

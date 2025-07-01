@@ -21,7 +21,7 @@ use settings::{
     replace_subschema,
 };
 use shellexpand;
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -673,7 +673,7 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
-    List(Vec<Formatter>),
+    List(FormatterList),
 }
 
 impl JsonSchema for FormatOnSave {
@@ -692,7 +692,7 @@ impl JsonSchema for FormatOnSave {
                 },
                 {
                     "type": "string",
-                    "enum": ["on", "off", "prettier", "language_server"]
+                    "enum": ["on", "off", "language_server"]
                 },
                 formatter_schema
             ]
@@ -735,11 +735,11 @@ impl<'de> Deserialize<'de> for FormatOnSave {
                 } else if v == "off" {
                     Ok(Self::Value::Off)
                 } else if v == "language_server" {
-                    Ok(Self::Value::List(vec![Formatter::LanguageServer {
-                        name: None,
-                    }]))
+                    Ok(Self::Value::List(FormatterList::Single(
+                        Formatter::LanguageServer { name: None },
+                    )))
                 } else {
-                    let ret: Result<Vec<Formatter>, _> =
+                    let ret: Result<FormatterList, _> =
                         Deserialize::deserialize(v.into_deserializer());
                     ret.map(Self::Value::List)
                 }
@@ -748,7 +748,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
             where
                 A: MapAccess<'d>,
             {
-                let ret: Result<Vec<Formatter>, _> =
+                let ret: Result<FormatterList, _> =
                     Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
                 ret.map(Self::Value::List)
             }
@@ -756,7 +756,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
             where
                 A: SeqAccess<'d>,
             {
-                let ret: Result<Vec<Formatter>, _> =
+                let ret: Result<FormatterList, _> =
                     Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
                 ret.map(Self::Value::List)
             }
@@ -793,7 +793,7 @@ pub enum SelectedFormatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
-    List(Vec<Formatter>),
+    List(FormatterList),
 }
 
 impl JsonSchema for SelectedFormatter {
@@ -812,7 +812,7 @@ impl JsonSchema for SelectedFormatter {
                 },
                 {
                     "type": "string",
-                    "enum": ["auto", "prettier", "language_server"]
+                    "enum": ["auto", "language_server"]
                 },
                 formatter_schema
             ]
@@ -852,11 +852,11 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
                 if v == "auto" {
                     Ok(Self::Value::Auto)
                 } else if v == "language_server" {
-                    Ok(Self::Value::List(vec![Formatter::LanguageServer {
-                        name: None,
-                    }]))
+                    Ok(Self::Value::List(FormatterList::Single(
+                        Formatter::LanguageServer { name: None },
+                    )))
                 } else {
-                    let ret: Result<Vec<Formatter>, _> =
+                    let ret: Result<FormatterList, _> =
                         Deserialize::deserialize(v.into_deserializer());
                     ret.map(SelectedFormatter::List)
                 }
@@ -865,7 +865,7 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             where
                 A: MapAccess<'d>,
             {
-                let ret: Result<Vec<Formatter>, _> =
+                let ret: Result<FormatterList, _> =
                     Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
                 ret.map(SelectedFormatter::List)
             }
@@ -873,12 +873,29 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             where
                 A: SeqAccess<'d>,
             {
-                let ret: Result<Vec<Formatter>, _> =
+                let ret: Result<FormatterList, _> =
                     Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
                 ret.map(SelectedFormatter::List)
             }
         }
         deserializer.deserialize_any(FormatDeserializer)
+    }
+}
+
+/// Controls which formatters should be used when formatting code.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(untagged)]
+pub enum FormatterList {
+    Single(Formatter),
+    Vec(Vec<Formatter>),
+}
+
+impl AsRef<[Formatter]> for FormatterList {
+    fn as_ref(&self) -> &[Formatter] {
+        match &self {
+            Self::Single(single) => slice::from_ref(single),
+            Self::Vec(v) => v,
+        }
     }
 }
 
@@ -1612,26 +1629,26 @@ mod tests {
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
-                name: None
-            }]))
+            Some(SelectedFormatter::List(FormatterList::Single(
+                Formatter::LanguageServer { name: None }
+            )))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
-                name: None
-            }]))
+            Some(SelectedFormatter::List(FormatterList::Vec(vec![
+                Formatter::LanguageServer { name: None }
+            ])))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(SelectedFormatter::List(vec![
+            Some(SelectedFormatter::List(FormatterList::Vec(vec![
                 Formatter::LanguageServer { name: None },
                 Formatter::Prettier
-            ]))
+            ])))
         );
     }
 

@@ -22,7 +22,9 @@ use gpui::{
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
-    language_settings::{AllLanguageSettings, Formatter, PrettierSettings, SelectedFormatter},
+    language_settings::{
+        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
+    },
     tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
@@ -4589,13 +4591,14 @@ async fn test_formatting_buffer(
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                    file.defaults.formatter =
-                        Some(SelectedFormatter::List(vec![Formatter::External {
+                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                        Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        }]));
+                        },
+                    )));
                 });
             });
         });
@@ -4695,10 +4698,9 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter =
-                    Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
-                        name: None,
-                    }]));
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                    Formatter::LanguageServer { name: None },
+                )));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
