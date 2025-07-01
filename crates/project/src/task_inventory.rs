@@ -1399,8 +1399,7 @@ mod tests {
                 })
                 .await
                 .0
-                .first()
-                .is_none(),
+                .is_empty(),
         );
     }
 
