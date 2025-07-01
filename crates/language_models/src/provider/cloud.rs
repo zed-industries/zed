@@ -394,7 +394,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
-        !self.state.read(cx).is_signed_out()
+        let state = self.state.read(cx);
+        !state.is_signed_out() && state.has_accepted_terms_of_service(cx)
     }
 
     fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
