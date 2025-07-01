@@ -5,7 +5,7 @@
     "bindings": {
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
-      "shift-cmd-f5": "debugger::Restart",
+      "shift-cmd-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
       "f11": "debugger::StepInto",
@@ -652,7 +652,7 @@
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
-      "f5": "debugger::RerunLastSession"
+      "f5": "debugger::Rerun"
     }
   },
   {

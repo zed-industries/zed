@@ -37,6 +37,7 @@ actions!(
         Detach,
         Pause,
         Restart,
+        RerunSession,
         StepInto,
         StepOver,
         StepOut,
@@ -54,7 +55,8 @@ actions!(
         ShowStackTrace,
         ToggleThreadPicker,
         ToggleSessionPicker,
-        RerunLastSession,
+        #[action(deprecated_aliases = ["debugger::RerunLastSession"])]
+        Rerun,
         ToggleExpandItem,
     ]
 );
@@ -74,17 +76,15 @@ pub fn init(cx: &mut App) {
             .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                 NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
             })
-            .register_action(
-                |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
-                    let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
-                        return;
-                    };
+            .register_action(|workspace: &mut Workspace, _: &Rerun, window, cx| {
+                let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                    return;
+                };
 
-                    debug_panel.update(cx, |debug_panel, cx| {
-                        debug_panel.rerun_last_session(workspace, window, cx);
-                    })
-                },
-            )
+                debug_panel.update(cx, |debug_panel, cx| {
+                    debug_panel.rerun_last_session(workspace, window, cx);
+                })
+            })
             .register_action(
                 |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
                     workspace.project().update(cx, |project, cx| {
@@ -207,6 +207,14 @@ pub fn init(cx: &mut App) {
                     move |_: &Restart, _, cx| {
                         active_item
                             .update(cx, |item, cx| item.restart_session(cx))
+                            .ok();
+                    }
+                })
+                .on_action({
+                    let active_item = active_item.clone();
+                    move |_: &RerunSession, window, cx| {
+                        active_item
+                            .update(cx, |item, cx| item.rerun_session(window, cx))
                             .ok();
                     }
                 })
