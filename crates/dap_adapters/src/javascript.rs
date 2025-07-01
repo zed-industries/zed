@@ -522,7 +522,11 @@ impl DebugAdapter for JsDebugAdapter {
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {
-        let label = args.configuration.get("name")?.as_str()?;
+        let label = args
+            .configuration
+            .get("name")?
+            .as_str()
+            .filter(|name| !name.is_empty())?;
         Some(label.to_owned())
     }
 }
