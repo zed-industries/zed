@@ -1,5 +1,6 @@
 use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Context as _, Result, anyhow};
+use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
@@ -120,7 +121,7 @@ pub struct State {
     llm_api_token: LlmApiToken,
     user_store: Entity<UserStore>,
     status: client::Status,
-    accept_terms: Option<Task<Result<()>>>,
+    accept_terms_of_service_task: Option<Task<Result<()>>>,
     models: Vec<Arc<zed_llm_client::LanguageModel>>,
     default_model: Option<Arc<zed_llm_client::LanguageModel>>,
     default_fast_model: Option<Arc<zed_llm_client::LanguageModel>>,
@@ -144,7 +145,7 @@ impl State {
             llm_api_token: LlmApiToken::default(),
             user_store,
             status,
-            accept_terms: None,
+            accept_terms_of_service_task: None,
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
@@ -253,12 +254,12 @@ impl State {
 
     fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
         let user_store = self.user_store.clone();
-        self.accept_terms = Some(cx.spawn(async move |this, cx| {
+        self.accept_terms_of_service_task = Some(cx.spawn(async move |this, cx| {
             let _ = user_store
                 .update(cx, |store, cx| store.accept_terms_of_service(cx))?
                 .await;
             this.update(cx, |this, cx| {
-                this.accept_terms = None;
+                this.accept_terms_of_service_task = None;
                 cx.notify()
             })
         }));
@@ -420,7 +421,17 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         view: LanguageModelProviderTosView,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        render_accept_terms(self.state.clone(), view, cx)
+        let state = self.state.read(cx);
+        if state.has_accepted_terms_of_service(cx) {
+            return None;
+        }
+        Some(
+            render_accept_terms(view, state.accept_terms_of_service_task.is_some(), {
+                let state = self.state.clone();
+                move |_window, cx| state.update(cx, |state, cx| state.accept_terms_of_service(cx))
+            })
+            .into_any_element(),
+        )
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -429,18 +440,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 }
 
 fn render_accept_terms(
-    state: Entity<State>,
     view_kind: LanguageModelProviderTosView,
-    cx: &mut App,
-) -> Option<AnyElement> {
-    if state.read(cx).has_accepted_terms_of_service(cx) {
-        return None;
-    }
-
-    let accept_terms_disabled = state.read(cx).accept_terms.is_some();
+    accept_terms_in_progress: bool,
+    accept_terms_callback: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let accept_terms_disabled = accept_terms_in_progress;
 
     let thread_fresh_start = matches!(view_kind, LanguageModelProviderTosView::ThreadFreshStart);
-    let thread_empty_state = matches!(view_kind, LanguageModelProviderTosView::ThreadtEmptyState);
+    let thread_empty_state = matches!(view_kind, LanguageModelProviderTosView::ThreadEmptyState);
 
     let terms_button = Button::new("terms_of_service", "Terms of Service")
         .style(ButtonStyle::Subtle)
@@ -464,17 +471,10 @@ fn render_accept_terms(
                     .label_size(LabelSize::Small)
             })
             .disabled(accept_terms_disabled)
-            .on_click({
-                let state = state.downgrade();
-                move |_, _window, cx| {
-                    state
-                        .update(cx, |state, cx| state.accept_terms_of_service(cx))
-                        .ok();
-                }
-            }),
+            .on_click(move |_, window, cx| (accept_terms_callback)(window, cx)),
     );
 
-    let form = if thread_empty_state {
+    if thread_empty_state {
         h_flex()
             .w_full()
             .flex_wrap()
@@ -512,12 +512,10 @@ fn render_accept_terms(
                     LanguageModelProviderTosView::ThreadFreshStart => {
                         button_container.w_full().justify_center()
                     }
-                    LanguageModelProviderTosView::ThreadtEmptyState => div().w_0(),
+                    LanguageModelProviderTosView::ThreadEmptyState => div().w_0(),
                 }
             })
-    };
-
-    Some(form.into_any())
+    }
 }
 
 pub struct CloudLanguageModel {
@@ -1054,6 +1052,94 @@ fn response_lines<T: DeserializeOwned>(
     )
 }
 
+#[derive(IntoElement)]
+struct Configuration {
+    is_connected: bool,
+    plan: Option<proto::Plan>,
+    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    eligible_for_trial: bool,
+    has_accepted_terms_of_service: bool,
+    accept_terms_in_progress: bool,
+    accept_terms_callback: Box<dyn Fn(&mut Window, &mut App)>,
+    sign_in_callback: Box<dyn Fn(&mut Window, &mut App)>,
+}
+
+impl RenderOnce for Configuration {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
+
+        let is_pro = self.plan == Some(proto::Plan::ZedPro);
+        let subscription_text = match (self.plan, self.subscription_period) {
+            (Some(proto::Plan::ZedPro), Some(_)) => {
+                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+            }
+            (Some(proto::Plan::ZedProTrial), Some(_)) => {
+                "You have access to Zed's hosted LLMs through your Zed Pro trial."
+            }
+            (Some(proto::Plan::Free), Some(_)) => {
+                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
+            }
+            _ => {
+                if self.eligible_for_trial {
+                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
+                } else {
+                    "Subscribe for access to Zed's hosted LLMs."
+                }
+            }
+        };
+        let manage_subscription_buttons = if is_pro {
+            h_flex().child(
+                Button::new("manage_settings", "Manage Subscription")
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+            )
+        } else {
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("learn_more", "Learn more")
+                        .style(ButtonStyle::Subtle)
+                        .on_click(|_, _, cx| cx.open_url(ZED_PRICING_URL)),
+                )
+                .child(
+                    Button::new("upgrade", "Upgrade")
+                        .style(ButtonStyle::Subtle)
+                        .color(Color::Accent)
+                        .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                )
+        };
+
+        if self.is_connected {
+            v_flex()
+                .gap_3()
+                .w_full()
+                .when(!self.has_accepted_terms_of_service, |this| {
+                    this.child(render_accept_terms(
+                        LanguageModelProviderTosView::Configuration,
+                        self.accept_terms_in_progress,
+                        self.accept_terms_callback,
+                    ))
+                })
+                .when(self.has_accepted_terms_of_service, |this| {
+                    this.child(subscription_text)
+                        .child(manage_subscription_buttons)
+                })
+        } else {
+            v_flex()
+                .gap_2()
+                .child(Label::new("Use Zed AI to access hosted language models."))
+                .child(
+                    Button::new("sign_in", "Sign In")
+                        .icon_color(Color::Muted)
+                        .icon(IconName::Github)
+                        .icon_position(IconPosition::Start)
+                        .on_click(move |_, window, cx| (self.sign_in_callback)(window, cx)),
+                )
+        }
+    }
+}
+
+#[derive(RegisterComponent)]
 struct ConfigurationView {
     state: gpui::Entity<State>,
 }
@@ -1069,82 +1155,51 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
-
-        let is_connected = !self.state.read(cx).is_signed_out();
-        let user_store = self.state.read(cx).user_store.read(cx);
+        let state = self.state.read(cx);
+        let is_connected = !state.is_signed_out();
+        let user_store = state.user_store.read(cx);
         let plan = user_store.current_plan();
         let subscription_period = user_store.subscription_period();
         let eligible_for_trial = user_store.trial_started_at().is_none();
-        let has_accepted_terms = self.state.read(cx).has_accepted_terms_of_service(cx);
+        let has_accepted_terms_of_service = state.has_accepted_terms_of_service(cx);
 
-        let is_pro = plan == Some(proto::Plan::ZedPro);
-        let subscription_text = match (plan, subscription_period) {
-            (Some(proto::Plan::ZedPro), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
-            }
-            (Some(proto::Plan::ZedProTrial), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro trial."
-            }
-            (Some(proto::Plan::Free), Some(_)) => {
-                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
-            }
-            _ => {
-                if eligible_for_trial {
-                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
-                } else {
-                    "Subscribe for access to Zed's hosted LLMs."
-                }
-            }
-        };
-        let manage_subscription_buttons = if is_pro {
-            h_flex().child(
-                Button::new("manage_settings", "Manage Subscription")
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
-            )
-        } else {
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("learn_more", "Learn more")
-                        .style(ButtonStyle::Subtle)
-                        .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_PRICING_URL))),
-                )
-                .child(
-                    Button::new("upgrade", "Upgrade")
-                        .style(ButtonStyle::Subtle)
-                        .color(Color::Accent)
-                        .on_click(
-                            cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                        ),
-                )
-        };
-
-        if is_connected {
-            v_flex()
-                .gap_3()
-                .w_full()
-                .children(render_accept_terms(
-                    self.state.clone(),
-                    LanguageModelProviderTosView::Configuration,
-                    cx,
-                ))
-                .when(has_accepted_terms, |this| {
-                    this.child(subscription_text)
-                        .child(manage_subscription_buttons)
+        Configuration {
+            is_connected,
+            plan,
+            subscription_period,
+            eligible_for_trial,
+            has_accepted_terms_of_service,
+            accept_terms_in_progress: state.accept_terms_of_service_task.is_some(),
+            accept_terms_callback: {
+                let state = self.state.clone();
+                Box::new(move |_window, cx| {
+                    state.update(cx, |state, cx| {
+                        state.accept_terms_of_service(cx);
+                    });
                 })
-        } else {
-            v_flex()
-                .gap_2()
-                .child(Label::new("Use Zed AI to access hosted language models."))
-                .child(
-                    Button::new("sign_in", "Sign In")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(move |this, _, _, cx| this.authenticate(cx))),
-                )
+            },
+            sign_in_callback: {
+                let this = cx.entity();
+                Box::new(move |_window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.authenticate(cx);
+                    });
+                })
+            },
         }
+    }
+}
+
+impl Component for ConfigurationView {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
+    fn sort_name() -> &'static str {
+        "ZedAIConfiguration"
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        None
     }
 }
