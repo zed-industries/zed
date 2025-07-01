@@ -357,17 +357,6 @@ impl WindowTextSystem {
         text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
-    ) -> ShapedLine {
-        self.shape_line_mono(text, font_size, runs, None)
-    }
-
-    /// Same as Shape line, but can be provided a "force_width" parameter
-    /// to ensure that glyphs are rendered on a grid (for the terminal)
-    pub fn shape_line_mono(
-        &self,
-        text: SharedString,
-        font_size: Pixels,
-        runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> ShapedLine {
         debug_assert!(

@@ -132,7 +132,7 @@ impl BatchedTextRun {
 
         let _ = window
             .text_system()
-            .shape_line_mono(
+            .shape_line(
                 self.text.clone().into(),
                 self.font_size.to_pixels(window.rem_size()),
                 &[self.style.clone()],
@@ -1060,6 +1060,7 @@ impl Element for TerminalElement {
                                 underline: Default::default(),
                                 strikethrough: None,
                             }],
+                            None,
                         )
                     };
 
@@ -1264,6 +1265,7 @@ impl Element for TerminalElement {
                                         underline: ime_style.underline,
                                         strikethrough: None,
                                     }],
+                                    None
                                 );
                                 shaped_line
                                     .paint(ime_position, layout.dimensions.line_height, window, cx)
