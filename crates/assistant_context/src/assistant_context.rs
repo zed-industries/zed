@@ -2140,7 +2140,8 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) |
-                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
+                                    LanguageModelCompletionEvent::ToolUseJsonParseError { .. } |
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
 
@@ -2346,13 +2347,13 @@ impl AssistantContext {
                 completion_request.messages.push(request_message);
             }
         }
-        let supports_max_mode = if let Some(model) = model {
-            model.supports_max_mode()
+        let supports_burn_mode = if let Some(model) = model {
+            model.supports_burn_mode()
         } else {
             false
         };
 
-        if supports_max_mode {
+        if supports_burn_mode {
             completion_request.mode = Some(self.completion_mode.into());
         }
         completion_request

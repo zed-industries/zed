@@ -1074,8 +1074,10 @@ fn handle_nc_mouse_up_msg(
     }
 
     let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
-    if button == MouseButton::Left && last_pressed.is_some() {
-        let handled = match (wparam.0 as u32, last_pressed.unwrap()) {
+    if button == MouseButton::Left
+        && let Some(last_pressed) = last_pressed
+    {
+        let handled = match (wparam.0 as u32, last_pressed) {
             (HTMINBUTTON, HTMINBUTTON) => {
                 unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
                 true

@@ -4,7 +4,7 @@ use crate::{
 };
 use call::ActiveCall;
 use editor::{
-    DocumentColorsRenderMode, Editor, EditorSettings, RowInfo,
+    DocumentColorsRenderMode, Editor, EditorSettings, RowInfo, SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
         ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
@@ -348,7 +348,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Type a completion trigger character as the guest.
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input(".", window, cx);
     });
     cx_b.focus(&editor_b);
@@ -461,7 +463,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Now we do a second completion, this time to ensure that documentation/snippets are
     // resolved
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([46..46]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([46..46])
+        });
         editor.handle_input("; a", window, cx);
         editor.handle_input(".", window, cx);
     });
@@ -613,7 +617,7 @@ async fn test_collaborating_with_code_actions(
 
     // Move cursor to a location that contains code actions.
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 31)..Point::new(1, 31)])
         });
     });
@@ -817,7 +821,9 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // Move cursor to a location that can be renamed.
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([7..7]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([7..7])
+        });
         editor.rename(&Rename, window, cx).unwrap()
     });
 
@@ -863,7 +869,9 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         editor.cancel(&editor::actions::Cancel, window, cx);
     });
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([7..8]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([7..8])
+        });
         editor.rename(&Rename, window, cx).unwrap()
     });
 
@@ -1364,7 +1372,9 @@ async fn test_on_input_format_from_host_to_guest(
     // Type a on type formatting trigger character as the guest.
     cx_a.focus(&editor_a);
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input(">", window, cx);
     });
 
@@ -1460,7 +1470,9 @@ async fn test_on_input_format_from_guest_to_host(
     // Type a on type formatting trigger character as the guest.
     cx_b.focus(&editor_b);
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input(":", window, cx);
     });
 
@@ -1697,7 +1709,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13].clone()));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13].clone())
+        });
         editor.handle_input(":", window, cx);
     });
     cx_b.focus(&editor_b);
@@ -1718,7 +1732,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input("a change to increment both buffers' versions", window, cx);
     });
     cx_a.focus(&editor_a);
@@ -2121,7 +2137,9 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
     });
 
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13].clone()));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13].clone())
+        });
         editor.handle_input(":", window, cx);
     });
     color_request_handle.next().await.unwrap();

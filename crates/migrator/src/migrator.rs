@@ -153,8 +153,8 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_06_16,
         ),
         (
-            migrations::m_2025_06_25::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_06_25,
+            migrations::m_2025_06_27::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_27,
         ),
     ];
     run_migrations(text, migrations)
@@ -259,8 +259,8 @@ define_query!(
     migrations::m_2025_06_16::SETTINGS_PATTERNS
 );
 define_query!(
-    SETTINGS_QUERY_2025_06_25,
-    migrations::m_2025_06_25::SETTINGS_PATTERNS
+    SETTINGS_QUERY_2025_06_27,
+    migrations::m_2025_06_27::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -283,6 +283,15 @@ mod tests {
 
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(&input).unwrap();
+        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+    }
+
+    fn assert_migrate_settings_with_migrations(
+        migrations: &[(MigrationPatterns, &Query)],
+        input: &str,
+        output: Option<&str>,
+    ) {
+        let migrated = run_migrations(input, migrations).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
@@ -873,7 +882,11 @@ mod tests {
 
     #[test]
     fn test_mcp_settings_migration() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
             r#"{
     "context_servers": {
         "empty_server": {},
@@ -1058,77 +1071,109 @@ mod tests {
         }
     }
 }"#;
-        assert_migrate_settings(settings, None);
+        assert_migrate_settings_with_migrations(
+            &[(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
+            settings,
+            None,
+        );
     }
 
     #[test]
-    fn test_remove_version_fields() {
+    fn test_flatten_context_server_command() {
         assert_migrate_settings(
             r#"{
-    "language_models": {
-        "anthropic": {
-            "version": "1",
-            "api_url": "https://api.anthropic.com"
-        },
-        "openai": {
-            "version": "1",
-            "api_url": "https://api.openai.com/v1"
-        }
-    },
-    "agent": {
-        "version": "2",
-        "enabled": true,
-        "preferred_completion_mode": "normal",
-        "button": true,
-        "dock": "right",
-        "default_width": 640,
-        "default_height": 320,
-        "default_model": {
-            "provider": "zed.dev",
-            "model": "claude-sonnet-4"
+    "context_servers": {
+        "some-mcp-server": {
+            "source": "custom",
+            "command": {
+                "path": "npx",
+                "args": [
+                    "-y",
+                    "@supabase/mcp-server-supabase@latest",
+                    "--read-only",
+                    "--project-ref=<project-ref>"
+                ],
+                "env": {
+                    "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+                }
+            }
         }
     }
 }"#,
             Some(
                 r#"{
-    "language_models": {
-        "anthropic": {
-            "api_url": "https://api.anthropic.com"
-        },
-        "openai": {
-            "api_url": "https://api.openai.com/v1"
-        }
-    },
-    "agent": {
-        "enabled": true,
-        "preferred_completion_mode": "normal",
-        "button": true,
-        "dock": "right",
-        "default_width": 640,
-        "default_height": 320,
-        "default_model": {
-            "provider": "zed.dev",
-            "model": "claude-sonnet-4"
+    "context_servers": {
+        "some-mcp-server": {
+            "source": "custom",
+            "command": "npx",
+            "args": [
+                "-y",
+                "@supabase/mcp-server-supabase@latest",
+                "--read-only",
+                "--project-ref=<project-ref>"
+            ],
+            "env": {
+                "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+            }
         }
     }
 }"#,
             ),
         );
 
-        // Test that version fields in other contexts are not removed
+        // Test with additional keys in server object
         assert_migrate_settings(
             r#"{
-    "language_models": {
-        "other_provider": {
-            "version": "1",
-            "api_url": "https://api.example.com"
+    "context_servers": {
+        "server-with-extras": {
+            "source": "custom",
+            "command": {
+                "path": "/usr/bin/node",
+                "args": ["server.js"]
+            },
+            "settings": {}
         }
-    },
-    "other_section": {
-        "version": "1"
     }
 }"#,
-            None,
+            Some(
+                r#"{
+    "context_servers": {
+        "server-with-extras": {
+            "source": "custom",
+            "command": "/usr/bin/node",
+            "args": ["server.js"],
+            "settings": {}
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test command without args or env
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "simple-server": {
+            "source": "custom",
+            "command": {
+                "path": "simple-mcp-server"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "simple-server": {
+            "source": "custom",
+            "command": "simple-mcp-server"
+        }
+    }
+}"#,
+            ),
         );
     }
 }

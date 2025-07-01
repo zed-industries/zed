@@ -1094,14 +1094,8 @@ mod tests {
     };
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
-    use serde::Serialize;
     use settings::SettingsStore;
     use std::{future, sync::Arc};
-
-    #[derive(Serialize)]
-    pub struct DummyCompletionRequest {
-        pub name: String,
-    }
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {

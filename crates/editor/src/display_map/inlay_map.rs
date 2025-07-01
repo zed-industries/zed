@@ -1,4 +1,4 @@
-use crate::{HighlightStyles, InlayId};
+use crate::{ChunkRenderer, HighlightStyles, InlayId};
 use collections::BTreeSet;
 use gpui::{Hsla, Rgba};
 use language::{Chunk, Edit, Point, TextSummary};
@@ -8,11 +8,13 @@ use multi_buffer::{
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
+    sync::Arc,
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
+use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
-use super::{Highlights, custom_highlights::CustomHighlightsChunks};
+use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -252,6 +254,13 @@ pub struct InlayChunks<'a> {
     snapshot: &'a InlaySnapshot,
 }
 
+#[derive(Clone)]
+pub struct InlayChunk<'a> {
+    pub chunk: Chunk<'a>,
+    /// Whether the inlay should be customly rendered.
+    pub renderer: Option<ChunkRenderer>,
+}
+
 impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
@@ -271,7 +280,7 @@ impl InlayChunks<'_> {
 }
 
 impl<'a> Iterator for InlayChunks<'a> {
-    type Item = Chunk<'a>;
+    type Item = InlayChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_offset == self.max_output_offset {
@@ -296,9 +305,12 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
-                Chunk {
-                    text: prefix,
-                    ..chunk.clone()
+                InlayChunk {
+                    chunk: Chunk {
+                        text: prefix,
+                        ..chunk.clone()
+                    },
+                    renderer: None,
                 }
             }
             Transform::Inlay(inlay) => {
@@ -313,6 +325,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                 }
 
+                let mut renderer = None;
                 let mut highlight_style = match inlay.id {
                     InlayId::InlineCompletion(_) => {
                         self.highlight_styles.inline_completion.map(|s| {
@@ -325,14 +338,31 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
-                    InlayId::Color(_) => match inlay.color {
-                        Some(color) => {
-                            let style = self.highlight_styles.inlay_hint.get_or_insert_default();
-                            style.color = Some(color);
-                            Some(*style)
+                    InlayId::Color(_) => {
+                        if let Some(color) = inlay.color {
+                            renderer = Some(ChunkRenderer {
+                                id: ChunkRendererId::Inlay(inlay.id),
+                                render: Arc::new(move |cx| {
+                                    div()
+                                        .relative()
+                                        .size_3p5()
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .right_1()
+                                                .size_3()
+                                                .border_1()
+                                                .border_color(cx.theme().colors().border)
+                                                .bg(color),
+                                        )
+                                        .into_any_element()
+                                }),
+                                constrain_width: false,
+                                measured_width: None,
+                            });
                         }
-                        None => self.highlight_styles.inlay_hint,
-                    },
+                        self.highlight_styles.inlay_hint
+                    }
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -370,11 +400,14 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 self.output_offset.0 += chunk.len();
 
-                Chunk {
-                    text: chunk,
-                    highlight_style,
-                    is_inlay: true,
-                    ..Default::default()
+                InlayChunk {
+                    chunk: Chunk {
+                        text: chunk,
+                        highlight_style,
+                        is_inlay: true,
+                        ..Chunk::default()
+                    },
+                    renderer,
                 }
             }
         };
@@ -1066,7 +1099,7 @@ impl InlaySnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(Default::default()..self.len(), false, Highlights::default())
-            .map(|chunk| chunk.text)
+            .map(|chunk| chunk.chunk.text)
             .collect()
     }
 
@@ -1704,7 +1737,7 @@ mod tests {
                             ..Highlights::default()
                         },
                     )
-                    .map(|chunk| chunk.text)
+                    .map(|chunk| chunk.chunk.text)
                     .collect::<String>();
                 assert_eq!(
                     actual_text,

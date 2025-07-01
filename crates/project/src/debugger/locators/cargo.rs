@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
-use serde_json::Value;
+use serde_json::{Value, json};
 use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
@@ -76,6 +76,13 @@ impl DapLocator for CargoLocator {
             _ => {}
         }
 
+        let config = if adapter.as_ref() == "CodeLLDB" {
+            json!({
+                "sourceLanguages": ["rust"]
+            })
+        } else {
+            Value::Null
+        };
         Some(DebugScenario {
             adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
@@ -83,7 +90,7 @@ impl DapLocator for CargoLocator {
                 task_template,
                 locator_name: Some(self.name()),
             }),
-            config: serde_json::Value::Null,
+            config,
             tcp_connection: None,
         })
     }

@@ -4,7 +4,6 @@ use editor::{
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
-    scroll::Autoscroll,
 };
 use gpui::{Action, Context, Window, actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
@@ -626,7 +625,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
                         self.update_editor(window, cx, |_, editor, window, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });
@@ -765,6 +764,73 @@ impl Motion {
         match self {
             Motion::WrappingLeft | Motion::WrappingRight => true,
             _ => false,
+        }
+    }
+
+    pub(crate) fn push_to_jump_list(&self) -> bool {
+        use Motion::*;
+        match self {
+            CurrentLine
+            | Down { .. }
+            | EndOfLine { .. }
+            | EndOfLineDownward
+            | FindBackward { .. }
+            | FindForward { .. }
+            | FirstNonWhitespace { .. }
+            | GoToColumn
+            | Left
+            | MiddleOfLine { .. }
+            | NextLineStart
+            | NextSubwordEnd { .. }
+            | NextSubwordStart { .. }
+            | NextWordEnd { .. }
+            | NextWordStart { .. }
+            | PreviousLineStart
+            | PreviousSubwordEnd { .. }
+            | PreviousSubwordStart { .. }
+            | PreviousWordEnd { .. }
+            | PreviousWordStart { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. }
+            | Right
+            | StartOfLine { .. }
+            | StartOfLineDownward
+            | Up { .. }
+            | WrappingLeft
+            | WrappingRight => false,
+            EndOfDocument
+            | EndOfParagraph
+            | GoToPercentage
+            | Jump { .. }
+            | Matching
+            | NextComment
+            | NextGreaterIndent
+            | NextLesserIndent
+            | NextMethodEnd
+            | NextMethodStart
+            | NextSameIndent
+            | NextSectionEnd
+            | NextSectionStart
+            | PreviousComment
+            | PreviousGreaterIndent
+            | PreviousLesserIndent
+            | PreviousMethodEnd
+            | PreviousMethodStart
+            | PreviousSameIndent
+            | PreviousSectionEnd
+            | PreviousSectionStart
+            | SentenceBackward
+            | SentenceForward
+            | Sneak { .. }
+            | SneakBackward { .. }
+            | StartOfDocument
+            | StartOfParagraph
+            | UnmatchedBackward { .. }
+            | UnmatchedForward { .. }
+            | WindowBottom
+            | WindowMiddle
+            | WindowTop
+            | ZedSearchResult { .. } => true,
         }
     }
 

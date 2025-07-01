@@ -25,8 +25,8 @@ use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: &str = "vercel";
-const PROVIDER_NAME: &str = "Vercel";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct VercelSettings {
@@ -172,11 +172,11 @@ impl LanguageModelProviderState for VercelLanguageModelProvider {
 
 impl LanguageModelProvider for VercelLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -269,7 +269,11 @@ impl VercelLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.context("Missing Vercel API Key")?;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
             let request =
                 open_ai::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
@@ -290,11 +294,11 @@ impl LanguageModel for VercelLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {

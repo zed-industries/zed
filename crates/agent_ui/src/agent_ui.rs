@@ -4,6 +4,7 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -11,7 +12,6 @@ mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod max_mode_tooltip;
 mod message_editor;
 mod profile_selector;
 mod slash_command;
@@ -92,6 +92,7 @@ actions!(
 
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
@@ -99,6 +100,7 @@ pub struct NewThread {
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
 pub struct ManageProfiles {
     #[serde(default)]
     pub customize_tools: Option<AgentProfileId>,
@@ -209,7 +211,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
-    let default = to_selected_model(&settings.default_model);
+    let default = settings.default_model.as_ref().map(to_selected_model);
     let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
@@ -229,7 +231,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         .collect::<Vec<_>>();
 
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        registry.select_default_model(Some(&default), cx);
+        registry.select_default_model(default.as_ref(), cx);
         registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
         registry.select_commit_message_model(commit_message.as_ref(), cx);
         registry.select_thread_summary_model(thread_summary.as_ref(), cx);
