@@ -1949,6 +1949,8 @@ mod tests {
         // This test verifies that we handle UTF-8 character boundaries correctly
         // when splitting inlay text for highlighting. Previously, this would panic
         // when trying to split at byte 13, which is in the middle of the '…' character.
+        //
+        // See https://github.com/zed-industries/zed/issues/33641
         let buffer = MultiBuffer::build_simple("fn main() {}\n", cx);
         let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
 
@@ -1967,7 +1969,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
 
         // Create highlights that request a split at byte 13, which is in the middle
-        // of the '…' character (bytes 12..14). Our fix should round up to byte 15.
+        // of the '…' character (bytes 12..14). We should round down to byte 12.
         let inlay_highlights = create_inlay_highlights(InlayId::Hint(0), 0..13, position);
 
         let highlights = crate::display_map::Highlights {
