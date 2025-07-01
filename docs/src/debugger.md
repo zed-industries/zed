@@ -3,6 +3,7 @@
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
 DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
 It allows Zed to support various debuggers without needing to implement language-specific debugging logic.
+Zed implements the client side of the protocol, and various _debug adapters_ implement the server side.
 
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
@@ -10,34 +11,51 @@ and more, in a consistent manner across different programming languages and runt
 > We currently offer onboarding support for users. We are eager to hear from you if you encounter any issues or have suggestions for improvement for our debugging experience.
 > You can schedule a call via [Cal.com](https://cal.com/team/zed-research/debugger)
 
-## Supported Debug Adapters
+## Supported Languages
 
-Zed supports a variety of debug adapters for different programming languages out of the box:
+To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](extensions/debugger-extensions.md). The following languages currently have debug adapters available:
 
-- JavaScript ([vscode-js-debug](https://github.com/microsoft/vscode-js-debug.git)): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript and TypeScript.
+<!-- keep this sorted -->
+- [C](languages/c.md#debugging) (built-in)
+- [C++](languages/cpp.md#debugging) (built-in)
+- [Go](languages/go.md#debugging) (built-in)
+- [JavaScript](languages/javascript.md#debugging) (built-in)
+- [PHP](languages/php.md#debugging) (built-in)
+- [Python](languages/python.md#debugging) (built-in)
+- [Ruby](languages/ruby.md#debugging) (provided by extension)
+- [Rust](languages/rust.md#debugging) (built-in)
+- [Swift](languages/swift.md#debugging) (provided by extension)
+- [TypeScript](languages/typescript.md#debugging) (built-in)
 
-- Python ([debugpy](https://github.com/microsoft/debugpy.git)): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
+> If your language isn't listed, you can contribute by adding a debug adapter for it. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
 
-- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for Rust, C, C++, and some other compiled languages, offering low-level debugging features and support for Apple platforms.
-
-- GDB ([GDB](https://sourceware.org/gdb/)): The GNU Debugger, which supports debugging for multiple programming languages including C, C++, Go, and Rust, across various platforms.
-
-- Go ([Delve](https://github.com/go-delve/delve)): Delve, a debugger for the Go programming language, offering both local and remote debugging capabilities with full support for Go's runtime and standard library.
-
-- PHP ([Xdebug](https://xdebug.org/)): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
-
-These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
-
-> Is your desired debugger not listed? You can install a [Debug Adapter extension](https://zed.dev/extensions?filter=debug-adapters) to add support for your favorite debugger.
-> If that's not enough, you can contribute by creating an extension yourself. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
+Follow those links for language- and adapter-specific information and examples, or read on for more about Zed's general debugging features that apply to all adapters.
 
 ## Getting Started
 
-For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
+For most languages, the fastest way to get started is to run {#action debugger::Start} ({#kb debugger::Start}). This opens the _new process modal_, which shows you a contextual list of preconfigured debug tasks for the current project. Debug tasks are created from tests, entry points (like a `main` function), and from other sources---consult the documentation for your language for full information about what's suppported.
 
-For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+You can open the same modal by clicking the "plus" button at the top right of the debug panel.
 
-You can then use the `New Session Modal` to select a configuration and start debugging.
+For languages that don't provide preconfigured debug tasks (this includes C, C++, and many extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
+
+```jsonc
+[
+  {
+    "adapter": "CodeLLDB",
+    "label": "First configuration"
+    // ...
+  },
+  {
+    "adapter": "Debugpy",
+    "label": "Second configuration"
+  }
+]
+```
+
+Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.zed/debug.json`, they'll appear in the list in the new process modal.
+
+Zed will also load debug configurations from `.vscode/launch.json`, and show them FIXME
 
 ### Launching & Attaching
 
@@ -111,41 +129,7 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
 ### Automatic scenario creation
 
 Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
-Automatic scenario creation is currently supported for Rust, Go, JavaScript, and TypeScript.
-
-### Example Configurations
-
-#### JavaScript
-
-See the [JavaScript language documentation](languages/javascript.md#debugging) for examples.
-
-#### TypeScript
-
-See the [TypeScript language documentation](languages/typescript.md#debugging) for examples.
-
-#### Python
-
-See the [Python language documentation](languages/python.md#debugging) for examples.
-
-#### Rust
-
-See the [Rust language documentation](languages/rust.md#debugging) for examples.
-
-#### C
-
-See the [C language documentation](languages/c.md#debugging) for examples.
-
-#### C++
-
-See the [C++ language documentation](languages/cpp.md#debugging) for examples.
-
-#### Go
-
-See the [Go language documentation](languages/go.md#debugging) for examples.
-
-#### Ruby
-
-See the [Ruby language documentation](languages/ruby.md#debugging) for examples.
+Automatic scenario creation is currently supported for Rust, Go, Python, JavaScript, and TypeScript.
 
 ## Breakpoints
 
@@ -353,5 +337,5 @@ If you're running into problems with the debugger, please [open a GitHub issue](
 
 There are also some features you can use to gather more information about the problem:
 
-- When you have a session running in the debug panel, you can run the `dev: copy debug adapter arguments` action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
-- You can also use the `dev: open debug adapter logs` action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
+- When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
+- You can also use the {# dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
