@@ -141,26 +141,6 @@ See the [C language documentation](languages/c.md#debugging) for examples.
 
 See the [C++ language documentation](languages/cpp.md#debugging) for examples.
 
-<<<<<<< HEAD
-#### Rust/C++/C
-
-> For CodeLLDB, you might want to set `sourceLanguages` in your launch configuration based on the source code language.
-
-##### Using pre-built binary
-
-```json
-[
-  {
-    "label": "Debug native binary",
-    "program": "$ZED_WORKTREE_ROOT/build/binary",
-    "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
-  }
-]
-```
-
-=======
->>>>>>> 0f70f846dc (move out c/c++/rust)
 
 #### Go
 
