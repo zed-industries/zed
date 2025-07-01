@@ -22,7 +22,7 @@ impl ZedAiOnboarding {
         cx.notify();
     }
 
-    fn continue_free(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn continue_free(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         // dl: ccept TOS if needed, select Claude Sonnet
         cx.notify();
     }
@@ -32,12 +32,7 @@ impl ZedAiOnboarding {
         cx.notify();
     }
 
-    fn configure_github_copilot(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn configure_github_copilot(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         // dl todo
         cx.notify();
     }
@@ -45,6 +40,16 @@ impl ZedAiOnboarding {
 
 impl Render for ZedAiOnboarding {
     fn render(&mut self, _window: &mut ui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        const PLANS_DESCRIPTION: &str = "Choose one of the available plans to start with Zed AI";
+        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free trial.";
+        const SIGN_IN_DISCLAIMER: &str = "You can start using AI features in Zed by subscribing to a Zed plan, for which you need to sign in";
+        const TOS_CALLOUT: &str = "By using any Zed plans, you accept the terms of service";
+        const NO_PLANS_DISLCAIMER: &str = "You don't need to use Zed plans if you don't want to.";
+
+        let in_agent_panel = matches!(self.source, OnboardingSource::AgentPanel);
+        let is_signed_in = self.is_signed_in;
+        let account_too_young = self.account_too_young;
+
         let free_plan_ad = v_flex()
             .child("Free")
             .child("50 Zed-hosted prompts per month with the Claude models")
@@ -73,44 +78,48 @@ impl Render for ZedAiOnboarding {
                 this.child(Button::new("trial", "Start Pro Trial").full_width().on_click(cx.listener(Self::upgrade_plan)))
             });
 
-        let young_account_disclaimer = "Given your GitHub account was created less than 30 days ago, we can't offer your a free trial.";
+        let main_content = if is_signed_in {
+            div()
+                .child(PLANS_DESCRIPTION)
+                .when(account_too_young, |this| {
+                    this.child(YOUNG_ACCOUNT_DISCLAIMER)
+                })
+                .child(free_plan_ad)
+                .child(pro_plan_ad)
+                .child(TOS_CALLOUT)
+        } else {
+            div().child(SIGN_IN_DISCLAIMER)
+        };
+
+        if in_agent_panel {
+            return div()
+                .m_6()
+                .p_6()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_lg()
+                .child("Welcome to Zed AI")
+                .child(main_content)
+                .child(ui::Divider::horizontal())
+                .child(NO_PLANS_DISLCAIMER)
+                .child("Bring your own API keys")
+                .child(
+                    Button::new("configure_models", "Configure Model Providers")
+                        .full_width()
+                        .on_click(cx.listener(Self::configure_providers)),
+                );
+        }
 
         div()
             .child("Welcome to Zed AI")
-            .child(if self.is_signed_in {
-                div()
-                    .child("Choose one of the available plans to start with Zed AI")
-                    .when(self.account_too_young, |this| this.child(young_account_disclaimer))
-                    .child(free_plan_ad)
-                    .child(pro_plan_ad)
-                    .child("By using any Zed plans, you accept the terms of service")
-            } else {
-                div()
-                    .child("You can start using AI features in Zed by subscribing to a Zed plan, for which you need to sign in")
-            })
+            .child(main_content)
             .child(ui::Divider::horizontal())
-            .child("You don't need to use Zed plans if you don't want to.")
-            .child(match self.source {
-                OnboardingSource::AgentPanel => "Bring your own API keys",
-                OnboardingSource::EditPredictions => {
-                    "Use GitHub Copilot as your edit prediction provider"
-                }
-            })
+            .child(NO_PLANS_DISLCAIMER)
+            .child("Use GitHub Copilot as your edit prediction provider")
             .child(
-                Button::new(
-                    "providers",
-                    match self.source {
-                        // takes the user to the panel's settings view
-                        OnboardingSource::AgentPanel => "Configure Model Providers",
-                        // opens the GH copilot setup modal
-                        OnboardingSource::EditPredictions => "Configure GitHub Copilot",
-                    },
-                )
-                .full_width()
-                .on_click(cx.listener(match self.source {
-                    OnboardingSource::AgentPanel => Self::configure_providers,
-                    OnboardingSource::EditPredictions => Self::configure_github_copilot,
-                })),
+                Button::new("configure_copilot", "Configure GitHub Copilot")
+                    .full_width()
+                    .on_click(cx.listener(Self::configure_github_copilot)),
             )
     }
 }
