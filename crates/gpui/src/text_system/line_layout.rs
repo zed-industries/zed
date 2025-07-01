@@ -579,13 +579,15 @@ impl LineLayoutCache {
                 .layout_line(&text, font_size, runs);
 
             if let Some(force_width) = force_width {
-                layout.runs.iter_mut().enumerate().for_each(|(i, run)| {
+                let mut glyph_pos = 0;
+                for run in layout.runs.iter_mut() {
                     for glyph in run.glyphs.iter_mut() {
-                        if (glyph.position.x - i * force_width).abs() > px(1.) {
-                            glyph.position.x = i * force_width;
+                        if (glyph.position.x - glyph_pos * force_width).abs() > px(1.) {
+                            glyph.position.x = glyph_pos * force_width;
                         }
+                        glyph_pos += 1;
                     }
-                });
+                }
             }
 
             let key = Arc::new(CacheKey {
