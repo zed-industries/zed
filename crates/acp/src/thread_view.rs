@@ -1,6 +1,9 @@
 use anyhow::Result;
 use editor::{Editor, MultiBuffer};
-use gpui::{App, Entity, Focusable, SharedString, Subscription, Window, div, prelude::*};
+use gpui::{
+    App, Empty, Entity, Focusable, ListState, SharedString, Subscription, Window, div, list,
+    prelude::*,
+};
 use gpui::{FocusHandle, Task};
 use language::Buffer;
 use ui::Tooltip;
@@ -13,6 +16,7 @@ pub struct AcpThreadView {
     thread: Entity<AcpThread>,
     // todo! use full message editor from agent2
     message_editor: Entity<Editor>,
+    list_state: ListState,
     send_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
@@ -38,14 +42,32 @@ impl AcpThreadView {
             editor
         });
 
-        let subscription = cx.observe(&thread, |_, _, cx| {
+        let subscription = cx.observe(&thread, |this, thread, cx| {
+            let count = this.list_state.item_count();
+            // TODO: Incremental updates
+            this.list_state
+                .splice(0..count, thread.read(cx).entries.len());
             cx.notify();
         });
 
+        let list_state = ListState::new(
+            thread.read(cx).entries.len(),
+            gpui::ListAlignment::Top,
+            px(1000.0),
+            cx.processor({
+                move |this: &mut Self, item: usize, window, cx| {
+                    let Some(entry) = this.thread.read(cx).entries.get(item) else {
+                        return Empty.into_any();
+                    };
+                    this.render_entry(entry, window, cx)
+                }
+            }),
+        );
         Self {
             thread,
             message_editor,
             send_task: None,
+            list_state: list_state,
             _subscription: subscription,
         }
     }
@@ -134,7 +156,7 @@ impl Focusable for AcpThreadView {
 }
 
 impl Render for AcpThreadView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.message_editor.read(cx).text(cx);
         let is_editor_empty = text.is_empty();
         let focus_handle = self.message_editor.focus_handle(cx);
@@ -143,14 +165,12 @@ impl Render for AcpThreadView {
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .child(
-                // todo! use gpui::list
-                v_flex().p_2().h_full().gap_1().children(
-                    self.thread
-                        .read(cx)
-                        .entries()
-                        .iter()
-                        .map(|entry| self.render_entry(entry, window, cx)),
-                ),
+                div()
+                    .child(
+                        list(self.list_state.clone())
+                            .with_sizing_behavior(gpui::ListSizingBehavior::Infer),
+                    )
+                    .p_2(),
             )
             .when(self.send_task.is_some(), |this| {
                 this.child(
