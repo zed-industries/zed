@@ -421,7 +421,7 @@ impl ListState {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
 
-    /// Add a pixel offset to a list offset, returning the new list offset.
+    /// Use the relative distance from an existing offset to compute a new offset.
     pub fn add_pixel_offset(&self, offset: &ListOffset, pixel_delta: Pixels) -> ListOffset {
         if pixel_delta == px(0.) {
             return *offset;
