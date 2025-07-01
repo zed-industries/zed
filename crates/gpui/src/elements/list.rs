@@ -293,9 +293,27 @@ impl ListState {
 
     /// Scroll the list by the given offset
     pub fn scroll_by(&self, distance: Pixels) {
+        if distance == px(0.) {
+            return;
+        }
+
         let current_offset = self.logical_scroll_top();
-        let new_offset = self.offset_by(&current_offset, distance);
-        self.scroll_to(new_offset);
+        let state = &*self.0.borrow();
+        let mut cursor = state.items.cursor::<ListItemSummary>(&());
+        cursor.seek(&Count(current_offset.item_ix), Bias::Right, &());
+
+        let start_pixel_offset = cursor.start().height + current_offset.offset_in_item;
+        let new_pixel_offset = (start_pixel_offset + distance).max(px(0.));
+        if new_pixel_offset > start_pixel_offset {
+            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
+        } else {
+            cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
+        }
+
+        self.scroll_to(ListOffset {
+            item_ix: cursor.start().count,
+            offset_in_item: new_pixel_offset - cursor.start().height,
+        });
     }
 
     /// Scroll the list to the given offset
@@ -426,30 +444,6 @@ impl ListState {
     /// Return the bounds of the viewport in pixels.
     pub fn viewport_bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
-    }
-
-    /// Use the relative distance from an existing offset to compute a new offset.
-    pub fn offset_by(&self, offset: &ListOffset, distance: Pixels) -> ListOffset {
-        if distance == px(0.) {
-            return *offset;
-        }
-
-        let state = &*self.0.borrow();
-        let mut cursor = state.items.cursor::<ListItemSummary>(&());
-        cursor.seek(&Count(offset.item_ix), Bias::Right, &());
-
-        let start_pixel_offset = cursor.start().height + offset.offset_in_item;
-        let new_pixel_offset = (start_pixel_offset + distance).max(px(0.));
-        if new_pixel_offset > start_pixel_offset {
-            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
-        } else {
-            cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
-        }
-
-        ListOffset {
-            item_ix: cursor.start().count,
-            offset_in_item: new_pixel_offset - cursor.start().height,
-        }
     }
 }
 
@@ -1152,7 +1146,7 @@ mod test {
     }
 
     #[gpui::test]
-    fn test_offset_by_positive_and_negative_distance(cx: &mut TestAppContext) {
+    fn test_scroll_by_positive_and_negative_distance(cx: &mut TestAppContext) {
         use crate::{
             AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
             list, point, px, size,
@@ -1176,28 +1170,25 @@ mod test {
             cx.new(|_| TestView(state.clone()))
         });
 
-        let start_offset = gpui::ListOffset {
-            item_ix: 1,
-            offset_in_item: px(5.0),
-        };
-
         // Test positive distance: start at item 1, move down 30px
-        let positive_result = state.offset_by(&start_offset, px(30.0));
+        state.scroll_by(px(30.));
 
         // Should move to item 2
-        assert_eq!(positive_result.item_ix, 2);
-        assert_eq!(positive_result.offset_in_item, px(15.0));
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 2);
+        assert_eq!(offset.offset_in_item, px(0.));
 
         // Test negative distance: start at item 2, move up 30px
-        let negative_result = state.offset_by(&positive_result, px(-30.0));
+        state.scroll_by(px(-30.));
 
         // Should move back to item 1
-        assert_eq!(negative_result.item_ix, 1);
-        assert_eq!(negative_result.offset_in_item, px(5.0));
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 1);
+        assert_eq!(offset.offset_in_item, px(0.));
 
         // Test zero distance
-        let zero_result = state.offset_by(&start_offset, px(0.0));
-        assert_eq!(zero_result.item_ix, start_offset.item_ix);
-        assert_eq!(zero_result.offset_in_item, start_offset.offset_in_item);
+        state.scroll_by(px(0.));
+        assert_eq!(offset.item_ix, 1);
+        assert_eq!(offset.offset_in_item, px(0.));
     }
 }
