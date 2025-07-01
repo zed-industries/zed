@@ -5423,8 +5423,8 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                very long and needs to be wrapped
                properly.
             - This is an unordered list item that is
-              also very long and should not merge with
-              the numbered item.ˇ»
+              also very long and should not merge
+              with the numbered item.ˇ»
         "},
         markdown_language.clone(),
         &mut cx,
@@ -5448,8 +5448,8 @@ async fn test_rewrap(cx: &mut TestAppContext) {
                very long and needs to be wrapped
                properly.
             - This is an unordered list item that is
-              also very long and should not merge with
-              the numbered item.ˇ»
+              also very long and should not merge
+              with the numbered item.ˇ»
         "},
         markdown_language.clone(),
         &mut cx,
