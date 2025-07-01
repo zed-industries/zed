@@ -426,13 +426,12 @@ impl ListState {
         let state = &*self.0.borrow();
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
         cursor.seek(&Count(offset.item_ix), Bias::Right, &());
+
         let start_pixel_offset = cursor.start().height + offset.offset_in_item;
         let new_pixel_offset = (start_pixel_offset + pixel_delta).max(px(0.));
         if new_pixel_offset == start_pixel_offset {
             return *offset;
-        }
-
-        if new_pixel_offset >= start_pixel_offset {
+        } else if new_pixel_offset > start_pixel_offset {
             cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
         } else {
             cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
