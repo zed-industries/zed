@@ -2043,8 +2043,8 @@ mod tests {
             },
             TestCase {
                 inlay_text: "Hello",
-                highlight_range: 0..3,
-                expected_highlighted: "Hel",
+                highlight_range: 0..2,
+                expected_highlighted: "He",
                 description: "ASCII only - no adjustment needed",
             },
             TestCase {
