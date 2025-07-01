@@ -144,6 +144,7 @@ pub use toolchain_store::ToolchainStore;
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+const MAX_FS_OPERATIONS: usize = 100;
 
 #[derive(Clone, Debug)]
 enum FsOperation {
@@ -2554,7 +2555,7 @@ impl Project {
     }
 
     fn record_fs_operation(&mut self, op: FsOperation) {
-        if self.fs_operations.len() >= 100 {
+        if self.fs_operations.len() >= MAX_FS_OPERATIONS {
             self.fs_operations.pop_front();
         }
         self.fs_operations.push_back(op);
@@ -2575,6 +2576,54 @@ impl Project {
         self.performing_undo = true;
         self.current_undo_id = Some(op_id);
 
+        let handle_undo_result = |this: &mut Project,
+                                  result: Result<()>,
+                                  op_id: u64,
+                                  error_message: Option<String>,
+                                  cx: &mut Context<Project>|
+         -> Result<()> {
+            this.performing_undo = false;
+
+            match result {
+                Ok(_) => {
+                    if this.current_undo_id == Some(op_id) {
+                        this.fs_operations.pop_back();
+                    }
+                    this.current_undo_id = None;
+                    Ok(())
+                }
+                Err(e) => {
+                    let error_chain = format!("{:?}", e).to_lowercase();
+                    if error_chain.contains("does not exist")
+                        || error_chain.contains("no such file")
+                        || error_chain.contains("not found")
+                        || error_chain.contains("cannot find")
+                    {
+                        // File doesn't exist, treat as successful
+                        if this.current_undo_id == Some(op_id) {
+                            this.fs_operations.pop_back();
+                        }
+                        this.current_undo_id = None;
+                        Ok(())
+                    } else {
+                        this.current_undo_id = None;
+                        if let Some(msg) = error_message {
+                            cx.emit(Event::Toast {
+                                notification_id: "filesystem-undo-error".into(),
+                                message: format!("{}: {}", msg, e),
+                            });
+                        } else {
+                            cx.emit(Event::Toast {
+                                notification_id: "filesystem-undo-error".into(),
+                                message: format!("Failed to undo filesystem change: {}", e),
+                            });
+                        }
+                        Err(e)
+                    }
+                }
+            }
+        };
+
         match op {
             FsOperation::Move { old_path, new_path } => {
                 let entry = self
@@ -2584,6 +2633,7 @@ impl Project {
                 let Some(id) = entry else {
                     // File doesn't exist, treat as successful
                     self.performing_undo = false;
+                    self.current_undo_id = None;
                     self.fs_operations.pop_back();
                     return Task::ready(Ok(()));
                 };
@@ -2591,42 +2641,11 @@ impl Project {
                 cx.spawn(async move |this, cx| {
                     let rename_result = this
                         .update(cx, |this, cx| this.rename_entry(id, old_path.as_ref(), cx))?
-                        .await;
+                        .await
+                        .map(|_| ());
 
                     this.update(cx, |this, cx| {
-                        this.performing_undo = false;
-
-                        match rename_result {
-                            Ok(_) => {
-                                if this.current_undo_id == Some(op_id) {
-                                    this.fs_operations.pop_back();
-                                }
-                                this.current_undo_id = None;
-                                Ok(())
-                            }
-                            Err(e) => {
-                                let error_chain = format!("{:?}", e).to_lowercase();
-                                if error_chain.contains("does not exist")
-                                    || error_chain.contains("no such file")
-                                    || error_chain.contains("not found")
-                                    || error_chain.contains("cannot find")
-                                {
-                                    // File doesn't exist, treat as successful
-                                    if this.current_undo_id == Some(op_id) {
-                                        this.fs_operations.pop_back();
-                                    }
-                                    this.current_undo_id = None;
-                                    Ok(())
-                                } else {
-                                    this.current_undo_id = None;
-                                    cx.emit(Event::Toast {
-                                        notification_id: "filesystem-undo-error".into(),
-                                        message: format!("Failed to undo filesystem change: {}", e),
-                                    });
-                                    Err(e)
-                                }
-                            }
-                        }
+                        handle_undo_result(this, rename_result, op_id, None, cx)
                     })?
                 })
             }
@@ -2640,6 +2659,7 @@ impl Project {
 
                 let Some(abs_path) = abs_path else {
                     self.performing_undo = false;
+                    self.current_undo_id = None;
                     cx.emit(Event::Toast {
                         notification_id: "filesystem-undo-error".into(),
                         message: format!("Cannot restore '{}': worktree not found", path.display()),
@@ -2652,25 +2672,13 @@ impl Project {
                     let restore_result = fs.restore_from_trash(&abs_path).await;
 
                     this.update(cx, |this, cx| {
-                        this.performing_undo = false;
-
-                        match restore_result {
-                            Ok(_) => {
-                                if this.current_undo_id == Some(op_id) {
-                                    this.fs_operations.pop_back();
-                                }
-                                this.current_undo_id = None;
-                                Ok(())
-                            }
-                            Err(e) => {
-                                this.current_undo_id = None;
-                                cx.emit(Event::Toast {
-                                    notification_id: "filesystem-undo-error".into(),
-                                    message: format!("Failed to restore '{}': {}", path_display, e),
-                                });
-                                Err(e)
-                            }
-                        }
+                        handle_undo_result(
+                            this,
+                            restore_result,
+                            op_id,
+                            Some(format!("Failed to restore '{}'", path_display)),
+                            cx,
+                        )
                     })?
                 })
             }
@@ -2698,29 +2706,16 @@ impl Project {
                         .await;
 
                     this.update(cx, |this, cx| {
-                        this.performing_undo = false;
-
-                        match delete_result {
-                            Ok(_) => {
-                                if this.current_undo_id == Some(op_id) {
-                                    this.fs_operations.pop_back();
-                                }
-                                this.current_undo_id = None;
-                                Ok(())
-                            }
-                            Err(e) => {
-                                this.current_undo_id = None;
-                                cx.emit(Event::Toast {
-                                    notification_id: "filesystem-undo-error".into(),
-                                    message: format!(
-                                        "Failed to delete copied file '{}': {}",
-                                        copied_to_path.display(),
-                                        e
-                                    ),
-                                });
-                                Err(e)
-                            }
-                        }
+                        handle_undo_result(
+                            this,
+                            delete_result,
+                            op_id,
+                            Some(format!(
+                                "Failed to delete copied file '{}'",
+                                copied_to_path.display()
+                            )),
+                            cx,
+                        )
                     })?
                 })
             }
@@ -2749,30 +2744,17 @@ impl Project {
                         .await;
 
                     this.update(cx, |this, cx| {
-                        this.performing_undo = false;
-
-                        match delete_result {
-                            Ok(_) => {
-                                if this.current_undo_id == Some(op_id) {
-                                    this.fs_operations.pop_back();
-                                }
-                                this.current_undo_id = None;
-                                Ok(())
-                            }
-                            Err(e) => {
-                                this.current_undo_id = None;
-                                cx.emit(Event::Toast {
-                                    notification_id: "filesystem-undo-error".into(),
-                                    message: format!(
-                                        "Failed to delete created {} '{}': {}",
-                                        if is_directory { "directory" } else { "file" },
-                                        created_path.display(),
-                                        e
-                                    ),
-                                });
-                                Err(e)
-                            }
-                        }
+                        handle_undo_result(
+                            this,
+                            delete_result,
+                            op_id,
+                            Some(format!(
+                                "Failed to delete created {} '{}'",
+                                if is_directory { "directory" } else { "file" },
+                                created_path.display()
+                            )),
+                            cx,
+                        )
                     })?
                 })
             }
