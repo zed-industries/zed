@@ -41,9 +41,9 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext,
-    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop, linear_gradient,
-    prelude::*, pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop,
+    linear_gradient, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -2745,6 +2745,10 @@ impl AgentPanel {
             }))
     }
 
+    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().status().error.opacity(0.08)
+    }
+
     fn render_payment_required_error(
         &self,
         thread: &Entity<ActiveThread>,
@@ -2768,7 +2772,7 @@ impl AgentPanel {
                     .tertiary_action(self.upgrade_button(thread, cx))
                     .secondary_action(self.create_copy_button(ERROR_MESSAGE))
                     .primary_action(self.dismiss_error_button(thread, cx))
-                    .bg_color(cx.theme().status().error.opacity(0.08)),
+                    .bg_color(self.error_callout_bg(cx)),
             )
             .into_any_element()
     }
@@ -2799,63 +2803,7 @@ impl AgentPanel {
                     .tertiary_action(self.upgrade_button(thread, cx))
                     .secondary_action(self.create_copy_button(error_message))
                     .primary_action(self.dismiss_error_button(thread, cx))
-                    .bg_color(cx.theme().status().error.opacity(0.08)),
-            )
-            .into_any_element()
-    }
-
-    fn render_model_request_limit_reached_error_test(
-        // dl: delete
-        &self,
-        thread: &Entity<ActiveThread>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        const ERROR_MESSAGE: &str = "Upgrade to usage-based billing for more prompts.";
-
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title("Model Prompt Limit Reached")
-                    .description(ERROR_MESSAGE)
-                    .tertiary_action(self.upgrade_button(thread, cx))
-                    .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-                    .primary_action(self.dismiss_error_button(thread, cx))
-                    .bg_color(cx.theme().status().error.opacity(0.08)),
-            )
-            .into_any_element()
-    }
-
-    fn render_model_request_limit_reached_error_test2(
-        // dl: delete
-        &self,
-        thread: &Entity<ActiveThread>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        const ERROR_MESSAGE: &str = "Upgrade to Zed Pro for more prompts.";
-
-        let icon = Icon::new(IconName::XCircle)
-            .size(IconSize::Small)
-            .color(Color::Error);
-
-        div()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Callout::new()
-                    .icon(icon)
-                    .title("Model Prompt Limit Reached")
-                    .description(ERROR_MESSAGE)
-                    .tertiary_action(self.upgrade_button(thread, cx))
-                    .secondary_action(self.create_copy_button(ERROR_MESSAGE))
-                    .primary_action(self.dismiss_error_button(thread, cx))
-                    .bg_color(cx.theme().status().error.opacity(0.08)),
+                    .bg_color(self.error_callout_bg(cx)),
             )
             .into_any_element()
     }
@@ -2883,7 +2831,7 @@ impl AgentPanel {
                     .description(message.clone())
                     .primary_action(self.dismiss_error_button(thread, cx))
                     .secondary_action(self.create_copy_button(message_with_header))
-                    .bg_color(cx.theme().status().error.opacity(0.08)),
+                    .bg_color(self.error_callout_bg(cx)),
             )
             .into_any_element()
     }
@@ -3111,9 +3059,6 @@ impl Render for AgentPanel {
                         thread.clone().into_any_element()
                     })
                     .children(self.render_tool_use_limit_reached(window, cx))
-                    .child(self.render_payment_required_error(thread, cx)) // dl: delete
-                    .child(self.render_model_request_limit_reached_error_test(thread, cx)) // dl: delete
-                    .child(self.render_model_request_limit_reached_error_test2(thread, cx)) // dl: delete
                     .when_some(thread.read(cx).last_error(), |this, last_error| {
                         this.child(
                             div()
