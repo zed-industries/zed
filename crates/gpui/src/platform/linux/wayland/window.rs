@@ -21,18 +21,21 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::platform::{
-    PlatformAtlas, PlatformInputHandler, PlatformWindow,
-    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
-    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
-};
 use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
-    ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
-    size,
+    PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowParams, px, size,
+};
+use crate::{
+    Capslock,
+    platform::{
+        PlatformAtlas, PlatformInputHandler, PlatformWindow,
+        blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+        linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+    },
 };
 
 #[derive(Default)]
@@ -249,11 +252,11 @@ impl Drop for WaylandWindow {
 }
 
 impl WaylandWindow {
-    fn borrow(&self) -> Ref<WaylandWindowState> {
+    fn borrow(&self) -> Ref<'_, WaylandWindowState> {
         self.0.state.borrow()
     }
 
-    fn borrow_mut(&self) -> RefMut<WaylandWindowState> {
+    fn borrow_mut(&self) -> RefMut<'_, WaylandWindowState> {
         self.0.state.borrow_mut()
     }
 
@@ -635,12 +638,8 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(selection) = input_handler.selected_text_range(true) {
-                bounds = input_handler.bounds_for_range(if selection.reversed {
-                    selection.range.start..selection.range.start
-                } else {
-                    selection.range.end..selection.range.end
-                });
+            if let Some(selection) = input_handler.marked_text_range() {
+                bounds = input_handler.bounds_for_range(selection.start..selection.start);
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
@@ -700,12 +699,14 @@ impl WaylandWindowStatePtr {
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            if let Some(key_char) = &event.keystroke.key_char {
-                let mut state = self.state.borrow_mut();
-                if let Some(mut input_handler) = state.input_handler.take() {
-                    drop(state);
-                    input_handler.replace_text_in_range(None, key_char);
-                    self.state.borrow_mut().input_handler = Some(input_handler);
+            if event.keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
+                if let Some(key_char) = &event.keystroke.key_char {
+                    let mut state = self.state.borrow_mut();
+                    if let Some(mut input_handler) = state.input_handler.take() {
+                        drop(state);
+                        input_handler.replace_text_in_range(None, key_char);
+                        self.state.borrow_mut().input_handler = Some(input_handler);
+                    }
                 }
             }
         }
@@ -751,12 +752,28 @@ where
 
 impl rwh::HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let surface = self.0.surface().id().as_ptr() as *mut libc::c_void;
+        let c_ptr = NonNull::new(surface).ok_or(rwh::HandleError::Unavailable)?;
+        let handle = rwh::WaylandWindowHandle::new(c_ptr);
+        let raw_handle = rwh::RawWindowHandle::Wayland(handle);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw_handle) })
     }
 }
+
 impl rwh::HasDisplayHandle for WaylandWindow {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let display = self
+            .0
+            .surface()
+            .backend()
+            .upgrade()
+            .ok_or(rwh::HandleError::Unavailable)?
+            .display_ptr() as *mut libc::c_void;
+
+        let c_ptr = NonNull::new(display).ok_or(rwh::HandleError::Unavailable)?;
+        let handle = rwh::WaylandDisplayHandle::new(c_ptr);
+        let raw_handle = rwh::RawDisplayHandle::Wayland(handle);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(raw_handle) })
     }
 }
 
@@ -849,6 +866,10 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().client.get_client().borrow().modifiers
     }
 
+    fn capslock(&self) -> Capslock {
+        self.borrow().client.get_client().borrow().capslock
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.borrow_mut().input_handler = Some(input_handler);
     }
@@ -862,7 +883,7 @@ impl PlatformWindow for WaylandWindow {
         _level: PromptLevel,
         _msg: &str,
         _detail: Option<&str>,
-        _answers: &[&str],
+        _answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         None
     }
@@ -964,6 +985,9 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.0.callbacks.borrow_mut().close = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {

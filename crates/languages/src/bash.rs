@@ -18,7 +18,7 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
+    use gpui::{BorrowAppContext, Context, TestAppContext};
     use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -48,6 +48,14 @@ mod tests {
                     buffer.edit( [(0..buffer.len(), input)], Some(AutoindentMode::EachLine), cx, );
                     assert_eq!(buffer.text(), expected);
                 };
+
+            // Do not indent after shebang
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "#!/usr/bin/env bash\n#",
+                "#!/usr/bin/env bash\n#",
+            );
 
             // indent function correctly
             expect_indents_to(

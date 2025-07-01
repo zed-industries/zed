@@ -10,11 +10,13 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [rustup](https://www.rust-lang.org/tools/install)
 
-- Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is year when your VS was released. Pay attention to the architecture and change it to yours if needed.)
+- Install either [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is year when your VS was released. Pay attention to the architecture and change it to yours if needed.)
+- Or, if you prefer to have a slimmer installer of only the MSVC compiler tools, you can install the [build tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (+libs as above) and the "Desktop development with C++" workload.
+  But beware this installation is not automatically picked up by rustup. You must initialize your environment variables by first launching the "developer" shell (cmd/powershell) this installation places in the start menu or in Windows Terminal and then compile.
 - Install Windows 11 or 10 SDK depending on your system, but ensure that at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed on your machine. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/)
 - Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/)). Or you can install it through Visual Studio Installer, then manually add the `bin` directory to your `PATH`, for example: `C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
 
-If you can't compile Zed, make sure that you have at least the following components installed:
+If you can't compile Zed, make sure that you have at least the following components installed in case of a Visual Studio installation:
 
 ```json
 {
@@ -26,6 +28,32 @@ If you can't compile Zed, make sure that you have at least the following compone
     "Microsoft.VisualStudio.ComponentGroup.WebToolsExtensions.CMake",
     "Microsoft.VisualStudio.Component.VC.CMake.Project",
     "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+    "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre"
+  ],
+  "extensions": []
+}
+```
+
+Or if in case of just Build Tools, the following components:
+
+```json
+{
+  "version": "1.0",
+  "components": [
+    "Microsoft.VisualStudio.Component.Roslyn.Compiler",
+    "Microsoft.Component.MSBuild",
+    "Microsoft.VisualStudio.Component.CoreBuildTools",
+    "Microsoft.VisualStudio.Workload.MSBuildTools",
+    "Microsoft.VisualStudio.Component.Windows10SDK",
+    "Microsoft.VisualStudio.Component.VC.CoreBuildTools",
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
+    "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+    "Microsoft.VisualStudio.Component.VC.CMake.Project",
+    "Microsoft.VisualStudio.Component.TextTemplating",
+    "Microsoft.VisualStudio.Component.VC.CoreIde",
+    "Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core",
+    "Microsoft.VisualStudio.Workload.VCTools",
     "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre"
   ],
   "extensions": []
@@ -231,3 +259,23 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name
 For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
 
 (note that you will need to restart your system after enabling longpath support)
+
+### Graphics issues
+
+#### Zed fails to launch
+
+Currently, Zed uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if Zed fails to launch, it's likely a Vulkan-related issue.
+
+You can check the Zed log at:
+`C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
+
+If you see messages like:
+
+- `Zed failed to open a window: NoSupportedDeviceFound`
+- `ERROR_INITIALIZATION_FAILED`
+- `GPU Crashed`
+- `ERROR_SURFACE_LOST_KHR`
+
+Then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
+
+If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.

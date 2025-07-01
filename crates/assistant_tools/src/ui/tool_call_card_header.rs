@@ -1,4 +1,4 @@
-use gpui::{Animation, AnimationExt, App, IntoElement, pulsating_between};
+use gpui::{Animation, AnimationExt, AnyElement, App, IntoElement, pulsating_between};
 use std::time::Duration;
 use ui::{Tooltip, prelude::*};
 
@@ -8,6 +8,8 @@ pub struct ToolCallCardHeader {
     icon: IconName,
     primary_text: SharedString,
     secondary_text: Option<SharedString>,
+    code_path: Option<SharedString>,
+    disclosure_slot: Option<AnyElement>,
     is_loading: bool,
     error: Option<String>,
 }
@@ -18,6 +20,8 @@ impl ToolCallCardHeader {
             icon,
             primary_text: primary_text.into(),
             secondary_text: None,
+            code_path: None,
+            disclosure_slot: None,
             is_loading: false,
             error: None,
         }
@@ -25,6 +29,16 @@ impl ToolCallCardHeader {
 
     pub fn with_secondary_text(mut self, text: impl Into<SharedString>) -> Self {
         self.secondary_text = Some(text.into());
+        self
+    }
+
+    pub fn with_code_path(mut self, text: impl Into<SharedString>) -> Self {
+        self.code_path = Some(text.into());
+        self
+    }
+
+    pub fn disclosure_slot(mut self, element: impl IntoElement) -> Self {
+        self.disclosure_slot = Some(element.into_any_element());
         self
     }
 
@@ -42,26 +56,36 @@ impl ToolCallCardHeader {
 impl RenderOnce for ToolCallCardHeader {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let font_size = rems(0.8125);
+        let line_height = window.line_height();
+
         let secondary_text = self.secondary_text;
+        let code_path = self.code_path;
+
+        let bullet_divider = || {
+            div()
+                .size(px(3.))
+                .rounded_full()
+                .bg(cx.theme().colors().text)
+        };
 
         h_flex()
             .id("tool-label-container")
-            .gap_1p5()
+            .gap_2()
             .max_w_full()
             .overflow_x_scroll()
             .opacity(0.8)
             .child(
-                h_flex().h(window.line_height()).justify_center().child(
-                    Icon::new(self.icon)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                ),
-            )
-            .child(
                 h_flex()
-                    .h(window.line_height())
+                    .h(line_height)
                     .gap_1p5()
                     .text_size(font_size)
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(self.icon)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                    )
                     .map(|this| {
                         if let Some(error) = &self.error {
                             this.child(format!("{} failed", self.primary_text)).child(
@@ -76,13 +100,15 @@ impl RenderOnce for ToolCallCardHeader {
                         }
                     })
                     .when_some(secondary_text, |this, secondary_text| {
-                        this.child(
-                            div()
-                                .size(px(3.))
-                                .rounded_full()
-                                .bg(cx.theme().colors().text),
+                        this.child(bullet_divider())
+                            .child(div().text_size(font_size).child(secondary_text.clone()))
+                    })
+                    .when_some(code_path, |this, code_path| {
+                        this.child(bullet_divider()).child(
+                            Label::new(code_path.clone())
+                                .size(LabelSize::Small)
+                                .inline_code(cx),
                         )
-                        .child(div().text_size(font_size).child(secondary_text.clone()))
                     })
                     .with_animation(
                         "loading-label",
@@ -98,5 +124,11 @@ impl RenderOnce for ToolCallCardHeader {
                         },
                     ),
             )
+            .when_some(self.disclosure_slot, |container, disclosure_slot| {
+                container
+                    .group("disclosure")
+                    .justify_between()
+                    .child(div().visible_on_hover("disclosure").child(disclosure_slot))
+            })
     }
 }

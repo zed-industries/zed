@@ -5,6 +5,7 @@ use crate::{Icon, IconName, IconSize, Label, h_flex};
 pub struct ListSubHeader {
     label: SharedString,
     start_slot: Option<IconName>,
+    end_slot: Option<AnyElement>,
     inset: bool,
     selected: bool,
 }
@@ -14,6 +15,7 @@ impl ListSubHeader {
         Self {
             label: label.into(),
             start_slot: None,
+            end_slot: None,
             inset: false,
             selected: false,
         }
@@ -21,6 +23,11 @@ impl ListSubHeader {
 
     pub fn left_icon(mut self, left_icon: Option<IconName>) -> Self {
         self.start_slot = left_icon;
+        self
+    }
+
+    pub fn end_slot(mut self, end_slot: AnyElement) -> Self {
+        self.end_slot = Some(end_slot);
         self
     }
 
@@ -73,7 +80,8 @@ impl RenderOnce for ListSubHeader {
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
                             ),
-                    ),
+                    )
+                    .children(self.end_slot),
             )
     }
 }

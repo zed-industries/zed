@@ -1,0 +1,11 @@
+interface context-server {
+    /// Configuration for context server setup and installation.
+    record context-server-configuration {
+        /// Installation instructions in Markdown format.
+        installation-instructions: string,
+        /// JSON schema for settings validation.
+        settings-schema: string,
+        /// Default settings template.
+        default-settings: string,
+    }
+}

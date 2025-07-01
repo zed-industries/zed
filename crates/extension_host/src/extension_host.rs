@@ -14,9 +14,10 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
-    ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
-    ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -131,6 +132,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionUninstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
 }
 
@@ -193,8 +195,8 @@ pub fn init(
             None,
             extension_host_proxy,
             fs,
-            client.http_client().clone(),
-            client.http_client().clone(),
+            client.http_client(),
+            client.http_client(),
             Some(client.telemetry().clone()),
             node_runtime,
             cx,
@@ -429,6 +431,13 @@ impl ExtensionStore {
             .extensions
             .values()
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
+    }
+
+    pub fn extension_manifest_for_id(&self, extension_id: &str) -> Option<&Arc<ExtensionManifest>> {
+        self.extension_index
+            .extensions
+            .get(extension_id)
+            .map(|extension| &extension.manifest)
     }
 
     /// Returns the names of themes provided by extensions.
@@ -709,7 +718,7 @@ impl ExtensionStore {
             let mut response = http_client
                 .get(url.as_ref(), Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+                .context("downloading extension")?;
 
             fs.remove_dir(
                 &extension_dir,
@@ -744,8 +753,18 @@ impl ExtensionStore {
             .await;
 
             if let ExtensionOperation::Install = operation {
-                this.update( cx, |_, cx| {
-                    cx.emit(Event::ExtensionInstalled(extension_id));
+                this.update( cx, |this, cx| {
+                    cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                    if let Some(events) = ExtensionEvents::try_global(cx) {
+                        if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                            events.update(cx, |this, cx| {
+                                this.emit(
+                                    extension::Event::ExtensionInstalled(manifest.clone()),
+                                    cx,
+                                )
+                            });
+                        }
+                    }
                 })
                 .ok();
             }
@@ -819,13 +838,19 @@ impl ExtensionStore {
         self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
     }
 
-    pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+    pub fn uninstall_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
+        let extension_manifest = self.extension_manifest_for_id(&extension_id).cloned();
+
         match self.outstanding_operations.entry(extension_id.clone()) {
-            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Occupied(_) => return Task::ready(Ok(())),
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
@@ -860,9 +885,19 @@ impl ExtensionStore {
             )
             .await?;
 
+            this.update(cx, |_, cx| {
+                cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = extension_manifest {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
+
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx)
     }
 
     pub fn install_dev_extension(
@@ -935,6 +970,17 @@ impl ExtensionStore {
                 .await?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
+            this.update(cx, |this, cx| {
+                cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
+
             Ok(())
         })
     }
@@ -987,7 +1033,7 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
-        new_index: ExtensionIndex,
+        mut new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
@@ -1102,6 +1148,16 @@ impl ExtensionStore {
                         .remove_language_server(&language, language_server_name);
                 }
             }
+
+            for (server_id, _) in extension.manifest.context_servers.iter() {
+                self.proxy.unregister_context_server(server_id.clone(), cx);
+            }
+            for (adapter, _) in extension.manifest.debug_adapters.iter() {
+                self.proxy.unregister_debug_adapter(adapter.clone());
+            }
+            for (locator, _) in extension.manifest.debug_locators.iter() {
+                self.proxy.unregister_debug_locator(locator.clone());
+            }
         }
 
         self.wasm_extensions
@@ -1111,11 +1167,6 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        let languages_to_add = new_index
-            .languages
-            .iter()
-            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
-            .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut icon_themes_to_add = Vec::new();
@@ -1156,7 +1207,11 @@ impl ExtensionStore {
         }
 
         self.proxy.register_grammars(grammars_to_add);
-
+        let languages_to_add = new_index
+            .languages
+            .iter_mut()
+            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+            .collect::<Vec<_>>();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
@@ -1199,7 +1254,6 @@ impl ExtensionStore {
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
             .collect::<Vec<_>>();
-
         self.extension_index = new_index;
         cx.notify();
         cx.emit(Event::ExtensionsUpdated);
@@ -1298,6 +1352,28 @@ impl ExtensionStore {
                         this.proxy
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
+
+                    for (debug_adapter, meta) in &manifest.debug_adapters {
+                        let mut path = root_dir.clone();
+                        path.push(Path::new(manifest.id.as_ref()));
+                        if let Some(schema_path) = &meta.schema_path {
+                            path.push(schema_path);
+                        } else {
+                            path.push("debug_adapter_schemas");
+                            path.push(Path::new(debug_adapter.as_ref()).with_extension("json"));
+                        }
+
+                        this.proxy.register_debug_adapter(
+                            extension.clone(),
+                            debug_adapter.clone(),
+                            &path,
+                        );
+                    }
+
+                    for debug_adapter in manifest.debug_locators.keys() {
+                        this.proxy
+                            .register_debug_locator(extension.clone(), debug_adapter.clone());
+                    }
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
@@ -1379,7 +1455,7 @@ impl ExtensionStore {
         let is_dev = fs
             .metadata(&extension_dir)
             .await?
-            .ok_or_else(|| anyhow!("directory does not exist"))?
+            .context("directory does not exist")?
             .is_symlink;
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
@@ -1646,12 +1722,15 @@ impl ExtensionStore {
 
     pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
         let connection_options = client.read(cx).connection_options();
-        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
-            return;
+        let ssh_url = connection_options.ssh_url();
+
+        if let Some(existing_client) = self.ssh_clients.get(&ssh_url) {
+            if existing_client.upgrade().is_some() {
+                return;
+            }
         }
 
-        self.ssh_clients
-            .insert(connection_options.ssh_url(), client.downgrade());
+        self.ssh_clients.insert(ssh_url, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

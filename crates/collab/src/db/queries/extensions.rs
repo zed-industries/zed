@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use anyhow::Context;
 use chrono::Utc;
 use sea_orm::sea_query::IntoCondition;
 use util::ResultExt;
@@ -14,7 +15,7 @@ impl Database {
         max_schema_version: i32,
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let mut condition = Condition::all()
                 .add(
                     extension::Column::LatestVersion
@@ -42,7 +43,7 @@ impl Database {
         ids: &[&str],
         constraints: Option<&ExtensionVersionConstraints>,
     ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let extensions = extension::Entity::find()
                 .filter(extension::Column::ExternalId.is_in(ids.iter().copied()))
                 .all(&*tx)
@@ -122,7 +123,7 @@ impl Database {
         &self,
         extension_id: &str,
     ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let condition = extension::Column::ExternalId
                 .eq(extension_id)
                 .into_condition();
@@ -161,12 +162,12 @@ impl Database {
         extension_id: &str,
         constraints: Option<&ExtensionVersionConstraints>,
     ) -> Result<Option<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let extension = extension::Entity::find()
                 .filter(extension::Column::ExternalId.eq(extension_id))
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such extension: {extension_id}"))?;
+                .with_context(|| format!("no such extension: {extension_id}"))?;
 
             let extensions = [extension];
             let mut versions = self
@@ -186,7 +187,7 @@ impl Database {
         extension_id: &str,
         version: &str,
     ) -> Result<Option<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let extension = extension::Entity::find()
                 .filter(extension::Column::ExternalId.eq(extension_id))
                 .filter(extension_version::Column::Version.eq(version))
@@ -203,7 +204,7 @@ impl Database {
     }
 
     pub async fn get_known_extension_versions(&self) -> Result<HashMap<String, Vec<String>>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let mut extension_external_ids_by_id = HashMap::default();
 
             let mut rows = extension::Entity::find().stream(&*tx).await?;
@@ -241,7 +242,7 @@ impl Database {
         &self,
         versions_by_extension_id: &HashMap<&str, Vec<NewExtensionVersion>>,
     ) -> Result<()> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             for (external_id, versions) in versions_by_extension_id {
                 if versions.is_empty() {
                     continue;
@@ -274,7 +275,7 @@ impl Database {
                         .filter(extension::Column::ExternalId.eq(*external_id))
                         .one(&*tx)
                         .await?
-                        .ok_or_else(|| anyhow!("failed to insert extension"))?
+                        .context("failed to insert extension")?
                 };
 
                 extension_version::Entity::insert_many(versions.iter().map(|version| {
@@ -320,6 +321,9 @@ impl Database {
                         provides_snippets: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::Snippets),
                         ),
+                        provides_debug_adapters: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::DebugAdapters),
+                        ),
                         download_count: ActiveValue::NotSet,
                     }
                 }))
@@ -345,7 +349,7 @@ impl Database {
     }
 
     pub async fn record_extension_download(&self, extension: &str, version: &str) -> Result<bool> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryId {
                 Id,
@@ -428,6 +432,10 @@ fn apply_provides_filter(
 
     if provides_filter.contains(&ExtensionProvides::Snippets) {
         condition = condition.add(extension_version::Column::ProvidesSnippets.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::DebugAdapters) {
+        condition = condition.add(extension_version::Column::ProvidesDebugAdapters.eq(true));
     }
 
     condition

@@ -258,7 +258,7 @@ impl Render for TerminalOutput {
                 cell: ic.cell.clone(),
             });
         let (cells, rects) =
-            TerminalElement::layout_grid(grid, &text_style, text_system, None, window, cx);
+            TerminalElement::layout_grid(grid, 0, &text_style, text_system, None, window, cx);
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());

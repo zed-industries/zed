@@ -51,17 +51,13 @@ impl ImageView {
             image::ImageFormat::WebP => ImageFormat::Webp,
             image::ImageFormat::Tiff => ImageFormat::Tiff,
             image::ImageFormat::Bmp => ImageFormat::Bmp,
-            _ => {
-                return Err(anyhow::anyhow!("unsupported image format"));
+            format => {
+                anyhow::bail!("unsupported image format {format:?}");
             }
         };
 
         // Convert back to a GPUI image for use with the clipboard
-        let clipboard_image = Arc::new(Image {
-            format,
-            bytes,
-            id: gpui_image_data.id.0 as u64,
-        });
+        let clipboard_image = Arc::new(Image::from_bytes(format, bytes));
 
         Ok(ImageView {
             clipboard_image,

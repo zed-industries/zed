@@ -13,3 +13,7 @@
   (jsx_self_closing_element)
   (jsx_expression)
 ] @default
+
+(_ value: (call_expression
+  function: (identifier) @function_name_before_type_arguments
+  type_arguments: (type_arguments)))

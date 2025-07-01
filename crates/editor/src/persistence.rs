@@ -276,6 +276,7 @@ impl EditorDb {
         workspace_id: WorkspaceId,
         selections: Vec<(usize, usize)>,
     ) -> Result<()> {
+        log::debug!("Saving selections for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_selection;
         let mut last_selection = 0_usize;
         for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
@@ -327,6 +328,7 @@ VALUES {placeholders};
         workspace_id: WorkspaceId,
         folds: Vec<(usize, usize)>,
     ) -> Result<()> {
+        log::debug!("Saving folds for editor {editor_id} in workspace {workspace_id:?}");
         let mut first_fold;
         let mut last_fold = 0_usize;
         for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
@@ -370,32 +372,6 @@ VALUES {placeholders};
             .await?;
         }
         Ok(())
-    }
-
-    pub async fn delete_unloaded_items(
-        &self,
-        workspace: WorkspaceId,
-        alive_items: Vec<ItemId>,
-    ) -> Result<()> {
-        let placeholders = alive_items
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<&str>>()
-            .join(", ");
-
-        let query = format!(
-            "DELETE FROM editors WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-        );
-
-        self.write(move |conn| {
-            let mut statement = Statement::prepare(conn, query)?;
-            let mut next_index = statement.bind(&workspace, 1)?;
-            for id in alive_items {
-                next_index = statement.bind(&id, next_index)?;
-            }
-            statement.exec()
-        })
-        .await
     }
 }
 

@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use assistant_context_editor::ContextStore;
+use assistant_context::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
@@ -20,11 +20,9 @@ use gpui::{
     UpdateGlobal, px, size,
 };
 use language::{
-    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LineEnding, OffsetRangeExt, Point, Rope,
-    language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-    },
+    Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
+    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    language_settings::{AllLanguageSettings, Formatter, PrettierSettings, SelectedFormatter},
     tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
@@ -51,14 +49,41 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{path, separator, uri};
+use util::{path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
+    zlog::init_test();
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_database_failure_during_client_reconnection(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client = server.create_client(cx, "user_a").await;
+
+    // Keep disconnecting the client until a database failure prevents it from
+    // reconnecting.
+    server.test_db.set_query_failure_probability(0.3);
+    loop {
+        server.disconnect_client(client.peer_id().unwrap());
+        executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        if !client.status().borrow().is_connected() {
+            break;
+        }
     }
+
+    // Make the database healthy again and ensure the client can finally connect.
+    server.test_db.set_query_failure_probability(0.);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    assert!(
+        matches!(*client.status().borrow(), client::Status::Connected { .. }),
+        "status was {:?}",
+        *client.status().borrow()
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -1253,6 +1278,7 @@ async fn test_calls_on_multiple_connections(
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
+        .into_response()
         .unwrap();
 
     // User B hangs up, and user A calls them again.
@@ -1633,6 +1659,7 @@ async fn test_project_reconnect(
     client_a
         .authenticate_and_connect(false, &cx_a.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1647,13 +1674,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1680,13 +1707,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1761,6 +1788,7 @@ async fn test_project_reconnect(
     client_b
         .authenticate_and_connect(false, &cx_b.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1776,13 +1804,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/j.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1824,6 +1852,8 @@ async fn test_active_call_events(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    executor.run_until_parked();
+
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
@@ -1844,7 +1874,6 @@ async fn test_active_call_events(
                 github_login: "user_a".to_string(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1864,7 +1893,6 @@ async fn test_active_call_events(
                 github_login: "user_b".to_string(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]
@@ -2592,6 +2620,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), committed_text.clone())],
+        "deadbeef",
     );
 
     // Create the buffer
@@ -2685,6 +2714,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), new_committed_text.clone())],
+        "deadbeef",
     );
 
     // Wait for buffer_local_a to receive it
@@ -2900,7 +2930,7 @@ async fn test_git_branch_name(
                 .read(cx)
                 .branch
                 .as_ref()
-                .map(|branch| branch.name.to_string()),
+                .map(|branch| branch.name().to_owned()),
             branch_name
         )
     }
@@ -2974,6 +3004,7 @@ async fn test_git_status_sync(
     client_a.fs().set_head_for_repo(
         path!("/dir/.git").as_ref(),
         &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+        "deadbeef",
     );
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
@@ -3282,13 +3313,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3300,13 +3331,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3326,14 +3357,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -3345,14 +3376,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -4202,7 +4233,8 @@ async fn test_collaborating_with_diagnostics(
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -4212,7 +4244,8 @@ async fn test_collaborating_with_diagnostics(
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 }
             ]
@@ -4224,7 +4257,7 @@ async fn test_collaborating_with_diagnostics(
         &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
-            diagnostics: vec![],
+            diagnostics: Vec::new(),
         },
     );
     executor.run_until_parked();
@@ -4315,6 +4348,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         })
         .await
+        .into_response()
         .unwrap();
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
@@ -4555,15 +4589,13 @@ async fn test_formatting_buffer(
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                        vec![Formatter::External {
+                    file.defaults.formatter =
+                        Some(SelectedFormatter::List(vec![Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        }]
-                        .into(),
-                    )));
+                        }]));
                 });
             });
         });
@@ -4663,9 +4695,10 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::LanguageServer { name: None }].into(),
-                )));
+                file.defaults.formatter =
+                    Some(SelectedFormatter::List(vec![Formatter::LanguageServer {
+                        name: None,
+                    }]));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
                     ..PrettierSettings::default()
@@ -5697,6 +5730,7 @@ async fn test_contacts(
     client_c
         .authenticate_and_connect(false, &cx_c.to_async())
         .await
+        .into_response()
         .unwrap();
 
     executor.run_until_parked();
@@ -6227,6 +6261,7 @@ async fn test_contact_requests(
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
     }
 }
@@ -6408,7 +6443,7 @@ async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppCont
 async fn test_preview_tabs(cx: &mut TestAppContext) {
     let (_server, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
 
     let worktree_id = project.update(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
@@ -6427,7 +6462,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         path: Path::new("3.rs").into(),
     };
 
-    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     let get_path = |pane: &Pane, idx: usize, cx: &App| {
         pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
@@ -6580,7 +6615,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         pane.split(workspace::SplitDirection::Right, cx);
     });
 
-    let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
@@ -6707,8 +6742,6 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    cx_a.update(context_server::init);
-    cx_b.update(context_server::init);
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
         .update(|cx| {
@@ -6862,7 +6895,7 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(branches_b, branches_set);
@@ -6893,7 +6926,7 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.name, branches[2]);
+    assert_eq!(host_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -6931,5 +6964,5 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.name, "totally-new-branch");
+    assert_eq!(host_branch.name(), "totally-new-branch");
 }

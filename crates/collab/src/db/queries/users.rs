@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use chrono::NaiveDateTime;
 
 use super::*;
@@ -65,6 +66,18 @@ impl Database {
         .await
     }
 
+    /// Returns all users flagged as staff.
+    pub async fn get_staff_users(&self) -> Result<Vec<user::Model>> {
+        self.transaction(|tx| async {
+            let tx = tx;
+            Ok(user::Entity::find()
+                .filter(user::Column::Admin.eq(true))
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns a user by email address. There are no access checks here, so this should only be used internally.
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
         self.transaction(|tx| async move {
@@ -98,7 +111,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_or_create_user_by_github_account(
+    pub async fn update_or_create_user_by_github_account(
         &self,
         github_login: &str,
         github_user_id: i32,
@@ -108,7 +121,7 @@ impl Database {
         initial_channel_id: Option<ChannelId>,
     ) -> Result<User> {
         self.transaction(|tx| async move {
-            self.get_or_create_user_by_github_account_tx(
+            self.update_or_create_user_by_github_account_tx(
                 github_login,
                 github_user_id,
                 github_email,
@@ -122,7 +135,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_or_create_user_by_github_account_tx(
+    pub async fn update_or_create_user_by_github_account_tx(
         &self,
         github_login: &str,
         github_user_id: i32,
@@ -235,7 +248,7 @@ impl Database {
                 .into_values::<_, QueryAs>()
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("could not find user"))?;
+                .context("could not find user")?;
             Ok(metrics_id.to_string())
         })
         .await
@@ -369,7 +382,7 @@ impl Database {
 
     /// Returns the active flags for the user.
     pub async fn get_user_flags(&self, user: UserId) -> Result<Vec<String>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryAs {
                 Flag,

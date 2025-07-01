@@ -1,11 +1,11 @@
 use crate::FakeFs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, CommitOptions, GitRepository,
+        AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
@@ -34,8 +34,8 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
-    pub merge_head_shas: Vec<String>,
     pub simulated_index_write_error_message: Option<String>,
+    pub refs: HashMap<String, String>,
 }
 
 impl FakeGitRepositoryState {
@@ -48,20 +48,13 @@ impl FakeGitRepositoryState {
             blames: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
-            merge_head_shas: Default::default(),
             simulated_index_write_error_message: Default::default(),
+            refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
         }
     }
 }
 
 impl FakeGitRepository {
-    fn with_state<F, T>(&self, write: bool, f: F) -> Result<T>
-    where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
-    {
-        self.fs.with_git_state(&self.dot_git_path, write, f)
-    }
-
     fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<'static, Result<T>>
     where
         F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> Result<T>,
@@ -81,13 +74,13 @@ impl FakeGitRepository {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         async {
             self.with_state_async(false, move |state| {
                 state
                     .index_contents
                     .get(path.as_ref())
-                    .ok_or_else(|| anyhow!("not present in index"))
+                    .context("not present in index")
                     .cloned()
             })
             .await
@@ -96,13 +89,13 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         async {
             self.with_state_async(false, move |state| {
                 state
                     .head_contents
                     .get(path.as_ref())
-                    .ok_or_else(|| anyhow!("not present in HEAD"))
+                    .context("not present in HEAD")
                     .cloned()
             })
             .await
@@ -115,7 +108,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _commit: String,
         _cx: AsyncApp,
-    ) -> BoxFuture<Result<git::repository::CommitDiff>> {
+    ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
         unimplemented!()
     }
 
@@ -124,10 +117,10 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         content: Option<String>,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<anyhow::Result<()>> {
+    ) -> BoxFuture<'_, anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
-            if let Some(message) = state.simulated_index_write_error_message.clone() {
-                return Err(anyhow!("{}", message));
+            if let Some(message) = &state.simulated_index_write_error_message {
+                anyhow::bail!("{message}");
             } else if let Some(content) = content {
                 state.index_contents.insert(path, content);
             } else {
@@ -141,16 +134,16 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn head_sha(&self) -> Option<String> {
-        None
+    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+        self.with_state_async(false, |state| {
+            Ok(revs
+                .into_iter()
+                .map(|rev| state.refs.get(&rev).cloned())
+                .collect())
+        })
     }
 
-    fn merge_head_shas(&self) -> Vec<String> {
-        self.with_state(false, |state| state.merge_head_shas.clone())
-            .unwrap()
-    }
-
-    fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {
+    fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
         async {
             Ok(CommitDetails {
                 sha: commit.into(),
@@ -165,7 +158,7 @@ impl GitRepository for FakeGitRepository {
         _commit: String,
         _mode: ResetMode,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -174,7 +167,7 @@ impl GitRepository for FakeGitRepository {
         _commit: String,
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -186,11 +179,11 @@ impl GitRepository for FakeGitRepository {
         self.common_dir_path.clone()
     }
 
-    fn merge_message(&self) -> BoxFuture<Option<String>> {
+    fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         async move { None }.boxed()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>> {
         let workdir_path = self.dot_git_path.parent().unwrap();
 
         // Load gitignores
@@ -321,7 +314,7 @@ impl GitRepository for FakeGitRepository {
         async move { result? }.boxed()
     }
 
-    fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
+    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
             Ok(state
@@ -329,7 +322,7 @@ impl GitRepository for FakeGitRepository {
                 .iter()
                 .map(|branch_name| Branch {
                     is_head: Some(branch_name) == current_branch.as_ref(),
-                    name: branch_name.into(),
+                    ref_name: branch_name.into(),
                     most_recent_commit: None,
                     upstream: None,
                 })
@@ -337,21 +330,21 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn change_branch(&self, name: String) -> BoxFuture<Result<()>> {
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, |state| {
             state.current_branch_name = Some(name);
             Ok(())
         })
     }
 
-    fn create_branch(&self, name: String) -> BoxFuture<Result<()>> {
+    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             state.branches.insert(name.to_owned());
             Ok(())
         })
     }
 
-    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<Result<git::blame::Blame>> {
+    fn blame(&self, path: RepoPath, _content: Rope) -> BoxFuture<'_, Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
                 .blames
@@ -365,7 +358,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -373,7 +366,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -383,7 +376,7 @@ impl GitRepository for FakeGitRepository {
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         _options: CommitOptions,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -395,7 +388,7 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
-    ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
 
@@ -406,28 +399,29 @@ impl GitRepository for FakeGitRepository {
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
-    ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
 
     fn fetch(
         &self,
+        _fetch_options: FetchOptions,
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
-    ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
+    ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
 
-    fn get_remotes(&self, _branch: Option<String>) -> BoxFuture<Result<Vec<Remote>>> {
+    fn get_remotes(&self, _branch: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>> {
         unimplemented!()
     }
 
-    fn check_for_pushed_commit(&self) -> BoxFuture<Result<Vec<gpui::SharedString>>> {
+    fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<gpui::SharedString>>> {
         future::ready(Ok(Vec::new())).boxed()
     }
 
-    fn diff(&self, _diff: git::repository::DiffType) -> BoxFuture<Result<String>> {
+    fn diff(&self, _diff: git::repository::DiffType) -> BoxFuture<'_, Result<String>> {
         unimplemented!()
     }
 
@@ -435,7 +429,10 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn restore_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
+    fn restore_checkpoint(
+        &self,
+        _checkpoint: GitRepositoryCheckpoint,
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -443,7 +440,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _left: GitRepositoryCheckpoint,
         _right: GitRepositoryCheckpoint,
-    ) -> BoxFuture<Result<bool>> {
+    ) -> BoxFuture<'_, Result<bool>> {
         unimplemented!()
     }
 
@@ -451,7 +448,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _base_checkpoint: GitRepositoryCheckpoint,
         _target_checkpoint: GitRepositoryCheckpoint,
-    ) -> BoxFuture<Result<String>> {
+    ) -> BoxFuture<'_, Result<String>> {
         unimplemented!()
     }
 }

@@ -109,6 +109,7 @@ pub fn marked_text_ranges_by(
 /// Any • characters in the input string will be replaced with spaces. This makes
 /// it easier to test cases with trailing spaces, which tend to get trimmed from the
 /// source code.
+#[track_caller]
 pub fn marked_text_ranges(
     marked_text: &str,
     ranges_are_directed: bool,
@@ -176,6 +177,7 @@ pub fn marked_text_ranges(
     (unmarked_text, ranges)
 }
 
+#[track_caller]
 pub fn marked_text_offsets(marked_text: &str) -> (String, Vec<usize>) {
     let (text, ranges) = marked_text_ranges(marked_text, false);
     (

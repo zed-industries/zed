@@ -5,7 +5,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use chrono::{Local, Utc};
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,10 @@ impl Tool for NowTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         "Returns the current datetime in RFC 3339 format. Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.".into()
     }
@@ -56,9 +60,10 @@ impl Tool for NowTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         _cx: &mut App,
     ) -> ToolResult {
@@ -73,6 +78,6 @@ impl Tool for NowTool {
         };
         let text = format!("The current datetime is {now}.");
 
-        Task::ready(Ok(text)).into()
+        Task::ready(Ok(text.into())).into()
     }
 }

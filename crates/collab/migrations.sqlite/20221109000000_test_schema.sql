@@ -185,7 +185,9 @@ CREATE TABLE "project_collaborators" (
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
-    "is_host" BOOLEAN NOT NULL
+    "is_host" BOOLEAN NOT NULL,
+    "committer_name" VARCHAR,
+    "committer_email" VARCHAR
 );
 
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
@@ -266,10 +268,13 @@ CREATE TABLE "channels" (
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL,
     "parent_path" TEXT NOT NULL,
-    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE
+    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE,
+    "channel_order" INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX "index_channels_on_parent_path" ON "channels" ("parent_path");
+
+CREATE INDEX "index_channels_on_parent_path_and_order" ON "channels" ("parent_path", "channel_order");
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -460,6 +465,7 @@ CREATE TABLE extension_versions (
     provides_slash_commands BOOLEAN NOT NULL DEFAULT FALSE,
     provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_debug_adapters BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (extension_id, version)
 );
 
@@ -482,7 +488,9 @@ CREATE TABLE IF NOT EXISTS billing_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users (id),
-    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL
+    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL,
+    model_request_overages_enabled bool NOT NULL DEFAULT FALSE,
+    model_request_overages_spend_limit_in_cents integer NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX "uix_billing_preferences_on_user_id" ON billing_preferences (user_id);

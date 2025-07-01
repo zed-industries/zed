@@ -42,9 +42,13 @@ enum Command {
 }
 
 impl VsCodeTaskDefinition {
-    fn into_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
+    fn into_zed_format(
+        self,
+        replacer: &EnvVariableReplacer,
+    ) -> anyhow::Result<Option<TaskTemplate>> {
         if self.other_attributes.contains_key("dependsOn") {
-            bail!("Encountered unsupported `dependsOn` key during deserialization");
+            log::warn!("Skipping deserializing of a task with the unsupported `dependsOn` key");
+            return Ok(None);
         }
         // `type` might not be set in e.g. tasks that use `dependsOn`; we still want to deserialize the whole object though (hence command is an Option),
         // as that way we can provide more specific description of why deserialization failed.
@@ -62,17 +66,17 @@ impl VsCodeTaskDefinition {
         // Per VSC docs, only `command`, `args` and `options` support variable substitution.
         let command = replacer.replace(&command);
         let args = args.into_iter().map(|arg| replacer.replace(&arg)).collect();
-        let mut ret = TaskTemplate {
+        let mut template = TaskTemplate {
             label: self.label,
             command,
             args,
-            ..Default::default()
+            ..TaskTemplate::default()
         };
         if let Some(options) = self.options {
-            ret.cwd = options.cwd.map(|cwd| replacer.replace(&cwd));
-            ret.env = options.env;
+            template.cwd = options.cwd.map(|cwd| replacer.replace(&cwd));
+            template.env = options.env;
         }
-        Ok(ret)
+        Ok(Some(template))
     }
 }
 
@@ -101,7 +105,12 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
         let templates = value
             .tasks
             .into_iter()
-            .filter_map(|vscode_definition| vscode_definition.into_zed_format(&replacer).log_err())
+            .filter_map(|vscode_definition| {
+                vscode_definition
+                    .into_zed_format(&replacer)
+                    .log_err()
+                    .flatten()
+            })
             .collect();
         Ok(Self(templates))
     }

@@ -16,6 +16,7 @@ pub enum BaseKeymap {
     Atom,
     TextMate,
     Emacs,
+    Cursor,
     None,
 }
 
@@ -28,6 +29,7 @@ impl Display for BaseKeymap {
             BaseKeymap::Atom => write!(f, "Atom"),
             BaseKeymap::TextMate => write!(f, "TextMate"),
             BaseKeymap::Emacs => write!(f, "Emacs (beta)"),
+            BaseKeymap::Cursor => write!(f, "Cursor (beta)"),
             BaseKeymap::None => write!(f, "None"),
         }
     }
@@ -35,22 +37,24 @@ impl Display for BaseKeymap {
 
 impl BaseKeymap {
     #[cfg(target_os = "macos")]
-    pub const OPTIONS: [(&'static str, Self); 6] = [
+    pub const OPTIONS: [(&'static str, Self); 7] = [
         ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
         ("TextMate", Self::TextMate),
+        ("Cursor (beta)", Self::Cursor),
     ];
 
     #[cfg(not(target_os = "macos"))]
-    pub const OPTIONS: [(&'static str, Self); 5] = [
+    pub const OPTIONS: [(&'static str, Self); 6] = [
         ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
         ("Emacs (beta)", Self::Emacs),
+        ("Cursor (beta)", Self::Cursor),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {
@@ -61,6 +65,7 @@ impl BaseKeymap {
             BaseKeymap::Atom => Some("keymaps/macos/atom.json"),
             BaseKeymap::TextMate => Some("keymaps/macos/textmate.json"),
             BaseKeymap::Emacs => Some("keymaps/macos/emacs.json"),
+            BaseKeymap::Cursor => Some("keymaps/macos/cursor.json"),
             BaseKeymap::VSCode => None,
             BaseKeymap::None => None,
         }
@@ -71,6 +76,7 @@ impl BaseKeymap {
             BaseKeymap::SublimeText => Some("keymaps/linux/sublime_text.json"),
             BaseKeymap::Atom => Some("keymaps/linux/atom.json"),
             BaseKeymap::Emacs => Some("keymaps/linux/emacs.json"),
+            BaseKeymap::Cursor => Some("keymaps/linux/cursor.json"),
             BaseKeymap::TextMate => None,
             BaseKeymap::VSCode => None,
             BaseKeymap::None => None,

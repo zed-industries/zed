@@ -10,12 +10,12 @@ pub struct ListItemStory;
 
 impl Render for ListItemStory {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        Story::container()
+        Story::container(cx)
             .bg(cx.theme().colors().background)
-            .child(Story::title_for::<ListItem>())
-            .child(Story::label("Default"))
+            .child(Story::title_for::<ListItem>(cx))
+            .child(Story::label("Default", cx))
             .child(ListItem::new("hello_world").child("Hello, world!"))
-            .child(Story::label("Inset"))
+            .child(Story::label("Inset", cx))
             .child(
                 ListItem::new("inset_list_item")
                     .inset(true)
@@ -31,7 +31,7 @@ impl Render for ListItemStory {
                             .color(Color::Muted),
                     ),
             )
-            .child(Story::label("With start slot icon"))
+            .child(Story::label("With start slot icon", cx))
             .child(
                 ListItem::new("with start slot_icon")
                     .child("Hello, world!")
@@ -41,7 +41,7 @@ impl Render for ListItemStory {
                             .color(Color::Muted),
                     ),
             )
-            .child(Story::label("With start slot avatar"))
+            .child(Story::label("With start slot avatar", cx))
             .child(
                 ListItem::new("with_start slot avatar")
                     .child("Hello, world!")
@@ -49,7 +49,7 @@ impl Render for ListItemStory {
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )),
             )
-            .child(Story::label("With end slot"))
+            .child(Story::label("With end slot", cx))
             .child(
                 ListItem::new("with_left_avatar")
                     .child("Hello, world!")
@@ -57,7 +57,7 @@ impl Render for ListItemStory {
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )),
             )
-            .child(Story::label("With end hover slot"))
+            .child(Story::label("With end hover slot", cx))
             .child(
                 ListItem::new("with_end_hover_slot")
                     .child("Hello, world!")
@@ -84,13 +84,13 @@ impl Render for ListItemStory {
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )),
             )
-            .child(Story::label("With `on_click`"))
+            .child(Story::label("With `on_click`", cx))
             .child(ListItem::new("with_on_click").child("Click me").on_click(
                 |_event, _window, _cx| {
                     println!("Clicked!");
                 },
             ))
-            .child(Story::label("With `on_secondary_mouse_down`"))
+            .child(Story::label("With `on_secondary_mouse_down`", cx))
             .child(
                 ListItem::new("with_on_secondary_mouse_down")
                     .child("Right click me")
@@ -98,7 +98,10 @@ impl Render for ListItemStory {
                         println!("Right mouse down!");
                     }),
             )
-            .child(Story::label("With overflowing content in the `end_slot`"))
+            .child(Story::label(
+                "With overflowing content in the `end_slot`",
+                cx,
+            ))
             .child(
                 ListItem::new("with_overflowing_content_in_end_slot")
                     .child("An excerpt")
@@ -106,6 +109,7 @@ impl Render for ListItemStory {
             )
             .child(Story::label(
                 "`inset` with overflowing content in the `end_slot`",
+                cx,
             ))
             .child(
                 ListItem::new("inset_with_overflowing_content_in_end_slot")
@@ -115,6 +119,7 @@ impl Render for ListItemStory {
             )
             .child(Story::label(
                 "`inset` with overflowing content in `children` and `end_slot`",
+                cx,
             ))
             .child(
                 ListItem::new("inset_with_overflowing_content_in_children_and_end_slot")

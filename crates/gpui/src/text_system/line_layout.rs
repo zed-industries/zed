@@ -34,7 +34,7 @@ pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,
     /// The glyphs that make up this run
-    pub glyphs: SmallVec<[ShapedGlyph; 8]>,
+    pub glyphs: Vec<ShapedGlyph>,
 }
 
 /// A single glyph, ready to paint.
@@ -582,7 +582,7 @@ pub struct FontRun {
 }
 
 trait AsCacheKeyRef {
-    fn as_cache_key_ref(&self) -> CacheKeyRef;
+    fn as_cache_key_ref(&self) -> CacheKeyRef<'_>;
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -616,7 +616,7 @@ impl Hash for (dyn AsCacheKeyRef + '_) {
 }
 
 impl AsCacheKeyRef for CacheKey {
-    fn as_cache_key_ref(&self) -> CacheKeyRef {
+    fn as_cache_key_ref(&self) -> CacheKeyRef<'_> {
         CacheKeyRef {
             text: &self.text,
             font_size: self.font_size,
@@ -645,7 +645,7 @@ impl<'a> Borrow<dyn AsCacheKeyRef + 'a> for Arc<CacheKey> {
 }
 
 impl AsCacheKeyRef for CacheKeyRef<'_> {
-    fn as_cache_key_ref(&self) -> CacheKeyRef {
+    fn as_cache_key_ref(&self) -> CacheKeyRef<'_> {
         *self
     }
 }

@@ -8,26 +8,25 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
+use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-use http_client::http::{HeaderMap, HeaderValue};
+use http_client::{StatusCode, http};
 use icons::IconName;
 use parking_lot::Mutex;
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::fmt;
 use std::ops::{Add, Sub};
-use std::str::FromStr as _;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
+use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::{
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
-};
+use zed_llm_client::CompletionRequestStatus;
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -36,20 +35,30 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 
-pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
+pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
+    LanguageModelProviderId::new("anthropic");
+pub const ANTHROPIC_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Anthropic");
+
+pub const GOOGLE_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("google");
+pub const GOOGLE_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Google AI");
+
+pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
+pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("OpenAI");
+
+pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
+pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("Zed");
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    registry::init(cx);
+    init_settings(cx);
     RefreshLlmTokenListener::register(client.clone(), cx);
 }
 
-/// The availability of a [`LanguageModel`].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LanguageModelAvailability {
-    /// The language model is available to the general public.
-    Public,
-    /// The language model is available to users on the indicated plan.
-    RequiresPlan(Plan),
+pub fn init_settings(cx: &mut App) {
+    registry::init(cx);
 }
 
 /// Configuration for caching language model messages.
@@ -57,19 +66,29 @@ pub enum LanguageModelAvailability {
 pub struct LanguageModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub should_speculate: bool,
-    pub min_total_token: usize,
+    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
+    StatusUpdate(CompletionRequestStatus),
     Stop(StopReason),
     Text(String),
     Thinking {
         text: String,
         signature: Option<String>,
     },
+    RedactedThinking {
+        data: String,
+    },
     ToolUse(LanguageModelToolUse),
+    ToolUseJsonParseError {
+        id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    },
     StartMessage {
         message_id: String,
         role: Role,
@@ -79,15 +98,221 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
-    #[error("received bad input JSON")]
-    BadInputJson {
-        id: LanguageModelToolUseId,
-        tool_name: Arc<str>,
-        raw_input: Arc<str>,
-        json_parse_error: String,
+    #[error("prompt too large for context window")]
+    PromptTooLarge { tokens: Option<u64> },
+    #[error("missing {provider} API key")]
+    NoApiKey { provider: LanguageModelProviderName },
+    #[error("{provider}'s API rate limit exceeded")]
+    RateLimitExceeded {
+        provider: LanguageModelProviderName,
+        retry_after: Option<Duration>,
     },
+    #[error("{provider}'s API servers are overloaded right now")]
+    ServerOverloaded {
+        provider: LanguageModelProviderName,
+        retry_after: Option<Duration>,
+    },
+    #[error("{provider}'s API server reported an internal server error: {message}")]
+    ApiInternalServerError {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("HTTP response error from {provider}'s API: status {status_code} - {message:?}")]
+    HttpResponseError {
+        provider: LanguageModelProviderName,
+        status_code: StatusCode,
+        message: String,
+    },
+
+    // Client errors
+    #[error("invalid request format to {provider}'s API: {message}")]
+    BadRequestFormat {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("authentication error with {provider}'s API: {message}")]
+    AuthenticationError {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("permission error with {provider}'s API: {message}")]
+    PermissionError {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
+    #[error("language model provider API endpoint not found")]
+    ApiEndpointNotFound { provider: LanguageModelProviderName },
+    #[error("I/O error reading response from {provider}'s API")]
+    ApiReadResponseError {
+        provider: LanguageModelProviderName,
+        #[source]
+        error: io::Error,
+    },
+    #[error("error serializing request to {provider} API")]
+    SerializeRequest {
+        provider: LanguageModelProviderName,
+        #[source]
+        error: serde_json::Error,
+    },
+    #[error("error building request body to {provider} API")]
+    BuildRequestBody {
+        provider: LanguageModelProviderName,
+        #[source]
+        error: http::Error,
+    },
+    #[error("error sending HTTP request to {provider} API")]
+    HttpSend {
+        provider: LanguageModelProviderName,
+        #[source]
+        error: anyhow::Error,
+    },
+    #[error("error deserializing {provider} API response")]
+    DeserializeResponse {
+        provider: LanguageModelProviderName,
+        #[source]
+        error: serde_json::Error,
+    },
+
+    // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+impl LanguageModelCompletionError {
+    pub fn from_cloud_failure(
+        upstream_provider: LanguageModelProviderName,
+        code: String,
+        message: String,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        if let Some(tokens) = parse_prompt_too_long(&message) {
+            // TODO: currently Anthropic PAYLOAD_TOO_LARGE response may cause INTERNAL_SERVER_ERROR
+            // to be reported. This is a temporary workaround to handle this in the case where the
+            // token limit has been exceeded.
+            Self::PromptTooLarge {
+                tokens: Some(tokens),
+            }
+        } else if let Some(status_code) = code
+            .strip_prefix("upstream_http_")
+            .and_then(|code| StatusCode::from_str(code).ok())
+        {
+            Self::from_http_status(upstream_provider, status_code, message, retry_after)
+        } else if let Some(status_code) = code
+            .strip_prefix("http_")
+            .and_then(|code| StatusCode::from_str(code).ok())
+        {
+            Self::from_http_status(ZED_CLOUD_PROVIDER_NAME, status_code, message, retry_after)
+        } else {
+            anyhow!("completion request failed, code: {code}, message: {message}").into()
+        }
+    }
+
+    pub fn from_http_status(
+        provider: LanguageModelProviderName,
+        status_code: StatusCode,
+        message: String,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        match status_code {
+            StatusCode::BAD_REQUEST => Self::BadRequestFormat { provider, message },
+            StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
+            StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
+            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
+            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
+                tokens: parse_prompt_too_long(&message),
+            },
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
+                provider,
+                retry_after,
+            },
+            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
+            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            _ if status_code.as_u16() == 529 => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            _ => Self::HttpResponseError {
+                provider,
+                status_code,
+                message,
+            },
+        }
+    }
+}
+
+impl From<AnthropicError> for LanguageModelCompletionError {
+    fn from(error: AnthropicError) -> Self {
+        let provider = ANTHROPIC_PROVIDER_NAME;
+        match error {
+            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
+            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
+            AnthropicError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
+            }
+            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            AnthropicError::HttpResponseError {
+                status_code,
+                message,
+            } => Self::HttpResponseError {
+                provider,
+                status_code,
+                message,
+            },
+            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after: retry_after,
+            },
+            AnthropicError::ApiError(api_error) => api_error.into(),
+        }
+    }
+}
+
+impl From<anthropic::ApiError> for LanguageModelCompletionError {
+    fn from(error: anthropic::ApiError) -> Self {
+        use anthropic::ApiErrorCode::*;
+        let provider = ANTHROPIC_PROVIDER_NAME;
+        match error.code() {
+            Some(code) => match code {
+                InvalidRequestError => Self::BadRequestFormat {
+                    provider,
+                    message: error.message,
+                },
+                AuthenticationError => Self::AuthenticationError {
+                    provider,
+                    message: error.message,
+                },
+                PermissionError => Self::PermissionError {
+                    provider,
+                    message: error.message,
+                },
+                NotFoundError => Self::ApiEndpointNotFound { provider },
+                RequestTooLarge => Self::PromptTooLarge {
+                    tokens: parse_prompt_too_long(&error.message),
+                },
+                RateLimitError => Self::RateLimitExceeded {
+                    provider,
+                    retry_after: None,
+                },
+                ApiError => Self::ApiInternalServerError {
+                    provider,
+                    message: error.message,
+                },
+                OverloadedError => Self::ServerOverloaded {
+                    provider,
+                    retry_after: None,
+                },
+            },
+            None => Self::Other(error.into()),
+        }
+    }
 }
 
 /// Indicates the format used to define the input schema for a language model tool.
@@ -105,44 +330,23 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RequestUsage {
-    pub limit: UsageLimit,
-    pub amount: i32,
-}
-
-impl RequestUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let limit = headers
-            .get(MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME)
-            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header"))?;
-        let limit = UsageLimit::from_str(limit.to_str()?)?;
-
-        let amount = headers
-            .get(MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME)
-            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header"))?;
-        let amount = amount.to_str()?.parse::<i32>()?;
-
-        Ok(Self { limit, amount })
-    }
+    Refusal,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "is_default")]
-    pub input_tokens: u32,
+    pub input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub output_tokens: u32,
+    pub output_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_creation_input_tokens: u32,
+    pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub cache_read_input_tokens: u32,
+    pub cache_read_input_tokens: u64,
 }
 
 impl TokenUsage {
-    pub fn total_tokens(&self) -> u32 {
+    pub fn total_tokens(&self) -> u64 {
         self.input_tokens
             + self.output_tokens
             + self.cache_read_input_tokens
@@ -227,26 +431,39 @@ pub trait LanguageModel: Send + Sync {
     fn name(&self) -> LanguageModelName;
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
+    fn upstream_provider_id(&self) -> LanguageModelProviderId {
+        self.provider_id()
+    }
+    fn upstream_provider_name(&self) -> LanguageModelProviderName {
+        self.provider_name()
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None
     }
 
-    /// Returns the availability of this language model.
-    fn availability(&self) -> LanguageModelAvailability {
-        LanguageModelAvailability::Public
-    }
+    /// Whether this model supports images
+    fn supports_images(&self) -> bool;
 
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;
+
+    /// Whether this model supports choosing which tool to use.
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
+
+    /// Returns whether this model supports "burn mode";
+    fn supports_burn_mode(&self) -> bool {
+        false
+    }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
 
-    fn max_token_count(&self) -> usize;
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_token_count(&self) -> u64;
+    fn max_output_tokens(&self) -> Option<u64> {
         None
     }
 
@@ -254,7 +471,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>>;
+    ) -> BoxFuture<'static, Result<u64>>;
 
     fn stream_completion(
         &self,
@@ -264,44 +481,19 @@ pub trait LanguageModel: Send + Sync {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     >;
-
-    fn stream_completion_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            Option<RequestUsage>,
-        )>,
-    > {
-        self.stream_completion(request, cx)
-            .map(|result| result.map(|stream| (stream, None)))
-            .boxed()
-    }
 
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
-        self.stream_completion_text_with_usage(request, cx)
-            .map(|result| result.map(|(stream, _usage)| stream))
-            .boxed()
-    }
-
-    fn stream_completion_text_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<(LanguageModelTextStream, Option<RequestUsage>)>> {
-        let future = self.stream_completion_with_usage(request, cx);
+    ) -> BoxFuture<'static, Result<LanguageModelTextStream, LanguageModelCompletionError>> {
+        let future = self.stream_completion(request, cx);
 
         async move {
-            let (events, usage) = future.await?;
+            let events = future.await?;
             let mut events = events.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
@@ -326,11 +518,16 @@ pub trait LanguageModel: Send + Sync {
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {
+                                Ok(LanguageModelCompletionEvent::StatusUpdate { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
+                                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    ..
+                                }) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None
@@ -342,14 +539,11 @@ pub trait LanguageModel: Send + Sync {
                 }))
                 .boxed();
 
-            Ok((
-                LanguageModelTextStream {
-                    message_id,
-                    stream,
-                    last_token_usage,
-                },
-                usage,
-            ))
+            Ok(LanguageModelTextStream {
+                message_id,
+                stream,
+                last_token_usage,
+            })
         }
         .boxed()
     }
@@ -362,12 +556,6 @@ pub trait LanguageModel: Send + Sync {
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()
     }
-}
-
-#[derive(Debug, Error)]
-pub enum LanguageModelKnownError {
-    #[error("Context window limit exceeded ({tokens})")]
-    ContextWindowLimitExceeded { tokens: usize },
 }
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
@@ -396,7 +584,6 @@ pub trait LanguageModelProvider: 'static {
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         Vec::new()
     }
-    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
@@ -416,7 +603,7 @@ pub trait LanguageModelProvider: 'static {
 #[derive(PartialEq, Eq)]
 pub enum LanguageModelProviderTosView {
     /// When there are some past interactions in the Agent Panel.
-    ThreadtEmptyState,
+    ThreadEmptyState,
     /// When there are no past interactions in the Agent Panel.
     ThreadFreshStart,
     PromptEditorPopup,
@@ -452,7 +639,25 @@ pub struct LanguageModelProviderId(pub SharedString);
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
 
+impl LanguageModelProviderId {
+    pub const fn new(id: &'static str) -> Self {
+        Self(SharedString::new_static(id))
+    }
+}
+
+impl LanguageModelProviderName {
+    pub const fn new(id: &'static str) -> Self {
+        Self(SharedString::new_static(id))
+    }
+}
+
 impl fmt::Display for LanguageModelProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for LanguageModelProviderName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

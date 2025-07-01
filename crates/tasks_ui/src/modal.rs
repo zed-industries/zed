@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::TaskContexts;
+use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
@@ -10,14 +11,11 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
-use task::{
-    DebugRequest, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
-    TaskTemplate, TaskType,
-};
+use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
-    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
-    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, Label, LabelSize,
-    ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
+    ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
+    IntoElement, KeyBinding, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div,
+    prelude::*,
 };
 
 use util::{ResultExt, truncate_and_trailoff};
@@ -25,7 +23,7 @@ use workspace::{ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
-pub(crate) struct TasksModalDelegate {
+pub struct TasksModalDelegate {
     task_store: Entity<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     task_overrides: Option<TaskOverrides>,
@@ -35,25 +33,22 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
-    task_contexts: TaskContexts,
+    task_contexts: Arc<TaskContexts>,
     placeholder_text: Arc<str>,
-    /// If this delegate is responsible for running a scripting task or a debugger
-    task_modal_type: TaskModal,
 }
 
 /// Task template amendments to do before resolving the context.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskOverrides {
+pub struct TaskOverrides {
     /// See [`RevealTarget`].
-    pub(crate) reveal_target: Option<RevealTarget>,
+    pub reveal_target: Option<RevealTarget>,
 }
 
 impl TasksModalDelegate {
     fn new(
         task_store: Entity<TaskStore>,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
-        task_modal_type: TaskModal,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
@@ -74,7 +69,6 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_contexts,
-            task_modal_type,
             task_overrides,
             placeholder_text,
         }
@@ -129,32 +123,27 @@ impl TasksModalDelegate {
 }
 
 pub struct TasksModal {
-    picker: Entity<Picker<TasksModalDelegate>>,
+    pub picker: Entity<Picker<TasksModalDelegate>>,
     _subscription: [Subscription; 2],
 }
 
 impl TasksModal {
-    pub(crate) fn new(
+    pub fn new(
         task_store: Entity<TaskStore>,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
+        is_modal: bool,
         workspace: WeakEntity<Workspace>,
-        task_modal_type: TaskModal,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(
-                    task_store,
-                    task_contexts,
-                    task_overrides,
-                    task_modal_type,
-                    workspace,
-                ),
+                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
                 window,
                 cx,
             )
+            .modal(is_modal)
         });
         let _subscription = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
@@ -170,6 +159,53 @@ impl TasksModal {
             picker,
             _subscription,
         }
+    }
+
+    pub fn tasks_loaded(
+        &mut self,
+        task_contexts: Arc<TaskContexts>,
+        lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        used_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        add_current_language_tasks: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let last_used_candidate_index = if used_tasks.is_empty() {
+            None
+        } else {
+            Some(used_tasks.len() - 1)
+        };
+        let mut new_candidates = used_tasks;
+        new_candidates.extend(lsp_tasks);
+        let hide_vscode = current_resolved_tasks.iter().any(|(kind, _)| match kind {
+            TaskSourceKind::Worktree {
+                id: _,
+                directory_in_worktree: dir,
+                id_base: _,
+            } => dir.ends_with(".zed"),
+            _ => false,
+        });
+        // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
+        // We should move the filter to new_candidates instead of on current
+        // and add a test for this
+        new_candidates.extend(current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
+            match task_kind {
+                TaskSourceKind::Worktree {
+                    directory_in_worktree: dir,
+                    ..
+                } => !(hide_vscode && dir.ends_with(".vscode")),
+                TaskSourceKind::Language { .. } => add_current_language_tasks,
+                _ => true,
+            }
+        }));
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.task_contexts = task_contexts;
+            picker.delegate.last_used_candidate_index = last_used_candidate_index;
+            picker.delegate.candidates = Some(new_candidates);
+            picker.refresh(window, cx);
+            cx.notify();
+        })
     }
 }
 
@@ -187,7 +223,7 @@ impl Render for TasksModal {
 }
 
 pub struct ShowAttachModal {
-    pub debug_config: DebugTaskDefinition,
+    pub debug_config: DebugScenario,
 }
 
 impl EventEmitter<DismissEvent> for TasksModal {}
@@ -234,26 +270,39 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
-        let task_type = self.task_modal_type.clone();
         let candidates = match &self.candidates {
-            Some(candidates) => Task::ready(string_match_candidates(candidates, task_type)),
+            Some(candidates) => Task::ready(string_match_candidates(candidates)),
             None => {
                 if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
-                    let (used, current) = task_inventory
-                        .read(cx)
-                        .used_and_current_resolved_tasks(&self.task_contexts, cx);
+                    let task_list = task_inventory.update(cx, |this, cx| {
+                        this.used_and_current_resolved_tasks(self.task_contexts.clone(), cx)
+                    });
                     let workspace = self.workspace.clone();
                     let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
                     let task_position = self.task_contexts.latest_selection;
-
                     cx.spawn(async move |picker, cx| {
-                        let Ok(lsp_tasks) = workspace.update(cx, |workspace, cx| {
-                            editor::lsp_tasks(
+                        let (used, current) = task_list.await;
+                        let Ok((lsp_tasks, prefer_lsp)) = workspace.update(cx, |workspace, cx| {
+                            let lsp_tasks = editor::lsp_tasks(
                                 workspace.project().clone(),
                                 &lsp_task_sources,
                                 task_position,
                                 cx,
-                            )
+                            );
+                            let prefer_lsp = workspace
+                                .active_item(cx)
+                                .and_then(|item| item.downcast::<Editor>())
+                                .map(|editor| {
+                                    editor
+                                        .read(cx)
+                                        .buffer()
+                                        .read(cx)
+                                        .language_settings(cx)
+                                        .tasks
+                                        .prefer_lsp
+                                })
+                                .unwrap_or(false);
+                            (lsp_tasks, prefer_lsp)
                         }) else {
                             return Vec::new();
                         };
@@ -268,6 +317,8 @@ impl PickerDelegate for TasksModalDelegate {
                                 };
 
                                 let mut new_candidates = used;
+                                let add_current_language_tasks =
+                                    !prefer_lsp || lsp_tasks.is_empty();
                                 new_candidates.extend(lsp_tasks.into_iter().flat_map(
                                     |(kind, tasks_with_locations)| {
                                         tasks_with_locations
@@ -278,9 +329,16 @@ impl PickerDelegate for TasksModalDelegate {
                                             .map(move |(_, task)| (kind.clone(), task))
                                     },
                                 ));
-                                new_candidates.extend(current);
-                                let match_candidates =
-                                    string_match_candidates(&new_candidates, task_type);
+                                // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
+                                // We should move the filter to new_candidates instead of on current
+                                // and add a test for this
+                                new_candidates.extend(current.into_iter().filter(
+                                    |(task_kind, _)| {
+                                        add_current_language_tasks
+                                            || !matches!(task_kind, TaskSourceKind::Language { .. })
+                                    },
+                                ));
+                                let match_candidates = string_match_candidates(&new_candidates);
                                 let _ = picker.delegate.candidates.insert(new_candidates);
                                 match_candidates
                             })
@@ -298,6 +356,7 @@ impl PickerDelegate for TasksModalDelegate {
             let matches = fuzzy::match_strings(
                 &candidates,
                 &query,
+                true,
                 true,
                 1000,
                 &Default::default(),
@@ -354,48 +413,20 @@ impl PickerDelegate for TasksModalDelegate {
             reveal_target: Some(reveal_target),
         }) = &self.task_overrides
         {
-            if let Some(resolved_task) = &mut task.resolved {
-                resolved_task.reveal_target = *reveal_target;
-            }
+            task.resolved.reveal_target = *reveal_target;
         }
 
-        match task.task_type() {
-            TaskType::Debug(_) => {
-                let Some(config) = task.resolved_debug_adapter_config() else {
-                    return;
-                };
-                let config = config.definition;
-
-                match &config.request {
-                    DebugRequest::Attach(attach_config) if attach_config.process_id.is_none() => {
-                        cx.emit(ShowAttachModal {
-                            debug_config: config.clone(),
-                        });
-                        return;
-                    }
-                    _ => {
-                        self.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.schedule_debug_task(task, window, cx);
-                            })
-                            .ok();
-                    }
-                }
-            }
-            TaskType::Script => {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.schedule_resolved_task(
-                            task_source_kind,
-                            task,
-                            omit_history_entry,
-                            window,
-                            cx,
-                        );
-                    })
-                    .ok();
-            }
-        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.schedule_resolved_task(
+                    task_source_kind,
+                    task,
+                    omit_history_entry,
+                    window,
+                    cx,
+                );
+            })
+            .ok();
 
         cx.emit(DismissEvent);
     }
@@ -422,16 +453,14 @@ impl PickerDelegate for TasksModalDelegate {
         } else {
             String::new()
         };
-        if let Some(resolved) = resolved_task.resolved.as_ref() {
-            if resolved.command_label != display_label
-                && resolved.command_label != resolved_task.resolved_label
-            {
-                if !tooltip_label_text.trim().is_empty() {
-                    tooltip_label_text.push('\n');
-                }
-                tooltip_label_text.push_str(&resolved.command_label);
+
+        if resolved_task.resolved.command_label != resolved_task.resolved_label {
+            if !tooltip_label_text.trim().is_empty() {
+                tooltip_label_text.push('\n');
             }
+            tooltip_label_text.push_str(&resolved_task.resolved.command_label);
         }
+
         if template.tags.len() > 0 {
             tooltip_label_text.push('\n');
             tooltip_label_text.push_str(
@@ -457,15 +486,29 @@ impl PickerDelegate for TasksModalDelegate {
             color: Color::Default,
         };
         let icon = match source_kind {
-            TaskSourceKind::Lsp(..) => Some(Icon::new(IconName::Bolt)),
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
-            TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
+            TaskSourceKind::Lsp {
+                language_name: name,
+                ..
+            }
+            | TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&name.to_lowercase(), cx)
                 .map(Icon::from_path),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
+        let indicator = if matches!(source_kind, TaskSourceKind::Lsp { .. }) {
+            Some(Indicator::icon(
+                Icon::new(IconName::Bolt).size(IconSize::Small),
+            ))
+        } else {
+            None
+        };
+        let icon = icon.map(|icon| {
+            IconWithIndicator::new(icon, indicator)
+                .indicator_border_color(Some(cx.theme().colors().border_transparent))
+        });
         let history_run_icon = if Some(ix) <= self.divider_index {
             Some(
                 Icon::new(IconName::HistoryRerun)
@@ -485,7 +528,7 @@ impl PickerDelegate for TasksModalDelegate {
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
-                .start_slot::<Icon>(icon)
+                .start_slot::<IconWithIndicator>(icon)
                 .end_slot::<AnyElement>(
                     h_flex()
                         .gap_1()
@@ -553,7 +596,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        Some(task.resolved.as_ref()?.command_label.clone())
+        Some(task.resolved.command_label.clone())
     }
 
     fn confirm_input(
@@ -570,26 +613,17 @@ impl PickerDelegate for TasksModalDelegate {
             reveal_target: Some(reveal_target),
         }) = self.task_overrides
         {
-            if let Some(resolved_task) = &mut task.resolved {
-                resolved_task.reveal_target = reveal_target;
-            }
+            task.resolved.reveal_target = reveal_target;
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                match task.task_type() {
-                    TaskType::Script => workspace.schedule_resolved_task(
-                        task_source_kind,
-                        task,
-                        omit_history_entry,
-                        window,
-                        cx,
-                    ),
-                    // todo(debugger): Should create a schedule_resolved_debug_task function
-                    // This would allow users to access to debug history and other issues
-                    TaskType::Debug(_) => {
-                        workspace.schedule_debug_task(task, window, cx);
-                    }
-                };
+                workspace.schedule_resolved_task(
+                    task_source_kind,
+                    task,
+                    omit_history_entry,
+                    window,
+                    cx,
+                )
             })
             .ok();
         cx.emit(DismissEvent);
@@ -602,6 +636,7 @@ impl PickerDelegate for TasksModalDelegate {
             Vec::new()
         }
     }
+
     fn render_footer(
         &self,
         window: &mut Window,
@@ -624,11 +659,8 @@ impl PickerDelegate for TasksModalDelegate {
         Some(
             h_flex()
                 .w_full()
-                .h_8()
-                .p_2()
+                .p_1p5()
                 .justify_between()
-                .rounded_b_sm()
-                .bg(cx.theme().colors().ghost_element_selected)
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
@@ -637,7 +669,6 @@ impl PickerDelegate for TasksModalDelegate {
                             let keybind = KeyBinding::for_action(&*action, window, cx);
 
                             Button::new("edit-current-task", label)
-                                .label_size(LabelSize::Small)
                                 .when_some(keybind, |this, keybind| this.key_binding(keybind))
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx);
@@ -661,7 +692,6 @@ impl PickerDelegate for TasksModalDelegate {
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
-                                .label_size(LabelSize::Small)
                                 .key_binding(keybind)
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx)
@@ -676,15 +706,14 @@ impl PickerDelegate for TasksModalDelegate {
                                     } else {
                                         "Spawn Without History"
                                     };
-                                    Button::new("spawn", label)
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(keybind)
-                                        .on_click(move |_, window, cx| {
+                                    Button::new("spawn", label).key_binding(keybind).on_click(
+                                        move |_, window, cx| {
                                             window.dispatch_action(
                                                 menu::SecondaryConfirm.boxed_clone(),
                                                 cx,
                                             )
-                                        })
+                                        },
+                                    )
                                 },
                             ),
                         )
@@ -695,7 +724,6 @@ impl PickerDelegate for TasksModalDelegate {
                                     if is_recent_selected { "Rerun" } else { "Spawn" };
 
                                 Button::new("spawn", run_entry_label)
-                                    .label_size(LabelSize::Small)
                                     .key_binding(keybind)
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(menu::Confirm.boxed_clone(), cx);
@@ -711,15 +739,10 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn string_match_candidates<'a>(
     candidates: impl IntoIterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
-    task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
         .into_iter()
         .enumerate()
-        .filter(|(_, (_, candidate))| match candidate.task_type() {
-            TaskType::Script => task_modal_type == TaskModal::ScriptModal,
-            TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
-        })
         .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()
 }
@@ -728,7 +751,7 @@ fn string_match_candidates<'a>(
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use editor::Editor;
+    use editor::{Editor, SelectionEffects};
     use gpui::{TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig, LanguageMatcher, Point};
     use project::{ContextProviderWithTasks, FakeFs, Project};
@@ -1005,7 +1028,7 @@ mod tests {
             .update(|_window, cx| second_item.act_as::<Editor>(cx))
             .unwrap();
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
             })
         });
@@ -1236,7 +1259,7 @@ mod tests {
         scheduled_task_label: &str,
         cx: &mut VisualTestContext,
     ) {
-        let scheduled_task = tasks_picker.update(cx, |tasks_picker, _| {
+        let scheduled_task = tasks_picker.read_with(cx, |tasks_picker, _| {
             tasks_picker
                 .delegate
                 .candidates
@@ -1280,14 +1303,14 @@ mod tests {
         spawn_tasks: &Entity<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> String {
-        spawn_tasks.update(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
+        spawn_tasks.read_with(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
     }
 
     fn task_names(
         spawn_tasks: &Entity<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
-        spawn_tasks.update(cx, |spawn_tasks, _| {
+        spawn_tasks.read_with(cx, |spawn_tasks, _| {
             spawn_tasks
                 .delegate
                 .matches

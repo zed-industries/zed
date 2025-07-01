@@ -10,7 +10,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
 };
-use gpui::{Window, actions, impl_actions};
+use gpui::{Action, Window, actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
@@ -28,9 +28,11 @@ pub enum Object {
     Quotes,
     BackQuotes,
     AnyQuotes,
+    MiniQuotes,
     DoubleQuotes,
     VerticalBars,
     AnyBrackets,
+    MiniBrackets,
     Parentheses,
     SquareBrackets,
     CurlyBrackets,
@@ -44,20 +46,23 @@ pub enum Object {
     EntireFile,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
@@ -158,7 +163,7 @@ impl DelimiterRange {
     }
 }
 
-fn find_any_delimiters(
+fn find_mini_delimiters(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     around: bool,
@@ -234,23 +239,21 @@ fn is_bracket_delimiter(buffer: &BufferSnapshot, start: usize, _end: usize) -> b
     )
 }
 
-fn find_any_quotes(
+fn find_mini_quotes(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    find_any_delimiters(map, display_point, around, &is_quote_delimiter)
+    find_mini_delimiters(map, display_point, around, &is_quote_delimiter)
 }
 
-fn find_any_brackets(
+fn find_mini_brackets(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    find_any_delimiters(map, display_point, around, &is_bracket_delimiter)
+    find_mini_delimiters(map, display_point, around, &is_bracket_delimiter)
 }
-
-impl_actions!(vim, [Word, Subword, IndentObj]);
 
 actions!(
     vim,
@@ -259,10 +262,12 @@ actions!(
         Paragraph,
         Quotes,
         BackQuotes,
+        MiniQuotes,
         AnyQuotes,
         DoubleQuotes,
         VerticalBars,
         Parentheses,
+        MiniBrackets,
         AnyBrackets,
         SquareBrackets,
         CurlyBrackets,
@@ -305,6 +310,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
         vim.object(Object::BackQuotes, window, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &MiniQuotes, window, cx| {
+        vim.object(Object::MiniQuotes, window, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &MiniBrackets, window, cx| {
+        vim.object(Object::MiniBrackets, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &AnyQuotes, window, cx| {
         vim.object(Object::AnyQuotes, window, cx)
@@ -362,10 +373,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        let count = Self::take_count(cx);
+
         match self.mode {
-            Mode::Normal => self.normal_object(object, window, cx),
+            Mode::Normal => self.normal_object(object, count, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_object(object, window, cx)
+                self.visual_object(object, count, window, cx)
             }
             Mode::Insert | Mode::Replace | Mode::HelixNormal => {
                 // Shouldn't execute a text object in insert mode. Ignoring
@@ -382,11 +395,13 @@ impl Object {
             | Object::Quotes
             | Object::BackQuotes
             | Object::AnyQuotes
+            | Object::MiniQuotes
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
             | Object::Paragraph
             | Object::AnyBrackets
+            | Object::MiniBrackets
             | Object::Parentheses
             | Object::Tag
             | Object::AngleBrackets
@@ -412,9 +427,11 @@ impl Object {
             Object::Quotes
             | Object::BackQuotes
             | Object::AnyQuotes
+            | Object::MiniQuotes
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::AnyBrackets
+            | Object::MiniBrackets
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::Tag
@@ -434,6 +451,7 @@ impl Object {
             | Object::Sentence
             | Object::Quotes
             | Object::AnyQuotes
+            | Object::MiniQuotes
             | Object::BackQuotes
             | Object::DoubleQuotes => {
                 if current_mode == Mode::VisualBlock {
@@ -444,6 +462,7 @@ impl Object {
             }
             Object::Parentheses
             | Object::AnyBrackets
+            | Object::MiniBrackets
             | Object::SquareBrackets
             | Object::CurlyBrackets
             | Object::AngleBrackets
@@ -468,6 +487,7 @@ impl Object {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
         match self {
@@ -486,14 +506,75 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
-            Object::Paragraph => paragraph(map, relative_to, around),
+            //change others later
+            Object::Paragraph => paragraph(map, relative_to, around, times.unwrap_or(1)),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
             }
-            Object::AnyQuotes => find_any_quotes(map, relative_to, around),
+            Object::AnyQuotes => {
+                let quote_types = ['\'', '"', '`'];
+                let cursor_offset = relative_to.to_offset(map, Bias::Left);
+
+                // Find innermost range directly without collecting all ranges
+                let mut innermost = None;
+                let mut min_size = usize::MAX;
+
+                // First pass: find innermost enclosing range
+                for quote in quote_types {
+                    if let Some(range) = surrounding_markers(
+                        map,
+                        relative_to,
+                        around,
+                        self.is_multiline(),
+                        quote,
+                        quote,
+                    ) {
+                        let start_offset = range.start.to_offset(map, Bias::Left);
+                        let end_offset = range.end.to_offset(map, Bias::Right);
+
+                        if cursor_offset >= start_offset && cursor_offset <= end_offset {
+                            let size = end_offset - start_offset;
+                            if size < min_size {
+                                min_size = size;
+                                innermost = Some(range);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(range) = innermost {
+                    return Some(range);
+                }
+
+                // Fallback: find nearest pair if not inside any quotes
+                quote_types
+                    .iter()
+                    .flat_map(|&quote| {
+                        surrounding_markers(
+                            map,
+                            relative_to,
+                            around,
+                            self.is_multiline(),
+                            quote,
+                            quote,
+                        )
+                    })
+                    .min_by_key(|range| {
+                        let start_offset = range.start.to_offset(map, Bias::Left);
+                        let end_offset = range.end.to_offset(map, Bias::Right);
+                        if cursor_offset < start_offset {
+                            (start_offset - cursor_offset) as isize
+                        } else if cursor_offset > end_offset {
+                            (cursor_offset - end_offset) as isize
+                        } else {
+                            0
+                        }
+                    })
+            }
+            Object::MiniQuotes => find_mini_quotes(map, relative_to, around),
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
             }
@@ -508,7 +589,66 @@ impl Object {
                 let range = selection.range();
                 surrounding_html_tag(map, head, range, around)
             }
-            Object::AnyBrackets => find_any_brackets(map, relative_to, around),
+            Object::AnyBrackets => {
+                let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+                let cursor_offset = relative_to.to_offset(map, Bias::Left);
+
+                // Find innermost enclosing bracket range
+                let mut innermost = None;
+                let mut min_size = usize::MAX;
+
+                for &(open, close) in bracket_pairs.iter() {
+                    if let Some(range) = surrounding_markers(
+                        map,
+                        relative_to,
+                        around,
+                        self.is_multiline(),
+                        open,
+                        close,
+                    ) {
+                        let start_offset = range.start.to_offset(map, Bias::Left);
+                        let end_offset = range.end.to_offset(map, Bias::Right);
+
+                        if cursor_offset >= start_offset && cursor_offset <= end_offset {
+                            let size = end_offset - start_offset;
+                            if size < min_size {
+                                min_size = size;
+                                innermost = Some(range);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(range) = innermost {
+                    return Some(range);
+                }
+
+                // Fallback: find nearest bracket pair if not inside any
+                bracket_pairs
+                    .iter()
+                    .flat_map(|&(open, close)| {
+                        surrounding_markers(
+                            map,
+                            relative_to,
+                            around,
+                            self.is_multiline(),
+                            open,
+                            close,
+                        )
+                    })
+                    .min_by_key(|range| {
+                        let start_offset = range.start.to_offset(map, Bias::Left);
+                        let end_offset = range.end.to_offset(map, Bias::Right);
+                        if cursor_offset < start_offset {
+                            (start_offset - cursor_offset) as isize
+                        } else if cursor_offset > end_offset {
+                            (cursor_offset - end_offset) as isize
+                        } else {
+                            0
+                        }
+                    })
+            }
+            Object::MiniBrackets => find_mini_brackets(map, relative_to, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -556,8 +696,9 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around) {
+        if let Some(range) = self.range(map, selection.clone(), around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -1263,30 +1404,37 @@ fn paragraph(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let mut paragraph_start = start_of_paragraph(map, relative_to);
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
-    let paragraph_end_row = paragraph_end.row();
-    let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
-    let point = relative_to.to_point(map);
-    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    for i in 0..times {
+        let paragraph_end_row = paragraph_end.row();
+        let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
+        let point = relative_to.to_point(map);
+        let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-    if around {
-        if paragraph_ends_with_eof {
-            if current_line_is_empty {
-                return None;
-            }
+        if around {
+            if paragraph_ends_with_eof {
+                if current_line_is_empty {
+                    return None;
+                }
 
-            let paragraph_start_row = paragraph_start.row();
-            if paragraph_start_row.0 != 0 {
-                let previous_paragraph_last_line_start =
-                    DisplayPoint::new(paragraph_start_row - 1, 0);
-                paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                let paragraph_start_row = paragraph_start.row();
+                if paragraph_start_row.0 != 0 {
+                    let previous_paragraph_last_line_start =
+                        Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                    paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                }
+            } else {
+                let mut start_row = paragraph_end_row.0 + 1;
+                if i > 0 {
+                    start_row += 1;
+                }
+                let next_paragraph_start = Point::new(start_row, 0).to_display_point(map);
+                paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
-        } else {
-            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
-            paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
 
@@ -1525,7 +1673,7 @@ mod test {
     use indoc::indoc;
 
     use crate::{
-        object::AnyBrackets,
+        object::{AnyBrackets, AnyQuotes, MiniBrackets},
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -2193,6 +2341,158 @@ mod test {
 
     #[gpui::test]
     async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "q",
+                AnyQuotes,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // the false string in the middle should be considered
+            (
+                "c i q",
+                "'first' false ˇstring 'second'",
+                "'first'ˇ'second'",
+                Mode::Insert,
+            ),
+            // Single quotes
+            (
+                "c i q",
+                "Thisˇ is a 'quote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "Thisˇ is a 'quote' example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "c i q",
+                "This is a \"simple 'qˇuote'\" example.",
+                "This is a \"simple 'ˇ'\" example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a \"simple 'qˇuote'\" example.",
+                "This is a \"simpleˇ\" example.",
+                Mode::Insert,
+            ),
+            (
+                "c i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Double quotes
+            (
+                "c i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Back quotes
+            (
+                "c i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+        ];
+
+        for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(expected_state, *expected_mode);
+        }
+
+        const INVALID_CASES: &[(&str, &str, Mode)] = &[
+            ("c i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("c a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+        ];
+
+        for (keystrokes, initial_state, mode) in INVALID_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(initial_state, *mode);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_miniquotes_object(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new_typescript(cx).await;
 
         const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
@@ -2220,7 +2520,7 @@ mod test {
                 Mode::Insert,
             ),
             // If you are in the close quote and it is the only quote in the buffer, it should replace inside the quote
-            // This is not working with the core motion ci' for this special edge case, so I am happy to fix it in AnyQuotes :)
+            // This is not working with the core motion ci' for this special edge case, so I am happy to fix it in MiniQuotes :)
             // Bug reference: https://github.com/zed-industries/zed/issues/23889
             ("c i q", "'quote«'ˇ»", "'ˇ'", Mode::Insert),
             // Single quotes
@@ -2363,6 +2663,169 @@ mod test {
             cx.bind_keys([KeyBinding::new(
                 "b",
                 AnyBrackets,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            ˇprint('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {
+                        {
+                            ˇ
+                        }
+                    }
+                "},
+                Mode::Insert,
+            ),
+            // Bracket (Parentheses)
+            (
+                "c i b",
+                "Thisˇ is a (simple [quote]) example.",
+                "This is a (ˇ) example.",
+                Mode::Insert,
+            ),
+            (
+                "c i b",
+                "This is a [simple (qˇuote)] example.",
+                "This is a [simple (ˇ)] example.",
+                Mode::Insert,
+            ),
+            (
+                "c a b",
+                "This is a [simple (qˇuote)] example.",
+                "This is a [simple ˇ] example.",
+                Mode::Insert,
+            ),
+            (
+                "c a b",
+                "Thisˇ is a (simple [quote]) example.",
+                "This is a ˇ example.",
+                Mode::Insert,
+            ),
+            (
+                "c i b",
+                "This is a (qˇuote) example.",
+                "This is a (ˇ) example.",
+                Mode::Insert,
+            ),
+            (
+                "c a b",
+                "This is a (qˇuote) example.",
+                "This is a ˇ example.",
+                Mode::Insert,
+            ),
+            (
+                "d i b",
+                "This is a (qˇuote) example.",
+                "This is a (ˇ) example.",
+                Mode::Normal,
+            ),
+            (
+                "d a b",
+                "This is a (qˇuote) example.",
+                "This is a ˇ example.",
+                Mode::Normal,
+            ),
+            // Square brackets
+            (
+                "c i b",
+                "This is a [qˇuote] example.",
+                "This is a [ˇ] example.",
+                Mode::Insert,
+            ),
+            (
+                "c a b",
+                "This is a [qˇuote] example.",
+                "This is a ˇ example.",
+                Mode::Insert,
+            ),
+            (
+                "d i b",
+                "This is a [qˇuote] example.",
+                "This is a [ˇ] example.",
+                Mode::Normal,
+            ),
+            (
+                "d a b",
+                "This is a [qˇuote] example.",
+                "This is a ˇ example.",
+                Mode::Normal,
+            ),
+            // Curly brackets
+            (
+                "c i b",
+                "This is a {qˇuote} example.",
+                "This is a {ˇ} example.",
+                Mode::Insert,
+            ),
+            (
+                "c a b",
+                "This is a {qˇuote} example.",
+                "This is a ˇ example.",
+                Mode::Insert,
+            ),
+            (
+                "d i b",
+                "This is a {qˇuote} example.",
+                "This is a {ˇ} example.",
+                Mode::Normal,
+            ),
+            (
+                "d a b",
+                "This is a {qˇuote} example.",
+                "This is a ˇ example.",
+                Mode::Normal,
+            ),
+        ];
+
+        for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(expected_state, *expected_mode);
+        }
+
+        const INVALID_CASES: &[(&str, &str, Mode)] = &[
+            ("c i b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
+            ("c a b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
+            ("d i b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
+            ("d a b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
+            ("c i b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
+            ("c a b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
+            ("d i b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
+            ("d a b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
+            ("c i b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
+            ("c a b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
+            ("d i b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
+            ("d a b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
+        ];
+
+        for (keystrokes, initial_state, mode) in INVALID_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(initial_state, *mode);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_minibrackets_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                MiniBrackets,
                 Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
             )]);
         });
@@ -2572,7 +3035,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_anybrackets_trailing_space(cx: &mut gpui::TestAppContext) {
+    async fn test_minibrackets_trailing_space(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("(trailingˇ whitespace          )")
             .await;

@@ -16,7 +16,7 @@ use std::{
 use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext as _, Entity, Subscription};
 use language::{
-    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate,
+    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate,
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
@@ -28,8 +28,8 @@ use crate::{LanguageServerId, ProjectPath, project_settings::LspSettings};
 use super::{ManifestTree, ManifestTreeEvent};
 
 #[derive(Debug, Default)]
-struct ServersForWorktree {
-    roots: BTreeMap<
+pub(crate) struct ServersForWorktree {
+    pub(crate) roots: BTreeMap<
         Arc<Path>,
         BTreeMap<LanguageServerName, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
     >,
@@ -37,7 +37,7 @@ struct ServersForWorktree {
 
 pub struct LanguageServerTree {
     manifest_tree: Entity<ManifestTree>,
-    instances: BTreeMap<WorktreeId, ServersForWorktree>,
+    pub(crate) instances: BTreeMap<WorktreeId, ServersForWorktree>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
     _subscriptions: Subscription,
@@ -47,7 +47,7 @@ pub struct LanguageServerTree {
 /// - A language server that has already been initialized/updated for a given project
 /// - A soon-to-be-initialized language server.
 #[derive(Clone)]
-pub(crate) struct LanguageServerTreeNode(Weak<InnerTreeNode>);
+pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
 /// Describes a request to launch a language server.
 #[derive(Debug)]
@@ -74,6 +74,7 @@ impl LanguageServerTreeNode {
     pub(crate) fn server_id(&self) -> Option<LanguageServerId> {
         self.0.upgrade()?.id.get().copied()
     }
+
     /// Returns a language server ID for this node if it has already been initialized; otherwise runs the provided closure to initialize the language server node in a tree.
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
@@ -87,6 +88,11 @@ impl LanguageServerTreeNode {
                 .get_or_init(|| init(LaunchDisposition::from(&*this))),
         )
     }
+
+    /// Returns a language server name as the language server adapter would return.
+    pub fn name(&self) -> Option<LanguageServerName> {
+        self.0.upgrade().map(|node| node.name.clone())
+    }
 }
 
 impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
@@ -96,7 +102,7 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
 }
 
 #[derive(Debug)]
-struct InnerTreeNode {
+pub struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
     name: LanguageServerName,
     attach: Attach,
@@ -151,7 +157,7 @@ impl LanguageServerTree {
         &'a mut self,
         path: ProjectPath,
         query: AdapterQuery<'_>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let settings_location = SettingsLocation {
@@ -181,7 +187,7 @@ impl LanguageServerTree {
             LanguageServerName,
             (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
         >,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
@@ -336,6 +342,28 @@ impl LanguageServerTree {
             }
         }
     }
+
+    pub(crate) fn register_reused(
+        &mut self,
+        worktree_id: WorktreeId,
+        language_name: LanguageName,
+        reused: LanguageServerTreeNode,
+    ) {
+        let Some(node) = reused.0.upgrade() else {
+            return;
+        };
+
+        self.instances
+            .entry(worktree_id)
+            .or_default()
+            .roots
+            .entry(Arc::from(Path::new("")))
+            .or_default()
+            .entry(node.name.clone())
+            .or_insert_with(|| (node, BTreeSet::new()))
+            .1
+            .insert(language_name);
+    }
 }
 
 pub(crate) struct ServerTreeRebase<'a> {
@@ -379,7 +407,7 @@ impl<'tree> ServerTreeRebase<'tree> {
         &'a mut self,
         path: ProjectPath,
         query: AdapterQuery<'_>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let settings_location = SettingsLocation {
@@ -440,5 +468,9 @@ impl<'tree> ServerTreeRebase<'tree> {
             .into_iter()
             .filter(|(id, _)| !self.rebased_server_ids.contains(id))
             .collect()
+    }
+
+    pub(crate) fn server_tree(&mut self) -> &mut LanguageServerTree {
+        &mut self.new_tree
     }
 }

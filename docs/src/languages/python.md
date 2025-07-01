@@ -2,7 +2,7 @@
 
 Python support is available natively in Zed.
 
-- Tree-sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
+- Tree-sitter: [tree-sitter-python](https://github.com/zed-industries/tree-sitter-python)
 - Language Servers:
   - [microsoft/pyright](https://github.com/microsoft/pyright)
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
@@ -99,7 +99,7 @@ venvPath = "."
 venv = ".venv"
 ```
 
-You can also configure this option directly in your `settings.json` file ([pyright settings](#settings)), as recommended in [Configuring Your Python Environment](https://microsoft.github.io/pyright/#/import-resolution?id=configuring-your-python-environment).
+You can also configure this option directly in your `settings.json` file ([pyright settings](#pyright-settings)), as recommended in [Configuring Your Python Environment](https://microsoft.github.io/pyright/#/import-resolution?id=configuring-your-python-environment).
 
 ```json
 {

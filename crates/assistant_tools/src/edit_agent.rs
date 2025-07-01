@@ -1,533 +1,1472 @@
+mod create_file_parser;
 mod edit_parser;
+#[cfg(test)]
+mod evals;
+mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
-use anyhow::{Result, anyhow};
-use edit_parser::EditParser;
-use futures::{Stream, StreamExt, TryStreamExt, stream};
-use gpui::{AsyncApp, Entity};
-use language::{Anchor, Bias, Buffer, BufferSnapshot};
-use language_model::{
-    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
+use anyhow::Result;
+use assistant_tool::ActionLog;
+use create_file_parser::{CreateFileParser, CreateFileParserEvent};
+pub use edit_parser::EditFormat;
+use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
+use futures::{
+    Stream, StreamExt,
+    channel::mpsc::{self, UnboundedReceiver},
+    pin_mut,
+    stream::BoxStream,
 };
-use project::{Project, ProjectPath};
-use serde::Serialize;
-use smallvec::{SmallVec, smallvec};
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use gpui::{AppContext, AsyncApp, Entity, Task};
+use language::{Anchor, Buffer, BufferSnapshot, LineIndent, Point, TextBufferSnapshot};
+use language_model::{
+    LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolChoice, MessageContent, Role,
+};
+use project::{AgentLocation, Project};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
+use streaming_diff::{CharOperation, StreamingDiff};
+use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
+use util::debug_panic;
+use zed_llm_client::CompletionIntent;
 
 #[derive(Serialize)]
-pub struct EditAgentTemplate {
+struct CreateFilePromptTemplate {
     path: Option<PathBuf>,
-    file_content: String,
-    instructions: String,
+    edit_description: String,
 }
 
-impl Template for EditAgentTemplate {
-    const TEMPLATE_NAME: &'static str = "edit_agent.hbs";
+impl Template for CreateFilePromptTemplate {
+    const TEMPLATE_NAME: &'static str = "create_file_prompt.hbs";
 }
 
+#[derive(Serialize)]
+struct EditFileXmlPromptTemplate {
+    path: Option<PathBuf>,
+    edit_description: String,
+}
+
+impl Template for EditFileXmlPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_xml.hbs";
+}
+
+#[derive(Serialize)]
+struct EditFileDiffFencedPromptTemplate {
+    path: Option<PathBuf>,
+    edit_description: String,
+}
+
+impl Template for EditFileDiffFencedPromptTemplate {
+    const TEMPLATE_NAME: &'static str = "edit_file_prompt_diff_fenced.hbs";
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditAgentOutputEvent {
+    ResolvingEditRange(Range<Anchor>),
+    UnresolvedEditRange,
+    AmbiguousEditRange(Vec<Range<usize>>),
+    Edited,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct EditAgentOutput {
+    pub raw_edits: String,
+    pub parser_metrics: EditParserMetrics,
+}
+
+#[derive(Clone)]
 pub struct EditAgent {
-    project: Entity<Project>,
     model: Arc<dyn LanguageModel>,
+    action_log: Entity<ActionLog>,
+    project: Entity<Project>,
     templates: Arc<Templates>,
+    edit_format: EditFormat,
 }
 
 impl EditAgent {
     pub fn new(
         model: Arc<dyn LanguageModel>,
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
+        edit_format: EditFormat,
     ) -> Self {
         EditAgent {
-            project,
             model,
+            project,
+            action_log,
             templates,
+            edit_format,
         }
     }
 
-    pub async fn interpret(
+    pub fn overwrite(
         &self,
         buffer: Entity<Buffer>,
-        instructions: String,
+        edit_description: String,
+        conversation: &LanguageModelRequest,
         cx: &mut AsyncApp,
-    ) -> Result<impl Stream<Item = Result<(Range<Anchor>, String)>>> {
-        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-        let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
-        // todo!("move to background")
-        let prompt = EditAgentTemplate {
-            path,
-            file_content: snapshot.text(),
-            instructions,
-        }
-        .render(&self.templates)?;
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text(prompt)],
-                cache: false,
-            }],
-            ..Default::default()
-        };
-        let mut parser = EditParser::new();
-        let stream = self.model.stream_completion_text(request, cx).await?.stream;
-        Ok(stream.flat_map(move |chunk| {
-            let mut edits = SmallVec::new();
-            let mut error = None;
-            let snapshot = snapshot.clone();
-            match chunk {
-                Ok(chunk) => {
-                    edits = parser.push(&chunk);
-                    // print!("{}", chunk);
-                }
-                Err(err) => error = Some(Err(anyhow!(err))),
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let this = self.clone();
+        let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
+        let output = cx.spawn(async move |cx| {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
+            let prompt = CreateFilePromptTemplate {
+                path,
+                edit_description,
             }
-            stream::iter(
-                edits
-                    .into_iter()
-                    .map(move |edit| {
-                        let range = Self::resolve_location(&snapshot, &edit.old_text);
-                        Ok((range, edit.new_text))
-                    })
-                    .chain(error),
-            )
-        }))
+            .render(&this.templates)?;
+            let new_chunks = this
+                .request(conversation, CompletionIntent::CreateFile, prompt, cx)
+                .await?;
+
+            let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
+            while let Some(event) = inner_events.next().await {
+                events_tx.unbounded_send(event).ok();
+            }
+            output.await
+        });
+        (output, events_rx)
     }
 
-    fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Range<Anchor> {
-        const INSERTION_COST: u32 = 3;
-        const DELETION_COST: u32 = 10;
-        const WHITESPACE_INSERTION_COST: u32 = 1;
-        const WHITESPACE_DELETION_COST: u32 = 1;
+    fn overwrite_with_chunks(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let (output_events_tx, output_events_rx) = mpsc::unbounded();
+        let (parse_task, parse_rx) = Self::parse_create_file_chunks(edit_chunks, cx);
+        let this = self.clone();
+        let task = cx.spawn(async move |cx| {
+            this.action_log
+                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
+            this.overwrite_with_chunks_internal(buffer, parse_rx, output_events_tx, cx)
+                .await?;
+            parse_task.await
+        });
+        (task, output_events_rx)
+    }
 
-        let buffer_len = buffer.len();
-        let query_len = search_query.len();
-        let mut matrix = SearchMatrix::new(query_len + 1, buffer_len + 1);
-        let mut leading_deletion_cost = 0_u32;
-        for (row, query_byte) in search_query.bytes().enumerate() {
-            let deletion_cost = if query_byte.is_ascii_whitespace() {
-                WHITESPACE_DELETION_COST
-            } else {
-                DELETION_COST
+    async fn overwrite_with_chunks_internal(
+        &self,
+        buffer: Entity<Buffer>,
+        mut parse_rx: UnboundedReceiver<Result<CreateFileParserEvent>>,
+        output_events_tx: mpsc::UnboundedSender<EditAgentOutputEvent>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+            self.action_log.update(cx, |log, cx| {
+                log.buffer_edited(buffer.clone(), cx);
+            });
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: language::Anchor::MAX,
+                    }),
+                    cx,
+                )
+            });
+            output_events_tx
+                .unbounded_send(EditAgentOutputEvent::Edited)
+                .ok();
+        })?;
+
+        while let Some(event) = parse_rx.next().await {
+            match event? {
+                CreateFileParserEvent::NewTextChunk { chunk } => {
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
+                        self.action_log
+                            .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: language::Anchor::MAX,
+                                }),
+                                cx,
+                            )
+                        });
+                    })?;
+                    output_events_tx
+                        .unbounded_send(EditAgentOutputEvent::Edited)
+                        .ok();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn edit(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_description: String,
+        conversation: &LanguageModelRequest,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let this = self.clone();
+        let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
+        let edit_format = self.edit_format;
+        let output = cx.spawn(async move |cx| {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
+            let prompt = match edit_format {
+                EditFormat::XmlTags => EditFileXmlPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
+                EditFormat::DiffFenced => EditFileDiffFencedPromptTemplate {
+                    path,
+                    edit_description,
+                }
+                .render(&this.templates)?,
             };
 
-            leading_deletion_cost = leading_deletion_cost.saturating_add(deletion_cost);
-            matrix.set(
-                row + 1,
-                0,
-                SearchState::new(leading_deletion_cost, SearchDirection::Diagonal),
-            );
+            let edit_chunks = this
+                .request(conversation, CompletionIntent::EditFile, prompt, cx)
+                .await?;
+            this.apply_edit_chunks(buffer, edit_chunks, events_tx, cx)
+                .await
+        });
+        (output, events_rx)
+    }
 
-            for (col, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
-                let insertion_cost = if buffer_byte.is_ascii_whitespace() {
-                    WHITESPACE_INSERTION_COST
-                } else {
-                    INSERTION_COST
+    async fn apply_edit_chunks(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        output_events: mpsc::UnboundedSender<EditAgentOutputEvent>,
+        cx: &mut AsyncApp,
+    ) -> Result<EditAgentOutput> {
+        self.action_log
+            .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
+
+        let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, self.edit_format, cx);
+        let mut edit_events = edit_events.peekable();
+        while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
+            // Skip events until we're at the start of a new edit.
+            let Ok(EditParserEvent::OldTextChunk { .. }) = edit_event else {
+                edit_events.next().await.unwrap()?;
+                continue;
+            };
+
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+
+            // Resolve the old text in the background, updating the agent
+            // location as we keep refining which range it corresponds to.
+            let (resolve_old_text, mut old_range) =
+                Self::resolve_old_text(snapshot.text.clone(), edit_events, cx);
+            while let Ok(old_range) = old_range.recv().await {
+                if let Some(old_range) = old_range {
+                    let old_range = snapshot.anchor_before(old_range.start)
+                        ..snapshot.anchor_before(old_range.end);
+                    self.project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position: old_range.end,
+                            }),
+                            cx,
+                        );
+                    })?;
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::ResolvingEditRange(old_range))
+                        .ok();
+                }
+            }
+
+            let (edit_events_, mut resolved_old_text) = resolve_old_text.await?;
+            edit_events = edit_events_;
+
+            // If we can't resolve the old text, restart the loop waiting for a
+            // new edit (or for the stream to end).
+            let resolved_old_text = match resolved_old_text.len() {
+                1 => resolved_old_text.pop().unwrap(),
+                0 => {
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
+                        .ok();
+                    continue;
+                }
+                _ => {
+                    let ranges = resolved_old_text
+                        .into_iter()
+                        .map(|text| {
+                            let start_line =
+                                (snapshot.offset_to_point(text.range.start).row + 1) as usize;
+                            let end_line =
+                                (snapshot.offset_to_point(text.range.end).row + 1) as usize;
+                            start_line..end_line
+                        })
+                        .collect();
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::AmbiguousEditRange(ranges))
+                        .ok();
+                    continue;
+                }
+            };
+
+            // Compute edits in the background and apply them as they become
+            // available.
+            let (compute_edits, edits) =
+                Self::compute_edits(snapshot, resolved_old_text, edit_events, cx);
+            let mut edits = edits.ready_chunks(32);
+            while let Some(edits) = edits.next().await {
+                if edits.is_empty() {
+                    continue;
+                }
+
+                // Edit the buffer and report edits to the action log as part of the
+                // same effect cycle, otherwise the edit will be reported as if the
+                // user made it.
+                cx.update(|cx| {
+                    let max_edit_end = buffer.update(cx, |buffer, cx| {
+                        buffer.edit(edits.iter().cloned(), None, cx);
+                        let max_edit_end = buffer
+                            .summaries_for_anchors::<Point, _>(
+                                edits.iter().map(|(range, _)| &range.end),
+                            )
+                            .max()
+                            .unwrap();
+                        buffer.anchor_before(max_edit_end)
+                    });
+                    self.action_log
+                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                    self.project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position: max_edit_end,
+                            }),
+                            cx,
+                        );
+                    });
+                })?;
+                output_events
+                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .ok();
+            }
+
+            edit_events = compute_edits.await?;
+        }
+
+        output.await
+    }
+
+    fn parse_edit_chunks(
+        chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        edit_format: EditFormat,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        UnboundedReceiver<Result<EditParserEvent>>,
+    ) {
+        let (tx, rx) = mpsc::unbounded();
+        let output = cx.background_spawn(async move {
+            pin_mut!(chunks);
+
+            let mut parser = EditParser::new(edit_format);
+            let mut raw_edits = String::new();
+            while let Some(chunk) = chunks.next().await {
+                match chunk {
+                    Ok(chunk) => {
+                        raw_edits.push_str(&chunk);
+                        for event in parser.push(&chunk) {
+                            tx.unbounded_send(Ok(event))?;
+                        }
+                    }
+                    Err(error) => {
+                        tx.unbounded_send(Err(error.into()))?;
+                    }
+                }
+            }
+            Ok(EditAgentOutput {
+                raw_edits,
+                parser_metrics: parser.finish(),
+            })
+        });
+        (output, rx)
+    }
+
+    fn parse_create_file_chunks(
+        chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        UnboundedReceiver<Result<CreateFileParserEvent>>,
+    ) {
+        let (tx, rx) = mpsc::unbounded();
+        let output = cx.background_spawn(async move {
+            pin_mut!(chunks);
+
+            let mut parser = CreateFileParser::new();
+            let mut raw_edits = String::new();
+            while let Some(chunk) = chunks.next().await {
+                match chunk {
+                    Ok(chunk) => {
+                        raw_edits.push_str(&chunk);
+                        for event in parser.push(Some(&chunk)) {
+                            tx.unbounded_send(Ok(event))?;
+                        }
+                    }
+                    Err(error) => {
+                        tx.unbounded_send(Err(error.into()))?;
+                    }
+                }
+            }
+            // Send final events with None to indicate completion
+            for event in parser.push(None) {
+                tx.unbounded_send(Ok(event))?;
+            }
+            Ok(EditAgentOutput {
+                raw_edits,
+                parser_metrics: EditParserMetrics::default(),
+            })
+        });
+        (output, rx)
+    }
+
+    fn resolve_old_text<T>(
+        snapshot: TextBufferSnapshot,
+        mut edit_events: T,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<(T, Vec<ResolvedOldText>)>>,
+        watch::Receiver<Option<Range<usize>>>,
+    )
+    where
+        T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
+    {
+        let (mut old_range_tx, old_range_rx) = watch::channel(None);
+        let task = cx.background_spawn(async move {
+            let mut matcher = StreamingFuzzyMatcher::new(snapshot);
+            while let Some(edit_event) = edit_events.next().await {
+                let EditParserEvent::OldTextChunk {
+                    chunk,
+                    done,
+                    line_hint,
+                } = edit_event?
+                else {
+                    break;
                 };
 
-                let up = SearchState::new(
-                    matrix.get(row, col + 1).cost.saturating_add(deletion_cost),
-                    SearchDirection::Up,
-                );
-                let left = SearchState::new(
-                    matrix.get(row + 1, col).cost.saturating_add(insertion_cost),
-                    SearchDirection::Left,
-                );
-                let diagonal = SearchState::new(
-                    if query_byte == *buffer_byte {
-                        matrix.get(row, col).cost
+                old_range_tx.send(matcher.push(&chunk, line_hint))?;
+                if done {
+                    break;
+                }
+            }
+
+            let matches = matcher.finish();
+            let best_match = matcher.select_best_match();
+
+            old_range_tx.send(best_match.clone())?;
+
+            let indent = LineIndent::from_iter(
+                matcher
+                    .query_lines()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .chars(),
+            );
+
+            let resolved_old_texts = if let Some(best_match) = best_match {
+                vec![ResolvedOldText {
+                    range: best_match,
+                    indent,
+                }]
+            } else {
+                matches
+                    .into_iter()
+                    .map(|range| ResolvedOldText { range, indent })
+                    .collect::<Vec<_>>()
+            };
+
+            Ok((edit_events, resolved_old_texts))
+        });
+
+        (task, old_range_rx)
+    }
+
+    fn compute_edits<T>(
+        snapshot: BufferSnapshot,
+        resolved_old_text: ResolvedOldText,
+        mut edit_events: T,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<T>>,
+        UnboundedReceiver<(Range<Anchor>, Arc<str>)>,
+    )
+    where
+        T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
+    {
+        let (edits_tx, edits_rx) = mpsc::unbounded();
+        let compute_edits = cx.background_spawn(async move {
+            let buffer_start_indent = snapshot
+                .line_indent_for_row(snapshot.offset_to_point(resolved_old_text.range.start).row);
+            let indent_delta = if buffer_start_indent.tabs > 0 {
+                IndentDelta::Tabs(
+                    buffer_start_indent.tabs as isize - resolved_old_text.indent.tabs as isize,
+                )
+            } else {
+                IndentDelta::Spaces(
+                    buffer_start_indent.spaces as isize - resolved_old_text.indent.spaces as isize,
+                )
+            };
+
+            let old_text = snapshot
+                .text_for_range(resolved_old_text.range.clone())
+                .collect::<String>();
+            let mut diff = StreamingDiff::new(old_text);
+            let mut edit_start = resolved_old_text.range.start;
+            let mut new_text_chunks =
+                Self::reindent_new_text_chunks(indent_delta, &mut edit_events);
+            let mut done = false;
+            while !done {
+                let char_operations = if let Some(new_text_chunk) = new_text_chunks.next().await {
+                    diff.push_new(&new_text_chunk?)
+                } else {
+                    done = true;
+                    mem::take(&mut diff).finish()
+                };
+
+                for op in char_operations {
+                    match op {
+                        CharOperation::Insert { text } => {
+                            let edit_start = snapshot.anchor_after(edit_start);
+                            edits_tx.unbounded_send((edit_start..edit_start, Arc::from(text)))?;
+                        }
+                        CharOperation::Delete { bytes } => {
+                            let edit_end = edit_start + bytes;
+                            let edit_range =
+                                snapshot.anchor_after(edit_start)..snapshot.anchor_before(edit_end);
+                            edit_start = edit_end;
+                            edits_tx.unbounded_send((edit_range, Arc::from("")))?;
+                        }
+                        CharOperation::Keep { bytes } => edit_start += bytes,
+                    }
+                }
+            }
+
+            drop(new_text_chunks);
+            anyhow::Ok(edit_events)
+        });
+
+        (compute_edits, edits_rx)
+    }
+
+    fn reindent_new_text_chunks(
+        delta: IndentDelta,
+        mut stream: impl Unpin + Stream<Item = Result<EditParserEvent>>,
+    ) -> impl Stream<Item = Result<String>> {
+        let mut buffer = String::new();
+        let mut in_leading_whitespace = true;
+        let mut done = false;
+        futures::stream::poll_fn(move |cx| {
+            while !done {
+                let (chunk, is_last_chunk) = match stream.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(EditParserEvent::NewTextChunk { chunk, done }))) => {
+                        (chunk, done)
+                    }
+                    Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
+                    Poll::Pending => return Poll::Pending,
+                    _ => return Poll::Ready(None),
+                };
+
+                buffer.push_str(&chunk);
+
+                let mut indented_new_text = String::new();
+                let mut start_ix = 0;
+                let mut newlines = buffer.match_indices('\n').peekable();
+                loop {
+                    let (line_end, is_pending_line) = match newlines.next() {
+                        Some((ix, _)) => (ix, false),
+                        None => (buffer.len(), true),
+                    };
+                    let line = &buffer[start_ix..line_end];
+
+                    if in_leading_whitespace {
+                        if let Some(non_whitespace_ix) = line.find(|c| delta.character() != c) {
+                            // We found a non-whitespace character, adjust
+                            // indentation based on the delta.
+                            let new_indent_len =
+                                cmp::max(0, non_whitespace_ix as isize + delta.len()) as usize;
+                            indented_new_text
+                                .extend(iter::repeat(delta.character()).take(new_indent_len));
+                            indented_new_text.push_str(&line[non_whitespace_ix..]);
+                            in_leading_whitespace = false;
+                        } else if is_pending_line {
+                            // We're still in leading whitespace and this line is incomplete.
+                            // Stop processing until we receive more input.
+                            break;
+                        } else {
+                            // This line is entirely whitespace. Push it without indentation.
+                            indented_new_text.push_str(line);
+                        }
                     } else {
-                        matrix
-                            .get(row, col)
-                            .cost
-                            .saturating_add(deletion_cost + insertion_cost)
-                    },
-                    SearchDirection::Diagonal,
+                        indented_new_text.push_str(line);
+                    }
+
+                    if is_pending_line {
+                        start_ix = line_end;
+                        break;
+                    } else {
+                        in_leading_whitespace = true;
+                        indented_new_text.push('\n');
+                        start_ix = line_end + 1;
+                    }
+                }
+                buffer.replace_range(..start_ix, "");
+
+                // This was the last chunk, push all the buffered content as-is.
+                if is_last_chunk {
+                    indented_new_text.push_str(&buffer);
+                    buffer.clear();
+                    done = true;
+                }
+
+                if !indented_new_text.is_empty() {
+                    return Poll::Ready(Some(Ok(indented_new_text)));
+                }
+            }
+
+            Poll::Ready(None)
+        })
+    }
+
+    async fn request(
+        &self,
+        mut conversation: LanguageModelRequest,
+        intent: CompletionIntent,
+        prompt: String,
+        cx: &mut AsyncApp,
+    ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
+        let mut messages_iter = conversation.messages.iter_mut();
+        if let Some(last_message) = messages_iter.next_back() {
+            if last_message.role == Role::Assistant {
+                let old_content_len = last_message.content.len();
+                last_message
+                    .content
+                    .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
+                let new_content_len = last_message.content.len();
+
+                // We just removed pending tool uses from the content of the
+                // last message, so it doesn't make sense to cache it anymore
+                // (e.g., the message will look very different on the next
+                // request). Thus, we move the flag to the message prior to it,
+                // as it will still be a valid prefix of the conversation.
+                if old_content_len != new_content_len && last_message.cache {
+                    if let Some(prev_message) = messages_iter.next_back() {
+                        last_message.cache = false;
+                        prev_message.cache = true;
+                    }
+                }
+
+                if last_message.content.is_empty() {
+                    conversation.messages.pop();
+                }
+            } else {
+                debug_panic!(
+                    "Last message must be an Assistant tool calling! Got {:?}",
+                    last_message.content
                 );
-                matrix.set(row + 1, col + 1, up.min(left).min(diagonal));
             }
         }
 
-        // Traceback to find the best match
-        let mut best_buffer_end = buffer_len;
-        let mut best_cost = u32::MAX;
-        for col in 1..=buffer_len {
-            let cost = matrix.get(query_len, col).cost;
-            if cost < best_cost {
-                best_cost = cost;
-                best_buffer_end = col;
-            }
+        conversation.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text(prompt)],
+            cache: false,
+        });
+
+        // Include tools in the request so that we can take advantage of
+        // caching when ToolChoice::None is supported.
+        let mut tool_choice = None;
+        let mut tools = Vec::new();
+        if !conversation.tools.is_empty()
+            && self
+                .model
+                .supports_tool_choice(LanguageModelToolChoice::None)
+        {
+            tool_choice = Some(LanguageModelToolChoice::None);
+            tools = conversation.tools.clone();
         }
 
-        let mut query_ix = query_len;
-        let mut buffer_ix = best_buffer_end;
-        while query_ix > 0 && buffer_ix > 0 {
-            let current = matrix.get(query_ix, buffer_ix);
-            match current.direction {
-                SearchDirection::Diagonal => {
-                    query_ix -= 1;
-                    buffer_ix -= 1;
-                }
-                SearchDirection::Up => {
-                    query_ix -= 1;
-                }
-                SearchDirection::Left => {
-                    buffer_ix -= 1;
-                }
-            }
-        }
+        let request = LanguageModelRequest {
+            thread_id: conversation.thread_id,
+            prompt_id: conversation.prompt_id,
+            intent: Some(intent),
+            mode: conversation.mode,
+            messages: conversation.messages,
+            tool_choice,
+            tools,
+            stop: Vec::new(),
+            temperature: None,
+        };
 
-        let mut start = buffer.offset_to_point(buffer.clip_offset(buffer_ix, Bias::Left));
-        start.column = 0;
-        let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
-        if end.column > 0 {
-            end.column = buffer.line_len(end.row);
-        }
-
-        buffer.anchor_after(start)..buffer.anchor_before(end)
+        Ok(self.model.stream_completion_text(request, cx).await?.stream)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum SearchDirection {
-    Up,
-    Left,
-    Diagonal,
+struct ResolvedOldText {
+    range: Range<usize>,
+    indent: LineIndent,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct SearchState {
-    cost: u32,
-    direction: SearchDirection,
+#[derive(Copy, Clone, Debug)]
+enum IndentDelta {
+    Spaces(isize),
+    Tabs(isize),
 }
 
-impl SearchState {
-    fn new(cost: u32, direction: SearchDirection) -> Self {
-        Self { cost, direction }
-    }
-}
-
-struct SearchMatrix {
-    cols: usize,
-    data: Vec<SearchState>,
-}
-
-impl SearchMatrix {
-    fn new(rows: usize, cols: usize) -> Self {
-        SearchMatrix {
-            cols,
-            data: vec![SearchState::new(0, SearchDirection::Diagonal); rows * cols],
+impl IndentDelta {
+    fn character(&self) -> char {
+        match self {
+            IndentDelta::Spaces(_) => ' ',
+            IndentDelta::Tabs(_) => '\t',
         }
     }
 
-    fn get(&self, row: usize, col: usize) -> SearchState {
-        self.data[row * self.cols + col]
-    }
-
-    fn set(&mut self, row: usize, col: usize, cost: SearchState) {
-        self.data[row * self.cols + col] = cost;
+    fn len(&self) -> isize {
+        match self {
+            IndentDelta::Spaces(n) => *n,
+            IndentDelta::Tabs(n) => *n,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{Client, UserStore};
     use fs::FakeFs;
+    use futures::stream;
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
-    use language_model::LanguageModelRegistry;
+    use language_model::fake_provider::FakeLanguageModel;
+    use project::{AgentLocation, Project};
     use rand::prelude::*;
-    use reqwest_client::ReqwestClient;
-    use serde_json::json;
-    use std::{
-        fmt::Write as _,
-        io::Write as _,
-        path::Path,
-        sync::{
-            atomic::{self, AtomicUsize},
-            mpsc,
-        },
-    };
-    use util::path;
+    use rand::rngs::StdRng;
+    use std::cmp;
 
-    #[gpui::test]
-    async fn test_basic(cx: &mut TestAppContext) {
-        let test = agent_test(cx).await;
-        apply_edits(
-            "root/blame.rs",
-            indoc! {"
-                struct User {
-                    id: u32,
-                    name: String,
-                }
-
-                impl User {
-                    pub fn new(id: u32, name: String) -> Self {
-                        User { id, name }
-                    }
-
-                    pub fn id(&self) -> u32 {
-                        self.id
-                    }
-
-                    pub fn name(&self) -> &str {
-                        &self.name
-                    }
-                }
-            "},
-            indoc! {"
-                Introduce a new field `age: u8`, add it to the constructor
-                and also add a getter method for it.
-            "},
-            &test,
-            cx,
-        )
-        .await;
-    }
-
-    #[test]
-    fn test_delete_run_git_blame() {
-        eval(100, 0.9, async |cx| {
-            let test = agent_test(cx).await;
-            let new_content = apply_edits(
-                "root/blame.rs",
-                include_str!("fixtures/delete_run_git_blame/before.rs"),
-                indoc! {r#"
-                    Let's delete the `run_git_blame` function while keeping all other code intact:
-
-                    // ... existing code ...
-                    const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
-                    const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
-
-                    #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
-                    pub struct BlameEntry {
-                    // ... existing code ...
-               "#},
-                &test,
+    #[gpui::test(iterations = 100)]
+    async fn test_empty_old_text(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! {"
+                    abc
+                    def
+                    ghi
+                "},
                 cx,
             )
-            .await;
-            (
-                new_content,
-                include_str!("fixtures/delete_run_git_blame/after.rs").into(),
-            )
         });
-    }
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
 
-    fn eval<F>(iterations: usize, expected_pass_ratio: f32, f: F)
-    where
-        F: 'static + Send + Sync + AsyncFn(&mut TestAppContext) -> (String, String),
-    {
-        let executor = gpui::background_executor();
-        let f = Arc::new(f);
-        let (tx, rx) = mpsc::channel();
-        for _ in 0..iterations {
-            let f = f.clone();
-            let tx = tx.clone();
-            executor
-                .spawn(async move {
-                    let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
-                    let mut cx = TestAppContext::build(dispatcher, None);
-                    let result = cx.executor().block_test(f(&mut cx));
-                    tx.send(result).unwrap();
-                })
-                .detach();
-        }
-        drop(tx);
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text></old_text>
+                <new_text>jkl</new_text>
+                <old_text>def</old_text>
+                <new_text>DEF</new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
 
-        let mut finished_count = 0;
-        report_progress(finished_count, iterations);
-
-        let mut failed_count = 0;
-        let mut failed = String::new();
-        while let Ok((actual, expected)) = rx.recv() {
-            if actual != expected {
-                failed_count += 1;
-                writeln!(
-                    failed,
-                    "=======\n{}\n=======",
-                    pretty_assertions::StrComparison::new(&actual, &expected)
-                )
-                .unwrap();
-            }
-
-            finished_count += 1;
-            report_progress(finished_count, iterations);
-        }
-
-        let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
-        assert!(
-            actual_pass_ratio >= expected_pass_ratio,
-            "Expected pass ratio: {}\nActual pass ratio: {}\nFailures: {}",
-            expected_pass_ratio,
-            actual_pass_ratio,
-            failed.trim_end()
+        pretty_assertions::assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            indoc! {"
+                abc
+                DEF
+                ghi
+            "}
         );
     }
 
-    fn report_progress(finished_count: usize, iterations: usize) {
-        print!("\r\x1b[KFinished {}/{}", finished_count, iterations);
-        std::io::stdout().flush().unwrap();
+    #[gpui::test(iterations = 100)]
+    async fn test_indentation(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! {"
+                    lorem
+                            ipsum
+                            dolor
+                            sit
+                "},
+                cx,
+            )
+        });
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                    ipsum
+                    dolor
+                    sit
+                </old_text>
+                <new_text>
+                    ipsum
+                    dolor
+                    sit
+                amet
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
+
+        pretty_assertions::assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            indoc! {"
+                lorem
+                        ipsum
+                        dolor
+                        sit
+                    amet
+            "}
+        );
     }
 
-    // #[gpui::test]
-    // async fn test_extract_method(cx: &mut TestAppContext) {
-    //     let EditAgentTest { fs, agent } = agent_test(cx).await;
-    //     fs.insert_file(
-    //         "/root/blame.rs",
-    //         include_bytes!("../../git/src/blame.rs").into(),
-    //     )
-    //     .await;
-    //     let path = agent
-    //         .project
-    //         .read_with(cx, |project, cx| {
-    //             project.find_project_path("root/blame.rs", cx)
-    //         })
-    //         .unwrap();
-    //     agent
-    //         .interpret(
-    //             path,
-    //             indoc! {r#"
-    //                 // ... existing code ...
+    #[gpui::test(iterations = 100)]
+    async fn test_dependent_edits(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
 
-    //                 async fn run_git_blame(
-    //                     git_binary: &Path,
-    //                     working_directory: &Path,
-    //                     path: &Path,
-    //                     contents: &Rope,
-    //                 ) -> Result<String> {
-    //                     let mut child = util::command::new_smol_command(git_binary)
-    //                         .current_dir(working_directory)
-    //                         .arg("blame")
-    //                         .arg("--incremental")
-    //                         .arg("--contents")
-    //                         .arg("-")
-    //                         .arg(path.as_os_str())
-    //                         .stdin(Stdio::piped())
-    //                         .stdout(Stdio::piped())
-    //                         .stderr(Stdio::piped())
-    //                         .spawn()
-    //                         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                def
+                </old_text>
+                <new_text>
+                DEF
+                </new_text>
 
-    //                     let stdin = child
-    //                         .stdin
-    //                         .as_mut()
-    //                         .context("failed to get pipe to stdin of git blame command")?;
+                <old_text>
+                DEF
+                </old_text>
+                <new_text>
+                DeF
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
 
-    //                     for chunk in contents.chunks() {
-    //                         stdin.write_all(chunk.as_bytes()).await?;
-    //                     }
-    //                     stdin.flush().await?;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\nDeF\nghi"
+        );
+    }
 
-    //                     let output = child
-    //                         .output()
-    //                         .await
-    //                         .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+    #[gpui::test(iterations = 100)]
+    async fn test_old_text_hallucination(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
 
-    //                     handle_git_blame_result(output)
-    //                 }
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                jkl
+                </old_text>
+                <new_text>
+                mno
+                </new_text>
 
-    //                 fn handle_git_blame_result(output: std::process::Output) -> Result<String> {
-    //                     if !output.status.success() {
-    //                         let stderr = String::from_utf8_lossy(&output.stderr);
-    //                         let trimmed = stderr.trim();
-    //                         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
-    //                             return Ok(String::new());
-    //                         }
-    //                         return Err(anyhow!("git blame process failed: {}", stderr));
-    //                     }
+                <old_text>
+                abc
+                </old_text>
+                <new_text>
+                ABC
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
 
-    //                     Ok(String::from_utf8(output.stdout)?)
-    //                 }
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "ABC\ndef\nghi"
+        );
+    }
 
-    //                 // ... existing code ...
-    //             "#}
-    //             .into(),
-    //             &mut cx.to_async(),
-    //         )
-    //         .await
-    //         .unwrap();
-    // }
+    #[gpui::test]
+    async fn test_edit_events(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let model = agent.model.as_fake();
+        let project = agent
+            .action_log
+            .read_with(cx, |log, _| log.project().clone());
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl", cx));
 
-    async fn apply_edits(
-        path: impl AsRef<Path>,
-        content: impl Into<Arc<str>>,
-        instructions: impl Into<String>,
-        test: &EditAgentTest,
-        cx: &mut TestAppContext,
-    ) -> String {
-        let path = test
-            .agent
-            .project
-            .read_with(cx, |project, cx| project.find_project_path(path, cx))
-            .unwrap();
-        let buffer = test
-            .agent
-            .project
-            .update(cx, |project, cx| project.open_buffer(path, cx))
-            .await
-            .unwrap();
-        buffer.update(cx, |buffer, cx| buffer.set_text(content, cx));
-        let edits = test
-            .agent
-            .interpret(buffer.clone(), instructions.into(), &mut cx.to_async())
-            .await
-            .unwrap()
-            .collect::<Vec<_>>()
-            .await
+        let mut async_cx = cx.to_async();
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut async_cx,
+        );
+        cx.run_until_parked();
+
+        model.stream_last_completion_response("<old_text>a");
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            None
+        );
+
+        model.stream_last_completion_response("bc</old_text>");
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::ResolvingEditRange(buffer.read_with(
+                cx,
+                |buffer, _| buffer.anchor_before(Point::new(0, 0))
+                    ..buffer.anchor_before(Point::new(0, 3))
+            ))]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)))
+            })
+        );
+
+        model.stream_last_completion_response("<new_text>abX");
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXc\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)))
+            })
+        );
+
+        model.stream_last_completion_response("cY");
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
+        );
+
+        model.stream_last_completion_response("</new_text>");
+        model.stream_last_completion_response("<old_text>hall");
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
+        );
+
+        model.stream_last_completion_response("ucinated old</old_text>");
+        model.stream_last_completion_response("<new_text>");
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::UnresolvedEditRange]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
+        );
+
+        model.stream_last_completion_response("hallucinated new</new_");
+        model.stream_last_completion_response("text>");
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
+        );
+
+        model.stream_last_completion_response("<old_text>\nghi\nj");
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::ResolvingEditRange(buffer.read_with(
+                cx,
+                |buffer, _| buffer.anchor_before(Point::new(2, 0))
+                    ..buffer.anchor_before(Point::new(2, 3))
+            ))]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
+            })
+        );
+
+        model.stream_last_completion_response("kl</old_text>");
+        model.stream_last_completion_response("<new_text>");
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::ResolvingEditRange(buffer.read_with(
+                cx,
+                |buffer, _| buffer.anchor_before(Point::new(2, 0))
+                    ..buffer.anchor_before(Point::new(3, 3))
+            ))]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi\njkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)))
+            })
+        );
+
+        model.stream_last_completion_response("GHI</new_text>");
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nGHI"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
+            })
+        );
+
+        model.end_last_completion_stream();
+        apply.await.unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nGHI"
+        );
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_overwrite_events(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let project = agent
+            .action_log
+            .read_with(cx, |log, _| log.project().clone());
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        let (apply, mut events) = agent.overwrite_with_chunks(
+            buffer.clone(),
+            chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            ""
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        chunks_tx.unbounded_send("```\njkl\n").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        chunks_tx.unbounded_send("mno\n").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\nmno"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        chunks_tx.unbounded_send("pqr\n```").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\nmno\npqr"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        drop(chunks_tx);
+        apply.await.unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\nmno\npqr"
+        );
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    async fn test_indent_new_text_chunks(mut rng: StdRng) {
+        let chunks = to_random_chunks(&mut rng, "    abc\n  def\n      ghi");
+        let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
+            Ok(EditParserEvent::NewTextChunk {
+                chunk: chunk.clone(),
+                done: index == chunks.len() - 1,
+            })
+        }));
+        let indented_chunks =
+            EditAgent::reindent_new_text_chunks(IndentDelta::Spaces(2), new_text_chunks)
+                .collect::<Vec<_>>()
+                .await;
+        let new_text = indented_chunks
             .into_iter()
-            .collect::<Result<Vec<_>>>()
+            .collect::<Result<String>>()
             .unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits, None, cx);
-            buffer.text()
+        assert_eq!(new_text, "      abc\n    def\n        ghi");
+    }
+
+    #[gpui::test(iterations = 100)]
+    async fn test_outdent_new_text_chunks(mut rng: StdRng) {
+        let chunks = to_random_chunks(&mut rng, "\t\t\t\tabc\n\t\tdef\n\t\t\t\t\t\tghi");
+        let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
+            Ok(EditParserEvent::NewTextChunk {
+                chunk: chunk.clone(),
+                done: index == chunks.len() - 1,
+            })
+        }));
+        let indented_chunks =
+            EditAgent::reindent_new_text_chunks(IndentDelta::Tabs(-2), new_text_chunks)
+                .collect::<Vec<_>>()
+                .await;
+        let new_text = indented_chunks
+            .into_iter()
+            .collect::<Result<String>>()
+            .unwrap();
+        assert_eq!(new_text, "\t\tabc\ndef\n\t\t\t\tghi");
+    }
+
+    #[gpui::test(iterations = 100)]
+    async fn test_random_indents(mut rng: StdRng) {
+        let len = rng.gen_range(1..=100);
+        let new_text = util::RandomCharIter::new(&mut rng)
+            .with_simple_text()
+            .take(len)
+            .collect::<String>();
+        let new_text = new_text
+            .split('\n')
+            .map(|line| format!("{}{}", " ".repeat(rng.gen_range(0..=8)), line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let delta = IndentDelta::Spaces(rng.gen_range(-4..=4));
+
+        let chunks = to_random_chunks(&mut rng, &new_text);
+        let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
+            Ok(EditParserEvent::NewTextChunk {
+                chunk: chunk.clone(),
+                done: index == chunks.len() - 1,
+            })
+        }));
+        let reindented_chunks = EditAgent::reindent_new_text_chunks(delta, new_text_chunks)
+            .collect::<Vec<_>>()
+            .await;
+        let actual_reindented_text = reindented_chunks
+            .into_iter()
+            .collect::<Result<String>>()
+            .unwrap();
+        let expected_reindented_text = new_text
+            .split('\n')
+            .map(|line| {
+                if let Some(ix) = line.find(|c| c != ' ') {
+                    let new_indent = cmp::max(0, ix as isize + delta.len()) as usize;
+                    format!("{}{}", " ".repeat(new_indent), &line[ix..])
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(actual_reindented_text, expected_reindented_text);
+    }
+
+    fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
+        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
+        chunk_indices.sort();
+        chunk_indices.push(input.len());
+
+        let mut chunks = Vec::new();
+        let mut last_ix = 0;
+        for chunk_ix in chunk_indices {
+            chunks.push(input[last_ix..chunk_ix].to_string());
+            last_ix = chunk_ix;
+        }
+        chunks
+    }
+
+    fn simulate_llm_output(
+        agent: &EditAgent,
+        output: &str,
+        rng: &mut StdRng,
+        cx: &mut TestAppContext,
+    ) {
+        let executor = cx.executor();
+        let chunks = to_random_chunks(rng, output);
+        let model = agent.model.clone();
+        cx.background_spawn(async move {
+            for chunk in chunks {
+                executor.simulate_random_delay().await;
+                model.as_fake().stream_last_completion_response(chunk);
+            }
+            model.as_fake().end_last_completion_stream();
         })
+        .detach();
     }
 
-    struct EditAgentTest {
-        fs: Arc<FakeFs>,
-        agent: EditAgent,
-    }
-
-    async fn agent_test(cx: &mut TestAppContext) -> EditAgentTest {
-        cx.executor().allow_parking();
+    async fn init_test(cx: &mut TestAppContext) -> EditAgent {
         cx.update(settings::init);
         cx.update(Project::init_settings);
-        cx.update(language::init);
-        cx.update(gpui_tokio::init);
-        cx.update(client::init_settings);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        EditAgent::new(
+            model,
+            project,
+            action_log,
+            Templates::new(),
+            EditFormat::XmlTags,
+        )
+    }
 
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree("/root", json!({})).await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let model = cx
-            .update(|cx| {
-                let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-                cx.set_http_client(Arc::new(http_client));
+    #[gpui::test(iterations = 10)]
+    async fn test_non_unique_text_error(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let original_text = indoc! {"
+                function foo() {
+                    return 42;
+                }
 
-                let client = Client::production(cx);
-                let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(client.clone(), cx);
-                language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+                function bar() {
+                    return 42;
+                }
 
-                let models = LanguageModelRegistry::read_global(cx);
-                let model = models
-                    .available_models(cx)
-                    .find(|model| model.id().0 == "gemini-2.5-flash-preview-04-17")
-                    .unwrap();
+                function baz() {
+                    return 42;
+                }
+            "};
+        let buffer = cx.new(|cx| Buffer::local(original_text, cx));
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
 
-                let provider = models.provider(&model.provider_id()).unwrap();
-                let authenticated = provider.authenticate(cx);
+        // When <old_text> matches text in more than one place
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                    return 42;
+                }
+                </old_text>
+                <new_text>
+                    return 100;
+                }
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
 
-                cx.spawn(async move |_| {
-                    authenticated.await.unwrap();
-                    model
-                })
-            })
-            .await;
+        // Then the text should remain unchanged
+        let result_text = buffer.read_with(cx, |buffer, _| buffer.snapshot().text());
+        assert_eq!(
+            result_text,
+            indoc! {"
+                function foo() {
+                    return 42;
+                }
 
-        EditAgentTest {
-            fs,
-            agent: EditAgent::new(model, project, Templates::new()),
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "},
+            "Text should remain unchanged when there are multiple matches"
+        );
+
+        // And AmbiguousEditRange even should be emitted
+        let events = drain_events(&mut events);
+        let ambiguous_ranges = vec![2..3, 6..7, 10..11];
+        assert!(
+            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
+            "Should emit AmbiguousEditRange for non-unique text"
+        );
+    }
+
+    fn drain_events(
+        stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
+    ) -> Vec<EditAgentOutputEvent> {
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = stream.try_next() {
+            events.push(event);
         }
+        events
     }
 }

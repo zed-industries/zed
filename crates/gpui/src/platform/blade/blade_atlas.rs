@@ -223,6 +223,7 @@ impl BladeAtlasState {
                 sample_count: self.path_sample_count,
                 dimension: gpu::TextureDimension::D2,
                 usage: gpu::TextureUsage::TARGET,
+                external: None,
             });
 
             (
@@ -254,6 +255,7 @@ impl BladeAtlasState {
             sample_count: 1,
             dimension: gpu::TextureDimension::D2,
             usage,
+            external: None,
         });
         let raw_view = self.gpu.create_texture_view(
             raw,

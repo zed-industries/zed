@@ -1,14 +1,9 @@
 use std::ops::Range;
-use std::str::FromStr as _;
 
-use anyhow::{Result, anyhow};
-use gpui::http_client::http::{HeaderMap, HeaderValue};
+use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
 use project::Project;
-use zed_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
-};
 
 // TODO: Find a better home for `Direction`.
 //
@@ -56,32 +51,6 @@ impl DataCollectionState {
             } => *is_project_open_source,
             _ => false,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct EditPredictionUsage {
-    pub limit: UsageLimit,
-    pub amount: i32,
-}
-
-impl EditPredictionUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let limit = headers
-            .get(EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME)
-            .ok_or_else(|| {
-                anyhow!("missing {EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME:?} header")
-            })?;
-        let limit = UsageLimit::from_str(limit.to_str()?)?;
-
-        let amount = headers
-            .get(EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME)
-            .ok_or_else(|| {
-                anyhow!("missing {EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME:?} header")
-            })?;
-        let amount = amount.to_str()?.parse::<i32>()?;
-
-        Ok(Self { limit, amount })
     }
 }
 

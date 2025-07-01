@@ -164,9 +164,82 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
-- You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
+- You can use `gR` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
 - You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 - You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
+- You can select quoted text with AnyQuotes and bracketed text with AnyBrackets text objects. Zed also provides MiniQuotes and MiniBrackets which offer alternative selection behavior based on the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin. See the [Quote and Bracket text objects](#quote-and-bracket-text-objects) section below for details.
+- You can configure AnyQuotes, AnyBrackets, MiniQuotes, and MiniBrackets text objects for selecting quoted and bracketed text using different selection strategies. See the [Any Bracket Functionality](#any-bracket-functionality) section below for details.
+
+### Any Bracket Functionality
+
+Zed offers two different strategies for selecting text surrounded by any quote, or any bracket. These text objects are **not enabled by default** and must be configured in your keymap to be used.
+
+#### Included Characters
+
+Each text object type works with specific characters:
+
+| Text Object              | Characters                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| AnyQuotes/MiniQuotes     | Single quote (`'`), Double quote (`"`), Backtick (`` ` ``)                             |
+| AnyBrackets/MiniBrackets | Parentheses (`()`), Square brackets (`[]`), Curly braces (`{}`), Angle brackets (`<>`) |
+
+Both "Any" and "Mini" variants work with the same character sets, but differ in their selection strategy.
+
+#### AnyQuotes and AnyBrackets (Traditional Vim behavior)
+
+These text objects implement traditional Vim behavior:
+
+- **Selection priority**: Finds the innermost (closest) quotes or brackets first
+- **Fallback mechanism**: If none are found, falls back to the current line
+- **Character-based matching**: Focuses solely on open and close characters without considering syntax
+- **Vanilla Vim similarity**: AnyBrackets matches the behavior of commands like `ci<`, `ci(`, etc., in vanilla Vim, including potential edge cases (like considering `>` in `=>` as a closing delimiter)
+
+#### MiniQuotes and MiniBrackets (mini.ai behavior)
+
+These text objects implement the behavior of the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin:
+
+- **Selection priority**: Searches the current line first before expanding outward
+- **Tree-sitter integration**: Uses Tree-sitter queries for more context-aware selections
+- **Syntax-aware matching**: Can distinguish between actual brackets and similar characters in other contexts (like `>` in `=>`)
+
+#### Choosing Between Approaches
+
+- Use **AnyQuotes/AnyBrackets** if you:
+
+  - Prefer traditional Vim behavior
+  - Want consistent character-based selection prioritizing innermost delimiters
+  - Need behavior that closely matches vanilla Vim's text objects
+
+- Use **MiniQuotes/MiniBrackets** if you:
+  - Prefer the mini.ai plugin behavior
+  - Want more context-aware selections using Tree-sitter
+  - Prefer current-line priority when searching
+
+#### Example Configuration
+
+To use these text objects, you need to add bindings to your keymap. Here's an example configuration that makes them available when using text object operators (`i` and `a`) or change-surrounds (`cs`):
+
+```json
+{
+  "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+  "bindings": {
+    // Traditional Vim behavior
+    "q": "vim::AnyQuotes",
+    "b": "vim::AnyBrackets",
+
+    // mini.ai plugin behavior
+    "Q": "vim::MiniQuotes",
+    "B": "vim::MiniBrackets"
+  }
+}
+```
+
+With this configuration, you can use commands like:
+
+- `cib` - Change inside brackets using AnyBrackets behavior
+- `cim` - Change inside brackets using MiniBrackets behavior
+- `ciq` - Change inside quotes using AnyQuotes behavior
+- `ciM` - Change inside quotes using MiniQuotes behavior
 
 ## Command palette
 
@@ -215,6 +288,7 @@ These ex commands open Zed's various panels and windows.
 | Open the chat panel          | `:Ch[at]`        |
 | Open the AI panel            | `:A[I]`          |
 | Open the git panel           | `:G[it]`         |
+| Open the debug panel         | `:D[ebug]`       |
 | Open the notifications panel | `:No[tif]`       |
 | Open the feedback window     | `:fe[edback]`    |
 | Open the diagnostics window  | `:cl[ist]`       |
@@ -252,11 +326,11 @@ These commands jump to specific positions in the file.
 
 ### Replacement
 
-This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Also, by default, Zed always replaces all occurrences of the search pattern in the current line.
+This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Zed will replace only the first occurrence of the search pattern in the current line. To replace all matches append the `g` flag.
 
-| Command              | Description                       |
-| -------------------- | --------------------------------- |
-| `:[range]s/foo/bar/` | Replace instances of foo with bar |
+| Command                 | Description                       |
+| ----------------------- | --------------------------------- |
+| `:[range]s/foo/bar/[g]` | Replace instances of foo with bar |
 
 ### Editing
 
@@ -474,6 +548,7 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
     "ctrl-o": "workspace::Open",       // vim default: go back
+    "ctrl-s": "workspace::Save",       // vim default: show signature
     "ctrl-a": "editor::SelectAll",     // vim default: increment
   }
 },
@@ -487,7 +562,7 @@ You can change the following settings to modify vim mode's behavior:
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
 | default_mode                 | The default mode to start in. One of "normal", "insert", "replace", "visual", "visual_line", "visual_block", "helix_normal".                                                                  | "normal"      |
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
-| use_multiline_find           | If `true`, `f` and `t` motions extend across multiple lines.                                                                                                                                  | false         |
+| use_multiline_find           | deprecated                                                                                                                                                                                    |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
@@ -512,7 +587,6 @@ Here's an example of these settings changed:
   "vim": {
     "default_mode": "insert",
     "use_system_clipboard": "never",
-    "use_multiline_find": true,
     "use_smartcase_find": true,
     "toggle_relative_line_numbers": true,
     "highlight_on_yank_duration": 50,

@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
-use dap::{DebugRequest, client::DebugAdapterClient};
+use anyhow::{Context as _, Result};
+use dap::adapters::DebugTaskDefinition;
+use dap::client::DebugAdapterClient;
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
-use task::DebugTaskDefinition;
+use task::TaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
@@ -20,16 +21,21 @@ mod dap_logger;
 #[cfg(test)]
 mod debugger_panel;
 #[cfg(test)]
+mod inline_values;
+#[cfg(test)]
 mod module_list;
+#[cfg(test)]
+mod new_process_modal;
+#[cfg(test)]
+mod persistence;
 #[cfg(test)]
 mod stack_frame_list;
 #[cfg(test)]
 mod variable_list;
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    #[cfg(test)]
+    zlog::init_test();
 
     cx.update(|cx| {
         let settings = SettingsStore::test(cx);
@@ -42,6 +48,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
+        dap_adapters::init(cx);
     });
 }
 
@@ -104,16 +111,22 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 ) -> Result<Entity<Session>> {
     let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
     workspace.update(cx, |workspace, window, cx| {
-        workspace.start_debug_session(config, window, cx)
+        workspace.start_debug_session(
+            config.to_scenario(),
+            TaskContext::default(),
+            None,
+            window,
+            cx,
+        )
     })?;
     cx.run_until_parked();
     let session = workspace.read_with(cx, |workspace, cx| {
         workspace
             .panel::<DebugPanel>(cx)
             .and_then(|panel| panel.read(cx).active_session())
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
-            .map(|running| running.read(cx).session().clone())
-            .ok_or_else(|| anyhow!("Failed to get active session"))
+            .map(|session| session.read(cx).running_state().read(cx).session())
+            .cloned()
+            .context("Failed to get active session")
     })??;
 
     Ok(session)
@@ -124,16 +137,18 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     cx: &mut gpui::TestAppContext,
     configure: T,
 ) -> Result<Entity<Session>> {
+    use serde_json::json;
+
     start_debug_session_with(
         workspace,
         cx,
         DebugTaskDefinition {
-            adapter: "fake-adapter".to_string(),
-            request: DebugRequest::Launch(Default::default()),
-            label: "test".to_string(),
-            initialize_args: None,
+            adapter: "fake-adapter".into(),
+            label: "test".into(),
+            config: json!({
+                "request": "launch"
+            }),
             tcp_connection: None,
-            stop_on_entry: None,
         },
         configure,
     )

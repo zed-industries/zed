@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AnyWindowHandle, AppContext as _, Context, Subscription, Task, WindowId};
+use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -59,7 +59,7 @@ impl Session {
 
 pub struct AppSession {
     session: Session,
-    _serialization_task: Option<Task<()>>,
+    _serialization_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -67,17 +67,21 @@ impl AppSession {
     pub fn new(session: Session, cx: &Context<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
-        let _serialization_task = Some(cx.spawn(async move |_, cx| {
+        let _serialization_task = cx.spawn(async move |_, cx| {
+            let mut current_window_stack = Vec::new();
             loop {
-                if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
-                    store_window_stack(windows).await;
+                if let Some(windows) = cx.update(|cx| window_stack(cx)).ok().flatten() {
+                    if windows != current_window_stack {
+                        store_window_stack(&windows).await;
+                        current_window_stack = windows;
+                    }
                 }
 
                 cx.background_executor()
-                    .timer(Duration::from_millis(100))
+                    .timer(Duration::from_millis(500))
                     .await;
             }
-        }));
+        });
 
         Self {
             session,
@@ -87,8 +91,8 @@ impl AppSession {
     }
 
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        if let Some(windows) = cx.window_stack() {
-            cx.background_spawn(store_window_stack(windows))
+        if let Some(window_stack) = window_stack(cx) {
+            cx.background_spawn(async move { store_window_stack(&window_stack).await })
         } else {
             Task::ready(())
         }
@@ -107,13 +111,17 @@ impl AppSession {
     }
 }
 
-async fn store_window_stack(windows: Vec<AnyWindowHandle>) {
-    let window_ids = windows
-        .into_iter()
-        .map(|window| window.window_id().as_u64())
-        .collect::<Vec<_>>();
+fn window_stack(cx: &App) -> Option<Vec<u64>> {
+    Some(
+        cx.window_stack()?
+            .into_iter()
+            .map(|window| window.window_id().as_u64())
+            .collect(),
+    )
+}
 
-    if let Ok(window_ids_json) = serde_json::to_string(&window_ids) {
+async fn store_window_stack(windows: &[u64]) {
+    if let Ok(window_ids_json) = serde_json::to_string(windows) {
         KEY_VALUE_STORE
             .write_kvp(SESSION_WINDOW_STACK_KEY.to_string(), window_ids_json)
             .await

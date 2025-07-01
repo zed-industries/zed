@@ -13,9 +13,9 @@ use gpui::{AsyncApp, BackgroundExecutor, Task};
 #[cfg(unix)]
 use smol::fs;
 #[cfg(unix)]
-use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
+use smol::net::unix::UnixListener;
 #[cfg(unix)]
-use util::ResultExt as _;
+use util::{ResultExt as _, fs::make_file_executable, get_shell_safe_zed_path};
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -72,8 +72,7 @@ impl AskPassSession {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
-        let zed_path = std::env::current_exe()
-            .context("Failed to figure out current executable path for use in askpass")?;
+        let zed_path = get_shell_safe_zed_path()?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -115,13 +114,13 @@ impl AskPassSession {
         // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
             "{shebang}\n{print_args} | {zed_exe} --askpass={askpass_socket} 2> /dev/null \n",
-            zed_exe = zed_path.display(),
+            zed_exe = zed_path,
             askpass_socket = askpass_socket.display(),
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
         );
         fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
+        make_file_executable(&askpass_script_path).await?;
 
         Ok(Self {
             script_path: askpass_script_path,

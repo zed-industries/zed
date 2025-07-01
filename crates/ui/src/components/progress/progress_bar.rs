@@ -13,6 +13,7 @@ pub struct ProgressBar {
     value: f32,
     max_value: f32,
     bg_color: Hsla,
+    over_color: Hsla,
     fg_color: Hsla,
 }
 
@@ -23,6 +24,7 @@ impl ProgressBar {
             value,
             max_value,
             bg_color: cx.theme().colors().background,
+            over_color: cx.theme().status().error,
             fg_color: cx.theme().status().info,
         }
     }
@@ -50,6 +52,12 @@ impl ProgressBar {
         self.fg_color = color;
         self
     }
+
+    /// Sets the over limit color of the progress bar.
+    pub fn over_color(mut self, color: Hsla) -> Self {
+        self.over_color = color;
+        self
+    }
 }
 
 impl RenderOnce for ProgressBar {
@@ -64,7 +72,7 @@ impl RenderOnce for ProgressBar {
             .py(px(2.0))
             .px(px(4.0))
             .bg(self.bg_color)
-            .shadow(smallvec::smallvec![gpui::BoxShadow {
+            .shadow(vec![gpui::BoxShadow {
                 color: gpui::black().opacity(0.08),
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(0.),
@@ -74,7 +82,8 @@ impl RenderOnce for ProgressBar {
                 div()
                     .h_full()
                     .rounded_full()
-                    .bg(self.fg_color)
+                    .when(self.value > self.max_value, |div| div.bg(self.over_color))
+                    .when(self.value <= self.max_value, |div| div.bg(self.fg_color))
                     .w(relative(fill_width)),
             )
     }

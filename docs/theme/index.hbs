@@ -199,6 +199,20 @@
                           </nav>
                       </div>
                       {{{ content }}}
+                        <div class="footer-buttons">
+                            {{#previous}}
+                            <a rel="prev" href="{{ path_to_root }}{{link}}" class="footer-button" title="{{title}}">
+                                <i class="fa fa-angle-left"></i>
+                                {{title}}
+                            </a>
+                            {{/previous}}
+                            {{#next}}
+                            <a rel="next" href="{{ path_to_root }}{{link}}" class="footer-button" title="{{title}}">
+                                {{title}}
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+                            {{/next}}
+                        </div>
                     </main>
                 </div>
             </div>

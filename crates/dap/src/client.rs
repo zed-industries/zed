@@ -2,25 +2,17 @@ use crate::{
     adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
 };
-use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, BackgroundExecutor};
-use smol::channel::{Receiver, Sender};
+use futures::channel::oneshot;
+use gpui::AsyncApp;
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
 };
-
-#[cfg(any(test, feature = "test-support"))]
-const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
-
-#[cfg(not(any(test, feature = "test-support")))]
-const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -41,7 +33,6 @@ pub struct DebugAdapterClient {
     id: SessionId,
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
-    executor: BackgroundExecutor,
     transport_delegate: TransportDelegate,
 }
 
@@ -52,98 +43,54 @@ impl DebugAdapterClient {
         id: SessionId,
         binary: DebugAdapterBinary,
         message_handler: DapMessageHandler,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let ((server_rx, server_tx), transport_delegate) =
-            TransportDelegate::start(&binary, cx.clone()).await?;
+        let transport_delegate = TransportDelegate::start(&binary, cx).await?;
         let this = Self {
             id,
             binary,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
-            executor: cx.background_executor().clone(),
         };
-        log::info!("Successfully connected to debug adapter");
-
-        let client_id = this.id;
-
-        // start handling events/reverse requests
-        cx.background_spawn(Self::handle_receive_messages(
-            client_id,
-            server_rx,
-            server_tx.clone(),
-            message_handler,
-        ))
-        .detach();
+        this.connect(message_handler, cx).await?;
 
         Ok(this)
     }
 
-    pub async fn reconnect(
+    pub fn should_reconnect_for_ssh(&self) -> bool {
+        self.transport_delegate.tcp_arguments().is_some()
+            && self.binary.command.as_deref() == Some("ssh")
+    }
+
+    pub async fn connect(
+        &self,
+        message_handler: DapMessageHandler,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        self.transport_delegate.connect(message_handler, cx).await
+    }
+
+    pub async fn create_child_connection(
         &self,
         session_id: SessionId,
         binary: DebugAdapterBinary,
         message_handler: DapMessageHandler,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let binary = match self.transport_delegate.transport() {
-            crate::transport::Transport::Tcp(tcp_transport) => DebugAdapterBinary {
-                command: binary.command,
-                arguments: binary.arguments,
-                envs: binary.envs,
-                cwd: binary.cwd,
-                connection: Some(crate::adapters::TcpArguments {
-                    host: tcp_transport.host,
-                    port: tcp_transport.port,
-                    timeout: Some(tcp_transport.timeout),
-                }),
+        let binary = if let Some(connection) = self.transport_delegate.tcp_arguments() {
+            DebugAdapterBinary {
+                command: None,
+                arguments: Default::default(),
+                envs: Default::default(),
+                cwd: Default::default(),
+                connection: Some(connection),
                 request_args: binary.request_args,
-            },
-            _ => self.binary.clone(),
+            }
+        } else {
+            self.binary.clone()
         };
 
         Self::start(session_id, binary, message_handler, cx).await
-    }
-
-    async fn handle_receive_messages(
-        client_id: SessionId,
-        server_rx: Receiver<Message>,
-        client_tx: Sender<Message>,
-        mut message_handler: DapMessageHandler,
-    ) -> Result<()> {
-        let result = loop {
-            let message = match server_rx.recv().await {
-                Ok(message) => message,
-                Err(e) => break Err(e.into()),
-            };
-            match message {
-                Message::Event(ev) => {
-                    log::debug!("Client {} received event `{}`", client_id.0, &ev);
-
-                    message_handler(Message::Event(ev))
-                }
-                Message::Request(req) => {
-                    log::debug!(
-                        "Client {} received reverse request `{}`",
-                        client_id.0,
-                        &req.command
-                    );
-
-                    message_handler(Message::Request(req))
-                }
-                Message::Response(response) => {
-                    log::debug!("Received response after request timeout: {:#?}", response);
-                }
-            }
-
-            smol::future::yield_now().await;
-        };
-
-        drop(client_tx);
-
-        log::debug!("Handle receive messages dropped");
-
-        result
     }
 
     /// Send a request to an adapter and get a response back
@@ -161,8 +108,7 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
         self.transport_delegate
-            .add_pending_request(sequence_id, callback_tx)
-            .await;
+            .add_pending_request(sequence_id, callback_tx);
 
         log::debug!(
             "Client {} send `{}` request with sequence_id: {}",
@@ -173,40 +119,30 @@ impl DebugAdapterClient {
 
         self.send_message(Message::Request(request)).await?;
 
-        let mut timeout = self.executor.timer(DAP_REQUEST_TIMEOUT).fuse();
         let command = R::COMMAND.to_string();
 
-        select! {
-            response = callback_rx.fuse() => {
-                log::debug!(
-                    "Client {} received response for: `{}` sequence_id: {}",
-                    self.id.0,
-                    command,
-                    sequence_id
-                );
-
-                let response = response??;
-                match response.success {
-                    true => {
-                        if let Some(json) = response.body {
-                            Ok(serde_json::from_value(json)?)
-                        // Note: dap types configure themselves to return `None` when an empty object is received,
-                        // which then fails here...
-                        } else if let Ok(result) = serde_json::from_value(serde_json::Value::Object(Default::default())) {
-                            Ok(result)
-                        } else {
-                            Ok(serde_json::from_value(Default::default())?)
-                        }
-                    }
-                    false => Err(anyhow!("Request failed: {}", response.message.unwrap_or_default())),
+        let response = callback_rx.await??;
+        log::debug!(
+            "Client {} received response for: `{}` sequence_id: {}",
+            self.id.0,
+            command,
+            sequence_id
+        );
+        match response.success {
+            true => {
+                if let Some(json) = response.body {
+                    Ok(serde_json::from_value(json)?)
+                // Note: dap types configure themselves to return `None` when an empty object is received,
+                // which then fails here...
+                } else if let Ok(result) =
+                    serde_json::from_value(serde_json::Value::Object(Default::default()))
+                {
+                    Ok(result)
+                } else {
+                    Ok(serde_json::from_value(Default::default())?)
                 }
             }
-
-            _ = timeout => {
-                self.transport_delegate.cancel_pending_request(&sequence_id).await;
-                log::error!("Cancelled DAP request for {command:?} id {sequence_id} which took over {DAP_REQUEST_TIMEOUT:?}");
-                anyhow::bail!("DAP request timeout");
-            }
+            false => anyhow::bail!("Request failed: {}", response.message.unwrap_or_default()),
         }
     }
 
@@ -227,8 +163,9 @@ impl DebugAdapterClient {
         self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub async fn shutdown(&self) -> Result<()> {
-        self.transport_delegate.shutdown().await
+    pub fn kill(&self) {
+        log::debug!("Killing DAP process");
+        self.transport_delegate.transport.lock().kill();
     }
 
     pub fn has_adapter_logs(&self) -> bool {
@@ -237,7 +174,7 @@ impl DebugAdapterClient {
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
     where
-        F: 'static + Send + FnMut(IoKind, &str),
+        F: 'static + Send + FnMut(IoKind, Option<&str>, &str),
     {
         self.transport_delegate.add_log_handler(f, kind);
     }
@@ -249,8 +186,11 @@ impl DebugAdapterClient {
             + Send
             + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
     {
-        let transport = self.transport_delegate.transport().as_fake();
-        transport.on_request::<R, F>(handler);
+        self.transport_delegate
+            .transport
+            .lock()
+            .as_fake()
+            .on_request::<R, F>(handler);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -269,8 +209,11 @@ impl DebugAdapterClient {
     where
         F: 'static + Send + Fn(Response),
     {
-        let transport = self.transport_delegate.transport().as_fake();
-        transport.on_response::<R, F>(handler).await;
+        self.transport_delegate
+            .transport
+            .lock()
+            .as_fake()
+            .on_response::<R, F>(handler);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -300,9 +243,7 @@ mod tests {
     };
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
@@ -318,7 +259,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -329,7 +270,7 @@ mod tests {
                 },
             },
             Box::new(|_| panic!("Did not expect to hit this code path")),
-            cx.to_async(),
+            &mut cx.to_async(),
         )
         .await
         .unwrap();
@@ -375,8 +316,6 @@ mod tests {
             },
             response
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -388,7 +327,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -411,7 +350,7 @@ mod tests {
                     );
                 }
             }),
-            cx.to_async(),
+            &mut cx.to_async(),
         )
         .await
         .unwrap();
@@ -428,8 +367,6 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -441,7 +378,7 @@ mod tests {
         let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
-                command: "command".into(),
+                command: Some("command".into()),
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
@@ -469,7 +406,7 @@ mod tests {
                     );
                 }
             }),
-            cx.to_async(),
+            &mut cx.to_async(),
         )
         .await
         .unwrap();
@@ -493,7 +430,5 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 }

@@ -1,5 +1,6 @@
-use crate::{HighlightStyles, InlayId};
+use crate::{ChunkRenderer, HighlightStyles, InlayId};
 use collections::BTreeSet;
+use gpui::{Hsla, Rgba};
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{
     Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
@@ -7,11 +8,13 @@ use multi_buffer::{
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
+    sync::Arc,
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
+use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
-use super::{Highlights, custom_highlights::CustomHighlightsChunks};
+use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -39,6 +42,7 @@ pub struct Inlay {
     pub id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
+    color: Option<Hsla>,
 }
 
 impl Inlay {
@@ -54,6 +58,26 @@ impl Inlay {
             id: InlayId::Hint(id),
             position,
             text: text.into(),
+            color: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mock_hint(id: usize, position: Anchor, text: impl Into<Rope>) -> Self {
+        Self {
+            id: InlayId::Hint(id),
+            position,
+            text: text.into(),
+            color: None,
+        }
+    }
+
+    pub fn color(id: usize, position: Anchor, color: Rgba) -> Self {
+        Self {
+            id: InlayId::Color(id),
+            position,
+            text: Rope::from("◼"),
+            color: Some(Hsla::from(color)),
         }
     }
 
@@ -62,15 +86,22 @@ impl Inlay {
             id: InlayId::InlineCompletion(id),
             position,
             text: text.into(),
+            color: None,
         }
     }
 
-    pub fn debugger_hint<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),
             position,
             text: text.into(),
+            color: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_color(&self) -> Option<Hsla> {
+        self.color
     }
 }
 
@@ -223,6 +254,13 @@ pub struct InlayChunks<'a> {
     snapshot: &'a InlaySnapshot,
 }
 
+#[derive(Clone)]
+pub struct InlayChunk<'a> {
+    pub chunk: Chunk<'a>,
+    /// Whether the inlay should be customly rendered.
+    pub renderer: Option<ChunkRenderer>,
+}
+
 impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
@@ -242,7 +280,7 @@ impl InlayChunks<'_> {
 }
 
 impl<'a> Iterator for InlayChunks<'a> {
-    type Item = Chunk<'a>;
+    type Item = InlayChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_offset == self.max_output_offset {
@@ -267,9 +305,12 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
-                Chunk {
-                    text: prefix,
-                    ..chunk.clone()
+                InlayChunk {
+                    chunk: Chunk {
+                        text: prefix,
+                        ..chunk.clone()
+                    },
+                    renderer: None,
                 }
             }
             Transform::Inlay(inlay) => {
@@ -284,6 +325,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                 }
 
+                let mut renderer = None;
                 let mut highlight_style = match inlay.id {
                     InlayId::InlineCompletion(_) => {
                         self.highlight_styles.inline_completion.map(|s| {
@@ -296,6 +338,31 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
+                    InlayId::Color(_) => {
+                        if let Some(color) = inlay.color {
+                            renderer = Some(ChunkRenderer {
+                                id: ChunkRendererId::Inlay(inlay.id),
+                                render: Arc::new(move |cx| {
+                                    div()
+                                        .relative()
+                                        .size_3p5()
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .right_1()
+                                                .size_3()
+                                                .border_1()
+                                                .border_color(cx.theme().colors().border)
+                                                .bg(color),
+                                        )
+                                        .into_any_element()
+                                }),
+                                constrain_width: false,
+                                measured_width: None,
+                            });
+                        }
+                        self.highlight_styles.inlay_hint
+                    }
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -333,10 +400,14 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 self.output_offset.0 += chunk.len();
 
-                Chunk {
-                    text: chunk,
-                    highlight_style,
-                    ..Default::default()
+                InlayChunk {
+                    chunk: Chunk {
+                        text: chunk,
+                        highlight_style,
+                        is_inlay: true,
+                        ..Chunk::default()
+                    },
+                    renderer,
                 }
             }
         };
@@ -633,24 +704,24 @@ impl InlayMap {
                     .take(len)
                     .collect::<String>();
 
-                let inlay_id = if i % 2 == 0 {
-                    InlayId::Hint(post_inc(next_inlay_id))
+                let next_inlay = if i % 2 == 0 {
+                    Inlay::mock_hint(
+                        post_inc(next_inlay_id),
+                        snapshot.buffer.anchor_at(position, bias),
+                        text.clone(),
+                    )
                 } else {
-                    InlayId::InlineCompletion(post_inc(next_inlay_id))
+                    Inlay::inline_completion(
+                        post_inc(next_inlay_id),
+                        snapshot.buffer.anchor_at(position, bias),
+                        text.clone(),
+                    )
                 };
+                let inlay_id = next_inlay.id;
                 log::info!(
-                    "creating inlay {:?} at buffer offset {} with bias {:?} and text {:?}",
-                    inlay_id,
-                    position,
-                    bias,
-                    text
+                    "creating inlay {inlay_id:?} at buffer offset {position} with bias {bias:?} and text {text:?}"
                 );
-
-                to_insert.push(Inlay {
-                    id: inlay_id,
-                    position: snapshot.buffer.anchor_at(position, bias),
-                    text: text.into(),
-                });
+                to_insert.push(next_inlay);
             } else {
                 to_remove.push(
                     self.inlays
@@ -1028,7 +1099,7 @@ impl InlaySnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(Default::default()..self.len(), false, Highlights::default())
-            .map(|chunk| chunk.text)
+            .map(|chunk| chunk.chunk.text)
             .collect()
     }
 
@@ -1077,7 +1148,7 @@ mod tests {
     use super::*;
     use crate::{
         InlayId, MultiBuffer,
-        display_map::{InlayHighlights, TextHighlights},
+        display_map::{HighlightKey, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
     };
     use gpui::{App, HighlightStyle};
@@ -1182,11 +1253,11 @@ mod tests {
 
         let (inlay_snapshot, _) = inlay_map.splice(
             &[],
-            vec![Inlay {
-                id: InlayId::Hint(post_inc(&mut next_inlay_id)),
-                position: buffer.read(cx).snapshot(cx).anchor_after(3),
-                text: "|123|".into(),
-            }],
+            vec![Inlay::mock_hint(
+                post_inc(&mut next_inlay_id),
+                buffer.read(cx).snapshot(cx).anchor_after(3),
+                "|123|",
+            )],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
         assert_eq!(
@@ -1259,16 +1330,16 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(
             &[],
             vec![
-                Inlay {
-                    id: InlayId::Hint(post_inc(&mut next_inlay_id)),
-                    position: buffer.read(cx).snapshot(cx).anchor_before(3),
-                    text: "|123|".into(),
-                },
-                Inlay {
-                    id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
-                    position: buffer.read(cx).snapshot(cx).anchor_after(3),
-                    text: "|456|".into(),
-                },
+                Inlay::mock_hint(
+                    post_inc(&mut next_inlay_id),
+                    buffer.read(cx).snapshot(cx).anchor_before(3),
+                    "|123|",
+                ),
+                Inlay::inline_completion(
+                    post_inc(&mut next_inlay_id),
+                    buffer.read(cx).snapshot(cx).anchor_after(3),
+                    "|456|",
+                ),
             ],
         );
         assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
@@ -1474,21 +1545,21 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(
             &[],
             vec![
-                Inlay {
-                    id: InlayId::Hint(post_inc(&mut next_inlay_id)),
-                    position: buffer.read(cx).snapshot(cx).anchor_before(0),
-                    text: "|123|\n".into(),
-                },
-                Inlay {
-                    id: InlayId::Hint(post_inc(&mut next_inlay_id)),
-                    position: buffer.read(cx).snapshot(cx).anchor_before(4),
-                    text: "|456|".into(),
-                },
-                Inlay {
-                    id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
-                    position: buffer.read(cx).snapshot(cx).anchor_before(7),
-                    text: "\n|567|\n".into(),
-                },
+                Inlay::mock_hint(
+                    post_inc(&mut next_inlay_id),
+                    buffer.read(cx).snapshot(cx).anchor_before(0),
+                    "|123|\n",
+                ),
+                Inlay::mock_hint(
+                    post_inc(&mut next_inlay_id),
+                    buffer.read(cx).snapshot(cx).anchor_before(4),
+                    "|456|",
+                ),
+                Inlay::inline_completion(
+                    post_inc(&mut next_inlay_id),
+                    buffer.read(cx).snapshot(cx).anchor_before(7),
+                    "\n|567|\n",
+                ),
             ],
         );
         assert_eq!(inlay_snapshot.text(), "|123|\nabc\n|456|def\n|567|\n\nghi");
@@ -1591,7 +1662,7 @@ mod tests {
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
-                TypeId::of::<()>(),
+                HighlightKey::Type(TypeId::of::<()>()),
                 Arc::new((
                     HighlightStyle::default(),
                     text_highlight_ranges
@@ -1666,7 +1737,7 @@ mod tests {
                             ..Highlights::default()
                         },
                     )
-                    .map(|chunk| chunk.text)
+                    .map(|chunk| chunk.chunk.text)
                     .collect::<String>();
                 assert_eq!(
                     actual_text,

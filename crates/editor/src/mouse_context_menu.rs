@@ -1,7 +1,7 @@
 use crate::{
-    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText, DisplayPoint,
-    DisplaySnapshot, Editor, FindAllReferences, GoToDeclaration, GoToDefinition,
-    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
+    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
+    EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
+    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, SelectionEffects,
     SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
@@ -177,7 +177,7 @@ pub fn deploy_context_menu(
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.clear_disjoint();
                 s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
@@ -199,24 +199,14 @@ pub fn deploy_context_menu(
                 .is_some()
         });
 
-        let evaluate_selection = command_palette_hooks::CommandPaletteFilter::try_global(cx)
-            .map_or(false, |filter| {
-                !filter.is_hidden(&DebuggerEvaluateSelectedText)
-            });
+        let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action(
-                    "Show Code Actions",
-                    Box::new(ToggleCodeActions {
-                        deployed_from_indicator: None,
-                    }),
-                )
-                .separator()
                 .when(evaluate_selection && has_selections, |builder| {
                     builder
-                        .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
+                        .action("Evaluate Selection", Box::new(EvaluateSelectedText))
                         .separator()
                 })
                 .action("Go to Definition", Box::new(GoToDefinition))
@@ -230,10 +220,17 @@ pub fn deploy_context_menu(
                 .when(has_selections, |cx| {
                     cx.action("Format Selections", Box::new(FormatSelections))
                 })
+                .action(
+                    "Show Code Actions",
+                    Box::new(ToggleCodeActions {
+                        deployed_from: None,
+                        quick_launch: false,
+                    }),
+                )
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
-                .action("Copy and trim", Box::new(CopyAndTrim))
+                .action("Copy and Trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
                 .map(|builder| {
@@ -278,10 +275,10 @@ pub fn deploy_context_menu(
             cx,
         ),
         None => {
-            let character_size = editor.character_size(window);
+            let character_size = editor.character_dimensions(window);
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
-                offset: gpui::point(character_size.width, character_size.height),
+                offset: gpui::point(character_size.em_width, character_size.line_height),
             };
             Some(MouseContextMenu::new(
                 editor,

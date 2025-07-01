@@ -48,8 +48,6 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
   }
 ```
 
-See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
-
 ## Compile Commands
 
 For some projects Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.

@@ -89,6 +89,9 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Pairs of file paths to diff. Can be specified multiple times.
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    diff: Vec<String>,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -127,8 +130,11 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(unix)]
+    util::prevent_root_execution();
+
     // Exit flatpak sandbox if needed
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     {
         flatpak::try_restart_to_host();
         flatpak::ld_extra_libs();
@@ -152,7 +158,7 @@ fn main() -> Result<()> {
         paths::set_custom_data_dir(dir);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
@@ -169,7 +175,7 @@ fn main() -> Result<()> {
             "To retrieve the system specs on the command line, run the following command:",
             &format!("{} --system-specs", path.display()),
         ];
-        return Err(anyhow::anyhow!(msg.join("\n")));
+        anyhow::bail!(msg.join("\n"));
     }
 
     #[cfg(all(
@@ -229,8 +235,16 @@ fn main() -> Result<()> {
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
+    let mut diff_paths = vec![];
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
+
+    for path in args.diff.chunks(2) {
+        diff_paths.push([
+            parse_path_with_position(&path[0])?,
+            parse_path_with_position(&path[1])?,
+        ]);
+    }
 
     for path in args.paths_with_position.iter() {
         if path.starts_with("zed://")
@@ -255,11 +269,10 @@ fn main() -> Result<()> {
         }
     }
 
-    if let Some(_) = args.dev_server_token {
-        return Err(anyhow::anyhow!(
-            "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
-        ))?;
-    }
+    anyhow::ensure!(
+        args.dev_server_token.is_none(),
+        "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
+    );
 
     let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
         let exit_status = exit_status.clone();
@@ -271,6 +284,7 @@ fn main() -> Result<()> {
             tx.send(CliRequest::Open {
                 paths,
                 urls,
+                diff_paths,
                 wait: args.wait,
                 open_new_workspace,
                 env,
@@ -360,7 +374,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         let file = unsafe { fs::File::from_raw_fd(fd) };
         return Some(file);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         use std::os::{
             fd::{self, FromRawFd},
@@ -378,7 +392,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         let file = unsafe { fs::File::from_raw_fd(fd) };
         return Some(file);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
@@ -400,7 +414,7 @@ mod linux {
         time::Duration,
     };
 
-    use anyhow::anyhow;
+    use anyhow::{Context as _, anyhow};
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
 
@@ -417,9 +431,7 @@ mod linux {
                 path.to_path_buf().canonicalize()?
             } else {
                 let cli = env::current_exe()?;
-                let dir = cli
-                    .parent()
-                    .ok_or_else(|| anyhow!("no parent path for cli"))?;
+                let dir = cli.parent().context("no parent path for cli")?;
 
                 // libexec is the standard, lib/zed is for Arch (and other non-libexec distros),
                 // ./zed is for the target directory in development builds.
@@ -428,8 +440,8 @@ mod linux {
                 possible_locations
                     .iter()
                     .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
-                    .ok_or_else(|| {
-                        anyhow!("could not find any of: {}", possible_locations.join(", "))
+                    .with_context(|| {
+                        format!("could not find any of: {}", possible_locations.join(", "))
                     })?
             };
 
@@ -525,7 +537,7 @@ mod linux {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 mod flatpak {
     use std::ffi::OsString;
     use std::path::PathBuf;
@@ -759,7 +771,7 @@ mod windows {
 
 #[cfg(target_os = "macos")]
 mod mac_os {
-    use anyhow::{Context as _, Result, anyhow};
+    use anyhow::{Context as _, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
         base::TCFType as _,
@@ -800,9 +812,10 @@ mod mac_os {
         let cli_path = std::env::current_exe()?.canonicalize()?;
         let mut app_path = cli_path.clone();
         while app_path.extension() != Some(OsStr::new("app")) {
-            if !app_path.pop() {
-                return Err(anyhow!("cannot find app bundle containing {:?}", cli_path));
-            }
+            anyhow::ensure!(
+                app_path.pop(),
+                "cannot find app bundle containing {cli_path:?}"
+            );
         }
         Ok(app_path)
     }

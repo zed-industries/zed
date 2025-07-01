@@ -6,8 +6,8 @@ use ui::prelude::*;
 pub struct ViewportUnitsStory;
 
 impl Render for ViewportUnitsStory {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        Story::container().child(
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Story::container(cx).child(
             div()
                 .flex()
                 .flex_row()

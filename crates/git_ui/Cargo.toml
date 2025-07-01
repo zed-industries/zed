@@ -17,10 +17,11 @@ default = []
 test-support = ["multi_buffer/test-support"]
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
-assistant_settings.workspace = true
 buffer_diff.workspace = true
+call.workspace = true
 chrono.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -35,7 +36,6 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 linkify.workspace = true
-linkme.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true
@@ -57,16 +57,17 @@ time.workspace = true
 time_format.workspace = true
 ui.workspace = true
 util.workspace = true
+watch.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-env_logger.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
@@ -74,3 +75,4 @@ project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

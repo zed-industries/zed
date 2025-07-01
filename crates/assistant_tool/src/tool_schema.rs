@@ -16,9 +16,22 @@ pub fn adapt_schema_to_format(
     }
 
     match format {
-        LanguageModelToolSchemaFormat::JsonSchema => Ok(()),
+        LanguageModelToolSchemaFormat::JsonSchema => preprocess_json_schema(json),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
     }
+}
+
+fn preprocess_json_schema(json: &mut Value) -> Result<()> {
+    // `additionalProperties` defaults to `false` unless explicitly specified.
+    // This prevents models from hallucinating tool parameters.
+    if let Value::Object(obj) = json {
+        if let Some(Value::String(type_str)) = obj.get("type") {
+            if type_str == "object" && !obj.contains_key("additionalProperties") {
+                obj.insert("additionalProperties".to_string(), Value::Bool(false));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Tries to adapt the json schema so that it is compatible with https://ai.google.dev/api/caching#Schema
@@ -27,27 +40,29 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         const UNSUPPORTED_KEYS: [&str; 4] = ["if", "then", "else", "$ref"];
 
         for key in UNSUPPORTED_KEYS {
-            if obj.contains_key(key) {
-                return Err(anyhow::anyhow!(
-                    "Schema cannot be made compatible because it contains \"{}\" ",
-                    key
-                ));
-            }
+            anyhow::ensure!(
+                !obj.contains_key(key),
+                "Schema cannot be made compatible because it contains \"{key}\""
+            );
         }
 
-        obj.remove("format");
-
-        if let Some(default) = obj.get("default") {
-            let is_null = default.is_null();
-            // Default is not supported, so we need to remove it
-            obj.remove("default");
-            if is_null {
-                obj.insert("nullable".to_string(), Value::Bool(true));
+        const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 5] = [
+            ("format", |value| value.is_string()),
+            ("additionalProperties", |value| value.is_boolean()),
+            ("exclusiveMinimum", |value| value.is_number()),
+            ("exclusiveMaximum", |value| value.is_number()),
+            ("optional", |value| value.is_boolean()),
+        ];
+        for (key, predicate) in KEYS_TO_REMOVE {
+            if let Some(value) = obj.get(key) {
+                if predicate(value) {
+                    obj.remove(key);
+                }
             }
         }
 
         // If a type is not specified for an input parameter, add a default type
-        if obj.contains_key("description")
+        if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
             && !(obj.contains_key("anyOf")
                 || obj.contains_key("oneOf")
@@ -85,26 +100,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_transform_default_null_to_nullable() {
-        let mut json = json!({
-            "description": "A test field",
-            "type": "string",
-            "default": null
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "description": "A test field",
-                "type": "string",
-                "nullable": true
-            })
-        );
-    }
-
-    #[test]
     fn test_transform_adds_type_when_missing() {
         let mut json = json!({
             "description": "A test field without type"
@@ -119,14 +114,38 @@ mod tests {
                 "type": "string"
             })
         );
+
+        // Ensure that we do not add a type if it is an object
+        let mut json = json!({
+            "description": {
+                "value": "abc",
+                "type": "string"
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "description": {
+                    "value": "abc",
+                    "type": "string"
+                }
+            })
+        );
     }
 
     #[test]
-    fn test_transform_removes_format() {
+    fn test_transform_removes_unsupported_keys() {
         let mut json = json!({
             "description": "A test field",
             "type": "integer",
-            "format": "uint32"
+            "format": "uint32",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 100,
+            "additionalProperties": false,
+            "optional": true
         });
 
         adapt_to_json_schema_subset(&mut json).unwrap();
@@ -136,6 +155,24 @@ mod tests {
             json!({
                 "description": "A test field",
                 "type": "integer"
+            })
+        );
+
+        // Ensure that we do not remove keys that are actually supported (e.g. "format" can just be used as another property)
+        let mut json = json!({
+            "description": "A test field",
+            "type": "integer",
+            "format": {},
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "description": "A test field",
+                "type": "integer",
+                "format": {},
             })
         );
     }
@@ -234,5 +271,60 @@ mod tests {
         });
 
         assert!(adapt_to_json_schema_subset(&mut json).is_err());
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_adds_additional_properties() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": false
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_preserves_additional_properties() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": true
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": true
+            })
+        );
     }
 }
