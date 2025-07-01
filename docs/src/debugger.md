@@ -14,7 +14,7 @@ and more, in a consistent manner across different programming languages and runt
 
 Zed supports a variety of debug adapters for different programming languages out of the box:
 
-- JavaScript ([vscode-js-debug](https://github.com/microsoft/vscode-js-debug.git)): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript.
+- JavaScript ([vscode-js-debug](https://github.com/microsoft/vscode-js-debug.git)): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript and TypeScript.
 
 - Python ([debugpy](https://github.com/microsoft/debugpy.git)): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
 
@@ -113,44 +113,17 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
 ### Automatic scenario creation
 
 Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
-Automatic scenario creation is currently supported for Rust, Go, and Python. JavaScript/TypeScript support is being worked on.
+Automatic scenario creation is currently supported for Rust, Go, JavaScript, and TypeScript.
 
 ### Example Configurations
 
 #### JavaScript
 
-##### Debug Active File
+See the [JavaScript language documentation](languages/javascript.md#debugging) for examples.
 
-```json
-[
-  {
-    "label": "Debug with node",
-    "adapter": "JavaScript",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "console": "integratedTerminal",
-    "type": "pwa-node"
-  }
-]
-```
+#### TypeScript
 
-##### Attach debugger to a server running in web browser (`npx serve`)
-
-Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
-
-```json
-[
-  {
-    "label": "Inspect ",
-    "adapter": "JavaScript",
-    "type": "pwa-chrome",
-    "request": "launch",
-    "url": "http://localhost:5500", // Fill your URL here.
-    "program": "$ZED_FILE",
-    "webRoot": "${ZED_WORKTREE_ROOT}"
-  }
-]
-```
+See the [TypeScript language documentation](languages/typescript.md#debugging) for examples.
 
 #### Python
 
@@ -258,31 +231,6 @@ requirements.txt
       "command": "cargo",
       "args": ["build"]
     },
-  }
-]
-```
-
-#### TypeScript
-
-##### Attach debugger to a server running in web browser (`npx serve`)
-
-Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
-
-```json
-[
-  {
-    "label": "Launch Chrome (TypeScript)",
-    "adapter": "JavaScript",
-    "type": "pwa-chrome",
-    "request": "launch",
-    "url": "http://localhost:5500",
-    "program": "$ZED_FILE",
-    "webRoot": "${ZED_WORKTREE_ROOT}",
-    "sourceMaps": true,
-    "build": {
-      "command": "npx",
-      "args": ["tsc"]
-    }
   }
 ]
 ```
