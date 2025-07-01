@@ -538,9 +538,13 @@ impl MarkdownPreviewView {
         }
 
         let current_scroll = self.list_state.logical_scroll_top();
+        if viewport_height > current_scroll.offset_in_item {
+            return;
+        }
+
         let new_scroll = gpui::ListOffset {
             item_ix: current_scroll.item_ix,
-            offset_in_item: (current_scroll.offset_in_item - viewport_height).max(px(0.0)),
+            offset_in_item: current_scroll.offset_in_item - viewport_height,
         };
         self.list_state.scroll_to(new_scroll);
         cx.notify();
