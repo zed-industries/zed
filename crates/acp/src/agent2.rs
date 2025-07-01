@@ -11,24 +11,6 @@ use std::{ops::Range, path::PathBuf, sync::Arc};
 pub use acp::AcpAgent;
 pub use thread_element::ThreadElement;
 
-#[async_trait(?Send)]
-pub trait Agent: 'static {
-    async fn threads(&self, cx: &mut AsyncApp) -> Result<Vec<AgentThreadSummary>>;
-    async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<Thread>>;
-    async fn open_thread(&self, id: ThreadId, cx: &mut AsyncApp) -> Result<Entity<Thread>>;
-    async fn thread_entries(
-        &self,
-        id: ThreadId,
-        cx: &mut AsyncApp,
-    ) -> Result<Vec<AgentThreadEntryContent>>;
-    async fn send_thread_message(
-        &self,
-        thread_id: ThreadId,
-        message: Message,
-        cx: &mut AsyncApp,
-    ) -> Result<()>;
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThreadId(SharedString);
 

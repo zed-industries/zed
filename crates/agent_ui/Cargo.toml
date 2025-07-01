@@ -13,14 +13,11 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = [
-    "gpui/test-support",
-    "language/test-support",
-]
+test-support = ["gpui/test-support", "language/test-support"]
 
 [dependencies]
+acp.workspace = true
 agent.workspace = true
-agent2.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true
