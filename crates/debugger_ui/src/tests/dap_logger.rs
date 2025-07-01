@@ -37,15 +37,23 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
     .await;
 
     assert!(
-        log_store.read_with(cx, |log_store, _| log_store
-            .contained_session_ids()
-            .is_empty()),
-        "log_store shouldn't contain any session IDs before any sessions were created"
+        log_store.read_with(cx, |log_store, _| !log_store.has_projects()),
+        "log_store shouldn't contain any projects before any projects were created"
     );
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
     let workspace = init_test_workspace(&project, cx).await;
+    assert!(
+        log_store.read_with(cx, |log_store, _| log_store.has_projects()),
+        "log_store shouldn't contain any projects before any projects were created"
+    );
+    assert!(
+        log_store.read_with(cx, |log_store, _| log_store
+            .contained_session_ids(&project.downgrade())
+            .is_empty()),
+        "log_store shouldn't contain any projects before any projects were created"
+    );
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     // Start a debug session
@@ -54,20 +62,22 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     assert_eq!(
-        log_store.read_with(cx, |log_store, _| log_store.contained_session_ids().len()),
+        log_store.read_with(cx, |log_store, _| log_store
+            .contained_session_ids(&project.downgrade())
+            .len()),
         1,
     );
 
     assert!(
         log_store.read_with(cx, |log_store, _| log_store
-            .contained_session_ids()
+            .contained_session_ids(&project.downgrade())
             .contains(&session_id)),
         "log_store should contain the session IDs of the started session"
     );
 
     assert!(
         !log_store.read_with(cx, |log_store, _| log_store
-            .rpc_messages_for_session_id(session_id)
+            .rpc_messages_for_session_id(&project.downgrade(), session_id)
             .is_empty()),
         "We should have the initialization sequence in the log store"
     );

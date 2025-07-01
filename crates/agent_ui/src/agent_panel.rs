@@ -2032,9 +2032,7 @@ impl AgentPanel {
                     .thread()
                     .read(cx)
                     .configured_model()
-                    .map_or(false, |model| {
-                        model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
-                    });
+                    .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
 
                 if !is_using_zed_provider {
                     return false;
@@ -2607,7 +2605,7 @@ impl AgentPanel {
                         Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
                             parent.child(Banner::new().severity(ui::Severity::Warning).child(
                                 h_flex().w_full().children(provider.render_accept_terms(
-                                    LanguageModelProviderTosView::ThreadtEmptyState,
+                                    LanguageModelProviderTosView::ThreadEmptyState,
                                     cx,
                                 )),
                             ))

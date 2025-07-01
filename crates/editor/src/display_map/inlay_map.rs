@@ -344,16 +344,14 @@ impl<'a> Iterator for InlayChunks<'a> {
                                 id: ChunkRendererId::Inlay(inlay.id),
                                 render: Arc::new(move |cx| {
                                     div()
-                                        .w_4()
-                                        .h_4()
                                         .relative()
+                                        .size_3p5()
                                         .child(
                                             div()
                                                 .absolute()
                                                 .right_1()
-                                                .w_3p5()
-                                                .h_3p5()
-                                                .border_2()
+                                                .size_3()
+                                                .border_1()
                                                 .border_color(cx.theme().colors().border)
                                                 .bg(color),
                                         )

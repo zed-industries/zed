@@ -14,8 +14,8 @@ use util::asset_str;
 pub use editable_setting_control::*;
 pub use key_equivalents::*;
 pub use keymap_file::{
-    KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeymapFile,
-    KeymapFileLoadResult,
+    KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
+    KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
 pub use settings_file::*;
 pub use settings_json::*;

@@ -1298,6 +1298,11 @@ impl Render for DebugPanel {
         }
 
         v_flex()
+            .when_else(
+                self.position(window, cx) == DockPosition::Bottom,
+                |this| this.max_h(self.size),
+                |this| this.max_w(self.size),
+            )
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))

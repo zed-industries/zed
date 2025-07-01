@@ -47,8 +47,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
-    prelude::*,
+    Banner, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -58,6 +58,7 @@ use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const RESPONSE_PADDING_X: Pixels = px(19.);
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -1874,9 +1875,6 @@ impl ActiveThread {
                 this.scroll_to_top(cx);
             }));
 
-        // For all items that should be aligned with the LLM's response.
-        const RESPONSE_PADDING_X: Pixels = px(19.);
-
         let show_feedback = thread.is_turn_end(ix);
         let feedback_container = h_flex()
             .group("feedback_container")
@@ -2537,34 +2535,18 @@ impl ActiveThread {
         ix: usize,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let colors = cx.theme().colors();
-        div().id(("message-container", ix)).py_1().px_2().child(
-            v_flex()
-                .w_full()
-                .bg(colors.editor_background)
-                .rounded_sm()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .p_2()
-                        .gap_2()
-                        .child(
-                            div().flex_none().child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
-                            ),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(TextSize::Small.rems(cx))
-                                .text_color(cx.theme().colors().text_muted)
-                                .children(message_content),
-                        ),
-                ),
-        )
+        let message = div()
+            .flex_1()
+            .min_w_0()
+            .text_size(TextSize::XSmall.rems(cx))
+            .text_color(cx.theme().colors().text_muted)
+            .children(message_content);
+
+        div()
+            .id(("message-container", ix))
+            .py_1()
+            .px_2p5()
+            .child(Banner::new().severity(ui::Severity::Warning).child(message))
     }
 
     fn render_message_thinking_segment(

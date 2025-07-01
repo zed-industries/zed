@@ -399,7 +399,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_models = self.all_models.clone();
-        let current_index = self.selected_index;
+        let active_model = (self.get_active_model)(cx);
         let bg_executor = cx.background_executor();
 
         let language_model_registry = LanguageModelRegistry::global(cx);
@@ -441,12 +441,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx.spawn_in(window, async move |this, cx| {
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries = filtered_models.entries();
-                // Preserve selection focus
-                let new_index = if current_index >= this.delegate.filtered_entries.len() {
-                    0
-                } else {
-                    current_index
-                };
+                // Finds the currently selected model in the list
+                let new_index =
+                    Self::get_active_model_index(&this.delegate.filtered_entries, active_model);
                 this.set_selected_index(new_index, Some(picker::Direction::Down), true, window, cx);
                 cx.notify();
             })

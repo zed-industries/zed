@@ -2023,7 +2023,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     "Rust".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
@@ -2042,14 +2042,14 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("Rust"),
                     LanguageSettingsContent {
                         enable_language_server: Some(true),
                         ..Default::default()
                     },
                 );
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("JavaScript"),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),

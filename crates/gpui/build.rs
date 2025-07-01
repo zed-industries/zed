@@ -17,7 +17,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             macos::build();
         }
-        #[cfg(target_os = "windows")]
+        #[cfg(all(target_os = "windows", feature = "windows-manifest"))]
         Ok("windows") => {
             let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
             let rc_file = std::path::Path::new("resources/windows/gpui.rc");

@@ -93,7 +93,7 @@ fn task_type_to_adapter_name(task_type: &str) -> String {
         "php" => "PHP",
         "cppdbg" | "lldb" => "CodeLLDB",
         "debugpy" => "Debugpy",
-        "rdbg" => "Ruby",
+        "rdbg" => "rdbg",
         _ => task_type,
     }
     .to_owned()

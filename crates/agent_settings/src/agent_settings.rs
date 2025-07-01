@@ -6,9 +6,10 @@ use anyhow::{Result, bail};
 use collections::IndexMap;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
-use schemars::{JsonSchema, schema::Schema};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
 
@@ -49,7 +50,7 @@ pub struct AgentSettings {
     pub dock: AgentDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_model: LanguageModelSelection,
+    pub default_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub commit_message_model: Option<LanguageModelSelection>,
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -211,7 +212,6 @@ impl AgentSettingsContent {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
-#[schemars(deny_unknown_fields)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -321,29 +321,27 @@ pub struct LanguageModelSelection {
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "LanguageModelProviderSetting".into()
     }
 
-    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        schemars::schema::SchemaObject {
-            enum_values: Some(vec![
-                "anthropic".into(),
-                "amazon-bedrock".into(),
-                "google".into(),
-                "lmstudio".into(),
-                "ollama".into(),
-                "openai".into(),
-                "zed.dev".into(),
-                "copilot_chat".into(),
-                "deepseek".into(),
-                "openrouter".into(),
-                "mistral".into(),
-                "vercel".into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "enum": [
+                "anthropic",
+                "amazon-bedrock",
+                "google",
+                "lmstudio",
+                "ollama",
+                "openai",
+                "zed.dev",
+                "copilot_chat",
+                "deepseek",
+                "openrouter",
+                "mistral",
+                "vercel"
+            ]
+        })
     }
 }
 
@@ -356,15 +354,6 @@ impl From<String> for LanguageModelProviderSetting {
 impl From<&str> for LanguageModelProviderSetting {
     fn from(provider: &str) -> Self {
         Self(provider.to_string())
-    }
-}
-
-impl Default for LanguageModelSelection {
-    fn default() -> Self {
-        Self {
-            provider: LanguageModelProviderSetting("openai".to_string()),
-            model: "gpt-4".to_string(),
-        }
     }
 }
 
@@ -411,7 +400,10 @@ impl Settings for AgentSettings {
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
             );
-            merge(&mut settings.default_model, value.default_model.clone());
+            settings.default_model = value
+                .default_model
+                .clone()
+                .or(settings.default_model.take());
             settings.inline_assistant_model = value
                 .inline_assistant_model
                 .clone()

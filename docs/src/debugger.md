@@ -214,6 +214,8 @@ requirements.txt
 
 #### Rust/C++/C
 
+> For CodeLLDB, you might want to set `sourceLanguages` in your launch configuration based on the source code language.
+
 ##### Using pre-built binary
 
 ```json
@@ -222,7 +224,7 @@ requirements.txt
     "label": "Debug native binary",
     "program": "$ZED_WORKTREE_ROOT/build/binary",
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
   }
 ]
 ```
@@ -239,7 +241,23 @@ requirements.txt
     },
     "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
+  }
+]
+```
+
+##### Automatically locate a debug target based on build command
+
+```json
+[
+  {
+    "label": "Build & Debug native binary",
+    "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
+    // Zed can infer the path to a debuggee based on the build command
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
   }
 ]
 ```

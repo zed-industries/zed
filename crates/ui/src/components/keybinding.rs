@@ -8,11 +8,12 @@ use itertools::Itertools;
 
 #[derive(Debug, IntoElement, Clone, RegisterComponent)]
 pub struct KeyBinding {
-    /// A keybinding consists of a key and a set of modifier keys.
-    /// More then one keybinding produces a chord.
+    /// A keybinding consists of a set of keystrokes,
+    /// where each keystroke is a key and a set of modifier keys.
+    /// More than one keystroke produces a chord.
     ///
-    /// This should always contain at least one element.
-    key_binding: gpui::KeyBinding,
+    /// This should always contain at least one keystroke.
+    pub key_binding: gpui::KeyBinding,
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,

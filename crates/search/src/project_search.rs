@@ -208,6 +208,7 @@ pub struct ProjectSearchView {
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     _subscriptions: Vec<Subscription>,
+    query_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -876,6 +877,7 @@ impl ProjectSearchView {
             included_opened_only: false,
             regex_language: None,
             _subscriptions: subscriptions,
+            query_error: None,
         };
         this.entity_changed(window, cx);
         this
@@ -1209,14 +1211,16 @@ impl ProjectSearchView {
                     if should_unmark_error {
                         cx.notify();
                     }
+                    self.query_error = None;
 
                     Some(query)
                 }
-                Err(_e) => {
+                Err(e) => {
                     let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
                     if should_mark_error {
                         cx.notify();
                     }
+                    self.query_error = Some(e.to_string());
 
                     None
                 }
@@ -2291,6 +2295,14 @@ impl Render for ProjectSearchBar {
             key_context.add("in_replace");
         }
 
+        let query_error_line = search.query_error.as_ref().map(|error| {
+            Label::new(error)
+                .size(LabelSize::Small)
+                .color(Color::Error)
+                .mt_neg_1()
+                .ml_2()
+        });
+
         v_flex()
             .py(px(1.0))
             .key_context(key_context)
@@ -2342,6 +2354,7 @@ impl Render for ProjectSearchBar {
             .gap_2()
             .w_full()
             .child(search_line)
+            .children(query_error_line)
             .children(replace_line)
             .children(filter_line)
     }

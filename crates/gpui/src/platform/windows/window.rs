@@ -1299,12 +1299,8 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
-        BladeRenderer::new(context, &raw, config).inspect_err(|err| {
-            show_error(
-                "Error: Zed failed to initialize BladeRenderer",
-                err.to_string(),
-            )
-        })
+        BladeRenderer::new(context, &raw, config)
+            .inspect_err(|err| show_error("Failed to initialize BladeRenderer", err.to_string()))
     }
 
     struct RawWindow {
