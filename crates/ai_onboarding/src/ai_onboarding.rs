@@ -72,20 +72,23 @@ impl Render for ZedAiOnboarding {
             // open the zed.dev site, so they can go through the trial in Stripe
             // check whether the account is young
             // once done, the modal should go away
-            .map(|this| if self.account_too_young {
+            .map(|this| if account_too_young {
                 this.child(Button::new("pro", "Start with Pro").full_width().on_click(cx.listener(Self::upgrade_plan)))
             } else {
                 this.child(Button::new("trial", "Start Pro Trial").full_width().on_click(cx.listener(Self::upgrade_plan)))
             });
 
         let main_content = if is_signed_in {
-            div()
+            v_flex()
+                .gap_2()
                 .child(PLANS_DESCRIPTION)
                 .when(account_too_young, |this| {
                     this.child(YOUNG_ACCOUNT_DISCLAIMER)
                 })
                 .child(free_plan_ad)
+                .child(ui::Divider::horizontal())
                 .child(pro_plan_ad)
+                .child(ui::Divider::horizontal())
                 .child(TOS_CALLOUT)
         } else {
             div().child(SIGN_IN_DISCLAIMER)
@@ -93,8 +96,8 @@ impl Render for ZedAiOnboarding {
 
         if in_agent_panel {
             return div()
-                .m_6()
-                .p_6()
+                .m_4()
+                .p_4()
                 .border_1()
                 .border_color(cx.theme().colors().border)
                 .rounded_lg()
