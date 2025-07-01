@@ -15,7 +15,7 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, cmp::Ordering, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 
 /// Construct a new list element
@@ -423,20 +423,20 @@ impl ListState {
 
     /// Add a pixel offset to a list offset, returning the new list offset.
     pub fn add_pixel_offset(&self, offset: &ListOffset, pixel_delta: Pixels) -> ListOffset {
+        if pixel_delta == px(0.) {
+            return *offset;
+        }
+
         let state = &*self.0.borrow();
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
         cursor.seek(&Count(offset.item_ix), Bias::Right, &());
 
         let start_pixel_offset = cursor.start().height + offset.offset_in_item;
         let new_pixel_offset = (start_pixel_offset + pixel_delta).max(px(0.));
-        match new_pixel_offset.cmp(&start_pixel_offset) {
-            Ordering::Equal => return *offset,
-            Ordering::Greater => {
-                cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
-            }
-            Ordering::Less => {
-                cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
-            }
+        if new_pixel_offset > start_pixel_offset {
+            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
+        } else {
+            cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
         }
 
         ListOffset {
