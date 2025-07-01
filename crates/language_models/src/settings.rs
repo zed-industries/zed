@@ -16,6 +16,7 @@ use crate::provider::{
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
     open_router::OpenRouterSettings,
+    requesty::RequestySettings,
     vercel::VercelSettings,
 };
 
@@ -31,6 +32,7 @@ pub struct AllLanguageModelSettings {
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub open_router: OpenRouterSettings,
+    pub requesty: RequestySettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub vercel: VercelSettings,
