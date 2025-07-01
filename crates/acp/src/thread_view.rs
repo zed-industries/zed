@@ -256,7 +256,9 @@ impl Render for AcpThreadView {
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .child(match &self.thread_state {
-                ThreadState::Loading { .. } => div().p_2().child(Label::new("Loading...")),
+                ThreadState::Loading { .. } => {
+                    div().p_2().child(Label::new("Connecting to Gemini..."))
+                }
                 ThreadState::LoadError(e) => div()
                     .p_2()
                     .child(Label::new(format!("Failed to load {e}")).into_any_element()),
