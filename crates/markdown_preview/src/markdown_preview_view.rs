@@ -538,14 +538,12 @@ impl MarkdownPreviewView {
         }
 
         let current_scroll = self.list_state.logical_scroll_top();
-        if viewport_height > current_scroll.offset_in_item {
-            return;
-        }
+        let current_pixel_offset = self.list_state.list_offset_to_pixel_offset(&current_scroll);
+        let target_pixel_offset = (current_pixel_offset - viewport_height).max(gpui::px(0.));
+        let new_scroll = self
+            .list_state
+            .pixel_offset_to_list_offset(target_pixel_offset);
 
-        let new_scroll = gpui::ListOffset {
-            item_ix: current_scroll.item_ix,
-            offset_in_item: current_scroll.offset_in_item - viewport_height,
-        };
         self.list_state.scroll_to(new_scroll);
         cx.notify();
     }
@@ -557,10 +555,12 @@ impl MarkdownPreviewView {
         }
 
         let current_scroll = self.list_state.logical_scroll_top();
-        let new_scroll = gpui::ListOffset {
-            item_ix: current_scroll.item_ix,
-            offset_in_item: current_scroll.offset_in_item + viewport_height,
-        };
+        let current_pixel_offset = self.list_state.list_offset_to_pixel_offset(&current_scroll);
+        let target_pixel_offset = current_pixel_offset + viewport_height;
+        let new_scroll = self
+            .list_state
+            .pixel_offset_to_list_offset(target_pixel_offset);
+
         self.list_state.scroll_to(new_scroll);
         cx.notify();
     }

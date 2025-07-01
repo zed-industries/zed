@@ -420,6 +420,27 @@ impl ListState {
     pub fn viewport_bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
+
+    /// Determine the item and offset for the given pixel position.
+    pub fn pixel_offset_to_list_offset(&self, pixel_offset: Pixels) -> ListOffset {
+        let state = &*self.0.borrow();
+        let mut cursor = state.items.cursor::<ListItemSummary>(&());
+        cursor.seek(&Height(pixel_offset), Bias::Right, &());
+        let item_ix = cursor.start().count;
+        let offset_in_item = pixel_offset - cursor.start().height;
+        ListOffset {
+            item_ix,
+            offset_in_item,
+        }
+    }
+
+    /// Convert a list offset to a pixel offset.
+    pub fn list_offset_to_pixel_offset(&self, offset: &ListOffset) -> Pixels {
+        let state = &*self.0.borrow();
+        let mut cursor = state.items.cursor::<ListItemSummary>(&());
+        cursor.seek(&Count(offset.item_ix), Bias::Right, &());
+        cursor.start().height + offset.offset_in_item
+    }
 }
 
 impl StateInner {
