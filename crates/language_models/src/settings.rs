@@ -50,6 +50,7 @@ pub struct AllLanguageModelSettingsContent {
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
+    pub requesty: Option<RequestySettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
@@ -125,6 +126,12 @@ pub struct ZedDotDevSettingsContent {
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::open_router::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct RequestySettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::requesty::AvailableModel>>,
 }
 
 impl settings::Settings for AllLanguageModelSettings {
