@@ -2085,9 +2085,7 @@ impl Workspace {
             }
 
             // Create new window with shared project
-            let _window = cx.open_window(options, {
-                let app_state = app_state.clone();
-                let project = project.clone();
+            cx.open_window(options, {
                 move |window, cx| {
                     cx.new(|cx| Workspace::new(workspace_id, project, app_state, window, cx))
                 }
