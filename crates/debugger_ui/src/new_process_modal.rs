@@ -94,7 +94,7 @@ impl NewProcessModal {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
-                // FIXME get the buffer here (if the active item is an editor) and store it so we can pass it to start_session later
+                // todo(debugger): get the buffer here (if the active item is an editor) and store it so we can pass it to start_session later
                 tasks_ui::task_contexts(workspace, window, cx)
             })?;
             workspace.update_in(cx, |workspace, window, cx| {
