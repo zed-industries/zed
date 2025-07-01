@@ -461,8 +461,8 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .striped()
-                    .column_widths([rems(24.), rems(16.), rems(32.), rems(8.)])
-                    .header(["Command", "Keystrokes", "Context", "Source"])
+                    .column_widths([rems(16.), rems(16.), rems(16.), rems(32.), rems(8.)])
+                    .header(["Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .selected_item_index(self.selected_index)
                     .on_click_row(cx.processor(|this, row_index, _window, _cx| {
                         this.selected_index = Some(row_index);
@@ -475,18 +475,13 @@ impl Render for KeymapEditor {
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
-                                    let action = h_flex()
-                                        .items_start()
-                                        .gap_1()
-                                        .child(binding.action.clone())
-                                        .when_some(
-                                            binding.action_input.clone(),
-                                            |this, binding_input| this.child(binding_input),
-                                        );
+                                    let action = binding.action.clone();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
                                     );
+                                    let action_input =
+                                        binding.action_input.clone().unwrap_or_default();
                                     let context = binding.context.clone();
                                     let source = binding
                                         .source
@@ -495,6 +490,7 @@ impl Render for KeymapEditor {
                                         .unwrap_or_default();
                                     Some([
                                         action.into_any_element(),
+                                        action_input.into_any_element(),
                                         keystrokes,
                                         context.into_any_element(),
                                         source.into_any_element(),
