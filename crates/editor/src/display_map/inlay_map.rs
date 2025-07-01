@@ -296,11 +296,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                let split_point = utf8_char_boundary(
+                let (prefix, suffix) = chunk.text.split_at(utf8_char_boundary(
                     chunk.text,
                     self.transforms.end(&()).0.0 - self.output_offset.0,
-                );
-                let (prefix, suffix) = chunk.text.split_at(split_point);
+                ));
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
@@ -390,9 +389,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let inlay_chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-
-                let split_point = utf8_char_boundary(inlay_chunk, next_inlay_highlight_endpoint);
-                let (chunk, remainder) = inlay_chunk.split_at(split_point);
+                let (chunk, remainder) = inlay_chunk.split_at(utf8_char_boundary(
+                    inlay_chunk,
+                    next_inlay_highlight_endpoint,
+                ));
                 *inlay_chunk = remainder;
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
