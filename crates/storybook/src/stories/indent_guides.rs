@@ -1,13 +1,8 @@
 use std::ops::Range;
 
+use gpui::{Entity, Render, div, uniform_list};
 use gpui::{prelude::*, *};
-use gpui::{
-    Render, div, uniform_list, Entity,
-
-};
-use ui::{
-    AbsoluteLength, Color, DefiniteLength, Label, LabelCommon, px, v_flex,
-};
+use ui::{AbsoluteLength, Color, DefiniteLength, Label, LabelCommon, px, v_flex};
 
 use story::Story;
 
@@ -57,7 +52,7 @@ impl Render for IndentGuidesStory {
                                         .child(Label::new(format!("Item {}", i)).color(Color::Info))
                                 })
                                 .collect()
-                        })
+                        }),
                     )
                     .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
                     .with_decoration(ui::indent_guides(
