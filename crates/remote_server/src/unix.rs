@@ -526,7 +526,7 @@ pub fn execute_run(
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ServerPaths {
     log_file: PathBuf,
     pid_file: PathBuf,
