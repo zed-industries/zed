@@ -92,6 +92,7 @@ actions!(
 
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
@@ -99,6 +100,7 @@ pub struct NewThread {
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
 pub struct ManageProfiles {
     #[serde(default)]
     pub customize_tools: Option<AgentProfileId>,
