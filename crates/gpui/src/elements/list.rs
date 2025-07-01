@@ -422,8 +422,8 @@ impl ListState {
     }
 
     /// Use the relative distance from an existing offset to compute a new offset.
-    pub fn add_pixel_offset(&self, offset: &ListOffset, pixel_delta: Pixels) -> ListOffset {
-        if pixel_delta == px(0.) {
+    pub fn offset_by(&self, offset: &ListOffset, distance: Pixels) -> ListOffset {
+        if distance == px(0.) {
             return *offset;
         }
 
@@ -432,7 +432,7 @@ impl ListState {
         cursor.seek(&Count(offset.item_ix), Bias::Right, &());
 
         let start_pixel_offset = cursor.start().height + offset.offset_in_item;
-        let new_pixel_offset = (start_pixel_offset + pixel_delta).max(px(0.));
+        let new_pixel_offset = (start_pixel_offset + distance).max(px(0.));
         if new_pixel_offset > start_pixel_offset {
             cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
         } else {

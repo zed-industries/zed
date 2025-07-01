@@ -538,9 +538,7 @@ impl MarkdownPreviewView {
         }
 
         let current_scroll = self.list_state.logical_scroll_top();
-        let new_scroll = self
-            .list_state
-            .add_pixel_offset(&current_scroll, -viewport_height);
+        let new_scroll = self.list_state.offset_by(&current_scroll, -viewport_height);
 
         self.list_state.scroll_to(new_scroll);
         cx.notify();
@@ -553,9 +551,7 @@ impl MarkdownPreviewView {
         }
 
         let current_scroll = self.list_state.logical_scroll_top();
-        let new_scroll = self
-            .list_state
-            .add_pixel_offset(&current_scroll, viewport_height);
+        let new_scroll = self.list_state.offset_by(&current_scroll, viewport_height);
 
         self.list_state.scroll_to(new_scroll);
         cx.notify();
