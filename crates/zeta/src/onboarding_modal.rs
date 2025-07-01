@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
+use ai_onboarding::{OnboardingSource, ZedAiOnboarding};
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
@@ -371,6 +372,8 @@ impl Render for ZedPredictModal {
             .on_click(cx.listener(Self::view_blog));
 
         if self.user_store.read(cx).current_user().is_some() {
+        let store = self.user_store.read(cx);
+        if store.current_user().is_some() {
             let copy = match self.sign_in_status {
                 SignInStatus::Idle => {
                     "Zed can now predict your next edit on every keystroke. Powered by Zeta, our open-source, open-dataset language model."
@@ -484,6 +487,15 @@ impl Render for ZedPredictModal {
                         )
                         .child(blog_post_button),
                 )
+                .child(ZedAiOnboarding {
+                    is_signed_in: store.current_user().is_some(),
+                    has_accepted_terms_of_service: store
+                        .current_user_has_accepted_terms()
+                        .unwrap_or(false),
+                    plan: store.current_plan(),
+                    account_too_young: store.account_too_young(),
+                    source: OnboardingSource::EditPredictions,
+                })
         } else {
             base.child(
                 Label::new("To set Zed as your edit prediction provider, please sign in.")

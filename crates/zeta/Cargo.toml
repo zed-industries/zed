@@ -17,6 +17,7 @@ doctest = false
 test-support = []
 
 [dependencies]
+ai_onboarding.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
 client.workspace = true
