@@ -826,7 +826,7 @@ impl X11Client {
                 self.reset_ime();
                 window.handle_ime_delete();
             }
-            Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
+            Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
                 let mut state = self.0.borrow_mut();
                 let xkb_state = {
                     let xkb_keymap = xkbc::x11::keymap_new_from_device(

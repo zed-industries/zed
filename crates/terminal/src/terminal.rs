@@ -47,6 +47,7 @@ use task::{HideStrategy, Shell, TaskId};
 use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
+use urlencoding;
 use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
@@ -910,7 +911,22 @@ impl Terminal {
                 ) {
                     Some((maybe_url_or_path, is_url, url_match)) => {
                         let target = if is_url {
-                            MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                            // Treat "file://" URLs like file paths to ensure
+                            // that line numbers at the end of the path are
+                            // handled correctly.
+                            // file://{path} should be urldecoded, returning a urldecoded {path}
+                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
+                                let decoded_path = urlencoding::decode(path)
+                                    .map(|decoded| decoded.into_owned())
+                                    .unwrap_or(path.to_owned());
+
+                                MaybeNavigationTarget::PathLike(PathLikeTarget {
+                                    maybe_path: decoded_path,
+                                    terminal_dir: self.working_directory(),
+                                })
+                            } else {
+                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                            }
                         } else {
                             MaybeNavigationTarget::PathLike(PathLikeTarget {
                                 maybe_path: maybe_url_or_path.clone(),

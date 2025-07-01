@@ -2607,7 +2607,7 @@ impl MultiBuffer {
                 return file.file_name(cx).to_string_lossy();
             }
 
-            if let Some(title) = self.buffer_based_title(buffer) {
+            if let Some(title) = self.buffer_content_title(buffer) {
                 return title;
             }
         };
@@ -2615,7 +2615,7 @@ impl MultiBuffer {
         "untitled".into()
     }
 
-    fn buffer_based_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
+    fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
         let mut is_leading_whitespace = true;
         let mut count = 0;
         let mut prev_was_space = false;
@@ -2647,11 +2647,11 @@ impl MultiBuffer {
 
         let title = title.trim_end().to_string();
 
-        if !title.is_empty() {
-            return Some(title.into());
+        if title.is_empty() {
+            return None;
         }
 
-        None
+        Some(title.into())
     }
 
     pub fn set_title(&mut self, title: String, cx: &mut Context<Self>) {

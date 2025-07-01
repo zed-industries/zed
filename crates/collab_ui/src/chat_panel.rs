@@ -90,7 +90,7 @@ impl ChatPanel {
                 languages.clone(),
                 user_store.clone(),
                 None,
-                cx.new(|cx| Editor::auto_height(4, window, cx)),
+                cx.new(|cx| Editor::auto_height(1, 4, window, cx)),
                 window,
                 cx,
             )

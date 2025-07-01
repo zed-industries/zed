@@ -475,6 +475,7 @@ pub enum EditorMode {
         auto_width: bool,
     },
     AutoHeight {
+        min_lines: usize,
         max_lines: usize,
     },
     Full {
@@ -1609,11 +1610,19 @@ impl Editor {
         )
     }
 
-    pub fn auto_height(max_lines: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn auto_height(
+        min_lines: usize,
+        max_lines: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(
-            EditorMode::AutoHeight { max_lines },
+            EditorMode::AutoHeight {
+                min_lines,
+                max_lines,
+            },
             buffer,
             None,
             window,
@@ -2861,7 +2870,8 @@ impl Editor {
                             buffer.char_kind_before(start_offset, true) == Some(CharKind::Word)
                         } else {
                             // Snippet choices can be shown even when the cursor is in whitespace.
-                            // Dismissing the menu when actions like backspace
+                            // Dismissing the menu with actions like backspace is handled by
+                            // invalidation regions.
                             true
                         }
                     } else {
@@ -2927,22 +2937,22 @@ impl Editor {
                         let background_executor = cx.background_executor().clone();
                         let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                         self.serialize_selections = cx.background_spawn(async move {
-                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                    let db_selections = selections
-                        .iter()
-                        .map(|selection| {
-                            (
-                                selection.start.to_offset(&snapshot),
-                                selection.end.to_offset(&snapshot),
-                            )
-                        })
-                        .collect();
+                            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+                            let db_selections = selections
+                                .iter()
+                                .map(|selection| {
+                                    (
+                                        selection.start.to_offset(&snapshot),
+                                        selection.end.to_offset(&snapshot),
+                                    )
+                                })
+                                .collect();
 
-                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
-                        .await
-                        .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
-                        .log_err();
-                });
+                            DB.save_editor_selections(editor_id, workspace_id, db_selections)
+                                .await
+                                .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
+                                .log_err();
+                        });
                     }
                 }
             }
@@ -21884,7 +21894,7 @@ impl Render for Editor {
 
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,
-            EditorMode::AutoHeight { max_lines: _ } => cx.theme().system().transparent,
+            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
             EditorMode::Full { .. } => cx.theme().colors().editor_background,
             EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
@@ -22542,6 +22552,7 @@ impl BreakpointPromptEditor {
         let prompt = cx.new(|cx| {
             let mut prompt = Editor::new(
                 EditorMode::AutoHeight {
+                    min_lines: 1,
                     max_lines: Self::MAX_LINES as usize,
                 },
                 buffer,

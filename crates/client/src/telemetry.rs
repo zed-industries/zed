@@ -8,10 +8,11 @@ use futures::{Future, FutureExt, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
+use regex::Regex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::sync::LazyLock;
@@ -45,7 +46,7 @@ struct TelemetryState {
     first_event_date_time: Option<Instant>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
-    worktree_id_map: WorktreeIdMap,
+    project_marker_patterns: ProjectMarkerPatterns,
 
     os_name: String,
     app_version: String,
@@ -53,7 +54,7 @@ struct TelemetryState {
 }
 
 #[derive(Debug)]
-struct WorktreeIdMap(HashMap<String, ProjectCache>);
+struct ProjectMarkerPatterns(Vec<(Regex, ProjectCache)>);
 
 #[derive(Debug)]
 struct ProjectCache {
@@ -194,20 +195,27 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
-            worktree_id_map: WorktreeIdMap(HashMap::from_iter([
+            project_marker_patterns: ProjectMarkerPatterns(vec![
                 (
-                    "pnpm-lock.yaml".to_string(),
+                    Regex::new(r"^pnpm-lock\.yaml$").unwrap(),
                     ProjectCache::new("pnpm".to_string()),
                 ),
                 (
-                    "yarn.lock".to_string(),
+                    Regex::new(r"^yarn\.lock$").unwrap(),
                     ProjectCache::new("yarn".to_string()),
                 ),
                 (
-                    "package.json".to_string(),
+                    Regex::new(r"^package\.json$").unwrap(),
                     ProjectCache::new("node".to_string()),
                 ),
-            ])),
+                (
+                    Regex::new(
+                        r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$",
+                    )
+                    .unwrap(),
+                    ProjectCache::new("dotnet".to_string()),
+                ),
+            ]),
 
             os_version: None,
             os_name: os_name(),
@@ -379,14 +387,11 @@ impl Telemetry {
         let project_type_names: Vec<String> = {
             let mut state = self.state.lock();
             state
-                .worktree_id_map
+                .project_marker_patterns
                 .0
                 .iter_mut()
-                .filter_map(|(project_file_name, project_type_telemetry)| {
-                    if project_type_telemetry
-                        .worktree_ids_reported
-                        .contains(&worktree_id)
-                    {
+                .filter_map(|(pattern, project_cache)| {
+                    if project_cache.worktree_ids_reported.contains(&worktree_id) {
                         return None;
                     }
 
@@ -394,7 +399,7 @@ impl Telemetry {
                         path.as_ref()
                             .file_name()
                             .and_then(|name| name.to_str())
-                            .map(|name_str| name_str == project_file_name)
+                            .map(|name_str| pattern.is_match(name_str))
                             .unwrap_or(false)
                     });
 
@@ -402,11 +407,9 @@ impl Telemetry {
                         return None;
                     }
 
-                    project_type_telemetry
-                        .worktree_ids_reported
-                        .insert(worktree_id);
+                    project_cache.worktree_ids_reported.insert(worktree_id);
 
-                    Some(project_type_telemetry.name.clone())
+                    Some(project_cache.name.clone())
                 })
                 .collect()
         };
@@ -578,6 +581,7 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
 
     #[gpui::test]
