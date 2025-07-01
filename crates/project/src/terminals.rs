@@ -493,30 +493,29 @@ impl Project {
             _ => "\n",
         };
 
-        match venv_settings.venv_name.is_empty() {
-            false => Some(format!(
+        if venv_settings.venv_name.is_empty() {
+            let path = venv_base_directory
+                .join(match std::env::consts::OS {
+                    "windows" => "Scripts",
+                    _ => "bin",
+                })
+                .join(activate_script_name)
+                .to_string_lossy()
+                .to_string();
+            let quoted = shlex::try_quote(&path).ok()?;
+            smol::block_on(self.fs.metadata(path.as_ref()))
+                .ok()
+                .flatten()?;
+
+            Some(format!(
+                "{} {} ; clear{}",
+                activate_keyword, quoted, line_ending
+            ))
+        } else {
+            Some(format!(
                 "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
                 name = venv_settings.venv_name
-            )),
-            true => {
-                let path = venv_base_directory
-                    .join(match std::env::consts::OS {
-                        "windows" => "Scripts",
-                        _ => "bin",
-                    })
-                    .join(activate_script_name)
-                    .to_string_lossy()
-                    .to_string();
-                let quoted = shlex::try_quote(&path).ok()?;
-                smol::block_on(self.fs.metadata(path.as_ref()))
-                    .ok()
-                    .flatten()?;
-
-                Some(format!(
-                    "{} {} ; clear{}",
-                    activate_keyword, quoted, line_ending
-                ))
-            }
+            ))
         }
     }
 
