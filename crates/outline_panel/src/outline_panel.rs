@@ -804,65 +804,37 @@ impl OutlinePanel {
 
                             // Apply new expansion depth to existing outlines
                             let new_depth = new_settings.default_outline_expansion_depth;
-                            if new_depth == 0 {
-                                // Collapse all outlines that have children
-                                for (buffer_id, excerpts) in &outline_panel.excerpts {
-                                    for (excerpt_id, excerpt) in excerpts {
-                                        if let ExcerptOutlines::Outlines(outlines) =
-                                            &excerpt.outlines
-                                        {
-                                            for outline in outlines.iter() {
-                                                let outline_entry = OutlineEntryOutline {
-                                                    buffer_id: *buffer_id,
-                                                    excerpt_id: *excerpt_id,
-                                                    outline: outline.clone(),
-                                                };
-                                                if outline_panel
-                                                    .has_outline_children(&outline_entry, cx)
-                                                {
-                                                    outline_panel.collapsed_entries.insert(
-                                                        CollapsedEntry::Outline(
-                                                            *buffer_id,
-                                                            *excerpt_id,
-                                                            outline.range.clone(),
-                                                        ),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else if new_depth < 9999 {
-                                // Apply selective expansion based on depth
-                                for (buffer_id, excerpts) in &outline_panel.excerpts {
-                                    for (excerpt_id, excerpt) in excerpts {
-                                        if let ExcerptOutlines::Outlines(outlines) =
-                                            &excerpt.outlines
-                                        {
-                                            for outline in outlines.iter() {
-                                                let outline_entry = OutlineEntryOutline {
-                                                    buffer_id: *buffer_id,
-                                                    excerpt_id: *excerpt_id,
-                                                    outline: outline.clone(),
-                                                };
-                                                if outline_panel
-                                                    .has_outline_children(&outline_entry, cx)
-                                                    && outline.depth >= new_depth
-                                                {
-                                                    outline_panel.collapsed_entries.insert(
-                                                        CollapsedEntry::Outline(
-                                                            *buffer_id,
-                                                            *excerpt_id,
-                                                            outline.range.clone(),
-                                                        ),
-                                                    );
-                                                }
+
+                            // Collapse outlines based on depth
+                            for (buffer_id, excerpts) in &outline_panel.excerpts {
+                                for (excerpt_id, excerpt) in excerpts {
+                                    if let ExcerptOutlines::Outlines(outlines) = &excerpt.outlines {
+                                        for outline in outlines.iter() {
+                                            let outline_entry = OutlineEntryOutline {
+                                                buffer_id: *buffer_id,
+                                                excerpt_id: *excerpt_id,
+                                                outline: outline.clone(),
+                                            };
+
+                                            // Collapse if has children AND either:
+                                            // - depth is 0 (collapse all)
+                                            // - outline depth >= specified depth
+                                            if outline_panel
+                                                .has_outline_children(&outline_entry, cx)
+                                                && (new_depth == 0 || outline.depth >= new_depth)
+                                            {
+                                                outline_panel.collapsed_entries.insert(
+                                                    CollapsedEntry::Outline(
+                                                        *buffer_id,
+                                                        *excerpt_id,
+                                                        outline.range.clone(),
+                                                    ),
+                                                );
                                             }
                                         }
                                     }
                                 }
                             }
-                            // else new_depth >= 9999, expand all (clear collapsed_entries)
 
                             outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                         } else {
