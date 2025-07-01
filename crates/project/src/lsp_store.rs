@@ -5254,7 +5254,7 @@ impl LspStore {
         })
     }
 
-    pub fn definition(
+    pub fn definitions(
         &mut self,
         buffer_handle: &Entity<Buffer>,
         position: PointUtf16,
@@ -5269,7 +5269,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDefinition(
-                    GetDefinition { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetDefinitions { position }.to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5290,9 +5290,9 @@ impl LspStore {
                                 None
                             }
                         })
-                        .map(|definition_response| {
-                            GetDefinition { position }.response_from_proto(
-                                definition_response,
+                        .map(|definitions_response| {
+                            GetDefinitions { position }.response_from_proto(
+                                definitions_response,
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
@@ -5310,24 +5310,24 @@ impl LspStore {
                     .collect())
             })
         } else {
-            let definition_task = self.request_multiple_lsp_locally(
+            let definitions_task = self.request_multiple_lsp_locally(
                 buffer_handle,
                 Some(position),
-                GetDefinition { position },
+                GetDefinitions { position },
                 cx,
             );
             cx.spawn(async move |_, _| {
-                Ok(definition_task
+                Ok(definitions_task
                     .await
                     .into_iter()
-                    .flat_map(|(_, definition)| definition)
+                    .flat_map(|(_, definitions)| definitions)
                     .dedup()
                     .collect())
             })
         }
     }
 
-    pub fn declaration(
+    pub fn declarations(
         &mut self,
         buffer_handle: &Entity<Buffer>,
         position: PointUtf16,
@@ -5342,7 +5342,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDeclaration(
-                    GetDeclaration { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetDeclarations { position }.to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5363,9 +5363,9 @@ impl LspStore {
                                 None
                             }
                         })
-                        .map(|declaration_response| {
-                            GetDeclaration { position }.response_from_proto(
-                                declaration_response,
+                        .map(|declarations_response| {
+                            GetDeclarations { position }.response_from_proto(
+                                declarations_response,
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
@@ -5383,24 +5383,24 @@ impl LspStore {
                     .collect())
             })
         } else {
-            let declaration_task = self.request_multiple_lsp_locally(
+            let declarations_task = self.request_multiple_lsp_locally(
                 buffer_handle,
                 Some(position),
-                GetDeclaration { position },
+                GetDeclarations { position },
                 cx,
             );
             cx.spawn(async move |_, _| {
-                Ok(declaration_task
+                Ok(declarations_task
                     .await
                     .into_iter()
-                    .flat_map(|(_, declaration)| declaration)
+                    .flat_map(|(_, declarations)| declarations)
                     .dedup()
                     .collect())
             })
         }
     }
 
-    pub fn type_definition(
+    pub fn type_definitions(
         &mut self,
         buffer_handle: &Entity<Buffer>,
         position: PointUtf16,
@@ -5415,7 +5415,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetTypeDefinition(
-                    GetTypeDefinition { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetTypeDefinitions { position }.to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5436,9 +5436,9 @@ impl LspStore {
                                 None
                             }
                         })
-                        .map(|type_definition_response| {
-                            GetTypeDefinition { position }.response_from_proto(
-                                type_definition_response,
+                        .map(|type_definitions_response| {
+                            GetTypeDefinitions { position }.response_from_proto(
+                                type_definitions_response,
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
@@ -5456,24 +5456,24 @@ impl LspStore {
                     .collect())
             })
         } else {
-            let type_definition_task = self.request_multiple_lsp_locally(
+            let type_definitions_task = self.request_multiple_lsp_locally(
                 buffer_handle,
                 Some(position),
-                GetTypeDefinition { position },
+                GetTypeDefinitions { position },
                 cx,
             );
             cx.spawn(async move |_, _| {
-                Ok(type_definition_task
+                Ok(type_definitions_task
                     .await
                     .into_iter()
-                    .flat_map(|(_, type_definition)| type_definition)
+                    .flat_map(|(_, type_definitions)| type_definitions)
                     .dedup()
                     .collect())
             })
         }
     }
 
-    pub fn implementation(
+    pub fn implementations(
         &mut self,
         buffer_handle: &Entity<Buffer>,
         position: PointUtf16,
@@ -5488,7 +5488,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetImplementation(
-                    GetImplementation { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetImplementations { position }.to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5509,9 +5509,9 @@ impl LspStore {
                                 None
                             }
                         })
-                        .map(|implementation_response| {
-                            GetImplementation { position }.response_from_proto(
-                                implementation_response,
+                        .map(|implementations_response| {
+                            GetImplementations { position }.response_from_proto(
+                                implementations_response,
                                 project.clone(),
                                 buffer.clone(),
                                 cx.clone(),
@@ -5529,17 +5529,17 @@ impl LspStore {
                     .collect())
             })
         } else {
-            let implementation_task = self.request_multiple_lsp_locally(
+            let implementations_task = self.request_multiple_lsp_locally(
                 buffer_handle,
                 Some(position),
-                GetImplementation { position },
+                GetImplementations { position },
                 cx,
             );
             cx.spawn(async move |_, _| {
-                Ok(implementation_task
+                Ok(implementations_task
                     .await
                     .into_iter()
-                    .flat_map(|(_, implementation)| implementation)
+                    .flat_map(|(_, implementations)| implementations)
                     .dedup()
                     .collect())
             })
@@ -8250,7 +8250,7 @@ impl LspStore {
                 })
             }
             Some(proto::multi_lsp_query::Request::GetDefinition(message)) => {
-                let get_definition = GetDefinition::from_proto(
+                let get_definitions = GetDefinitions::from_proto(
                     message,
                     lsp_store.clone(),
                     buffer.clone(),
@@ -8258,12 +8258,12 @@ impl LspStore {
                 )
                 .await?;
 
-                let definition = lsp_store
+                let definitions = lsp_store
                     .update(&mut cx, |project, cx| {
                         project.request_multiple_lsp_locally(
                             &buffer,
-                            Some(get_definition.position),
-                            get_definition,
+                            Some(get_definitions.position),
+                            get_definitions,
                             cx,
                         )
                     })?
@@ -8271,12 +8271,12 @@ impl LspStore {
                     .into_iter();
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: definition
-                        .map(|(server_id, definition)| proto::LspResponse {
+                    responses: definitions
+                        .map(|(server_id, definitions)| proto::LspResponse {
                             server_id: server_id.to_proto(),
                             response: Some(proto::lsp_response::Response::GetDefinitionResponse(
-                                GetDefinition::response_to_proto(
-                                    definition,
+                                GetDefinitions::response_to_proto(
+                                    definitions,
                                     project,
                                     sender_id,
                                     &buffer_version,
@@ -8288,7 +8288,7 @@ impl LspStore {
                 })
             }
             Some(proto::multi_lsp_query::Request::GetDeclaration(message)) => {
-                let get_declaration = GetDeclaration::from_proto(
+                let get_declarations = GetDeclarations::from_proto(
                     message,
                     lsp_store.clone(),
                     buffer.clone(),
@@ -8296,12 +8296,12 @@ impl LspStore {
                 )
                 .await?;
 
-                let declaration = lsp_store
+                let declarations = lsp_store
                     .update(&mut cx, |project, cx| {
                         project.request_multiple_lsp_locally(
                             &buffer,
-                            Some(get_declaration.position),
-                            get_declaration,
+                            Some(get_declarations.position),
+                            get_declarations,
                             cx,
                         )
                     })?
@@ -8309,12 +8309,12 @@ impl LspStore {
                     .into_iter();
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: declaration
-                        .map(|(server_id, declaration)| proto::LspResponse {
+                    responses: declarations
+                        .map(|(server_id, declarations)| proto::LspResponse {
                             server_id: server_id.to_proto(),
                             response: Some(proto::lsp_response::Response::GetDeclarationResponse(
-                                GetDeclaration::response_to_proto(
-                                    declaration,
+                                GetDeclarations::response_to_proto(
+                                    declarations,
                                     project,
                                     sender_id,
                                     &buffer_version,
@@ -8326,7 +8326,7 @@ impl LspStore {
                 })
             }
             Some(proto::multi_lsp_query::Request::GetTypeDefinition(message)) => {
-                let get_type_definition = GetTypeDefinition::from_proto(
+                let get_type_definitions = GetTypeDefinitions::from_proto(
                     message,
                     lsp_store.clone(),
                     buffer.clone(),
@@ -8334,12 +8334,12 @@ impl LspStore {
                 )
                 .await?;
 
-                let type_definition = lsp_store
+                let type_definitions = lsp_store
                     .update(&mut cx, |project, cx| {
                         project.request_multiple_lsp_locally(
                             &buffer,
-                            Some(get_type_definition.position),
-                            get_type_definition,
+                            Some(get_type_definitions.position),
+                            get_type_definitions,
                             cx,
                         )
                     })?
@@ -8347,13 +8347,13 @@ impl LspStore {
                     .into_iter();
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: type_definition
-                        .map(|(server_id, type_definition)| proto::LspResponse {
+                    responses: type_definitions
+                        .map(|(server_id, type_definitions)| proto::LspResponse {
                             server_id: server_id.to_proto(),
                             response: Some(
                                 proto::lsp_response::Response::GetTypeDefinitionResponse(
-                                    GetTypeDefinition::response_to_proto(
-                                        type_definition,
+                                    GetTypeDefinitions::response_to_proto(
+                                        type_definitions,
                                         project,
                                         sender_id,
                                         &buffer_version,
@@ -8366,7 +8366,7 @@ impl LspStore {
                 })
             }
             Some(proto::multi_lsp_query::Request::GetImplementation(message)) => {
-                let get_implementation = GetImplementation::from_proto(
+                let get_implementations = GetImplementations::from_proto(
                     message,
                     lsp_store.clone(),
                     buffer.clone(),
@@ -8374,12 +8374,12 @@ impl LspStore {
                 )
                 .await?;
 
-                let implementation = lsp_store
+                let implementations = lsp_store
                     .update(&mut cx, |project, cx| {
                         project.request_multiple_lsp_locally(
                             &buffer,
-                            Some(get_implementation.position),
-                            get_implementation,
+                            Some(get_implementations.position),
+                            get_implementations,
                             cx,
                         )
                     })?
@@ -8387,13 +8387,13 @@ impl LspStore {
                     .into_iter();
 
                 lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: implementation
-                        .map(|(server_id, implementation)| proto::LspResponse {
+                    responses: implementations
+                        .map(|(server_id, implementations)| proto::LspResponse {
                             server_id: server_id.to_proto(),
                             response: Some(
                                 proto::lsp_response::Response::GetImplementationResponse(
-                                    GetImplementation::response_to_proto(
-                                        implementation,
+                                    GetImplementations::response_to_proto(
+                                        implementations,
                                         project,
                                         sender_id,
                                         &buffer_version,

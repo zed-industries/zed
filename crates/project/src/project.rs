@@ -3341,7 +3341,7 @@ impl Project {
         })
     }
 
-    pub fn definition<T: ToPointUtf16>(
+    pub fn definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
@@ -3349,11 +3349,11 @@ impl Project {
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.definition(buffer, position, cx)
+            lsp_store.definitions(buffer, position, cx)
         })
     }
 
-    pub fn declaration<T: ToPointUtf16>(
+    pub fn declarations<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
@@ -3361,11 +3361,11 @@ impl Project {
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.declaration(buffer, position, cx)
+            lsp_store.declarations(buffer, position, cx)
         })
     }
 
-    pub fn type_definition<T: ToPointUtf16>(
+    pub fn type_definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
@@ -3373,11 +3373,11 @@ impl Project {
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.type_definition(buffer, position, cx)
+            lsp_store.type_definitions(buffer, position, cx)
         })
     }
 
-    pub fn implementation<T: ToPointUtf16>(
+    pub fn implementations<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
@@ -3385,7 +3385,7 @@ impl Project {
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.implementation(buffer, position, cx)
+            lsp_store.implementations(buffer, position, cx)
         })
     }
 
