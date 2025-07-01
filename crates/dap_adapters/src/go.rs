@@ -539,7 +539,7 @@ async fn handle_envs(
         _ => return None,
     };
 
-    let handle_path = |path: PathBuf| {
+    let rebase_path = |path: PathBuf| {
         if path.is_absolute() {
             Some(path)
         } else {
@@ -550,7 +550,7 @@ async fn handle_envs(
     for path in env_files {
         let Some(path) = path
             .and_then(|s| PathBuf::from_str(s).ok())
-            .and_then(|p| handle_path(p))
+            .and_then(rebase_path)
         else {
             continue;
         };
