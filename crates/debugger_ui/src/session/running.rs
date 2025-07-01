@@ -33,7 +33,7 @@ use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
-    Project, WorktreeId,
+    DebugScenarioContext, Project, WorktreeId,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
@@ -79,6 +79,8 @@ pub struct RunningState {
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
+    pub(crate) scenario: Option<DebugScenario>,
+    pub(crate) scenario_context: Option<DebugScenarioContext>,
 }
 
 impl RunningState {
@@ -831,6 +833,8 @@ impl RunningState {
             debug_terminal,
             dock_axis,
             _schedule_serialize: None,
+            scenario: None,
+            scenario_context: None,
         }
     }
 
@@ -1039,7 +1043,7 @@ impl RunningState {
                 let scenario = dap_registry
                     .adapter(&adapter)
                     .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
-.await?;
+                    .await?;
                 config = scenario.config;
                 util::merge_non_null_json_value_into(extra_config, &mut config);
 
@@ -1523,6 +1527,34 @@ impl RunningState {
         self.session().update(cx, |state, cx| {
             state.step_back(thread_id, granularity, cx);
         });
+    }
+
+    pub fn rerun_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((scenario, context)) = self.scenario.take().zip(self.scenario_context.take())
+            && scenario.build.is_some()
+        {
+            let DebugScenarioContext {
+                task_context,
+                active_buffer,
+                worktree_id,
+            } = context;
+            let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
+
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context,
+                        active_buffer,
+                        worktree_id,
+                        window,
+                        cx,
+                    )
+                })
+                .ok();
+        } else {
+            self.restart_session(cx);
+        }
     }
 
     pub fn restart_session(&self, cx: &mut Context<Self>) {

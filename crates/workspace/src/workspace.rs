@@ -146,6 +146,7 @@ pub trait DebuggerProvider {
         definition: DebugScenario,
         task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
     );
