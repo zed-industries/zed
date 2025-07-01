@@ -609,6 +609,7 @@
       "alt-shift-enter": "toast::RunAction",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-shift-n": "workspace::NewWindow",
+      "cmd-alt-shift-n": "workspace::NewWindowForWorkspace",
       "ctrl-`": "terminal_panel::ToggleFocus",
       "cmd-1": ["workspace::ActivatePane", 0],
       "cmd-2": ["workspace::ActivatePane", 1],

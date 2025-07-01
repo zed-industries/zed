@@ -187,6 +187,7 @@ actions!(
         NewSearch,
         NewTerminal,
         NewWindow,
+        NewWindowForWorkspace,
         Open,
         OpenFiles,
         OpenInTerminal,
@@ -2057,6 +2058,44 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn new_window_for_workspace(
+        &mut self,
+        _: &NewWindowForWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.clone();
+        let app_state = self.app_state.clone();
+        let workspace_id = self.database_id;
+        let current_bounds = window.window_bounds();
+
+        cx.spawn_in(window, async move |_, cx| {
+            let mut options =
+                cx.update(|_window, cx| (app_state.build_window_options)(None, cx))?;
+
+            // Offset new window position by 50 pixels
+            if let WindowBounds::Windowed(bounds) = current_bounds {
+                let offset = px(50.0);
+                options.window_bounds = Some(WindowBounds::Windowed(Bounds {
+                    origin: point(bounds.origin.x + offset, bounds.origin.y + offset),
+                    size: bounds.size,
+                }));
+            }
+
+            // Create new window with shared project
+            let _window = cx.open_window(options, {
+                let app_state = app_state.clone();
+                let project = project.clone();
+                move |window, cx| {
+                    cx.new(|cx| Workspace::new(workspace_id, project, app_state, window, cx))
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn move_focused_panel_to_next_position(

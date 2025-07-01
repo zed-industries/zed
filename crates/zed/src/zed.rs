@@ -65,9 +65,9 @@ use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    AppState, NewFile, NewWindow, NewWindowForWorkspace, OpenLog, Toast, Workspace,
+    WorkspaceSettings, create_and_open_local_file,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
@@ -616,6 +616,9 @@ fn register_actions(
                 }
             })
             .detach()
+        })
+        .register_action(|workspace, _: &NewWindowForWorkspace, window, cx| {
+            workspace.new_window_for_workspace(&NewWindowForWorkspace, window, cx);
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {
