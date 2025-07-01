@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -9,25 +10,63 @@ use gpui::{
 use gpui::{FocusHandle, Task};
 use language::Buffer;
 use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
+use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::Tooltip;
 use ui::prelude::*;
+use util::ResultExt;
 use zed_actions::agent::Chat;
 
-use crate::{AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry};
+use crate::{
+    AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry,
+};
 
 pub struct AcpThreadView {
-    thread: Entity<AcpThread>,
+    thread_state: ThreadState,
     // todo! use full message editor from agent2
     message_editor: Entity<Editor>,
     list_state: ListState,
     send_task: Option<Task<Result<()>>>,
-    _subscription: Subscription,
+}
+
+enum ThreadState {
+    Loading {
+        _task: Task<()>,
+    },
+    Ready {
+        thread: Entity<AcpThread>,
+        _subscription: Subscription,
+    },
+    LoadError(SharedString),
 }
 
 impl AcpThreadView {
-    pub fn new(thread: Entity<AcpThread>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let Some(root_dir) = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path())
+        else {
+            todo!();
+        };
+
+        let cli_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
+
+        let child = util::command::new_smol_command("node")
+            .arg(cli_path)
+            .arg("--acp")
+            .args(["--model", "gemini-2.5-flash"])
+            .current_dir(root_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+
         let message_editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -47,43 +86,79 @@ impl AcpThreadView {
             editor
         });
 
-        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
-            let count = this.list_state.item_count();
-            match event {
-                AcpThreadEvent::NewEntry => {
-                    this.list_state.splice(count..count, 1);
-                }
-                AcpThreadEvent::LastEntryUpdated => {
-                    this.list_state.splice(count - 1..count, 1);
-                }
-            }
-            cx.notify();
+        let project = project.clone();
+        let load_task = cx.spawn_in(window, async move |this, cx| {
+            let agent = AcpServer::stdio(child, project, cx);
+            let result = agent.create_thread(cx).await;
+
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(thread) => {
+                        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
+                            let count = this.list_state.item_count();
+                            match event {
+                                AcpThreadEvent::NewEntry => {
+                                    this.list_state.splice(count..count, 1);
+                                }
+                                AcpThreadEvent::LastEntryUpdated => {
+                                    this.list_state.splice(count - 1..count, 1);
+                                }
+                            }
+                            cx.notify();
+                        });
+                        this.list_state
+                            .splice(0..0, thread.read(cx).entries().len());
+
+                        this.thread_state = ThreadState::Ready {
+                            thread,
+                            _subscription: subscription,
+                        };
+                    }
+                    Err(e) => this.thread_state = ThreadState::LoadError(e.to_string().into()),
+                };
+                cx.notify();
+            })
+            .log_err();
         });
 
         let list_state = ListState::new(
-            thread.read(cx).entries.len(),
+            0,
             gpui::ListAlignment::Top,
             px(1000.0),
             cx.processor({
                 move |this: &mut Self, item: usize, window, cx| {
-                    let Some(entry) = this.thread.read(cx).entries.get(item) else {
+                    let Some(entry) = this
+                        .thread()
+                        .and_then(|thread| thread.read(cx).entries.get(item))
+                    else {
                         return Empty.into_any();
                     };
                     this.render_entry(entry, window, cx)
                 }
             }),
         );
+
         Self {
-            thread,
+            thread_state: ThreadState::Loading { _task: load_task },
             message_editor,
             send_task: None,
             list_state: list_state,
-            _subscription: subscription,
+        }
+    }
+
+    fn thread(&self) -> Option<&Entity<AcpThread>> {
+        match &self.thread_state {
+            ThreadState::Ready { thread, .. } => Some(thread),
+            _ => None,
         }
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.thread.read(cx).title()
+        match &self.thread_state {
+            ThreadState::Ready { thread, .. } => thread.read(cx).title(),
+            ThreadState::Loading { .. } => "Loading...".into(),
+            ThreadState::LoadError(_) => "Failed to load".into(),
+        }
     }
 
     pub fn cancel(&mut self) {
@@ -95,8 +170,9 @@ impl AcpThreadView {
         if text.is_empty() {
             return;
         }
+        let Some(thread) = self.thread() else { return };
 
-        let task = self.thread.update(cx, |thread, cx| thread.send(&text, cx));
+        let task = thread.update(cx, |thread, cx| thread.send(&text, cx));
 
         self.send_task = Some(cx.spawn(async move |this, cx| {
             task.await?;
@@ -179,14 +255,18 @@ impl Render for AcpThreadView {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .child(
-                div()
+            .child(match &self.thread_state {
+                ThreadState::Loading { .. } => div().p_2().child(Label::new("Loading...")),
+                ThreadState::LoadError(e) => div()
+                    .p_2()
+                    .child(Label::new(format!("Failed to load {e}")).into_any_element()),
+                ThreadState::Ready { .. } => div()
                     .child(
                         list(self.list_state.clone())
                             .with_sizing_behavior(gpui::ListSizingBehavior::Infer),
                     )
                     .p_2(),
-            )
+            })
             .when(self.send_task.is_some(), |this| {
                 this.child(
                     div().p_2().child(

@@ -4,7 +4,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acp::AcpServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
@@ -890,36 +889,11 @@ impl AgentPanel {
     }
 
     fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(root_dir) = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path())
-        else {
-            todo!();
-        };
-
-        let cli_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
-        let child = util::command::new_smol_command("node")
-            .arg(cli_path)
-            .arg("--acp")
-            .args(["--model", "gemini-2.5-flash"])
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-
         let project = self.project.clone();
+
         cx.spawn_in(window, async move |this, cx| {
-            let agent = AcpServer::stdio(child, project, cx);
-            let thread = agent.create_thread(cx).await?;
             let thread_view =
-                cx.new_window_entity(|window, cx| acp::AcpThreadView::new(thread, window, cx))?;
+                cx.new_window_entity(|window, cx| acp::AcpThreadView::new(project, window, cx))?;
             this.update_in(cx, |this, window, cx| {
                 this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
             })
