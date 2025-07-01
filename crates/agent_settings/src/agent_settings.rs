@@ -50,7 +50,7 @@ pub struct AgentSettings {
     pub dock: AgentDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_model: LanguageModelSelection,
+    pub default_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub commit_message_model: Option<LanguageModelSelection>,
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -357,15 +357,6 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
-impl Default for LanguageModelSelection {
-    fn default() -> Self {
-        Self {
-            provider: LanguageModelProviderSetting("openai".to_string()),
-            model: "gpt-4".to_string(),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
@@ -409,7 +400,10 @@ impl Settings for AgentSettings {
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
             );
-            merge(&mut settings.default_model, value.default_model.clone());
+            settings.default_model = value
+                .default_model
+                .clone()
+                .or(settings.default_model.take());
             settings.inline_assistant_model = value
                 .inline_assistant_model
                 .clone()
