@@ -130,12 +130,12 @@ TBD: Ruff pyproject.toml, ruff.toml docs. `ruff.configuration`.
 ## Debugging
 
 Zed supports zero-configuration debugging of Python module entry points and pytest tests.
-Run {#action debugger::Start} ({#kb f4}) to see a contextual list for the current project.
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list for the current project.
 For greater control, you can add debug configurations to `.zed/debug.json`. See the examples below.
 
 ### Debug Active File
 
-```json
+```jsonc
 [
   {
     "label": "Python Active File",
