@@ -98,7 +98,8 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
-      "shift-f6": "project_panel::Rename"
+      "shift-f6": "project_panel::Rename",
+      "ctrl-z": "project_panel::UndoFsOperation"
     }
   }
 ]

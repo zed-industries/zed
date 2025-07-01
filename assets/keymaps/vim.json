@@ -822,7 +822,8 @@
       "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
-      "-": "project_panel::SelectParent"
+      "-": "project_panel::SelectParent",
+      "u": "project_panel::UndoFsOperation"
     }
   },
   {

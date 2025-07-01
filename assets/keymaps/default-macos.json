@@ -848,6 +848,7 @@
       "cmd-x": "project_panel::Cut",
       "cmd-c": "project_panel::Copy",
       "cmd-v": "project_panel::Paste",
+      "cmd-z": "project_panel::UndoFsOperation",
       "cmd-alt-c": "workspace::CopyPath",
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",

@@ -786,6 +786,8 @@
       "paste": "project_panel::Paste",
       "shift-insert": "project_panel::Paste",
       "ctrl-v": "project_panel::Paste",
+      "undo": "project_panel::UndoFsOperation",
+      "ctrl-z": "project_panel::UndoFsOperation",
       "alt-copy": "project_panel::CopyPath",
       "ctrl-alt-c": "project_panel::CopyPath",
       "alt-shift-copy": "workspace::CopyRelativePath",
