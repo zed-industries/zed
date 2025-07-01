@@ -2,7 +2,7 @@ use super::{
     BoolExt, MacKeyboardLayout,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    is_macos_version_at_least, renderer, screen_capture,
+    is_macos_version_at_least, renderer,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
@@ -572,15 +572,17 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         let min_version = NSOperatingSystemVersion::new(12, 3, 0);
         is_macos_version_at_least(min_version)
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        screen_capture::get_sources()
+        super::screen_capture::get_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

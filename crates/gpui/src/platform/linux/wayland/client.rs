@@ -666,10 +666,12 @@ impl LinuxClient for WaylandClient {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
