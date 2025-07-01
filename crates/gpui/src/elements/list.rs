@@ -421,7 +421,7 @@ impl ListState {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
 
-    /// Determine the item and offset for the given pixel position.
+    /// Convert a pixel offset to a list offset.
     pub fn pixel_offset_to_list_offset(&self, pixel_offset: Pixels) -> ListOffset {
         let state = &*self.0.borrow();
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
