@@ -14567,6 +14567,7 @@ dependencies = [
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
  "command_palette",
  "command_palette_hooks",
@@ -14577,6 +14578,7 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "language",
  "log",
  "menu",
  "paths",
@@ -14586,6 +14588,7 @@ dependencies = [
  "serde",
  "settings",
  "theme",
+ "tree-sitter-json",
  "ui",
  "util",
  "workspace",

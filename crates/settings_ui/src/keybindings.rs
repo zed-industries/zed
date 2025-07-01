@@ -1,17 +1,19 @@
 use std::{ops::Range, sync::Arc};
 
+use anyhow::{Context as _, anyhow};
 use collections::HashSet;
-use db::anyhow::anyhow;
 use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, Subscription,
-    WeakEntity, actions, div,
+    AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText,
+    Subscription, WeakEntity, actions, div,
 };
+use language::{Language, LanguageConfig};
 use settings::KeybindSource;
+
 use util::ResultExt;
 
 use ui::{
@@ -167,38 +169,47 @@ impl KeymapEditor {
         this
     }
 
-    fn update_matches(&mut self, cx: &mut Context<Self>) {
-        let query = self.filter_editor.read(cx).text(cx);
-        let string_match_candidates = self.string_match_candidates.clone();
-        let executor = cx.background_executor().clone();
-        let keybind_count = self.keybindings.len();
-        let query = command_palette::normalize_action_query(&query);
-        let fuzzy_match = cx.background_spawn(async move {
-            fuzzy::match_strings(
-                &string_match_candidates,
-                &query,
-                true,
-                true,
-                keybind_count,
-                &Default::default(),
-                executor,
-            )
-            .await
-        });
+    fn current_query(&self, cx: &mut Context<Self>) -> String {
+        self.filter_editor.read(cx).text(cx)
+    }
 
-        cx.spawn(async move |this, cx| {
-            let matches = fuzzy_match.await;
-            this.update(cx, |this, cx| {
-                this.selected_index.take();
-                this.scroll_to_item(0, ScrollStrategy::Top, cx);
-                this.matches = matches;
-                cx.notify();
-            })
+    fn update_matches(&self, cx: &mut Context<Self>) {
+        let query = self.current_query(cx);
+
+        cx.spawn(async move |this, cx| Self::process_query(this, query, cx).await)
+            .detach();
+    }
+
+    async fn process_query(
+        this: WeakEntity<Self>,
+        query: String,
+        cx: &mut AsyncApp,
+    ) -> Result<(), db::anyhow::Error> {
+        let query = command_palette::normalize_action_query(&query);
+        let (string_match_candidates, keybind_count) = this.read_with(cx, |this, _| {
+            (this.string_match_candidates.clone(), this.keybindings.len())
+        })?;
+        let executor = cx.background_executor().clone();
+        let matches = fuzzy::match_strings(
+            &string_match_candidates,
+            &query,
+            true,
+            true,
+            keybind_count,
+            &Default::default(),
+            executor,
+        )
+        .await;
+        this.update(cx, |this, cx| {
+            this.selected_index.take();
+            this.scroll_to_item(0, ScrollStrategy::Top, cx);
+            this.matches = matches;
+            cx.notify();
         })
-        .detach();
     }
 
     fn process_bindings(
+        json_language: Arc<Language>,
         cx: &mut Context<Self>,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
@@ -227,6 +238,9 @@ impl KeymapEditor {
 
             let action_name = key_binding.action().name();
             unmapped_action_names.remove(&action_name);
+            let action_input = key_binding
+                .action_input()
+                .map(|input| TextWithSyntaxHighlighting::new(input, json_language.clone()));
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
@@ -234,7 +248,7 @@ impl KeymapEditor {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action: action_name.into(),
-                action_input: key_binding.action_input(),
+                action_input,
                 context: context.into(),
                 source,
             });
@@ -259,24 +273,61 @@ impl KeymapEditor {
         (processed_bindings, string_match_candidates)
     }
 
-    fn update_keybindings(self: &mut KeymapEditor, cx: &mut Context<KeymapEditor>) {
-        let (key_bindings, string_match_candidates) = Self::process_bindings(cx);
-        self.keybindings = key_bindings;
-        self.string_match_candidates = Arc::new(string_match_candidates);
-        self.matches = self
-            .string_match_candidates
-            .iter()
-            .enumerate()
-            .map(|(ix, candidate)| StringMatch {
-                candidate_id: ix,
-                score: 0.0,
-                positions: vec![],
-                string: candidate.string.clone(),
-            })
-            .collect();
+    fn update_keybindings(&mut self, cx: &mut Context<KeymapEditor>) {
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let json_language = Self::load_json_language(workspace, cx).await;
+            let query = this.update(cx, |this, cx| {
+                let (key_bindings, string_match_candidates) =
+                    Self::process_bindings(json_language.clone(), cx);
+                this.keybindings = key_bindings;
+                this.string_match_candidates = Arc::new(string_match_candidates);
+                this.matches = this
+                    .string_match_candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, candidate)| StringMatch {
+                        candidate_id: ix,
+                        score: 0.0,
+                        positions: vec![],
+                        string: candidate.string.clone(),
+                    })
+                    .collect();
+                this.current_query(cx)
+            })?;
+            // calls cx.notify
+            Self::process_query(this, query, cx).await
+        })
+        .detach_and_log_err(cx);
+    }
 
-        self.update_matches(cx);
-        cx.notify();
+    async fn load_json_language(
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncApp,
+    ) -> Arc<Language> {
+        let json_language_task = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .languages()
+                    .language_for_name("JSON")
+            })
+            .context("Failed to load JSON language")
+            .log_err();
+        let json_language = match json_language_task {
+            Some(task) => task.await.context("Failed to load JSON language").log_err(),
+            None => None,
+        };
+        return json_language.unwrap_or_else(|| {
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "JSON".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_json::LANGUAGE.into()),
+            ))
+        });
     }
 
     fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
@@ -409,7 +460,7 @@ struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
-    action_input: Option<SharedString>,
+    action_input: Option<TextWithSyntaxHighlighting>,
     context: SharedString,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -461,8 +512,8 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .striped()
-                    .column_widths([rems(24.), rems(16.), rems(32.), rems(8.)])
-                    .header(["Command", "Keystrokes", "Context", "Source"])
+                    .column_widths([rems(16.), rems(16.), rems(16.), rems(32.), rems(8.)])
+                    .header(["Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .selected_item_index(self.selected_index)
                     .on_click_row(cx.processor(|this, row_index, _window, _cx| {
                         this.selected_index = Some(row_index);
@@ -475,35 +526,83 @@ impl Render for KeymapEditor {
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
-                                    let action = h_flex()
-                                        .items_start()
-                                        .gap_1()
-                                        .child(binding.action.clone())
-                                        .when_some(
-                                            binding.action_input.clone(),
-                                            |this, binding_input| this.child(binding_input),
-                                        );
+
+                                    let action = binding.action.clone().into_any_element();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
                                     );
-                                    let context = binding.context.clone();
+                                    let action_input = binding
+                                        .action_input
+                                        .clone()
+                                        .map_or(gpui::Empty.into_any_element(), |input| {
+                                            input.into_any_element()
+                                        });
+                                    let context = binding.context.clone().into_any_element();
                                     let source = binding
                                         .source
                                         .clone()
                                         .map(|(_source, name)| name)
-                                        .unwrap_or_default();
-                                    Some([
-                                        action.into_any_element(),
-                                        keystrokes,
-                                        context.into_any_element(),
-                                        source.into_any_element(),
-                                    ])
+                                        .unwrap_or_default()
+                                        .into_any_element();
+                                    Some([action, action_input, keystrokes, context, source])
                                 })
                                 .collect()
                         }),
                     ),
             )
+    }
+}
+
+#[derive(Debug, Clone, IntoElement)]
+struct TextWithSyntaxHighlighting {
+    text: SharedString,
+    language: Arc<Language>,
+}
+
+impl TextWithSyntaxHighlighting {
+    pub fn new(text: impl Into<SharedString>, language: Arc<Language>) -> Self {
+        Self {
+            text: text.into(),
+            language,
+        }
+    }
+}
+
+impl RenderOnce for TextWithSyntaxHighlighting {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let text_style = window.text_style();
+        let syntax_theme = cx.theme().syntax();
+
+        let text = self.text.clone();
+
+        let highlights = self
+            .language
+            .highlight_text(&text.as_ref().into(), 0..text.len());
+        let mut runs = Vec::with_capacity(highlights.len());
+        let mut offset = 0;
+
+        for (highlight_range, highlight_id) in highlights {
+            // Add un-highlighted text before the current highlight
+            if highlight_range.start > offset {
+                runs.push(text_style.to_run(highlight_range.start - offset));
+            }
+
+            let mut run_style = text_style.clone();
+            if let Some(highlight_style) = highlight_id.style(syntax_theme) {
+                run_style = run_style.highlight(highlight_style);
+            }
+            // add the highlighted range
+            runs.push(run_style.to_run(highlight_range.len()));
+            offset = highlight_range.end;
+        }
+
+        // Add any remaining un-highlighted text
+        if offset < text.len() {
+            runs.push(text_style.to_run(text.len() - offset));
+        }
+
+        return StyledText::new(text).with_runs(runs);
     }
 }
 
@@ -658,7 +757,10 @@ async fn save_keybinding_update(
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
-                input: existing.action_input.as_ref().map(|input| input.as_ref()),
+                input: existing
+                    .action_input
+                    .as_ref()
+                    .map(|input| input.text.as_ref()),
             },
             target_source: existing
                 .source
@@ -669,7 +771,10 @@ async fn save_keybinding_update(
                 keystrokes: new_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
-                input: existing.action_input.as_ref().map(|input| input.as_ref()),
+                input: existing
+                    .action_input
+                    .as_ref()
+                    .map(|input| input.text.as_ref()),
             },
         }
     } else {
