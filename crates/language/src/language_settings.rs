@@ -692,7 +692,7 @@ impl JsonSchema for FormatOnSave {
                 },
                 {
                     "type": "string",
-                    "enum": ["on", "off", "prettier", "language_server"]
+                    "enum": ["on", "off", "language_server"]
                 },
                 formatter_schema
             ]
@@ -812,7 +812,7 @@ impl JsonSchema for SelectedFormatter {
                 },
                 {
                     "type": "string",
-                    "enum": ["auto", "prettier", "language_server"]
+                    "enum": ["auto", "language_server"]
                 },
                 formatter_schema
             ]
