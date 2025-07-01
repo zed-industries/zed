@@ -406,10 +406,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
-        cx.new(|_| ConfigurationView {
-            state: self.state.clone(),
-        })
-        .into()
+        cx.new(|_| ConfigurationView::new(self.state.clone()))
+            .into()
     }
 
     fn must_accept_terms(&self, cx: &App) -> bool {
@@ -428,7 +426,9 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Some(
             render_accept_terms(view, state.accept_terms_of_service_task.is_some(), {
                 let state = self.state.clone();
-                move |_window, cx| state.update(cx, |state, cx| state.accept_terms_of_service(cx))
+                move |_window, cx| {
+                    state.update(cx, |state, cx| state.accept_terms_of_service(cx));
+                }
             })
             .into_any_element(),
         )
@@ -1052,19 +1052,19 @@ fn response_lines<T: DeserializeOwned>(
     )
 }
 
-#[derive(IntoElement)]
-struct Configuration {
+#[derive(IntoElement, RegisterComponent)]
+struct ZedAIConfiguration {
     is_connected: bool,
     plan: Option<proto::Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     eligible_for_trial: bool,
     has_accepted_terms_of_service: bool,
-    accept_terms_in_progress: bool,
-    accept_terms_callback: Box<dyn Fn(&mut Window, &mut App)>,
-    sign_in_callback: Box<dyn Fn(&mut Window, &mut App)>,
+    accept_terms_of_service_in_progress: bool,
+    accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+    sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
-impl RenderOnce for Configuration {
+impl RenderOnce for ZedAIConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
 
@@ -1116,8 +1116,11 @@ impl RenderOnce for Configuration {
                 .when(!self.has_accepted_terms_of_service, |this| {
                     this.child(render_accept_terms(
                         LanguageModelProviderTosView::Configuration,
-                        self.accept_terms_in_progress,
-                        self.accept_terms_callback,
+                        self.accept_terms_of_service_in_progress,
+                        {
+                            let callback = self.accept_terms_of_service_callback.clone();
+                            move |window, cx| (callback)(window, cx)
+                        },
                     ))
                 })
                 .when(self.has_accepted_terms_of_service, |this| {
@@ -1133,23 +1136,46 @@ impl RenderOnce for Configuration {
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
                         .icon_position(IconPosition::Start)
-                        .on_click(move |_, window, cx| (self.sign_in_callback)(window, cx)),
+                        .on_click({
+                            let callback = self.sign_in_callback.clone();
+                            move |_, window, cx| (callback)(window, cx)
+                        }),
                 )
         }
     }
 }
 
-#[derive(RegisterComponent)]
 struct ConfigurationView {
-    state: gpui::Entity<State>,
+    state: Entity<State>,
+    accept_terms_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+    sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl ConfigurationView {
-    fn authenticate(&mut self, cx: &mut Context<Self>) {
-        self.state.update(cx, |state, cx| {
-            state.authenticate(cx).detach_and_log_err(cx);
+    fn new(state: Entity<State>) -> Self {
+        let accept_terms_callback = Arc::new({
+            let state = state.clone();
+            move |_window: &mut Window, cx: &mut App| {
+                state.update(cx, |state, cx| {
+                    state.accept_terms_of_service(cx);
+                });
+            }
         });
-        cx.notify();
+
+        let sign_in_callback = Arc::new({
+            let state = state.clone();
+            move |_window: &mut Window, cx: &mut App| {
+                state.update(cx, |state, cx| {
+                    state.authenticate(cx).detach_and_log_err(cx);
+                });
+            }
+        });
+
+        Self {
+            state,
+            accept_terms_callback,
+            sign_in_callback,
+        }
     }
 }
 
@@ -1163,43 +1189,78 @@ impl Render for ConfigurationView {
         let eligible_for_trial = user_store.trial_started_at().is_none();
         let has_accepted_terms_of_service = state.has_accepted_terms_of_service(cx);
 
-        Configuration {
+        ZedAIConfiguration {
             is_connected,
             plan,
             subscription_period,
             eligible_for_trial,
             has_accepted_terms_of_service,
-            accept_terms_in_progress: state.accept_terms_of_service_task.is_some(),
-            accept_terms_callback: {
-                let state = self.state.clone();
-                Box::new(move |_window, cx| {
-                    state.update(cx, |state, cx| {
-                        state.accept_terms_of_service(cx);
-                    });
-                })
-            },
-            sign_in_callback: {
-                let this = cx.entity();
-                Box::new(move |_window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.authenticate(cx);
-                    });
-                })
-            },
+            accept_terms_of_service_in_progress: state.accept_terms_of_service_task.is_some(),
+            accept_terms_of_service_callback: self.accept_terms_callback.clone(),
+            sign_in_callback: self.sign_in_callback.clone(),
         }
     }
 }
 
-impl Component for ConfigurationView {
+impl Component for ZedAIConfiguration {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
     }
 
-    fn sort_name() -> &'static str {
-        "ZedAIConfiguration"
-    }
-
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        None
+        fn configuration(
+            is_connected: bool,
+            plan: Option<proto::Plan>,
+            eligible_for_trial: bool,
+            has_accepted_terms_of_service: bool,
+        ) -> AnyElement {
+            ZedAIConfiguration {
+                is_connected,
+                plan,
+                subscription_period: plan
+                    .is_some()
+                    .then(|| (Utc::now(), Utc::now() + chrono::Duration::days(7))),
+                eligible_for_trial,
+                has_accepted_terms_of_service,
+                accept_terms_of_service_in_progress: false,
+                accept_terms_of_service_callback: Arc::new(|_, _| {}),
+                sign_in_callback: Arc::new(|_, _| {}),
+            }
+            .into_any_element()
+        }
+
+        Some(
+            v_flex()
+                .p_4()
+                .gap_4()
+                .children(vec![
+                    single_example("Not connected", configuration(false, None, false, true)),
+                    single_example(
+                        "Accept Terms of Service",
+                        configuration(true, None, true, false),
+                    ),
+                    single_example(
+                        "No Plan - Not eligible for trial",
+                        configuration(true, None, false, true),
+                    ),
+                    single_example(
+                        "No Plan - Eligible for trial",
+                        configuration(true, None, true, true),
+                    ),
+                    single_example(
+                        "Free Plan",
+                        configuration(true, Some(proto::Plan::Free), true, true),
+                    ),
+                    single_example(
+                        "Zed Pro Trial Plan",
+                        configuration(true, Some(proto::Plan::ZedProTrial), true, true),
+                    ),
+                    single_example(
+                        "Zed Pro Plan",
+                        configuration(true, Some(proto::Plan::ZedPro), true, true),
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }
