@@ -11,8 +11,6 @@ use gpui::{
 use itertools::Itertools;
 use language::CursorShape;
 use settings::Settings;
-use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
 use std::time::Instant;
 use terminal::{
     IndexedCell, Terminal, TerminalBounds, TerminalContent,
@@ -36,10 +34,6 @@ use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
 use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
-
-// Cache for monospace font detection results
-static MONOSPACE_FONT_CACHE: LazyLock<RwLock<HashMap<String, bool>>> =
-    LazyLock::new(|| RwLock::new(HashMap::with_capacity(1)));
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -131,44 +125,20 @@ impl BatchedTextRun {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if is_monospace(&self.style.font, &window.text_system()) {
-            // For monospace fonts, we can render the entire batch at once
-            let pos = Point::new(
-                (origin.x + self.start_point.column as f32 * dimensions.cell_width).floor(),
-                origin.y + self.start_point.line as f32 * dimensions.line_height,
-            );
+        let pos = Point::new(
+            (origin.x + self.start_point.column as f32 * dimensions.cell_width).floor(),
+            origin.y + self.start_point.line as f32 * dimensions.line_height,
+        );
 
-            let _ = window
-                .text_system()
-                .shape_line(
-                    self.text.clone().into(),
-                    self.font_size.to_pixels(window.rem_size()),
-                    &[self.style.clone()],
-                )
-                .paint(pos, dimensions.line_height, window, cx);
-        } else {
-            // For non-monospace fonts, paint each character at its grid position
-            let mut current_column = self.start_point.column;
-
-            for ch in self.text.chars() {
-                let pos = Point::new(
-                    (origin.x + current_column as f32 * dimensions.cell_width).floor(),
-                    origin.y + self.start_point.line as f32 * dimensions.line_height,
-                );
-
-                let _ = window
-                    .text_system()
-                    .shape_line(
-                        ch.to_string().into(),
-                        self.font_size.to_pixels(window.rem_size()),
-                        &[self.style.clone()],
-                    )
-                    .paint(pos, dimensions.line_height, window, cx);
-
-                // Move to next grid cell
-                current_column += 1;
-            }
-        }
+        let _ = window
+            .text_system()
+            .shape_line_mono(
+                self.text.clone().into(),
+                self.font_size.to_pixels(window.rem_size()),
+                &[self.style.clone()],
+                Some(dimensions.cell_width),
+            )
+            .paint(pos, dimensions.line_height, window, cx);
     }
 }
 
@@ -1796,53 +1766,4 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
             terminal::get_color_at_index(*i as usize, theme)
         }
     }
-}
-
-fn is_monospace(font: &Font, text_system: &WindowTextSystem) -> bool {
-    let cache_key = font.family.to_string();
-
-    // Check cache first
-    if let Ok(cache) = MONOSPACE_FONT_CACHE.read() {
-        if let Some(&is_monospace) = cache.get(&cache_key) {
-            return is_monospace;
-        }
-    }
-
-    let Ok(font_id) = text_system.font_id(font) else {
-        // If we can't get font ID, zed will default to monospace
-        return true;
-    };
-
-    let font_size_pixels = Pixels(10.0);
-
-    // Compare widths of a few different characters to determine if font is monospace
-    // In a monospace font, all characters should have the same advance width
-    let test_chars = ['z', 'e', 'd', '0', '1', '_', ' '];
-    let tolerance = px(0.1); // Small tolerance for floating point comparison
-    let mut last_width = None;
-
-    let is_monospace = test_chars.iter().all(|&ch| {
-        text_system
-            .advance(font_id, font_size_pixels, ch)
-            .map_or(false, |advance| {
-                let result =
-                    last_width.map_or(true, |last| (advance.width - last).abs() <= tolerance);
-                last_width = Some(advance.width);
-                result
-            })
-    });
-
-    // Store result in cache
-    if let Ok(mut cache) = MONOSPACE_FONT_CACHE.write() {
-        cache.insert(cache_key, is_monospace);
-    }
-
-    if !is_monospace {
-        log::warn!(
-            "Font {} is not monospace. Terminal performance may be affected.",
-            font.family
-        );
-    }
-
-    is_monospace
 }

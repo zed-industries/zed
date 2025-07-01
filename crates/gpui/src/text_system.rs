@@ -358,6 +358,18 @@ impl WindowTextSystem {
         font_size: Pixels,
         runs: &[TextRun],
     ) -> ShapedLine {
+        self.shape_line_mono(text, font_size, runs, None)
+    }
+
+    /// Same as Shape line, but can be provided a "force_width" parameter
+    /// to ensure that glyphs are rendered on a grid (for the terminal)
+    pub fn shape_line_mono(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        force_width: Option<Pixels>,
+    ) -> ShapedLine {
         debug_assert!(
             text.find('\n').is_none(),
             "text argument should not contain newlines"
@@ -384,7 +396,7 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(&text, font_size, runs);
+        let layout = self.layout_line(&text, font_size, runs, force_width);
 
         ShapedLine {
             layout,
@@ -524,6 +536,7 @@ impl WindowTextSystem {
         text: Text,
         font_size: Pixels,
         runs: &[TextRun],
+        force_width: Option<Pixels>,
     ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
@@ -544,9 +557,9 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self
-            .line_layout_cache
-            .layout_line(text, font_size, &font_runs);
+        let layout =
+            self.line_layout_cache
+                .layout_line_internal(text, font_size, &font_runs, force_width);
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
