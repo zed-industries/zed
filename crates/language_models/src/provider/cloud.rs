@@ -1057,7 +1057,7 @@ fn response_lines<T: DeserializeOwned>(
 }
 
 #[derive(IntoElement, RegisterComponent)]
-struct ZedAIConfiguration {
+struct ZedAiConfiguration {
     is_connected: bool,
     plan: Option<proto::Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
@@ -1068,7 +1068,7 @@ struct ZedAIConfiguration {
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
-impl RenderOnce for ZedAIConfiguration {
+impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
 
@@ -1195,7 +1195,7 @@ impl Render for ConfigurationView {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
 
-        ZedAIConfiguration {
+        ZedAiConfiguration {
             is_connected: !state.is_signed_out(),
             plan: user_store.current_plan(),
             subscription_period: user_store.subscription_period(),
@@ -1208,7 +1208,7 @@ impl Render for ConfigurationView {
     }
 }
 
-impl Component for ZedAIConfiguration {
+impl Component for ZedAiConfiguration {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
     }
@@ -1220,7 +1220,7 @@ impl Component for ZedAIConfiguration {
             eligible_for_trial: bool,
             has_accepted_terms_of_service: bool,
         ) -> AnyElement {
-            ZedAIConfiguration {
+            ZedAiConfiguration {
                 is_connected,
                 plan,
                 subscription_period: plan
