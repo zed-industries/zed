@@ -281,6 +281,19 @@ impl settings::Settings for AllLanguageModelSettings {
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
+
+            // Requesty
+            let requesty = value.requesty.clone();
+            merge(
+                &mut settings.requesty.api_url,
+                requesty.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.requesty.available_models,
+                requesty
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            );
         }
 
         Ok(settings)

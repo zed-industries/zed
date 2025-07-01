@@ -106,10 +106,12 @@ impl State {
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .requesty
-            .api_url
-            .clone();
+        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
+        let api_url = if settings.api_url.is_empty() {
+            requesty::REQUESTY_API_URL.to_string()
+        } else {
+            settings.api_url.clone()
+        };
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(&api_url, &cx)
@@ -125,10 +127,12 @@ impl State {
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .requesty
-            .api_url
-            .clone();
+        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
+        let api_url = if settings.api_url.is_empty() {
+            requesty::REQUESTY_API_URL.to_string()
+        } else {
+            settings.api_url.clone()
+        };
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
@@ -148,10 +152,12 @@ impl State {
         }
 
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .requesty
-            .api_url
-            .clone();
+        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
+        let api_url = if settings.api_url.is_empty() {
+            requesty::REQUESTY_API_URL.to_string()
+        } else {
+            settings.api_url.clone()
+        };
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(REQUESTY_API_KEY_VAR) {
                 (api_key, true)
@@ -180,7 +186,11 @@ impl State {
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).requesty;
         let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
+        let api_url = if settings.api_url.is_empty() {
+            requesty::REQUESTY_API_URL.to_string()
+        } else {
+            settings.api_url.clone()
+        };
 
         cx.spawn(async move |this, cx| {
             let models = list_models(http_client.as_ref(), &api_url).await?;
@@ -331,12 +341,17 @@ impl RequestyLanguageModel {
         let state = self.state.clone();
         let http_client = self.http_client.clone();
         async move {
-            let (api_key, api_url) = state
-                .update(cx, |state, cx| {
-                    let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-                    (state.api_key.clone(), settings.api_url.clone())
-                })
-                .await?;
+                    let (api_key, api_url) = state
+            .update(cx, |state, cx| {
+                let settings = &AllLanguageModelSettings::get_global(cx).requesty;
+                let api_url = if settings.api_url.is_empty() {
+                    requesty::REQUESTY_API_URL.to_string()
+                } else {
+                    settings.api_url.clone()
+                };
+                (state.api_key.clone(), api_url)
+            })
+            .await?;
 
             let api_key = api_key.ok_or_else(|| anyhow!("API key not set"))?;
             let stream = stream_completion(http_client.as_ref(), &api_url, &api_key, request).await?;
@@ -773,7 +788,12 @@ impl ConfigurationView {
             if let Some(this) = this.upgrade() {
                 let credentials_provider = <dyn CredentialsProvider>::global(&cx);
                 let api_url = state.read_with(&cx, |state, cx| {
-                    AllLanguageModelSettings::get_global(cx).requesty.api_url.clone()
+                    let settings = &AllLanguageModelSettings::get_global(cx).requesty;
+                    if settings.api_url.is_empty() {
+                        requesty::REQUESTY_API_URL.to_string()
+                    } else {
+                        settings.api_url.clone()
+                    }
                 }).await?;
 
                 if let Ok(Some((_, api_key))) = credentials_provider
@@ -858,7 +878,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const REQUESTY_SIGN_UP_URL: &str = "https://router.requesty.ai";
+        const REQUESTY_SIGN_UP_URL: &str = "https://app.requesty.ai/onboarding";
 
         if !self.should_render_editor(cx) {
             return v_flex()
