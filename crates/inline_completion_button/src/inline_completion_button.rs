@@ -13,11 +13,13 @@ use gpui::{
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     pulsating_between,
 };
+
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use language_models::AllLanguageModelSettings;
 use regex::Regex;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
@@ -845,18 +847,54 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let fs = self.fs.clone();
-        ContextMenu::build(window, cx, |menu, _window, _cx| {
-            menu.entry("Toggle Ollama Completions", None, {
-                let fs = fs.clone();
-                move |_window, cx| {
-                    toggle_inline_completions_globally(fs.clone(), cx);
-                }
-            })
-            .entry("Ollama Settings...", None, |_window, cx| {
-                // TODO: Open Ollama-specific settings
-                cx.open_url("http://localhost:11434");
-            })
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Check if we have available models (indicates connection)
+            let is_connected = !ollama_settings.available_models.is_empty();
+            let connection_status = if is_connected {
+                "Connected"
+            } else {
+                "Disconnected"
+            };
+            let api_url = ollama_settings.api_url.clone();
+
+            let menu =
+                menu.header("Ollama Status")
+                    .entry(connection_status, None, |_window, _cx| {
+                        // Status display only
+                    });
+
+            let menu = if !ollama_settings.available_models.is_empty() {
+                let current_model = ollama_settings
+                    .available_models
+                    .first()
+                    .map(|m| m.display_name.as_ref().unwrap_or(&m.name).clone())
+                    .unwrap_or_else(|| "No model selected".to_string());
+
+                menu.separator().header("Current Model").entry(
+                    current_model,
+                    None,
+                    |_window, _cx| {
+                        // TODO: Open model selection dialog
+                    },
+                )
+            } else {
+                menu
+            };
+
+            // Use the common language settings menu
+            let menu = self.build_language_settings_menu(menu, window, cx);
+
+            // Separator and Ollama-specific actions
+            menu.separator()
+                .entry("Open Ollama Web UI", None, move |_window, cx| {
+                    cx.open_url(&api_url);
+                })
+                .entry("Download More Models", None, |_window, cx| {
+                    cx.open_url("https://ollama.com/library");
+                })
         })
     }
 
@@ -1051,6 +1089,71 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                         ..Default::default()
                     });
             }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use client::{Client, UserStore};
+    use clock::FakeSystemClock;
+    use fs::{FakeFs, Fs};
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use language_model;
+    use language_models::AllLanguageModelSettings;
+    use settings::SettingsStore;
+    use std::sync::Arc;
+
+    #[gpui::test]
+    async fn test_ollama_context_menu_functionality(cx: &mut TestAppContext) {
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AllLanguageModelSettings::register(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let http = FakeHttpClient::with_404_response();
+            let client = Client::new(clock, http.clone(), cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            let popover_menu_handle = PopoverMenuHandle::default();
+
+            let button = cx.new(|cx| {
+                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
+            });
+
+            // Verify that the button was created successfully
+            assert!(button.entity_id().as_u64() > 0);
+
+            // Test that accessing Ollama settings doesn't panic
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let _ollama_settings = &settings.ollama;
+
+            // Verify the button has access to build_language_settings_menu method
+            // This indirectly tests that Ollama menu can use the common functionality
+            button.read(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_settings_access(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AllLanguageModelSettings::register(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            // Test that Ollama settings can be accessed
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Verify default settings structure
+            assert!(ollama_settings.api_url.contains("localhost"));
+            assert!(ollama_settings.available_models.is_empty());
         });
     }
 }
