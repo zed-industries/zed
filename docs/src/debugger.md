@@ -253,7 +253,7 @@ requirements.txt
   {
     "label": "Build & Debug native binary",
     "adapter": "CodeLLDB" // GDB is available on non-ARM Macs as well as Linux
-    // Zed can infer the path to a debugee based on the build command
+    // Zed can infer the path to a debuggee based on the build command
     "build": {
       "command": "cargo",
       "args": ["build"]
