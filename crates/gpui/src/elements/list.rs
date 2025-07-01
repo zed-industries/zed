@@ -291,6 +291,13 @@ impl ListState {
         self.0.borrow().logical_scroll_top()
     }
 
+    /// Scroll the list by the given offset
+    pub fn scroll_by(&self, distance: Pixels) {
+        let current_offset = self.logical_scroll_top();
+        let new_offset = self.offset_by(&current_offset, distance);
+        self.scroll_to(new_offset);
+    }
+
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();

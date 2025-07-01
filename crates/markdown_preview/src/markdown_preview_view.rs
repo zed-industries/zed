@@ -537,10 +537,7 @@ impl MarkdownPreviewView {
             return;
         }
 
-        let current_scroll = self.list_state.logical_scroll_top();
-        let new_scroll = self.list_state.offset_by(&current_scroll, -viewport_height);
-
-        self.list_state.scroll_to(new_scroll);
+        self.list_state.scroll_by(-viewport_height);
         cx.notify();
     }
 
@@ -550,10 +547,7 @@ impl MarkdownPreviewView {
             return;
         }
 
-        let current_scroll = self.list_state.logical_scroll_top();
-        let new_scroll = self.list_state.offset_by(&current_scroll, viewport_height);
-
-        self.list_state.scroll_to(new_scroll);
+        self.list_state.scroll_by(viewport_height);
         cx.notify();
     }
 }
