@@ -205,15 +205,25 @@ fn scroll_editor(
                 };
 
                 // The minimum column position that the cursor position can be
-                // at is the scroll manager's anchor column, which is the
-                // left-most column in the visible area. As for the maximum
-                // column position, that should be either the right-most column
-                // in the visible area, which we can easily calculate by adding
-                // the visible column count to the minimum column position, or
-                // the right-most column in the current line, seeing as the
-                // cursor might be in a short line, in which case we don't want
-                // to go past its last column.
-                let min_column = top.column();
+                // at is either the scroll manager's anchor column, which is the
+                // left-most column in the visible area, or the scroll manager's
+                // old anchor column, in case the cursor position is being
+                // preserved. This is necessary for motions like `ctrl-d` in
+                // case there's not enough content to scroll half page down, in
+                // which case the scroll manager's anchor column will be the
+                // maximum column for the current line, so the minimum column
+                // would end up being the same as the maximum column.
+                let min_column = match preserve_cursor_position {
+                    true => old_top_anchor.to_display_point(map).column(),
+                    false => top.column(),
+                };
+
+                // As for the maximum column position, that should be either the
+                // right-most column in the visible area, which we can easily
+                // calculate by adding the visible column count to the minimum
+                // column position, or the right-most column in the current
+                // line, seeing as the cursor might be in a short line, in which
+                // case we don't want to go past its last column.
                 let max_column = match min_column + visible_column_count as u32 {
                     max_column if max_column >= max_point.column() => max_point.column(),
                     max_column => max_column,
