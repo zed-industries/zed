@@ -238,22 +238,17 @@ impl KeymapEditor {
 
             let action_name = key_binding.action().name();
             unmapped_action_names.remove(&action_name);
+            let action_input = key_binding
+                .action_input()
+                .map(|input| TextWithSyntaxHighlighting::new(input, json_language.clone()));
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
-
-            // Calculate JSON syntax highlights for action_input
-            let action_input = key_binding.action_input();
-            let action_input_highlights = action_input
-                .as_ref()
-                .map(|input| json_language.highlight_text(&input.as_ref().into(), 0..input.len()));
-
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action: action_name.into(),
                 action_input,
-                action_input_highlights,
                 context: context.into(),
                 source,
             });
@@ -269,7 +264,6 @@ impl KeymapEditor {
                 ui_key_binding: None,
                 action: (*action_name).into(),
                 action_input: None,
-                action_input_highlights: None,
                 context: empty.clone(),
                 source: None,
             });
@@ -429,8 +423,7 @@ struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
-    action_input: Option<SharedString>,
-    action_input_highlights: Option<Vec<(Range<usize>, language::HighlightId)>>,
+    action_input: Option<TextWithSyntaxHighlighting>,
     context: SharedString,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -491,97 +484,88 @@ impl Render for KeymapEditor {
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
-                        cx.processor(move |this, range: Range<usize>, _window, cx| {
-                            let syntax_theme = cx.theme().syntax();
+                        cx.processor(move |this, range: Range<usize>, _window, _cx| {
                             range
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
-                                    let action = binding.action.clone();
+
+                                    let action = binding.action.clone().into_any_element();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
                                     );
-
-                                    // Clone the data we need to avoid lifetime issues
-                                    let action_input = binding.action_input.clone();
-                                    let action_input_highlights =
-                                        binding.action_input_highlights.clone();
-
-                                    // Render action_input with JSON syntax highlighting
-                                    let action_input_element = if let Some(input) = action_input {
-                                        if let Some(highlights) = action_input_highlights {
-                                            let mut elements = Vec::new();
-                                            let mut last_highlight_end = 0;
-
-                                            for (highlight_range, highlight_id) in highlights {
-                                                // Add un-highlighted text before the current highlight
-                                                if highlight_range.start > last_highlight_end {
-                                                    let substring = input.as_ref()
-                                                        [last_highlight_end..highlight_range.start]
-                                                        .to_string();
-                                                    elements.push(
-                                                        div()
-                                                            .child(SharedString::from(substring))
-                                                            .into_any_element(),
-                                                    );
-                                                }
-
-                                                // Add the highlighted text
-                                                let substring = input.as_ref()
-                                                    [highlight_range.clone()]
-                                                .to_string();
-                                                let mut element =
-                                                    div().child(SharedString::from(substring));
-                                                if let Some(style) =
-                                                    highlight_id.style(&syntax_theme)
-                                                {
-                                                    if let Some(color) = style.color {
-                                                        element = element.text_color(color);
-                                                    }
-                                                }
-                                                elements.push(element.into_any_element());
-                                                last_highlight_end = highlight_range.end;
-                                            }
-
-                                            // Add any remaining un-highlighted text
-                                            if last_highlight_end < input.len() {
-                                                let substring = input.as_ref()
-                                                    [last_highlight_end..input.len()]
-                                                    .to_string();
-                                                elements.push(
-                                                    div()
-                                                        .child(SharedString::from(substring))
-                                                        .into_any_element(),
-                                                );
-                                            }
-
-                                            div().flex().children(elements).into_any_element()
-                                        } else {
+                                    let action_input = binding
+                                        .action_input
+                                        .clone()
+                                        .map_or(gpui::Empty.into_any_element(), |input| {
                                             input.into_any_element()
-                                        }
-                                    } else {
-                                        SharedString::default().into_any_element()
-                                    };
-
-                                    let context = binding.context.clone();
+                                        });
+                                    let context = binding.context.clone().into_any_element();
                                     let source = binding
                                         .source
                                         .clone()
                                         .map(|(_source, name)| name)
-                                        .unwrap_or_default();
-                                    Some([
-                                        action.into_any_element(),
-                                        action_input_element,
-                                        keystrokes,
-                                        context.into_any_element(),
-                                        source.into_any_element(),
-                                    ])
+                                        .unwrap_or_default()
+                                        .into_any_element();
+                                    Some([action, action_input, keystrokes, context, source])
                                 })
                                 .collect()
                         }),
                     ),
             )
+    }
+}
+
+#[derive(Debug, Clone, IntoElement)]
+struct TextWithSyntaxHighlighting {
+    text: SharedString,
+    language: Arc<Language>,
+}
+
+impl TextWithSyntaxHighlighting {
+    pub fn new(text: impl Into<SharedString>, language: Arc<Language>) -> Self {
+        Self {
+            text: text.into(),
+            language,
+        }
+    }
+}
+
+impl RenderOnce for TextWithSyntaxHighlighting {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let text_style = window.text_style();
+        let syntax_theme = cx.theme().syntax();
+
+        let text = self.text.clone();
+
+        let highlights = self
+            .language
+            .highlight_text(&text.as_ref().into(), 0..text.len());
+        let mut runs = Vec::with_capacity(highlights.len());
+        let mut offset = 0;
+
+        for (highlight_range, highlight_id) in highlights {
+            // Add un-highlighted text before the current highlight
+            if highlight_range.start > offset {
+                runs.push(text_style.to_run(highlight_range.start - offset));
+            }
+
+            let mut run_style = text_style.clone();
+            if let Some(highlight_style) = highlight_id.style(syntax_theme) {
+                run_style = run_style.highlight(highlight_style);
+            }
+            // add the highlighted range
+            runs.push(run_style.to_run(highlight_range.len()));
+            offset = highlight_range.end;
+        }
+
+        // Add any remaining un-highlighted text
+        if offset < text.len() {
+            runs.push(text_style.to_run(text.len() - offset));
+        }
+
+        return StyledText::new(text).with_runs(runs);
     }
 }
 
@@ -736,7 +720,10 @@ async fn save_keybinding_update(
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
-                input: existing.action_input.as_ref().map(|input| input.as_ref()),
+                input: existing
+                    .action_input
+                    .as_ref()
+                    .map(|input| input.text.as_ref()),
             },
             target_source: existing
                 .source
@@ -747,7 +734,10 @@ async fn save_keybinding_update(
                 keystrokes: new_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
-                input: existing.action_input.as_ref().map(|input| input.as_ref()),
+                input: existing
+                    .action_input
+                    .as_ref()
+                    .map(|input| input.text.as_ref()),
             },
         }
     } else {
