@@ -1,7 +1,9 @@
 #![allow(unused, dead_code)]
+mod juicy_button;
 mod persistence;
 mod theme_preview;
 
+use self::juicy_button::JuicyButton;
 use client::{Client, TelemetrySettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
@@ -657,21 +659,12 @@ impl OnboardingUI {
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
         h_flex().w_full().p(px(12.)).pl(px(24.)).child(
-            Button::new(
-                "next",
-                if self.current_page == OnboardingPage::Welcome {
-                    "Get Started"
-                } else {
-                    "Next"
-                },
-            )
-            .style(ButtonStyle::Filled)
-            .when(
-                self.focus_area == FocusArea::Navigation
-                    && self.nav_focus == NavigationFocusItem::Next,
-                |this| this.color(Color::Accent),
-            )
-            .key_binding(ui::KeyBinding::for_action_in(
+            JuicyButton::new(if self.current_page == OnboardingPage::Welcome {
+                "Get Started"
+            } else {
+                "Next"
+            })
+            .keybinding(ui::KeyBinding::for_action_in(
                 &NextPage,
                 &self.focus_handle,
                 window,
