@@ -7144,7 +7144,6 @@ outline: struct OutlineEntryExcerpt
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        // Create a simple Rust file with nested structures to test outline expansion
         fs.insert_tree(
             "/test",
             json!({
@@ -7239,7 +7238,6 @@ outline: struct OutlineEntryExcerpt
             outline_panel.set_active(true, window, cx)
         });
 
-        // Open the file to populate the panel with outlines
         workspace
             .update(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
@@ -7256,7 +7254,6 @@ outline: struct OutlineEntryExcerpt
             .await
             .unwrap();
 
-        // Wait for outlines to be parsed
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
@@ -7270,7 +7267,6 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
 
-        // Count visible outline entries
         let count_visible_outlines = |panel: &OutlinePanel| {
             panel
                 .cached_entries
@@ -7299,7 +7295,6 @@ outline: struct OutlineEntryExcerpt
             })
             .expect("Should find an outline with children");
 
-        // Select and collapse the parent outline
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.select_entry(parent_outline.clone(), true, window, cx);
             panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
@@ -7316,7 +7311,6 @@ outline: struct OutlineEntryExcerpt
             collapsed_count
         );
 
-        // Expand the parent outline again
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
         });
@@ -7330,10 +7324,8 @@ outline: struct OutlineEntryExcerpt
             "Should return to initial count after expanding"
         );
 
-        // Test collapsing multiple outlines
         // First, make sure we're starting from all expanded state
         outline_panel.update_in(cx, |panel, window, cx| {
-            // Clear all collapsed entries to start fresh
             panel.collapsed_entries.clear();
             panel.update_cached_entries(None, window, cx);
         });
@@ -7344,9 +7336,7 @@ outline: struct OutlineEntryExcerpt
         let fully_expanded_count =
             outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
 
-        // Now collapse all outlines that have children
         outline_panel.update_in(cx, |panel, window, cx| {
-            // Find all visible outlines with children and collapse them
             let outlines_with_children: Vec<_> = panel
                 .cached_entries
                 .iter()
@@ -7382,14 +7372,12 @@ outline: struct OutlineEntryExcerpt
             fully_expanded_count
         );
 
-        // The collapsed count should be minimal - only top-level items
         assert!(
             all_collapsed_count <= 2,
             "Should have minimal entries when all parents are collapsed (got {})",
             all_collapsed_count
         );
 
-        // Verify collapsed entries are tracked
         let collapsed_entries_count =
             outline_panel.read_with(cx, |panel, _| panel.collapsed_entries.len());
         assert!(
@@ -7403,7 +7391,6 @@ outline: struct OutlineEntryExcerpt
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        // Create a file with multiple outline levels to test
         fs.insert_tree(
             "/test",
             json!({
@@ -7499,7 +7486,6 @@ outline: struct OutlineEntryExcerpt
             outline_panel.set_active(true, window, cx)
         });
 
-        // Open the file
         workspace
             .update(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
@@ -7516,7 +7502,6 @@ outline: struct OutlineEntryExcerpt
             .await
             .unwrap();
 
-        // Wait for outlines to be parsed
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
@@ -7530,7 +7515,6 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
 
-        // Helper to count visible outline entries
         let count_visible_outlines = |panel: &OutlinePanel| {
             panel
                 .cached_entries
@@ -7543,7 +7527,6 @@ outline: struct OutlineEntryExcerpt
 
         // Select and expand first expandable outline entry (like a struct or impl block)
         outline_panel.update_in(cx, |panel, window, cx| {
-            // Find the first outline entry
             if let Some(outline_entry) = panel
                 .cached_entries
                 .iter()
@@ -7559,7 +7542,6 @@ outline: struct OutlineEntryExcerpt
 
         let _after_expand = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
 
-        // Collapse the selected entry
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
         });
@@ -7582,7 +7564,6 @@ outline: struct OutlineEntryExcerpt
             }
         });
 
-        // Verify we have a selected entry and can interact with it
         let selected = outline_panel.read_with(cx, |panel, _| panel.selected_entry().cloned());
         assert!(
             selected.is_some(),
