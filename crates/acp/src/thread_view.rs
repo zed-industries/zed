@@ -10,7 +10,9 @@ use ui::Tooltip;
 use ui::prelude::*;
 use zed_actions::agent::Chat;
 
-use crate::{AcpThread, AgentThreadEntryContent, Message, MessageChunk, Role, ThreadEntry};
+use crate::{
+    AcpThread, AcpThreadEvent, AgentThreadEntryContent, Message, MessageChunk, Role, ThreadEntry,
+};
 
 pub struct AcpThreadView {
     thread: Entity<AcpThread>,
@@ -42,11 +44,16 @@ impl AcpThreadView {
             editor
         });
 
-        let subscription = cx.observe(&thread, |this, thread, cx| {
+        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
             let count = this.list_state.item_count();
-            // TODO: Incremental updates
-            this.list_state
-                .splice(0..count, thread.read(cx).entries.len());
+            match event {
+                AcpThreadEvent::NewEntry => {
+                    this.list_state.splice(count..count, 1);
+                }
+                AcpThreadEvent::LastEntryUpdated => {
+                    this.list_state.splice(count - 1..count, 1);
+                }
+            }
             cx.notify();
         });
 

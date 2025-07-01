@@ -108,6 +108,13 @@ pub struct AcpThread {
     project: Entity<Project>,
 }
 
+enum AcpThreadEvent {
+    NewEntry,
+    LastEntryUpdated,
+}
+
+impl EventEmitter<AcpThreadEvent> for AcpThread {}
+
 impl AcpThread {
     pub fn new(
         server: Arc<AcpServer>,
@@ -146,33 +153,34 @@ impl AcpThread {
             id: self.next_entry_id.post_inc(),
             content: entry,
         });
-        cx.notify();
+        cx.emit(AcpThreadEvent::NewEntry)
     }
 
     pub fn push_assistant_chunk(&mut self, chunk: MessageChunk, cx: &mut Context<Self>) {
-        if let Some(last_entry) = self.entries.last_mut() {
-            if let AgentThreadEntryContent::Message(Message {
+        if let Some(last_entry) = self.entries.last_mut()
+            && let AgentThreadEntryContent::Message(Message {
                 ref mut chunks,
                 role: Role::Assistant,
             }) = last_entry.content
-            {
-                if let (
-                    Some(MessageChunk::Text { chunk: old_chunk }),
-                    MessageChunk::Text { chunk: new_chunk },
-                ) = (chunks.last_mut(), &chunk)
-                {
-                    old_chunk.push_str(&new_chunk);
-                    return cx.notify();
-                }
+        {
+            cx.emit(AcpThreadEvent::LastEntryUpdated);
 
+            if let (
+                Some(MessageChunk::Text { chunk: old_chunk }),
+                MessageChunk::Text { chunk: new_chunk },
+            ) = (chunks.last_mut(), &chunk)
+            {
+                old_chunk.push_str(&new_chunk);
+            } else {
                 chunks.push(chunk);
                 return cx.notify();
             }
+
+            return;
         }
 
-        self.entries.push(ThreadEntry {
-            id: self.next_entry_id.post_inc(),
-            content: AgentThreadEntryContent::Message(Message {
+        self.push_entry(
+            AgentThreadEntryContent::Message(Message {
                 role: Role::Assistant,
                 chunks: vec![chunk],
             }),
