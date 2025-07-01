@@ -11,7 +11,9 @@ use gpui::{
     FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, Subscription,
     WeakEntity, actions, div,
 };
+use language::{HighlightId, Language, LanguageConfig};
 use settings::KeybindSource;
+
 use util::ResultExt;
 
 use ui::{
@@ -206,6 +208,15 @@ impl KeymapEditor {
         let key_bindings = lock.bindings();
         let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names());
 
+        // Create JSON language for syntax highlighting
+        let json_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JSON".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_json::LANGUAGE.into()),
+        ));
+
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
 
@@ -230,11 +241,19 @@ impl KeymapEditor {
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
+
+            // Calculate JSON syntax highlights for action_input
+            let action_input = key_binding.action_input();
+            let action_input_highlights = action_input
+                .as_ref()
+                .map(|input| json_language.highlight_text(&input.as_ref().into(), 0..input.len()));
+
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action: action_name.into(),
-                action_input: key_binding.action_input(),
+                action_input,
+                action_input_highlights,
                 context: context.into(),
                 source,
             });
@@ -250,6 +269,7 @@ impl KeymapEditor {
                 ui_key_binding: None,
                 action: (*action_name).into(),
                 action_input: None,
+                action_input_highlights: None,
                 context: empty.clone(),
                 source: None,
             });
@@ -410,6 +430,7 @@ struct ProcessedKeybinding {
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
     action_input: Option<SharedString>,
+    action_input_highlights: Option<Vec<(Range<usize>, language::HighlightId)>>,
     context: SharedString,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -470,7 +491,8 @@ impl Render for KeymapEditor {
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
-                        cx.processor(move |this, range: Range<usize>, _window, _cx| {
+                        cx.processor(move |this, range: Range<usize>, _window, cx| {
+                            let syntax_theme = cx.theme().syntax();
                             range
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
@@ -480,8 +502,68 @@ impl Render for KeymapEditor {
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
                                     );
-                                    let action_input =
-                                        binding.action_input.clone().unwrap_or_default();
+
+                                    // Clone the data we need to avoid lifetime issues
+                                    let action_input = binding.action_input.clone();
+                                    let action_input_highlights =
+                                        binding.action_input_highlights.clone();
+
+                                    // Render action_input with JSON syntax highlighting
+                                    let action_input_element = if let Some(input) = action_input {
+                                        if let Some(highlights) = action_input_highlights {
+                                            let mut elements = Vec::new();
+                                            let mut last_highlight_end = 0;
+
+                                            for (highlight_range, highlight_id) in highlights {
+                                                // Add un-highlighted text before the current highlight
+                                                if highlight_range.start > last_highlight_end {
+                                                    let substring = input.as_ref()
+                                                        [last_highlight_end..highlight_range.start]
+                                                        .to_string();
+                                                    elements.push(
+                                                        div()
+                                                            .child(SharedString::from(substring))
+                                                            .into_any_element(),
+                                                    );
+                                                }
+
+                                                // Add the highlighted text
+                                                let substring = input.as_ref()
+                                                    [highlight_range.clone()]
+                                                .to_string();
+                                                let mut element =
+                                                    div().child(SharedString::from(substring));
+                                                if let Some(style) =
+                                                    highlight_id.style(&syntax_theme)
+                                                {
+                                                    if let Some(color) = style.color {
+                                                        element = element.text_color(color);
+                                                    }
+                                                }
+                                                elements.push(element.into_any_element());
+                                                last_highlight_end = highlight_range.end;
+                                            }
+
+                                            // Add any remaining un-highlighted text
+                                            if last_highlight_end < input.len() {
+                                                let substring = input.as_ref()
+                                                    [last_highlight_end..input.len()]
+                                                    .to_string();
+                                                elements.push(
+                                                    div()
+                                                        .child(SharedString::from(substring))
+                                                        .into_any_element(),
+                                                );
+                                            }
+
+                                            div().flex().children(elements).into_any_element()
+                                        } else {
+                                            input.into_any_element()
+                                        }
+                                    } else {
+                                        SharedString::default().into_any_element()
+                                    };
+
                                     let context = binding.context.clone();
                                     let source = binding
                                         .source
@@ -490,7 +572,7 @@ impl Render for KeymapEditor {
                                         .unwrap_or_default();
                                     Some([
                                         action.into_any_element(),
-                                        action_input.into_any_element(),
+                                        action_input_element,
                                         keystrokes,
                                         context.into_any_element(),
                                         source.into_any_element(),
