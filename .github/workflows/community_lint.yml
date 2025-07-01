@@ -1,0 +1,19 @@
+name: Lint Community Files
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/community_*.yml"
+
+jobs:
+  typo-check:
+    name: Check for Typos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for Typos with Typos-CLI
+        uses: crate-ci/typos@v1.24.6 # Uses the same version and config path as docs.yml
+        with:
+          config: ./typos.toml
