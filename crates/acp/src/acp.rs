@@ -4,12 +4,14 @@ mod thread_view;
 use agentic_coding_protocol::{self as acp, Role};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use futures::channel::oneshot;
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{mem, ops::Range, path::PathBuf, sync::Arc};
 use ui::App;
+use util::{ResultExt, debug_panic};
 
 pub use server::AcpServer;
 pub use thread_view::AcpThreadView;
@@ -112,14 +114,32 @@ impl MessageChunk {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum AgentThreadEntryContent {
     Message(Message),
     ReadFile { path: PathBuf, content: String },
+    ToolCall(ToolCall),
 }
 
+#[derive(Debug)]
+pub enum ToolCall {
+    WaitingForConfirmation {
+        id: ToolCallId,
+        tool_name: Entity<Markdown>,
+        description: Entity<Markdown>,
+        respond_tx: oneshot::Sender<bool>,
+    },
+    // todo! Running?
+    Allowed,
+    Rejected,
+}
+
+/// A `ThreadEntryId` that is known to be a ToolCall
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ThreadEntryId(usize);
+pub struct ToolCallId(ThreadEntryId);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ThreadEntryId(pub u64);
 
 impl ThreadEntryId {
     pub fn post_inc(&mut self) -> Self {
@@ -146,7 +166,7 @@ pub struct AcpThread {
 
 enum AcpThreadEvent {
     NewEntry,
-    LastEntryUpdated,
+    EntryUpdated(usize),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -184,22 +204,26 @@ impl AcpThread {
         &self.entries
     }
 
-    pub fn push_entry(&mut self, entry: AgentThreadEntryContent, cx: &mut Context<Self>) {
-        self.entries.push(ThreadEntry {
-            id: self.next_entry_id.post_inc(),
-            content: entry,
-        });
-        cx.emit(AcpThreadEvent::NewEntry)
+    pub fn push_entry(
+        &mut self,
+        entry: AgentThreadEntryContent,
+        cx: &mut Context<Self>,
+    ) -> ThreadEntryId {
+        let id = self.next_entry_id.post_inc();
+        self.entries.push(ThreadEntry { id, content: entry });
+        cx.emit(AcpThreadEvent::NewEntry);
+        id
     }
 
     pub fn push_assistant_chunk(&mut self, chunk: acp::MessageChunk, cx: &mut Context<Self>) {
+        let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntryContent::Message(Message {
                 ref mut chunks,
                 role: Role::Assistant,
             }) = last_entry.content
         {
-            cx.emit(AcpThreadEvent::LastEntryUpdated);
+            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
 
             if let (
                 Some(MessageChunk::Text { chunk: old_chunk }),
@@ -229,6 +253,74 @@ impl AcpThread {
             }),
             cx,
         );
+    }
+
+    pub fn push_tool_call(
+        &mut self,
+        title: String,
+        description: String,
+        respond_tx: oneshot::Sender<bool>,
+        cx: &mut Context<Self>,
+    ) -> ToolCallId {
+        let language_registry = self.project.read(cx).languages().clone();
+
+        let entry_id = self.push_entry(
+            AgentThreadEntryContent::ToolCall(ToolCall::WaitingForConfirmation {
+                // todo! clean up id creation
+                id: ToolCallId(ThreadEntryId(self.entries.len() as u64)),
+                tool_name: cx.new(|cx| {
+                    Markdown::new(title.into(), Some(language_registry.clone()), None, cx)
+                }),
+                description: cx.new(|cx| {
+                    Markdown::new(
+                        description.into(),
+                        Some(language_registry.clone()),
+                        None,
+                        cx,
+                    )
+                }),
+                respond_tx,
+            }),
+            cx,
+        );
+
+        ToolCallId(entry_id)
+    }
+
+    pub fn authorize_tool_call(&mut self, id: ToolCallId, allowed: bool, cx: &mut Context<Self>) {
+        let Some(entry) = self.entry_mut(id.0) else {
+            return;
+        };
+
+        let AgentThreadEntryContent::ToolCall(call) = &mut entry.content else {
+            debug_panic!("expected ToolCall");
+            return;
+        };
+
+        let new_state = if allowed {
+            ToolCall::Allowed
+        } else {
+            ToolCall::Rejected
+        };
+
+        let call = mem::replace(call, new_state);
+
+        if let ToolCall::WaitingForConfirmation { respond_tx, .. } = call {
+            respond_tx.send(allowed).log_err();
+        } else {
+            debug_panic!("tried to authorize an already authorized tool call");
+        }
+
+        cx.emit(AcpThreadEvent::EntryUpdated(id.0.0 as usize));
+    }
+
+    fn entry_mut(&mut self, id: ThreadEntryId) -> Option<&mut ThreadEntry> {
+        let entry = self.entries.get_mut(id.0 as usize);
+        debug_assert!(
+            entry.is_some(),
+            "We shouldn't give out ids to entries that don't exist"
+        );
+        entry
     }
 
     pub fn send(&mut self, message: &str, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -303,11 +395,13 @@ mod tests {
             ));
             assert!(
                 thread.entries().iter().any(|entry| {
-                    entry.content
-                        == AgentThreadEntryContent::ReadFile {
-                            path: "/private/tmp/foo".into(),
-                            content: "Lorem ipsum dolor".into(),
+                    match &entry.content {
+                        AgentThreadEntryContent::ReadFile { path, content } => {
+                            path.to_string_lossy().to_string() == "/private/tmp/foo"
+                                && content == "Lorem ipsum dolor"
                         }
+                        _ => false,
+                    }
                 }),
                 "Thread does not contain entry. Actual: {:?}",
                 thread.entries()

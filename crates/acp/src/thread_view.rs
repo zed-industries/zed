@@ -13,13 +13,14 @@ use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::Tooltip;
 use ui::prelude::*;
+use ui::{Button, Tooltip};
 use util::ResultExt;
 use zed_actions::agent::Chat;
 
 use crate::{
     AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry,
+    ToolCall, ToolCallId,
 };
 
 pub struct AcpThreadView {
@@ -100,8 +101,8 @@ impl AcpThreadView {
                                 AcpThreadEvent::NewEntry => {
                                     this.list_state.splice(count..count, 1);
                                 }
-                                AcpThreadEvent::LastEntryUpdated => {
-                                    this.list_state.splice(count - 1..count, 1);
+                                AcpThreadEvent::EntryUpdated(index) => {
+                                    this.list_state.splice(*index..*index + 1, 1);
                                 }
                             }
                             cx.notify();
@@ -149,7 +150,7 @@ impl AcpThreadView {
     fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
-            _ => None,
+            ThreadState::Loading { .. } | ThreadState::LoadError(..) => None,
         }
     }
 
@@ -185,6 +186,16 @@ impl AcpThreadView {
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
         });
+    }
+
+    fn authorize_tool_call(&mut self, id: ToolCallId, allowed: bool, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(id, allowed, cx);
+        });
+        cx.notify();
     }
 
     fn render_entry(
@@ -236,6 +247,46 @@ impl AcpThreadView {
                     .child(format!("<Reading file {}>", path.display()))
                     .into_any()
             }
+            AgentThreadEntryContent::ToolCall(tool_call) => match tool_call {
+                ToolCall::WaitingForConfirmation {
+                    id,
+                    tool_name,
+                    description,
+                    ..
+                } => {
+                    let id = *id;
+                    v_flex()
+                        .elevation_1(cx)
+                        .child(MarkdownElement::new(
+                            tool_name.clone(),
+                            default_markdown_style(window, cx),
+                        ))
+                        .child(MarkdownElement::new(
+                            description.clone(),
+                            default_markdown_style(window, cx),
+                        ))
+                        .child(
+                            h_flex()
+                                .child(Button::new(("allow", id.0.0), "Allow").on_click(
+                                    cx.listener({
+                                        move |this, _, _, cx| {
+                                            this.authorize_tool_call(id, true, cx);
+                                        }
+                                    }),
+                                ))
+                                .child(Button::new(("reject", id.0.0), "Reject").on_click(
+                                    cx.listener({
+                                        move |this, _, _, cx| {
+                                            this.authorize_tool_call(id, false, cx);
+                                        }
+                                    }),
+                                )),
+                        )
+                        .into_any()
+                }
+                ToolCall::Allowed => div().child("Allowed!").into_any(),
+                ToolCall::Rejected => div().child("Rejected!").into_any(),
+            },
         }
     }
 }

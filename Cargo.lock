@@ -17,6 +17,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
+ "log",
  "markdown",
  "parking_lot",
  "project",

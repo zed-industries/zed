@@ -1,8 +1,9 @@
-use crate::{AcpThread, AgentThreadEntryContent, ThreadEntryId, ThreadId};
+use crate::{AcpThread, AgentThreadEntryContent, ThreadEntryId, ThreadId, ToolCallId};
 use agentic_coding_protocol as acp;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::channel::oneshot;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
@@ -185,6 +186,31 @@ impl acp::Client for AcpClientDelegate {
     ) -> Result<acp::GlobSearchResponse> {
         todo!()
     }
+
+    async fn request_tool_call(
+        &self,
+        request: acp::RequestToolCallParams,
+    ) -> Result<acp::RequestToolCallResponse> {
+        let (tx, rx) = oneshot::channel();
+
+        let cx = &mut self.cx.clone();
+        let entry_id = cx
+            .update(|cx| {
+                self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
+                    // todo! tools that don't require confirmation
+                    thread.push_tool_call(request.tool_name, request.description, tx, cx)
+                })
+            })?
+            .context("Failed to update thread")?;
+
+        if dbg!(rx.await)? {
+            Ok(acp::RequestToolCallResponse::Allowed {
+                id: entry_id.into(),
+            })
+        } else {
+            Ok(acp::RequestToolCallResponse::Rejected)
+        }
+    }
 }
 
 impl AcpServer {
@@ -256,5 +282,17 @@ impl From<acp::ThreadId> for ThreadId {
 impl From<ThreadId> for acp::ThreadId {
     fn from(thread_id: ThreadId) -> Self {
         acp::ThreadId(thread_id.0.to_string())
+    }
+}
+
+impl From<acp::ToolCallId> for ToolCallId {
+    fn from(tool_call_id: acp::ToolCallId) -> Self {
+        Self(ThreadEntryId(tool_call_id.0.into()))
+    }
+}
+
+impl From<ToolCallId> for acp::ToolCallId {
+    fn from(tool_call_id: ToolCallId) -> Self {
+        acp::ToolCallId(tool_call_id.0.0)
     }
 }
