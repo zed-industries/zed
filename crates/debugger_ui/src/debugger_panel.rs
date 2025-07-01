@@ -5,7 +5,7 @@ use crate::session::running::breakpoint_list::BreakpointList;
 use crate::{
     ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
     FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
-    NewProcessModal, NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop,
+    NewProcessModal, NewProcessMode, Pause, RerunSession, StepInto, StepOut, StepOver, Stop,
     ToggleExpandItem, ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -25,7 +25,7 @@ use gpui::{
 use itertools::Itertools as _;
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Fs, ProjectPath, WorktreeId};
+use project::{DebugScenarioContext, Fs, ProjectPath, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -197,6 +197,7 @@ impl DebugPanel {
                 .and_then(|buffer| buffer.read(cx).file())
                 .map(|f| f.worktree_id(cx))
         });
+
         let Some(worktree) = worktree
             .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
             .or_else(|| self.project.read(cx).visible_worktrees(cx).next())
@@ -204,6 +205,7 @@ impl DebugPanel {
             log::debug!("Could not find a worktree to spawn the debug session in");
             return;
         };
+
         self.debug_scenario_scheduled_last = true;
         if let Some(inventory) = self
             .project
@@ -214,7 +216,15 @@ impl DebugPanel {
             .cloned()
         {
             inventory.update(cx, |inventory, _| {
-                inventory.scenario_scheduled(scenario.clone());
+                inventory.scenario_scheduled(
+                    scenario.clone(),
+                    // todo(debugger): Task context is cloned three times
+                    // once in Session,inventory, and in resolve scenario
+                    // we should wrap it in an RC instead to save some memory
+                    task_context.clone(),
+                    worktree_id,
+                    active_buffer.as_ref().map(|buffer| buffer.downgrade()),
+                );
             })
         }
         let task = cx.spawn_in(window, {
@@ -225,6 +235,16 @@ impl DebugPanel {
                 let definition = debug_session
                     .update_in(cx, |debug_session, window, cx| {
                         debug_session.running_state().update(cx, |running, cx| {
+                            if scenario.build.is_some() {
+                                running.scenario = Some(scenario.clone());
+                                running.scenario_context = Some(DebugScenarioContext {
+                                    active_buffer: active_buffer
+                                        .as_ref()
+                                        .map(|entity| entity.downgrade()),
+                                    task_context: task_context.clone(),
+                                    worktree_id: worktree_id,
+                                });
+                            };
                             running.resolve_scenario(
                                 scenario,
                                 task_context,
@@ -273,7 +293,8 @@ impl DebugPanel {
             return;
         };
         let workspace = self.workspace.clone();
-        let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+        let Some((scenario, context)) = task_inventory.read(cx).last_scheduled_scenario().cloned()
+        else {
             window.defer(cx, move |window, cx| {
                 workspace
                     .update(cx, |workspace, cx| {
@@ -284,28 +305,22 @@ impl DebugPanel {
             return;
         };
 
-        cx.spawn_in(window, async move |this, cx| {
-            let task_contexts = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    tasks_ui::task_contexts(workspace, window, cx)
-                })?
-                .await;
+        let DebugScenarioContext {
+            task_context,
+            worktree_id,
+            active_buffer,
+        } = context;
 
-            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
-            let worktree_id = task_contexts.worktree();
+        let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
-            this.update_in(cx, |this, window, cx| {
-                this.start_session(
-                    scenario.clone(),
-                    task_context,
-                    None,
-                    worktree_id,
-                    window,
-                    cx,
-                );
-            })
-        })
-        .detach();
+        self.start_session(
+            scenario,
+            task_context,
+            active_buffer,
+            worktree_id,
+            window,
+            cx,
+        );
     }
 
     pub(crate) async fn register_session(
@@ -758,16 +773,16 @@ impl DebugPanel {
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
                                                 &running_state,
-                                                |this, _, _window, cx| {
-                                                    this.restart_session(cx);
+                                                |this, _, window, cx| {
+                                                    this.rerun_session(window, cx);
                                                 },
                                             ))
                                             .tooltip({
                                                 let focus_handle = focus_handle.clone();
                                                 move |window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Restart",
-                                                        &Restart,
+                                                        "Rerun Session",
+                                                        &RerunSession,
                                                         &focus_handle,
                                                         window,
                                                         cx,
@@ -1600,12 +1615,13 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         definition: DebugScenario,
         context: TaskContext,
         buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
     ) {
         self.0.update(cx, |_, cx| {
-            cx.defer_in(window, |this, window, cx| {
-                this.start_session(definition, context, buffer, None, window, cx);
+            cx.defer_in(window, move |this, window, cx| {
+                this.start_session(definition, context, buffer, worktree_id, window, cx);
             })
         })
     }

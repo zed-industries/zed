@@ -1911,7 +1911,6 @@ dependencies = [
  "serde_json",
  "strum 0.27.1",
  "thiserror 2.0.12",
- "tokio",
  "workspace-hack",
 ]
 
@@ -4133,7 +4132,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=b40956a7f4d1939da67429d941389ee306a3a308#b40956a7f4d1939da67429d941389ee306a3a308"
+source = "git+https://github.com/zed-industries/dap-types?rev=7f39295b441614ca9dbf44293e53c32f666897f9#7f39295b441614ca9dbf44293e53c32f666897f9"
 dependencies = [
  "schemars",
  "serde",
@@ -4148,6 +4147,8 @@ dependencies = [
  "async-trait",
  "collections",
  "dap",
+ "dotenvy",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "json_dotpath",
@@ -4677,12 +4678,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
-
-[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4814,6 +4809,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "schemars",
@@ -5114,7 +5110,7 @@ dependencies = [
  "collections",
  "debug_adapter_extension",
  "dirs 4.0.0",
- "dotenv",
+ "dotenvy",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -8847,6 +8843,7 @@ dependencies = [
  "http_client",
  "imara-diff",
  "indoc",
+ "inventory",
  "itertools 0.14.0",
  "log",
  "lsp",
@@ -8945,8 +8942,10 @@ dependencies = [
  "aws-credential-types",
  "aws_http_client",
  "bedrock",
+ "chrono",
  "client",
  "collections",
+ "component",
  "copilot",
  "credentials_provider",
  "deepseek",
@@ -14053,12 +14052,13 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "0.8.22"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
  "dyn-clone",
  "indexmap",
+ "ref-cast",
  "schemars_derive",
  "serde",
  "serde_json",
@@ -14066,9 +14066,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "0.8.22"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+checksum = "6ca9fcb757952f8e8629b9ab066fc62da523c46c2b247b1708a3be06dd82530b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -14567,16 +14567,28 @@ dependencies = [
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
  "command_palette_hooks",
+ "component",
+ "db",
  "editor",
  "feature_flags",
  "fs",
+ "fuzzy",
  "gpui",
+ "language",
  "log",
+ "menu",
+ "paths",
+ "project",
  "schemars",
+ "search",
  "serde",
  "settings",
  "theme",
+ "tree-sitter-json",
  "ui",
  "util",
  "workspace",
@@ -16010,6 +16022,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indexmap",
+ "inventory",
  "log",
  "palette",
  "parking_lot",
@@ -20127,9 +20140,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de7d9523255f4e00ee3d0918e5407bd252d798a4a8e71f6d37f23317a1588203"
+checksum = "c740e29260b8797ad252c202ea09a255b3cbc13f30faaf92fb6b2490336106e0"
 dependencies = [
  "anyhow",
  "serde",

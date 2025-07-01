@@ -146,6 +146,7 @@ pub trait DebuggerProvider {
         definition: DebugScenario,
         task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
     );
@@ -288,6 +289,7 @@ actions!(
 
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = file_finder, name = "Toggle")]
+#[serde(deny_unknown_fields)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,

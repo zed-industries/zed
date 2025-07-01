@@ -32,7 +32,6 @@ mod settings_group;
 mod stack;
 mod tab;
 mod tab_bar;
-mod table;
 mod toggle;
 mod tooltip;
 
@@ -73,7 +72,6 @@ pub use settings_group::*;
 pub use stack::*;
 pub use tab::*;
 pub use tab_bar::*;
-pub use table::*;
 pub use toggle::*;
 pub use tooltip::*;
 

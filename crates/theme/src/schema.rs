@@ -4,12 +4,11 @@ use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::{Schema, SchemaObject};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use std::borrow::Cow;
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -1502,30 +1501,15 @@ pub enum FontWeightContent {
 }
 
 impl JsonSchema for FontWeightContent {
-    fn schema_name() -> String {
-        "FontWeightContent".to_owned()
+    fn schema_name() -> Cow<'static, str> {
+        "FontWeightContent".into()
     }
 
-    fn is_referenceable() -> bool {
-        false
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            enum_values: Some(vec![
-                100.into(),
-                200.into(),
-                300.into(),
-                400.into(),
-                500.into(),
-                600.into(),
-                700.into(),
-                800.into(),
-                900.into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "integer",
+            "enum": [100, 200, 300, 400, 500, 600, 700, 800, 900]
+        })
     }
 }
 

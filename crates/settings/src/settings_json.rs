@@ -1,82 +1,89 @@
-use std::{ops::Range, sync::LazyLock};
-
 use anyhow::Result;
-use schemars::schema::{
-    ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
-};
+use gpui::App;
+use schemars::{JsonSchema, Schema, transform::transform_subschemas};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, StreamingIterator as _};
 use util::RangeExt;
 
+/// Parameters that are used when generating some JSON schemas at runtime.
 pub struct SettingsJsonSchemaParams<'a> {
     pub language_names: &'a [String],
     pub font_names: &'a [String],
 }
 
-impl SettingsJsonSchemaParams<'_> {
-    pub fn font_family_schema(&self) -> Schema {
-        let available_fonts: Vec<_> = self.font_names.iter().cloned().map(Value::String).collect();
-
-        SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(available_fonts),
-            ..Default::default()
-        }
-        .into()
-    }
-
-    pub fn font_fallback_schema(&self) -> Schema {
-        SchemaObject {
-            instance_type: Some(SingleOrVec::Vec(vec![
-                InstanceType::Array,
-                InstanceType::Null,
-            ])),
-            array: Some(Box::new(ArrayValidation {
-                items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                    self.font_family_schema(),
-                ))),
-                unique_items: Some(true),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }
-        .into()
-    }
+/// Value registered which specifies JSON schemas that are generated at runtime.
+pub struct ParameterizedJsonSchema {
+    pub add_and_get_ref:
+        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams, &App) -> schemars::Schema,
 }
 
-type PropertyName<'a> = &'a str;
-type ReferencePath<'a> = &'a str;
+inventory::collect!(ParameterizedJsonSchema);
 
-/// Modifies the provided [`RootSchema`] by adding references to all of the specified properties.
-///
-/// # Examples
-///
-/// ```
-/// # let root_schema = RootSchema::default();
-/// add_references_to_properties(&mut root_schema, &[
-///     ("property_a", "#/definitions/DefinitionA"),
-///     ("property_b", "#/definitions/DefinitionB"),
-/// ])
-/// ```
-pub fn add_references_to_properties(
-    root_schema: &mut RootSchema,
-    properties_with_references: &[(PropertyName, ReferencePath)],
-) {
-    for (property, definition) in properties_with_references {
-        let Some(schema) = root_schema.schema.object().properties.get_mut(*property) else {
-            log::warn!("property '{property}' not found in JSON schema");
-            continue;
-        };
+const DEFS_PATH: &str = "#/$defs/";
 
-        match schema {
-            Schema::Object(schema) => {
-                schema.reference = Some(definition.to_string());
-            }
-            Schema::Bool(_) => {
-                // Boolean schemas can't have references.
+/// Replaces the JSON schema definition for some type, and returns a reference to it.
+pub fn replace_subschema<T: JsonSchema>(
+    generator: &mut schemars::SchemaGenerator,
+    schema: schemars::Schema,
+) -> schemars::Schema {
+    // The key in definitions may not match T::schema_name() if multiple types have the same name.
+    // This is a workaround for there being no straightforward way to get the key used for a type -
+    // see https://github.com/GREsau/schemars/issues/449
+    let ref_schema = generator.subschema_for::<T>();
+    if let Some(serde_json::Value::String(definition_pointer)) = ref_schema.get("$ref") {
+        if let Some(definition_name) = definition_pointer.strip_prefix(DEFS_PATH) {
+            generator
+                .definitions_mut()
+                .insert(definition_name.to_string(), schema.to_value());
+            return ref_schema;
+        } else {
+            log::error!(
+                "bug: expected `$ref` field to start with {DEFS_PATH}, \
+                got {definition_pointer}"
+            );
+        }
+    } else {
+        log::error!("bug: expected `$ref` field in result of `subschema_for`");
+    }
+    // fallback on just using the schema name, which could collide.
+    let schema_name = T::schema_name();
+    generator
+        .definitions_mut()
+        .insert(schema_name.to_string(), schema.to_value());
+    Schema::new_ref(format!("{DEFS_PATH}{schema_name}"))
+}
+
+/// Adds a new JSON schema definition and returns a reference to it. **Panics** if the name is
+/// already in use.
+pub fn add_new_subschema(
+    generator: &mut schemars::SchemaGenerator,
+    name: &str,
+    schema: Value,
+) -> Schema {
+    let old_definition = generator.definitions_mut().insert(name.to_string(), schema);
+    assert_eq!(old_definition, None);
+    schemars::Schema::new_ref(format!("{DEFS_PATH}{name}"))
+}
+
+/// Defaults `additionalProperties` to `true`, as if `#[schemars(deny_unknown_fields)]` was on every
+/// struct. Skips structs that have `additionalProperties` set (such as if #[serde(flatten)] is used
+/// on a map).
+#[derive(Clone)]
+pub struct DefaultDenyUnknownFields;
+
+impl schemars::transform::Transform for DefaultDenyUnknownFields {
+    fn transform(&mut self, schema: &mut schemars::Schema) {
+        if let Some(object) = schema.as_object_mut() {
+            if object.contains_key("properties")
+                && !object.contains_key("additionalProperties")
+                && !object.contains_key("unevaluatedProperties")
+            {
+                object.insert("additionalProperties".to_string(), false.into());
             }
         }
+        transform_subschemas(self, schema);
     }
 }
 

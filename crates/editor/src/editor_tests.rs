@@ -25,12 +25,12 @@ use language::{
     DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
     LanguageName, Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, LspInsertMode, PrettierSettings,
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, FormatterList,
+        LanguageSettingsContent, LspInsertMode, PrettierSettings, SelectedFormatter,
     },
     tree_sitter_python,
 };
-use language_settings::{Formatter, FormatterList, IndentGuideSettings};
+use language_settings::{Formatter, IndentGuideSettings};
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -3567,7 +3567,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "TOML".into(),
                 LanguageSettingsContent {
@@ -5145,7 +5145,7 @@ fn test_transpose(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_rewrap(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "Markdown".into(),
                 LanguageSettingsContent {
@@ -5210,6 +5210,10 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     let markdown_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Markdown".into(),
+            rewrap_prefixes: vec![
+                regex::Regex::new("\\d+\\.\\s+").unwrap(),
+                regex::Regex::new("[-*+]\\s+").unwrap(),
+            ],
             ..LanguageConfig::default()
         },
         None,
@@ -5372,7 +5376,82 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             A long long long line of markdown text
             to wrap.ˇ
          "},
-        markdown_language,
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping boundary works and preserves relative indent for Markdown documents
+    assert_rewrap(
+        indoc! {"
+            «1. This is a numbered list item that is very long and needs to be wrapped properly.
+            2. This is a numbered list item that is very long and needs to be wrapped properly.
+            - This is an unordered list item that is also very long and should not merge with the numbered item.ˇ»
+        "},
+        indoc! {"
+            «1. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            2. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            - This is an unordered list item that is
+              also very long and should not merge
+              with the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping add indents for rewrapping boundary if not exists already.
+    assert_rewrap(
+        indoc! {"
+            «1. This is a numbered list item that is
+            very long and needs to be wrapped
+            properly.
+            2. This is a numbered list item that is
+            very long and needs to be wrapped
+            properly.
+            - This is an unordered list item that is
+            also very long and should not merge with
+            the numbered item.ˇ»
+        "},
+        indoc! {"
+            «1. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            2. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            - This is an unordered list item that is
+              also very long and should not merge
+              with the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping maintain indents even when they already exists.
+    assert_rewrap(
+        indoc! {"
+            «1. This is a numbered list
+               item that is very long and needs to be wrapped properly.
+            2. This is a numbered list
+               item that is very long and needs to be wrapped properly.
+            - This is an unordered list item that is also very long and
+              should not merge with the numbered item.ˇ»
+        "},
+        indoc! {"
+            «1. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            2. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            - This is an unordered list item that is
+              also very long and should not merge
+              with the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
         &mut cx,
     );
 
@@ -9326,7 +9405,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
-        settings.languages.insert(
+        settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -9890,7 +9969,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
-        settings.languages.insert(
+        settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -9933,9 +10012,9 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
-        ))
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+            Formatter::LanguageServer { name: None },
+        )))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10062,21 +10141,17 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-        settings.defaults.formatter =
-            Some(language_settings::SelectedFormatter::List(FormatterList(
-                vec![
-                    Formatter::LanguageServer { name: None },
-                    Formatter::CodeActions(
-                        [
-                            ("code-action-1".into(), true),
-                            ("code-action-2".into(), true),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ),
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
+            Formatter::LanguageServer { name: None },
+            Formatter::CodeActions(
+                [
+                    ("code-action-1".into(), true),
+                    ("code-action-2".into(), true),
                 ]
-                .into(),
-            )))
+                .into_iter()
+                .collect(),
+            ),
+        ])))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10328,9 +10403,9 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
-        ))
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
+            Formatter::LanguageServer { name: None },
+        ])))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10536,7 +10611,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(SelectedFormatter::Auto)
     });
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -14905,7 +14980,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         .unwrap();
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
-        language_settings.languages.insert(
+        language_settings.languages.0.insert(
             language_name.clone(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -15803,9 +15878,9 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::Prettier].into()),
-        ))
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+            Formatter::Prettier,
+        )))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -15875,7 +15950,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     );
 
     update_test_language_settings(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(SelectedFormatter::Auto)
     });
     let format = editor.update_in(cx, |editor, window, cx| {
         editor.perform_format(
