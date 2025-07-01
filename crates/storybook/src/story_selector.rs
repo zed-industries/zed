@@ -31,7 +31,7 @@ pub enum ComponentStory {
     ToggleButton,
     ViewportUnits,
     WithRemSize,
-    IndentGuidesStory,
+    IndentGuides,
 }
 
 impl ComponentStory {
@@ -61,7 +61,7 @@ impl ComponentStory {
             Self::ToggleButton => cx.new(|_| ui::ToggleButtonStory).into(),
             Self::ViewportUnits => cx.new(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new(|_| crate::stories::WithRemSizeStory).into(),
-            Self::IndentGuidesStory => crate::stories::IndentGuidesStory::model(window, cx).into(),
+            Self::IndentGuides => crate::stories::IndentGuidesStory::model(window, cx).into(),
         }
     }
 }
