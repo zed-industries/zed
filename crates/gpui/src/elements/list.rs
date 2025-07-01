@@ -421,25 +421,27 @@ impl ListState {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
 
-    /// Convert a pixel offset to a list offset.
-    pub fn pixel_offset_to_list_offset(&self, pixel_offset: Pixels) -> ListOffset {
-        let state = &*self.0.borrow();
-        let mut cursor = state.items.cursor::<ListItemSummary>(&());
-        cursor.seek(&Height(pixel_offset), Bias::Right, &());
-        let item_ix = cursor.start().count;
-        let offset_in_item = pixel_offset - cursor.start().height;
-        ListOffset {
-            item_ix,
-            offset_in_item,
-        }
-    }
-
-    /// Convert a list offset to a pixel offset.
-    pub fn list_offset_to_pixel_offset(&self, offset: &ListOffset) -> Pixels {
+    /// Add a pixel offset to a list offset, returning the new list offset.
+    pub fn add_pixel_offset(&self, offset: &ListOffset, pixel_delta: Pixels) -> ListOffset {
         let state = &*self.0.borrow();
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
         cursor.seek(&Count(offset.item_ix), Bias::Right, &());
-        cursor.start().height + offset.offset_in_item
+        let start_pixel_offset = cursor.start().height + offset.offset_in_item;
+        let new_pixel_offset = (start_pixel_offset + pixel_delta).max(px(0.));
+        if new_pixel_offset == start_pixel_offset {
+            return *offset;
+        }
+
+        if new_pixel_offset >= start_pixel_offset {
+            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
+        } else {
+            cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
+        }
+
+        ListOffset {
+            item_ix: cursor.start().count,
+            offset_in_item: new_pixel_offset - cursor.start().height,
+        }
     }
 }
 
