@@ -1,4 +1,4 @@
-use agent::{ThreadEvent, ZedAgent};
+use agent::{ThreadEvent, ZedAgentThread};
 use assistant_tool::{Tool, ToolSource};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};
@@ -8,12 +8,12 @@ use ui::prelude::*;
 
 pub struct IncompatibleToolsState {
     cache: HashMap<LanguageModelToolSchemaFormat, Vec<Arc<dyn Tool>>>,
-    thread: Entity<ZedAgent>,
+    thread: Entity<ZedAgentThread>,
     _thread_subscription: Subscription,
 }
 
 impl IncompatibleToolsState {
-    pub fn new(thread: Entity<ZedAgent>, cx: &mut Context<Self>) -> Self {
+    pub fn new(thread: Entity<ZedAgentThread>, cx: &mut Context<Self>) -> Self {
         let _tool_working_set_subscription =
             cx.subscribe(&thread, |this, _, event, _| match event {
                 ThreadEvent::ProfileChanged => {

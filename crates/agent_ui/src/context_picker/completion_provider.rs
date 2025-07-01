@@ -22,7 +22,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use agent::{
-    ZedAgent,
+    ZedAgentThread,
     context::{AgentContextHandle, AgentContextKey, RULES_ICON},
     thread_store::{TextThreadStore, ThreadStore},
 };
@@ -449,7 +449,7 @@ impl ContextPickerCompletionProvider {
                         let context_store = context_store.clone();
                         let thread_store = thread_store.clone();
                         window.spawn::<_, Option<_>>(cx, async move |cx| {
-                            let thread: Entity<ZedAgent> = thread_store
+                            let thread: Entity<ZedAgentThread> = thread_store
                                 .update_in(cx, |thread_store, window, cx| {
                                     thread_store.open_thread(&thread_id, window, cx)
                                 })
