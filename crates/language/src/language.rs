@@ -39,7 +39,7 @@ use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServer
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
-use schemars::{JsonSchema, json_schema};
+use schemars::{JsonSchema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -972,19 +972,10 @@ fn deserialize_regex_vec<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Regex>, 
     Ok(regexes)
 }
 
-fn regex_vec_json_schema(_: &mut SchemaGenerator) -> Schema {
-    Schema::Object(SchemaObject {
-        instance_type: Some(InstanceType::Array.into()),
-        array: Some(Box::new(schemars::schema::ArrayValidation {
-            items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                Schema::Object(SchemaObject {
-                    instance_type: Some(InstanceType::String.into()),
-                    ..Default::default()
-                }),
-            ))),
-            ..Default::default()
-        })),
-        ..Default::default()
+fn regex_vec_json_schema(_: &mut SchemaGenerator) -> schemars::Schema {
+    json_schema!({
+        "type": "array",
+        "items": { "type": "string" }
     })
 }
 
