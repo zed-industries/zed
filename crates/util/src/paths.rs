@@ -170,10 +170,16 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
-    ([^\(:]+)\:?(?:
-        \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column), filename:(row,column), filename:(row:column)
+    ([^\(]+)\:(?:
+        \((\d+)[,:](\d+)\) # filename:(row,column), filename:(row:column)
         |
-        \((\d+)\)()     # filename(row), filename:(row)
+        \((\d+)\)()     # filename:(row)
+    )
+    |
+    ([^\(]+)(?:
+        \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
+        |
+        \((\d+)\)()     # filename(row)
     )
     |
     (.+?)(?:
