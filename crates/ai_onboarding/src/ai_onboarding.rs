@@ -1,11 +1,13 @@
-use ui::{prelude::*, IntoElement, RegisterComponent, RenderOnce};
+use gpui::{Action, ClickEvent};
+use ui::{IntoElement, RegisterComponent, prelude::*};
+use zed_actions::agent::OpenConfiguration;
 
 pub enum OnboardingSource {
     AgentPanel,
     EditPredictions,
 }
 
-#[derive(RegisterComponent, IntoElement)]
+#[derive(RegisterComponent)]
 pub struct ZedAiOnboarding {
     pub is_signed_in: bool,
     pub has_accepted_terms_of_service: bool,
@@ -14,8 +16,35 @@ pub struct ZedAiOnboarding {
     pub source: OnboardingSource,
 }
 
-impl RenderOnce for ZedAiOnboarding {
-    fn render(self, window: &mut ui::Window, cx: &mut ui::App) -> impl IntoElement {
+impl ZedAiOnboarding {
+    fn upgrade_plan(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        cx.open_url("https://zed.dev/account/upgrade");
+        cx.notify();
+    }
+
+    fn continue_free(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        // dl: ccept TOS if needed, select Claude Sonnet
+        cx.notify();
+    }
+
+    fn configure_providers(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
+        cx.notify();
+    }
+
+    fn configure_github_copilot(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // dl todo
+        cx.notify();
+    }
+}
+
+impl Render for ZedAiOnboarding {
+    fn render(&mut self, _window: &mut ui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let free_plan_ad = v_flex()
             .child("Free")
             .child("50 Zed-hosted prompts per month with the Claude models")
@@ -26,7 +55,8 @@ impl RenderOnce for ZedAiOnboarding {
             .child(
                 Button::new("continue", "Continue Free")
                     .disabled(self.account_too_young)
-                    .full_width(),
+                    .full_width()
+                    .on_click(cx.listener(Self::configure_providers)),
             );
 
         let pro_plan_ad = v_flex()
@@ -38,9 +68,9 @@ impl RenderOnce for ZedAiOnboarding {
             // check whether the account is young
             // once done, the modal should go away
             .map(|this| if self.account_too_young {
-                this.child(Button::new("pro", "Start with Pro").full_width())
+                this.child(Button::new("pro", "Start with Pro").full_width().on_click(cx.listener(Self::upgrade_plan)))
             } else {
-                this.child(Button::new("trial", "Start Trial").full_width())
+                this.child(Button::new("trial", "Start Pro Trial").full_width().on_click(cx.listener(Self::upgrade_plan)))
             });
 
         let young_account_disclaimer = "Given your GitHub account was created less than 30 days ago, we can't offer your a free trial.";
@@ -76,7 +106,11 @@ impl RenderOnce for ZedAiOnboarding {
                         OnboardingSource::EditPredictions => "Configure GitHub Copilot",
                     },
                 )
-                .full_width(),
+                .full_width()
+                .on_click(cx.listener(match self.source {
+                    OnboardingSource::AgentPanel => Self::configure_providers,
+                    OnboardingSource::EditPredictions => Self::configure_github_copilot,
+                })),
             )
     }
 }
@@ -86,21 +120,22 @@ impl Component for ZedAiOnboarding {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         fn onboarding(
             is_signed_in: bool,
             has_accepted_terms_of_service: bool,
             plan: Option<proto::Plan>,
             account_too_young: bool,
             source: OnboardingSource,
+            cx: &mut App,
         ) -> AnyElement {
-            ZedAiOnboarding {
+            cx.new(|_cx| ZedAiOnboarding {
                 is_signed_in,
                 has_accepted_terms_of_service,
                 plan,
                 account_too_young,
                 source,
-            }
+            })
             .into_any_element()
         }
 
@@ -111,15 +146,15 @@ impl Component for ZedAiOnboarding {
                 .children(vec![
                     single_example(
                         "Not Signed-In",
-                        onboarding(false, false, None, false, OnboardingSource::AgentPanel),
+                        onboarding(false, false, None, false, OnboardingSource::AgentPanel, cx),
                     ),
                     single_example(
                         "Not accepted TOS",
-                        onboarding(true, false, None, false, OnboardingSource::AgentPanel),
+                        onboarding(true, false, None, false, OnboardingSource::AgentPanel, cx),
                     ),
                     single_example(
                         "Account too young",
-                        onboarding(true, false, None, true, OnboardingSource::AgentPanel),
+                        onboarding(true, false, None, true, OnboardingSource::AgentPanel, cx),
                     ),
                     single_example(
                         "Agent Panel (Free)",
@@ -129,6 +164,7 @@ impl Component for ZedAiOnboarding {
                             Some(proto::Plan::Free),
                             false,
                             OnboardingSource::AgentPanel,
+                            cx,
                         ),
                     ),
                     single_example(
@@ -139,6 +175,7 @@ impl Component for ZedAiOnboarding {
                             Some(proto::Plan::ZedProTrial),
                             false,
                             OnboardingSource::AgentPanel,
+                            cx,
                         ),
                     ),
                     single_example(
@@ -149,6 +186,7 @@ impl Component for ZedAiOnboarding {
                             Some(proto::Plan::ZedPro),
                             false,
                             OnboardingSource::AgentPanel,
+                            cx,
                         ),
                     ),
                     single_example(
@@ -159,6 +197,7 @@ impl Component for ZedAiOnboarding {
                             Some(proto::Plan::Free),
                             false,
                             OnboardingSource::EditPredictions,
+                            cx,
                         ),
                     ),
                 ])
