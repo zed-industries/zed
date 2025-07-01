@@ -9,7 +9,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText,
-    Subscription, WeakEntity, actions, div,
+    Subscription, WeakEntity, actions, div, transparent_black,
 };
 use language::{Language, LanguageConfig};
 use settings::KeybindSource;
@@ -514,10 +514,21 @@ impl Render for KeymapEditor {
                     .striped()
                     .column_widths([rems(16.), rems(16.), rems(16.), rems(32.), rems(8.)])
                     .header(["Action", "Arguments", "Keystrokes", "Context", "Source"])
-                    .selected_item_index(self.selected_index)
-                    .on_click_row(cx.processor(|this, row_index, _window, _cx| {
-                        this.selected_index = Some(row_index);
-                    }))
+                    .map_row(
+                        cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
+                            let is_selected = this.selected_index == Some(row_index);
+                            row.id(("keymap-table-row", row_index))
+                                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                    this.selected_index = Some(row_index);
+                                }))
+                                .border_2()
+                                .border_color(transparent_black())
+                                .when(is_selected, |row| {
+                                    row.border_color(cx.theme().colors().panel_focused_border)
+                                })
+                                .into_any_element()
+                        }),
+                    )
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,

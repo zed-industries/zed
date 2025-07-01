@@ -155,8 +155,6 @@ impl TableInteractionState {
         self.vertical_scrollbar.hide(window, cx);
     }
 
-    // fn listener(this: Entity<Self>, fn: F) ->
-
     pub fn listener<E: ?Sized>(
         this: &Entity<Self>,
         f: impl Fn(&mut Self, &E, &mut Window, &mut Context<Self>) + 'static,
@@ -353,9 +351,8 @@ pub struct Table<const COLS: usize = 3> {
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    selected_item_index: Option<usize>,
     column_widths: Option<[Length; COLS]>,
-    on_click_row: Option<Rc<dyn Fn(usize, &mut Window, &mut App)>>,
+    map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -367,9 +364,8 @@ impl<const COLS: usize> Table<COLS> {
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
-            selected_item_index: None,
             column_widths: None,
-            on_click_row: None,
+            map_row: None,
         }
     }
 
@@ -418,11 +414,6 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    pub fn selected_item_index(mut self, selected_item_index: Option<usize>) -> Self {
-        self.selected_item_index = selected_item_index;
-        self
-    }
-
     pub fn header(mut self, headers: [impl IntoElement; COLS]) -> Self {
         self.headers = Some(headers.map(IntoElement::into_any_element));
         self
@@ -440,11 +431,11 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    pub fn on_click_row(
+    pub fn map_row(
         mut self,
-        callback: impl Fn(usize, &mut Window, &mut App) + 'static,
+        callback: impl Fn((usize, Div), &mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
-        self.on_click_row = Some(Rc::new(callback));
+        self.map_row = Some(Rc::new(callback));
         self
     }
 }
@@ -465,7 +456,8 @@ pub fn render_row<const COLS: usize>(
     row_index: usize,
     items: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let is_striped = table_context.striped;
     let is_last = row_index == table_context.total_row_count - 1;
@@ -477,43 +469,33 @@ pub fn render_row<const COLS: usize>(
     let column_widths = table_context
         .column_widths
         .map_or([None; COLS], |widths| widths.map(Some));
-    let is_selected = table_context.selected_item_index == Some(row_index);
 
-    let row = div()
-        .w_full()
-        .border_2()
-        .border_color(transparent_black())
-        .when(is_selected, |row| {
-            row.border_color(cx.theme().colors().panel_focused_border)
-        })
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .px_1p5()
-                .py_1()
-                .when_some(bg, |row, bg| row.bg(bg))
-                .when(!is_striped, |row| {
-                    row.border_b_1()
-                        .border_color(transparent_black())
-                        .when(!is_last, |row| row.border_color(cx.theme().colors().border))
-                })
-                .children(
-                    items
-                        .map(IntoElement::into_any_element)
-                        .into_iter()
-                        .zip(column_widths)
-                        .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
-                ),
-        );
+    let row = div().w_full().child(
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_1p5()
+            .py_1()
+            .when_some(bg, |row, bg| row.bg(bg))
+            .when(!is_striped, |row| {
+                row.border_b_1()
+                    .border_color(transparent_black())
+                    .when(!is_last, |row| row.border_color(cx.theme().colors().border))
+            })
+            .children(
+                items
+                    .map(IntoElement::into_any_element)
+                    .into_iter()
+                    .zip(column_widths)
+                    .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
+            ),
+    );
 
-    if let Some(on_click) = table_context.on_click_row {
-        row.id(("table-row", row_index))
-            .on_click(move |_, window, cx| on_click(row_index, window, cx))
-            .into_any_element()
+    if let Some(map_row) = table_context.map_row {
+        map_row((row_index, row), window, cx)
     } else {
         row.into_any_element()
     }
@@ -547,9 +529,8 @@ pub fn render_header<const COLS: usize>(
 pub struct TableRenderContext<const COLS: usize> {
     pub striped: bool,
     pub total_row_count: usize,
-    pub selected_item_index: Option<usize>,
     pub column_widths: Option<[Length; COLS]>,
-    pub on_click_row: Option<Rc<dyn Fn(usize, &mut Window, &mut App)>>,
+    pub map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -558,14 +539,13 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             striped: table.striped,
             total_row_count: table.rows.len(),
             column_widths: table.column_widths,
-            selected_item_index: table.selected_item_index,
-            on_click_row: table.on_click_row.clone(),
+            map_row: table.map_row.clone(),
         }
     }
 }
 
 impl<const COLS: usize> RenderOnce for Table<COLS> {
-    fn render(mut self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let table_context = TableRenderContext::new(&self);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
 
@@ -598,7 +578,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .map(|parent| match self.rows {
                         TableContents::Vec(items) => {
                             parent.children(items.into_iter().enumerate().map(|(index, row)| {
-                                render_row(index, row, table_context.clone(), cx)
+                                render_row(index, row, table_context.clone(), window, cx)
                             }))
                         }
                         TableContents::UniformList(uniform_list_data) => parent.child(
@@ -617,6 +597,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                                     row_index,
                                                     row,
                                                     table_context.clone(),
+                                                    window,
                                                     cx,
                                                 )
                                             })
