@@ -33,13 +33,13 @@ Follow those links for language- and adapter-specific information and examples, 
 
 ## Getting Started
 
-For most languages, the fastest way to get started is to run {#action debugger::Start} ({#kb debugger::Start}). This opens the _new process modal_, which shows you a contextual list of preconfigured debug tasks for the current project. Debug tasks are created from tests, entry points (like a `main` function), and from other sources---consult the documentation for your language for full information about what's suppported.
+For most languages, the fastest way to get started is to run {#action debugger::Start} ({#kb debugger::Start}). This opens the _new process modal_, which shows you a contextual list of preconfigured debug tasks for the current project. Debug tasks are created from tests, entry points (like a `main` function), and from other sources — consult the documentation for your language for full information about what's suppported.
 
 You can open the same modal by clicking the "plus" button at the top right of the debug panel.
 
-For languages that don't provide preconfigured debug tasks (this includes C, C++, and many extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
+For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
 
-```jsonc
+```json
 [
   {
     "adapter": "CodeLLDB",
@@ -49,13 +49,14 @@ For languages that don't provide preconfigured debug tasks (this includes C, C++
   {
     "adapter": "Debugpy",
     "label": "Second configuration"
+    // ...
   }
 ]
 ```
 
 Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.zed/debug.json`, they'll appear in the list in the new process modal.
 
-Zed will also load debug configurations from `.vscode/launch.json`, and show them FIXME
+Zed will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.zed/debug.json`.
 
 ### Launching & Attaching
 
@@ -74,7 +75,7 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ```json
 [
   {
-    // The label for the debug configuration and used to identify the debug session inside the debug panel & new session modal
+    // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
     "label": "Example Start debugger config",
     // The debug adapter that Zed should use to debug the program
     "adapter": "Example adapter name",
@@ -338,4 +339,4 @@ If you're running into problems with the debugger, please [open a GitHub issue](
 There are also some features you can use to gather more information about the problem:
 
 - When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
-- You can also use the {# dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
+- You can also use the {#action dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.

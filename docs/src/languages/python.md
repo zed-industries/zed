@@ -135,7 +135,7 @@ For greater control, you can add debug configurations to `.zed/debug.json`. See 
 
 ### Debug Active File
 
-```jsonc
+```json
 [
   {
     "label": "Python Active File",
@@ -165,7 +165,7 @@ requirements.txt
 
 …the following configuration can be used:
 
-```jsonc
+```json
 [
   {
     "label": "Python: Flask",

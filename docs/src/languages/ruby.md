@@ -44,7 +44,7 @@ For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `s
 
 You can skip step 1 and force using the system executable by setting `use_bundler` to `false` in your settings:
 
-```jsonc
+```json
 {
   "lsp": {
     "<SERVER_NAME>": {
@@ -350,7 +350,7 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug a Ruby script
 
-```jsonc
+```json
 [
   {
     "label": "Debug current file",
@@ -364,7 +364,7 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug Rails server
 
-```jsonc
+```json
 [
   {
     "label": "Debug Rails server",

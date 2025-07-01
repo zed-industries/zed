@@ -119,7 +119,7 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
 
 ### Build and Debug Binary
 
-```jsonc
+```json
 [
   {
     "label": "Debug native binary",

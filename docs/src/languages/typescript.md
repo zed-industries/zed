@@ -174,21 +174,21 @@ If your use-case isn't covered by any of these, you can take full control by add
 
 Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
 
-```jsonc
+```json
 [
   {
     "label": "Launch Chrome (TypeScript)",
     "adapter": "JavaScript",
-    "type": "pwa-chrome",
+    "type": "chrome",
     "request": "launch",
     "url": "http://localhost:5500",
     "program": "$ZED_FILE",
     "webRoot": "${ZED_WORKTREE_ROOT}",
-    "sourceMaps": true,
     "build": {
       "command": "npx",
       "args": ["tsc"]
-    }
+    },
+    "skipFiles": ["<node_internals>/**"]
   }
 ]
 ```

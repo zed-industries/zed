@@ -191,7 +191,7 @@ If your use-case isn't covered by any of these, you can take full control by add
 
 ### Debug the current file
 
-```jsonc
+```json
 [
   {
     "adapter": "JavaScript",
@@ -208,7 +208,7 @@ This implicitly runs the current file using `node`.
 
 ### Launch a web app in Chrome
 
-```jsonc
+```json
 [
   {
     "adapter": "JavaScript",
