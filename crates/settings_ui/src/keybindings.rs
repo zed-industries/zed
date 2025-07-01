@@ -562,7 +562,17 @@ impl Render for KeymapEditor {
 
                             let this = cx.entity();
                             right_click_menu(("keymap-table-row-menu", row_index))
-                                .trigger(|_| row)
+                                .trigger(move |is_menu_open: bool, _window, cx| {
+                                    if is_menu_open {
+                                        this.update(cx, |this, cx| {
+                                            if this.selected_index != Some(row_index) {
+                                                this.selected_index = Some(row_index);
+                                                cx.notify();
+                                            }
+                                        });
+                                    }
+                                    row
+                                })
                                 .menu(|window, cx| {
                                     ContextMenu::build(window, cx, |menu, _window, _cx| {
                                         menu.header("Context Menu")
