@@ -7,18 +7,18 @@ use ui::Tooltip;
 use ui::prelude::*;
 use zed_actions::agent::Chat;
 
-use crate::{AgentThreadEntryContent, Message, MessageChunk, Role, Thread, ThreadEntry};
+use crate::{AcpThread, AgentThreadEntryContent, Message, MessageChunk, Role, ThreadEntry};
 
-pub struct ThreadElement {
-    thread: Entity<Thread>,
+pub struct AcpThreadView {
+    thread: Entity<AcpThread>,
     // todo! use full message editor from agent2
     message_editor: Entity<Editor>,
     send_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
 
-impl ThreadElement {
-    pub fn new(thread: Entity<Thread>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+impl AcpThreadView {
+    pub fn new(thread: Entity<AcpThread>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let message_editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -127,13 +127,13 @@ impl ThreadElement {
     }
 }
 
-impl Focusable for ThreadElement {
+impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.message_editor.focus_handle(cx)
     }
 }
 
-impl Render for ThreadElement {
+impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.message_editor.read(cx).text(cx);
         let is_editor_empty = text.is_empty();

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent2::{AcpAgent, Agent as _};
+use acp::AcpServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
@@ -198,7 +198,7 @@ enum ActiveView {
         _subscriptions: Vec<gpui::Subscription>,
     },
     AcpThread {
-        thread_element: Entity<agent2::ThreadElement>,
+        thread_view: Entity<acp::AcpThreadView>,
     },
     TextThread {
         context_editor: Entity<TextThreadEditor>,
@@ -753,8 +753,8 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
-            ActiveView::AcpThread { thread_element, .. } => {
-                thread_element.update(cx, |thread_element, _cx| thread_element.cancel());
+            ActiveView::AcpThread { thread_view, .. } => {
+                thread_view.update(cx, |thread_element, _cx| thread_element.cancel());
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
@@ -916,12 +916,12 @@ impl AgentPanel {
 
         let project = self.project.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let agent = AcpAgent::stdio(child, project, cx);
+            let agent = AcpServer::stdio(child, project, cx);
             let thread = agent.create_thread(cx).await?;
-            let thread_element =
-                cx.new_window_entity(|window, cx| agent2::ThreadElement::new(thread, window, cx))?;
+            let thread_view =
+                cx.new_window_entity(|window, cx| acp::AcpThreadView::new(thread, window, cx))?;
             this.update_in(cx, |this, window, cx| {
-                this.set_active_view(ActiveView::AcpThread { thread_element }, window, cx);
+                this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
             })
         })
         .detach();
@@ -1521,7 +1521,7 @@ impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Thread { message_editor, .. } => message_editor.focus_handle(cx),
-            ActiveView::AcpThread { thread_element, .. } => thread_element.focus_handle(cx),
+            ActiveView::AcpThread { thread_view, .. } => thread_view.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
@@ -1678,11 +1678,9 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
-            ActiveView::AcpThread { thread_element } => {
-                Label::new(thread_element.read(cx).title(cx))
-                    .truncate()
-                    .into_any_element()
-            }
+            ActiveView::AcpThread { thread_view } => Label::new(thread_view.read(cx).title(cx))
+                .truncate()
+                .into_any_element(),
             ActiveView::TextThread {
                 title_editor,
                 context_editor,
@@ -3188,9 +3186,9 @@ impl Render for AgentPanel {
                     })
                     .child(h_flex().child(message_editor.clone()))
                     .child(self.render_drag_target(cx)),
-                ActiveView::AcpThread { thread_element, .. } => parent
+                ActiveView::AcpThread { thread_view, .. } => parent
                     .relative()
-                    .child(thread_element.clone())
+                    .child(thread_view.clone())
                     // todo!
                     // .child(h_flex().child(self.message_editor.clone()))
                     .child(self.render_drag_target(cx)),
