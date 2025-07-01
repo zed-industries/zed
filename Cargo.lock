@@ -10826,6 +10826,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "menu",
  "project",
  "settings",
  "settings_ui",

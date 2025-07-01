@@ -22,6 +22,7 @@ component.workspace = true
 db.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
+menu.workspace = true
 project.workspace = true
 settings.workspace = true
 settings_ui.workspace = true

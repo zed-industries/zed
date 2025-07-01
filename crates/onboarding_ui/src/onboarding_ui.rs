@@ -7,6 +7,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
     Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, WeakEntity, actions, prelude::*,
 };
+use menu;
 use persistence::ONBOARDING_DB;
 
 use project::Project;
@@ -51,7 +52,7 @@ pub fn init(cx: &mut App) {
 }
 
 fn feature_gate_onboarding_ui_actions(cx: &mut App) {
-    const ONBOARDING_ACTION_NAMESPACE: &str = "onboarding";
+    const ONBOARDING_ACTION_NAMESPACE: &str = "onboarding_ui";
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(ONBOARDING_ACTION_NAMESPACE);
@@ -112,12 +113,19 @@ pub enum NavigationFocusItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageFocusItem(pub usize);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusArea {
+    Navigation,
+    PageContent,
+}
+
 pub struct OnboardingUI {
     focus_handle: FocusHandle,
     current_page: OnboardingPage,
     nav_focus: NavigationFocusItem,
     page_focus: [PageFocusItem; 4],
     completed_pages: [bool; 4],
+    focus_area: FocusArea,
 
     // Workspace reference for Item trait
     workspace: WeakEntity<Workspace>,
@@ -147,6 +155,12 @@ impl Render for OnboardingUI {
         div()
             .bg(cx.theme().colors().editor_background)
             .size_full()
+            .key_context("OnboardingUI")
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::toggle_focus))
             .flex()
             .items_center()
             .justify_center()
@@ -163,14 +177,27 @@ impl Render for OnboardingUI {
                     .on_action(cx.listener(Self::handle_next_page))
                     .on_action(cx.listener(Self::handle_previous_page))
                     .w(px(904.))
-                    .h(px(500.))
-                    .gap(px(48.))
-                    .child(self.render_navigation(window, cx))
+                    .gap(px(24.))
                     .child(
-                        v_flex()
-                            .h_full()
-                            .flex_1()
-                            .child(div().flex_1().child(self.render_active_page(window, cx))),
+                        h_flex()
+                            .h(px(500.))
+                            .w_full()
+                            .gap(px(48.))
+                            .child(self.render_navigation(window, cx))
+                            .child(
+                                v_flex()
+                                    .h_full()
+                                    .flex_1()
+                                    .when(self.focus_area == FocusArea::PageContent, |this| {
+                                        this.border_2()
+                                            .border_color(cx.theme().colors().border_focused)
+                                    })
+                                    .rounded_lg()
+                                    .p_4()
+                                    .child(
+                                        div().flex_1().child(self.render_active_page(window, cx)),
+                                    ),
+                            ),
                     ),
             )
     }
@@ -181,8 +208,10 @@ impl OnboardingUI {
         Self {
             focus_handle: cx.focus_handle(),
             current_page: OnboardingPage::Basics,
-            current_focus: OnboardingFocus::default(),
+            nav_focus: NavigationFocusItem::Basics,
+            page_focus: [PageFocusItem(0); 4],
             completed_pages: [false; 4],
+            focus_area: FocusArea::Navigation,
             workspace: workspace.weak_handle(),
             workspace_id: workspace.database_id(),
             client,
@@ -229,18 +258,185 @@ impl OnboardingUI {
         }
     }
 
-    fn toggle_focus(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) {
-        self.current_focus = match self.current_focus {
-            OnboardingFocus::Navigation => OnboardingFocus::Page,
-            OnboardingFocus::Page => OnboardingFocus::Navigation,
-        };
+    fn reset(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) {
+        self.current_page = OnboardingPage::Basics;
+        self.focus_area = FocusArea::Navigation;
+        self.completed_pages = [false; 4];
         cx.notify();
     }
 
-    fn reset(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) {
-        self.current_page = OnboardingPage::Basics;
-        self.current_focus = OnboardingFocus::Page;
-        self.completed_pages = [false; 4];
+    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        match self.focus_area {
+            FocusArea::Navigation => {
+                self.nav_focus = match self.nav_focus {
+                    NavigationFocusItem::SignIn => NavigationFocusItem::Basics,
+                    NavigationFocusItem::Basics => NavigationFocusItem::Editing,
+                    NavigationFocusItem::Editing => NavigationFocusItem::AiSetup,
+                    NavigationFocusItem::AiSetup => NavigationFocusItem::Welcome,
+                    NavigationFocusItem::Welcome => NavigationFocusItem::Next,
+                    NavigationFocusItem::Next => NavigationFocusItem::SignIn,
+                };
+            }
+            FocusArea::PageContent => {
+                let page_index = match self.current_page {
+                    OnboardingPage::Basics => 0,
+                    OnboardingPage::Editing => 1,
+                    OnboardingPage::AiSetup => 2,
+                    OnboardingPage::Welcome => 3,
+                };
+                // Bounds checking for page items
+                let max_items = match self.current_page {
+                    OnboardingPage::Basics => 3,  // 3 buttons
+                    OnboardingPage::Editing => 3, // 3 buttons
+                    OnboardingPage::AiSetup => 2, // Will have 2 items
+                    OnboardingPage::Welcome => 1, // Will have 1 item
+                };
+
+                if self.page_focus[page_index].0 < max_items - 1 {
+                    self.page_focus[page_index].0 += 1;
+                } else {
+                    // Wrap to start
+                    self.page_focus[page_index].0 = 0;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.focus_area {
+            FocusArea::Navigation => {
+                self.nav_focus = match self.nav_focus {
+                    NavigationFocusItem::SignIn => NavigationFocusItem::Next,
+                    NavigationFocusItem::Basics => NavigationFocusItem::SignIn,
+                    NavigationFocusItem::Editing => NavigationFocusItem::Basics,
+                    NavigationFocusItem::AiSetup => NavigationFocusItem::Editing,
+                    NavigationFocusItem::Welcome => NavigationFocusItem::AiSetup,
+                    NavigationFocusItem::Next => NavigationFocusItem::Welcome,
+                };
+            }
+            FocusArea::PageContent => {
+                let page_index = match self.current_page {
+                    OnboardingPage::Basics => 0,
+                    OnboardingPage::Editing => 1,
+                    OnboardingPage::AiSetup => 2,
+                    OnboardingPage::Welcome => 3,
+                };
+                // Bounds checking for page items
+                let max_items = match self.current_page {
+                    OnboardingPage::Basics => 3,  // 3 buttons
+                    OnboardingPage::Editing => 3, // 3 buttons
+                    OnboardingPage::AiSetup => 2, // Will have 2 items
+                    OnboardingPage::Welcome => 1, // Will have 1 item
+                };
+
+                if self.page_focus[page_index].0 > 0 {
+                    self.page_focus[page_index].0 -= 1;
+                } else {
+                    // Wrap to end
+                    self.page_focus[page_index].0 = max_items - 1;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        match self.focus_area {
+            FocusArea::Navigation => {
+                match self.nav_focus {
+                    NavigationFocusItem::SignIn => {
+                        // Handle sign in action
+                        // TODO: Implement sign in action
+                    }
+                    NavigationFocusItem::Basics => {
+                        self.jump_to_page(OnboardingPage::Basics, window, cx)
+                    }
+                    NavigationFocusItem::Editing => {
+                        self.jump_to_page(OnboardingPage::Editing, window, cx)
+                    }
+                    NavigationFocusItem::AiSetup => {
+                        self.jump_to_page(OnboardingPage::AiSetup, window, cx)
+                    }
+                    NavigationFocusItem::Welcome => {
+                        self.jump_to_page(OnboardingPage::Welcome, window, cx)
+                    }
+                    NavigationFocusItem::Next => {
+                        // Handle next button action
+                        self.next_page(window, cx);
+                    }
+                }
+                // After confirming navigation item (except Next), switch focus to page content
+                if self.nav_focus != NavigationFocusItem::Next {
+                    self.focus_area = FocusArea::PageContent;
+                }
+            }
+            FocusArea::PageContent => {
+                // Handle page-specific item selection
+                let page_index = match self.current_page {
+                    OnboardingPage::Basics => 0,
+                    OnboardingPage::Editing => 1,
+                    OnboardingPage::AiSetup => 2,
+                    OnboardingPage::Welcome => 3,
+                };
+                let item_index = self.page_focus[page_index].0;
+
+                // Trigger the action for the focused item
+                match self.current_page {
+                    OnboardingPage::Basics => {
+                        match item_index {
+                            0 => {
+                                // Open file action
+                                cx.notify();
+                            }
+                            1 => {
+                                // Create project action
+                                cx.notify();
+                            }
+                            2 => {
+                                // Explore UI action
+                                cx.notify();
+                            }
+                            _ => {}
+                        }
+                    }
+                    OnboardingPage::Editing => {
+                        // Similar handling for editing page
+                        cx.notify();
+                    }
+                    _ => {
+                        cx.notify();
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        match self.focus_area {
+            FocusArea::PageContent => {
+                // Switch focus back to navigation
+                self.focus_area = FocusArea::Navigation;
+            }
+            FocusArea::Navigation => {
+                // If already in navigation, maybe close the onboarding?
+                // For now, just stay in navigation
+            }
+        }
+        cx.notify();
+    }
+
+    fn toggle_focus(&mut self, _: &ToggleFocus, _window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_area = match self.focus_area {
+            FocusArea::Navigation => FocusArea::PageContent,
+            FocusArea::PageContent => FocusArea::Navigation,
+        };
         cx.notify();
     }
 
@@ -340,6 +536,11 @@ impl OnboardingUI {
                                 Button::new("sign_in", "Sign in")
                                     .color(Color::Muted)
                                     .label_size(LabelSize::Small)
+                                    .when(
+                                        self.focus_area == FocusArea::Navigation
+                                            && self.nav_focus == NavigationFocusItem::SignIn,
+                                        |this| this.color(Color::Accent),
+                                    )
                                     .size(ButtonSize::Compact)
                                     .on_click(cx.listener(move |_, _, window, cx| {
                                         let client = client.clone();
@@ -401,15 +602,31 @@ impl OnboardingUI {
         let shortcut = shortcut.into();
         let id = ElementId::Name(label.clone());
 
+        let is_focused = match page {
+            OnboardingPage::Basics => self.nav_focus == NavigationFocusItem::Basics,
+            OnboardingPage::Editing => self.nav_focus == NavigationFocusItem::Editing,
+            OnboardingPage::AiSetup => self.nav_focus == NavigationFocusItem::AiSetup,
+            OnboardingPage::Welcome => self.nav_focus == NavigationFocusItem::Welcome,
+        };
+
+        let area_focused = self.focus_area == FocusArea::Navigation;
+
         h_flex()
             .id(id)
             .h(rems(1.5))
             .w_full()
+            .when(is_focused, |this| {
+                this.bg(if area_focused {
+                    cx.theme().colors().border_focused.opacity(0.16)
+                } else {
+                    cx.theme().colors().border.opacity(0.24)
+                })
+            })
             .child(
                 div()
                     .w(px(3.))
                     .h_full()
-                    .when(selected, |this| this.bg(cx.theme().status().info)),
+                    .when(selected, |this| this.bg(cx.theme().colors().border_focused)),
             )
             .child(
                 h_flex()
@@ -417,7 +634,7 @@ impl OnboardingUI {
                     .flex_1()
                     .justify_between()
                     .items_center()
-                    .child(Label::new(label))
+                    .child(Label::new(label).when(is_focused, |this| this.color(Color::Default)))
                     .child(Label::new(format!("⌘{}", shortcut.clone())).color(Color::Muted)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -440,6 +657,11 @@ impl OnboardingUI {
                 },
             )
             .style(ButtonStyle::Filled)
+            .when(
+                self.focus_area == FocusArea::Navigation
+                    && self.nav_focus == NavigationFocusItem::Next,
+                |this| this.color(Color::Accent),
+            )
             .key_binding(ui::KeyBinding::for_action_in(
                 &NextPage,
                 &self.focus_handle,
@@ -452,48 +674,230 @@ impl OnboardingUI {
         )
     }
 
-    fn render_active_page(
-        &mut self,
-        _window: &mut gpui::Window,
-        _cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_active_page(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.current_page {
-            OnboardingPage::Basics => self.render_basics_page(),
-            OnboardingPage::Editing => self.render_editing_page(),
-            OnboardingPage::AiSetup => self.render_ai_setup_page(),
-            OnboardingPage::Welcome => self.render_welcome_page(),
+            OnboardingPage::Basics => self.render_basics_page(cx),
+            OnboardingPage::Editing => self.render_editing_page(cx),
+            OnboardingPage::AiSetup => self.render_ai_setup_page(cx),
+            OnboardingPage::Welcome => self.render_welcome_page(cx),
         }
     }
 
-    fn render_basics_page(&self) -> AnyElement {
+    fn render_basics_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let page_index = 0; // Basics page index
+        let focused_item = self.page_focus[page_index].0;
+        let is_page_focused = self.focus_area == FocusArea::PageContent;
+
         v_flex()
             .h_full()
             .w_full()
-            .child("Basics Page")
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                Label::new("Welcome to Zed!")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(
+                Label::new("Let's get you started with the basics")
+                    .size(LabelSize::Default)
+                    .color(Color::Muted),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .mt_4()
+                    .child(
+                        Button::new("open_file", "Open a File")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 0, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                // TODO: Trigger open file action
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("create_project", "Create a Project")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 1, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                // TODO: Trigger create project action
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("explore_ui", "Explore the UI")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 2, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                // TODO: Trigger explore UI action
+                                cx.notify();
+                            })),
+                    ),
+            )
             .into_any_element()
     }
 
-    fn render_editing_page(&self) -> AnyElement {
+    fn render_editing_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let page_index = 1; // Editing page index
+        let focused_item = self.page_focus[page_index].0;
+        let is_page_focused = self.focus_area == FocusArea::PageContent;
+
         v_flex()
             .h_full()
             .w_full()
-            .child("Editing Page")
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                Label::new("Editing Features")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .mt_4()
+                    .child(
+                        Button::new("try_multi_cursor", "Try Multi-cursor Editing")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 0, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("learn_shortcuts", "Learn Keyboard Shortcuts")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 1, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("explore_actions", "Explore Command Palette")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 2, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.notify();
+                            })),
+                    ),
+            )
             .into_any_element()
     }
 
-    fn render_ai_setup_page(&self) -> AnyElement {
+    fn render_ai_setup_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let page_index = 2; // AI Setup page index
+        let focused_item = self.page_focus[page_index].0;
+        let is_page_focused = self.focus_area == FocusArea::PageContent;
+
         v_flex()
             .h_full()
             .w_full()
-            .child("AI Setup Page")
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                Label::new("AI Assistant Setup")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .mt_4()
+                    .child(
+                        Button::new("configure_ai", "Configure AI Provider")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 0, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("try_ai_chat", "Try AI Chat")
+                            .style(ButtonStyle::Filled)
+                            .when(is_page_focused && focused_item == 1, |this| {
+                                this.color(Color::Accent)
+                            })
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.notify();
+                            })),
+                    ),
+            )
             .into_any_element()
     }
 
-    fn render_welcome_page(&self) -> AnyElement {
+    fn render_welcome_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let page_index = 3; // Welcome page index
+        let focused_item = self.page_focus[page_index].0;
+        let is_page_focused = self.focus_area == FocusArea::PageContent;
+
         v_flex()
             .h_full()
             .w_full()
-            .child("Welcome Page")
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                Label::new("Welcome to Zed!")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(
+                Label::new("You're all set up and ready to code")
+                    .size(LabelSize::Default)
+                    .color(Color::Muted),
+            )
+            .child(
+                Button::new("finish_onboarding", "Start Coding!")
+                    .style(ButtonStyle::Filled)
+                    .size(ButtonSize::Large)
+                    .when(is_page_focused && focused_item == 0, |this| {
+                        this.color(Color::Accent)
+                    })
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        // TODO: Close onboarding and start coding
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn render_keyboard_help(&self, cx: &mut Context<Self>) -> AnyElement {
+        let help_text = match self.focus_area {
+            FocusArea::Navigation => {
+                "Use ↑/↓ to navigate • Enter to select page • Tab to switch to page content"
+            }
+            FocusArea::PageContent => {
+                "Use ↑/↓ to navigate • Enter to activate • Esc to return to navigation"
+            }
+        };
+
+        h_flex()
+            .w_full()
+            .justify_center()
+            .p_2()
+            .child(
+                Label::new(help_text)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
             .into_any_element()
     }
 }
