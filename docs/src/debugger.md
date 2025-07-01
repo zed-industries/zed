@@ -34,7 +34,7 @@ Follow those links for language- and adapter-specific information and examples, 
 
 ## Getting Started
 
-For most languages, the fastest way to get started is to run {#action debugger::Start} ({#kb debugger::Start}). This opens the _new process modal_, which shows you a contextual list of preconfigured debug tasks for the current project. Debug tasks are created from tests, entry points (like a `main` function), and from other sources — consult the documentation for your language for full information about what's suppported.
+For most languages, the fastest way to get started is to run {#action debugger::Start} ({#kb debugger::Start}). This opens the _new process modal_, which shows you a contextual list of preconfigured debug tasks for the current project. Debug tasks are created from tests, entry points (like a `main` function), and from other sources — consult the documentation for your language for full information about what's supported.
 
 You can open the same modal by clicking the "plus" button at the top right of the debug panel.
 
