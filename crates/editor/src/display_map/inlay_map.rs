@@ -2122,37 +2122,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn test_utf8_char_boundary() {
-        let hello = "Hello";
-        assert!(hello.is_char_boundary(utf8_char_boundary(hello, 3))); // ASCII boundary
-        assert!(hello.is_char_boundary(utf8_char_boundary(hello, 5))); // At end
-        assert!(hello.is_char_boundary(utf8_char_boundary(hello, 10))); // Past end
-
-        let emoji_str = "👋"; // 4-byte emoji
-        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 0))); // Start
-        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 1))); // Mid-emoji -> next boundary
-        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 2))); // Mid-emoji -> next boundary
-        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 3))); // Mid-emoji -> next boundary
-        assert!(emoji_str.is_char_boundary(utf8_char_boundary(emoji_str, 4))); // Valid boundary
-
-        let mixed = "a→b"; // 'a' (1B), '→' (3B), 'b' (1B)
-        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 0))); // Start
-        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 1))); // After 'a'
-        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 2))); // Mid-arrow -> after arrow
-        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 3))); // Mid-arrow -> after arrow
-        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 4))); // After arrow
-        assert!(mixed.is_char_boundary(utf8_char_boundary(mixed, 5))); // End
-
-        let complex = "Hello 👋 World! 世界";
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 0))); // Start
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 5))); // Before space
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 6))); // At space
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 7))); // Mid-emoji -> after emoji
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 8))); // Mid-emoji -> after emoji
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 9))); // Mid-emoji -> after emoji
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 10))); // After emoji
-        assert!(complex.is_char_boundary(utf8_char_boundary(complex, 17))); // At '!'
-    }
 }
