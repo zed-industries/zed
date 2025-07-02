@@ -1,6 +1,7 @@
 # Based on the template in: https://docs.digitalocean.com/reference/api/spaces-api/
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\lib\blob-store.ps1"
+. "$PSScriptRoot\lib\workspace.ps1"
 
 $allowedTargets = @("windows")
 
@@ -8,7 +9,7 @@ function Test-AllowedTarget {
     param (
         [string]$Target
     )
-    
+
     return $allowedTargets -contains $Target
 }
 
@@ -26,6 +27,7 @@ if ($args.Count -gt 0) {
     exit 1
 }
 
+ParseZedWorkspace
 Write-Host "Uploading nightly for target: $target"
 
 $bucketName = "zed-nightly-host"
@@ -44,13 +46,14 @@ $sha | Out-File -FilePath "target/latest-sha" -NoNewline
 
 switch ($target) {
     "windows" {
-        UploadToBlobStore -BucketName $bucketName -FileToUpload "target/ZedEditorInstaller.exe" -BlobStoreKey "nightly/ZedEditorInstaller.exe"
+        $zedSetup = "target/ZedEditorUserSetup-x64-$env:RELEASE_VERSION.exe"
+        UploadToBlobStore -BucketName $bucketName -FileToUpload $zedSetup -BlobStoreKey "nightly/ZedEditorInstaller.exe"
         UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha"
-        
-        Remove-Item -Path "target/ZedEditorInstaller.exe" -ErrorAction SilentlyContinue
+
+        Remove-Item -Path $zedSetup -ErrorAction SilentlyContinue
         Remove-Item -Path "target/latest-sha" -ErrorAction SilentlyContinue
     }
-    
+
     default {
         Write-Error "Error: Unknown target '$target'"
         exit 1

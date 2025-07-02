@@ -5,8 +5,8 @@ Param(
     [Parameter()][string]$Name
 )
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. "$scriptDir/lib/blob-store.ps1"
+. "$PSScriptRoot/lib/blob-store.ps1"
+. "$PSScriptRoot/lib/workspace.ps1"
 
 # https://stackoverflow.com/questions/57949031/powershell-script-stops-if-program-fails-like-bash-set-o-errexit
 $ErrorActionPreference = 'Stop'
@@ -27,12 +27,6 @@ Push-Location -Path crates/zed
 $channel = Get-Content "RELEASE_CHANNEL"
 $env:ZED_RELEASE_CHANNEL = $channel
 Pop-Location
-
-function ParseZedWorkspace {
-    $metadata = cargo metadata --no-deps --offline | ConvertFrom-Json
-    $env:ZED_WORKSPACE = $metadata.workspace_root
-    $env:RELEASE_VERSION = $metadata.packages | Where-Object { $_.name -eq "zed" } | Select-Object -ExpandProperty version
-}
 
 function CheckEnvironmentVariables {
     $requiredVars = @(
