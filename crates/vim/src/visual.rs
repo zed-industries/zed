@@ -23,41 +23,41 @@ use crate::{
 actions!(
     vim,
     [
-        /// Toggle visual mode
+        /// Toggles visual mode.
         ToggleVisual,
-        /// Toggle visual line mode
+        /// Toggles visual line mode.
         ToggleVisualLine,
-        /// Toggle visual block mode
+        /// Toggles visual block mode.
         ToggleVisualBlock,
-        /// Delete the visual selection
+        /// Deletes the visual selection.
         VisualDelete,
-        /// Delete entire lines in visual selection
+        /// Deletes entire lines in visual selection.
         VisualDeleteLine,
-        /// Yank (copy) the visual selection
+        /// Yanks (copies) the visual selection.
         VisualYank,
-        /// Yank entire lines in visual selection
+        /// Yanks entire lines in visual selection.
         VisualYankLine,
-        /// Move cursor to the other end of the selection
+        /// Moves cursor to the other end of the selection.
         OtherEnd,
-        /// Move cursor to the other end of the selection (row-aware)
+        /// Moves cursor to the other end of the selection (row-aware).
         OtherEndRowAware,
-        /// Select the next occurrence of the current selection
+        /// Selects the next occurrence of the current selection.
         SelectNext,
-        /// Select the previous occurrence of the current selection
+        /// Selects the previous occurrence of the current selection.
         SelectPrevious,
-        /// Select the next match of the current selection
+        /// Selects the next match of the current selection.
         SelectNextMatch,
-        /// Select the previous match of the current selection
+        /// Selects the previous match of the current selection.
         SelectPreviousMatch,
-        /// Select the next smaller syntax node
+        /// Selects the next smaller syntax node.
         SelectSmallerSyntaxNode,
-        /// Select the next larger syntax node
+        /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
-        /// Restore the previous visual selection
+        /// Restores the previous visual selection.
         RestoreVisualSelection,
-        /// Insert at the end of each line in visual selection
+        /// Inserts at the end of each line in visual selection.
         VisualInsertEndOfLine,
-        /// Insert at the first non-whitespace character of each line
+        /// Inserts at the first non-whitespace character of each line.
         VisualInsertFirstNonWhiteSpace,
     ]
 );

@@ -57,9 +57,9 @@ impl From<ScopeFileName> for ScopeName {
 actions!(
     snippets,
     [
-        /// Open the snippets configuration file
+        /// Opens the snippets configuration file.
         ConfigureSnippets,
-        /// Open the snippets folder in the file manager
+        /// Opens the snippets folder in the file manager.
         OpenFolder
     ]
 );

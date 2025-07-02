@@ -14,11 +14,11 @@ use crate::TitleBar;
 actions!(
     collab,
     [
-        /// Toggle screen sharing on or off
+        /// Toggles screen sharing on or off.
         ToggleScreenSharing,
-        /// Toggle microphone mute
+        /// Toggles microphone mute.
         ToggleMute,
-        /// Toggle deafen mode (mute both microphone and speakers)
+        /// Toggles deafen mode (mute both microphone and speakers).
         ToggleDeafen
     ]
 );

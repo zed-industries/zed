@@ -28,7 +28,7 @@ mod welcome_ui;
 actions!(
     welcome,
     [
-        /// Reset the welcome screen hints to their initial state
+        /// Resets the welcome screen hints to their initial state.
         ResetHints
     ]
 );

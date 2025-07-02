@@ -169,83 +169,83 @@ pub trait DebuggerProvider {
 actions!(
     workspace,
     [
-        /// Activate the next pane in the workspace
+        /// Activates the next pane in the workspace.
         ActivateNextPane,
-        /// Activate the previous pane in the workspace
+        /// Activates the previous pane in the workspace.
         ActivatePreviousPane,
-        /// Switch to the next window
+        /// Switches to the next window.
         ActivateNextWindow,
-        /// Switch to the previous window
+        /// Switches to the previous window.
         ActivatePreviousWindow,
-        /// Add a folder to the current project
+        /// Adds a folder to the current project.
         AddFolderToProject,
-        /// Clear all notifications
+        /// Clears all notifications.
         ClearAllNotifications,
-        /// Close the active dock
+        /// Closes the active dock.
         CloseActiveDock,
-        /// Close all docks
+        /// Closes all docks.
         CloseAllDocks,
-        /// Close the current window
+        /// Closes the current window.
         CloseWindow,
-        /// Open the feedback dialog
+        /// Opens the feedback dialog.
         Feedback,
-        /// Follow the next collaborator in the session
+        /// Follows the next collaborator in the session.
         FollowNextCollaborator,
-        /// Move the focused panel to the next position
+        /// Moves the focused panel to the next position.
         MoveFocusedPanelToNextPosition,
-        /// Open a new terminal in the center
+        /// Opens a new terminal in the center.
         NewCenterTerminal,
-        /// Create a new file
+        /// Creates a new file.
         NewFile,
-        /// Create a new file in a vertical split
+        /// Creates a new file in a vertical split.
         NewFileSplitVertical,
-        /// Create a new file in a horizontal split
+        /// Creates a new file in a horizontal split.
         NewFileSplitHorizontal,
-        /// Open a new search
+        /// Opens a new search.
         NewSearch,
-        /// Open a new terminal
+        /// Opens a new terminal.
         NewTerminal,
-        /// Open a new window
+        /// Opens a new window.
         NewWindow,
-        /// Open a file or directory
+        /// Opens a file or directory.
         Open,
-        /// Open multiple files
+        /// Opens multiple files.
         OpenFiles,
-        /// Open the current location in terminal
+        /// Opens the current location in terminal.
         OpenInTerminal,
-        /// Open the component preview
+        /// Opens the component preview.
         OpenComponentPreview,
-        /// Reload the active item
+        /// Reloads the active item.
         ReloadActiveItem,
-        /// Reset the active dock to its default size
+        /// Resets the active dock to its default size.
         ResetActiveDockSize,
-        /// Reset all open docks to their default sizes
+        /// Resets all open docks to their default sizes.
         ResetOpenDocksSize,
-        /// Save the current file with a new name
+        /// Saves the current file with a new name.
         SaveAs,
-        /// Save without formatting
+        /// Saves without formatting.
         SaveWithoutFormat,
-        /// Shutdown all debug adapters
+        /// Shuts down all debug adapters.
         ShutdownDebugAdapters,
-        /// Suppress the current notification
+        /// Suppresses the current notification.
         SuppressNotification,
-        /// Toggle the bottom dock
+        /// Toggles the bottom dock.
         ToggleBottomDock,
-        /// Toggle centered layout mode
+        /// Toggles centered layout mode.
         ToggleCenteredLayout,
-        /// Toggle the left dock
+        /// Toggles the left dock.
         ToggleLeftDock,
-        /// Toggle the right dock
+        /// Toggles the right dock.
         ToggleRightDock,
-        /// Toggle zoom on the active pane
+        /// Toggles zoom on the active pane.
         ToggleZoom,
-        /// Stop following a collaborator
+        /// Stops following a collaborator.
         Unfollow,
-        /// Show the welcome screen
+        /// Shows the welcome screen.
         Welcome,
-        /// Restore the banner
+        /// Restores the banner.
         RestoreBanner,
-        /// Toggle expansion of the selected item
+        /// Toggles expansion of the selected item.
         ToggleExpandItem,
     ]
 );
@@ -337,7 +337,7 @@ pub struct Reload {
 actions!(
     project_symbols,
     [
-        /// Toggle the project symbols search
+        /// Toggles the project symbols search.
         #[action(name = "Toggle")]
         ToggleProjectSymbols
     ]
@@ -394,21 +394,21 @@ pub struct DecreaseOpenDocksSize {
 actions!(
     workspace,
     [
-        /// Activate the pane to the left
+        /// Activates the pane to the left.
         ActivatePaneLeft,
-        /// Activate the pane to the right
+        /// Activates the pane to the right.
         ActivatePaneRight,
-        /// Activate the pane above
+        /// Activates the pane above.
         ActivatePaneUp,
-        /// Activate the pane below
+        /// Activates the pane below.
         ActivatePaneDown,
-        /// Swap the current pane with the one to the left
+        /// Swaps the current pane with the one to the left.
         SwapPaneLeft,
-        /// Swap the current pane with the one to the right
+        /// Swaps the current pane with the one to the right.
         SwapPaneRight,
-        /// Swap the current pane with the one above
+        /// Swaps the current pane with the one above.
         SwapPaneUp,
-        /// Swap the current pane with the one below
+        /// Swaps the current pane with the one below.
         SwapPaneDown,
     ]
 );
@@ -6725,22 +6725,22 @@ actions!(
         /// can be copied via "Copy link to section" in the context menu of the channel notes
         /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
-        /// Mute your microphone
+        /// Mutes your microphone.
         Mute,
-        /// Deafen yourself (mute both microphone and speakers)
+        /// Deafens yourself (mute both microphone and speakers).
         Deafen,
-        /// Leave the current call
+        /// Leaves the current call.
         LeaveCall,
-        /// Share the current project with collaborators
+        /// Shares the current project with collaborators.
         ShareProject,
-        /// Share your screen with collaborators
+        /// Shares your screen with collaborators.
         ScreenShare
     ]
 );
 actions!(
     zed,
     [
-        /// Open the Zed log file
+        /// Opens the Zed log file.
         OpenLog
     ]
 );

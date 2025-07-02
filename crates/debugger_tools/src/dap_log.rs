@@ -921,7 +921,7 @@ impl Render for DapLogView {
 actions!(
     dev,
     [
-        /// Open the debug adapter protocol logs viewer
+        /// Opens the debug adapter protocol logs viewer.
         OpenDebugAdapterLogs
     ]
 );

@@ -37,7 +37,7 @@ pub enum Direction {
 actions!(
     picker,
     [
-        /// Confirm the selected completion in the picker
+        /// Confirms the selected completion in the picker.
         ConfirmCompletion
     ]
 );

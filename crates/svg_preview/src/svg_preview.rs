@@ -6,11 +6,11 @@ pub mod svg_preview_view;
 actions!(
     svg,
     [
-        /// Open an SVG preview for the current file
+        /// Opens an SVG preview for the current file.
         OpenPreview,
-        /// Open an SVG preview in a split pane
+        /// Opens an SVG preview in a split pane.
         OpenPreviewToTheSide,
-        /// Open a following SVG preview that syncs with the editor
+        /// Opens a following SVG preview that syncs with the editor.
         OpenFollowingPreview
     ]
 );

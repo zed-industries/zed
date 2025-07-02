@@ -18,7 +18,7 @@ use workspace::{ModalView, Workspace};
 actions!(
     toolchain,
     [
-        /// Select a toolchain for the current project
+        /// Selects a toolchain for the current project.
         Select
     ]
 );

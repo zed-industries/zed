@@ -7,7 +7,7 @@ use language::SelectionGoal;
 actions!(
     vim,
     [
-        /// Rewrap the selected text to fit within the line width
+        /// Rewraps the selected text to fit within the line width.
         Rewrap
     ]
 );

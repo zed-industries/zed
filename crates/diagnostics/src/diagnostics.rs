@@ -49,11 +49,11 @@ use workspace::{
 actions!(
     diagnostics,
     [
-        /// Open the project diagnostics view
+        /// Opens the project diagnostics view.
         Deploy,
-        /// Toggle the display of warning-level diagnostics
+        /// Toggles the display of warning-level diagnostics.
         ToggleWarnings,
-        /// Toggle automatic refresh of diagnostics
+        /// Toggles automatic refresh of diagnostics.
         ToggleDiagnosticsRefresh
     ]
 );

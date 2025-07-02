@@ -8,9 +8,9 @@ use vim_mode_setting::HelixModeSetting;
 actions!(
     vim,
     [
-        /// Switch to normal mode with cursor positioned before the current character
+        /// Switches to normal mode with cursor positioned before the current character.
         NormalBefore,
-        /// Temporarily switch to normal mode for one command
+        /// Temporarily switches to normal mode for one command.
         TemporaryNormal
     ]
 );

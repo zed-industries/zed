@@ -48,11 +48,11 @@ use workspace::{
 actions!(
     file_finder,
     [
-        /// Select the previous item in the file finder
+        /// Selects the previous item in the file finder.
         SelectPrevious,
-        /// Toggle the file filter menu
+        /// Toggles the file filter menu.
         ToggleFilterMenu,
-        /// Toggle the split direction menu
+        /// Toggles the split direction menu.
         ToggleSplitMenu
     ]
 );

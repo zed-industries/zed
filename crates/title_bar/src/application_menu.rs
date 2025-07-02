@@ -15,9 +15,9 @@ use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 actions!(
     app_menu,
     [
-        /// Navigate to the menu item on the right
+        /// Navigates to the menu item on the right.
         ActivateMenuRight,
-        /// Navigate to the menu item on the left
+        /// Navigates to the menu item on the left.
         ActivateMenuLeft
     ]
 );

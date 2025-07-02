@@ -15,7 +15,7 @@ use workspace::{ModalView, Workspace, ui::HighlightedLabel};
 actions!(
     welcome,
     [
-        /// Toggle the base keymap selector modal
+        /// Toggles the base keymap selector modal.
         ToggleBaseKeymapSelector
     ]
 );

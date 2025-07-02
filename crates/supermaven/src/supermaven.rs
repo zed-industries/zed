@@ -28,7 +28,7 @@ use util::ResultExt;
 actions!(
     supermaven,
     [
-        /// Sign out of Supermaven
+        /// Signs out of Supermaven.
         SignOut
     ]
 );

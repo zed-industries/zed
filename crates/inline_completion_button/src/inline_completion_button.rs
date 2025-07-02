@@ -40,7 +40,7 @@ use zeta::RateCompletions;
 actions!(
     edit_prediction,
     [
-        /// Toggle the inline completion menu
+        /// Toggles the inline completion menu.
         ToggleMenu
     ]
 );

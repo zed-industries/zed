@@ -18,19 +18,19 @@ use util::debug_panic;
 actions!(
     variable_list,
     [
-        /// Expand the selected variable entry to show its children
+        /// Expands the selected variable entry to show its children.
         ExpandSelectedEntry,
-        /// Collapse the selected variable entry to hide its children
+        /// Collapses the selected variable entry to hide its children.
         CollapseSelectedEntry,
-        /// Copy the variable name to the clipboard
+        /// Copies the variable name to the clipboard.
         CopyVariableName,
-        /// Copy the variable value to the clipboard
+        /// Copies the variable value to the clipboard.
         CopyVariableValue,
-        /// Edit the value of the selected variable
+        /// Edits the value of the selected variable.
         EditVariable,
-        /// Add the selected variable to the watch list
+        /// Adds the selected variable to the watch list.
         AddWatch,
-        /// Remove the selected variable from the watch list
+        /// Removes the selected variable from the watch list.
         RemoveWatch,
     ]
 );

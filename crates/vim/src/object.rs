@@ -258,45 +258,45 @@ fn find_mini_brackets(
 actions!(
     vim,
     [
-        /// Select a sentence text object
+        /// Selects a sentence text object.
         Sentence,
-        /// Select a paragraph text object
+        /// Selects a paragraph text object.
         Paragraph,
-        /// Select text within single quotes
+        /// Selects text within single quotes.
         Quotes,
-        /// Select text within backticks
+        /// Selects text within backticks.
         BackQuotes,
-        /// Select text within the nearest quotes (single or double)
+        /// Selects text within the nearest quotes (single or double).
         MiniQuotes,
-        /// Select text within any type of quotes
+        /// Selects text within any type of quotes.
         AnyQuotes,
-        /// Select text within double quotes
+        /// Selects text within double quotes.
         DoubleQuotes,
-        /// Select text within vertical bars (pipes)
+        /// Selects text within vertical bars (pipes).
         VerticalBars,
-        /// Select text within parentheses
+        /// Selects text within parentheses.
         Parentheses,
-        /// Select text within the nearest brackets
+        /// Selects text within the nearest brackets.
         MiniBrackets,
-        /// Select text within any type of brackets
+        /// Selects text within any type of brackets.
         AnyBrackets,
-        /// Select text within square brackets
+        /// Selects text within square brackets.
         SquareBrackets,
-        /// Select text within curly brackets
+        /// Selects text within curly brackets.
         CurlyBrackets,
-        /// Select text within angle brackets
+        /// Selects text within angle brackets.
         AngleBrackets,
-        /// Select a function argument
+        /// Selects a function argument.
         Argument,
-        /// Select an HTML/XML tag
+        /// Selects an HTML/XML tag.
         Tag,
-        /// Select a method or function
+        /// Selects a method or function.
         Method,
-        /// Select a class definition
+        /// Selects a class definition.
         Class,
-        /// Select a comment block
+        /// Selects a comment block.
         Comment,
-        /// Select the entire file
+        /// Selects the entire file.
         EntireFile
     ]
 );

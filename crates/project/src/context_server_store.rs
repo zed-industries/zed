@@ -24,7 +24,7 @@ pub fn init(cx: &mut App) {
 actions!(
     context_server,
     [
-        /// Restart the context server
+        /// Restarts the context server.
         Restart
     ]
 );

@@ -35,9 +35,9 @@ pub struct Toggle {
 actions!(
     tab_switcher,
     [
-        /// Close the selected item in the tab switcher
+        /// Closes the selected item in the tab switcher.
         CloseSelectedItem,
-        /// Toggle between showing all tabs or just the current pane's tabs
+        /// Toggles between showing all tabs or just the current pane's tabs.
         ToggleAll
     ]
 );

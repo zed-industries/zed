@@ -75,7 +75,7 @@ const MAX_EVENT_COUNT: usize = 16;
 actions!(
     edit_prediction,
     [
-        /// Clear the edit prediction history
+        /// Clears the edit prediction history.
         ClearHistory
     ]
 );

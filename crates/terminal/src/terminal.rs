@@ -73,33 +73,35 @@ use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
 actions!(
     terminal,
     [
-        /// Clear the terminal screen
+        /// Clears the terminal screen.
         Clear,
-        /// Copy selected text to the clipboard
+        /// Copies selected text to the clipboard.
         Copy,
-        /// Paste from the clipboard
+        /// Pastes from the clipboard.
         Paste,
-        /// Show the character palette for special characters
+        /// Shows the character palette for special characters.
         ShowCharacterPalette,
-        /// Search for text in the terminal
+        /// Searches for text in the terminal.
         SearchTest,
-        /// Scroll up by one line
+        /// Scrolls up by one line.
         ScrollLineUp,
-        /// Scroll down by one line
+        /// Scrolls down by one line.
         ScrollLineDown,
-        /// Scroll up by one page
+        /// Scrolls up by one page.
         ScrollPageUp,
-        /// Scroll down by one page
+        /// Scrolls down by one page.
         ScrollPageDown,
-        /// Scroll up by half a page
+        /// Scrolls up by half a page.
         ScrollHalfPageUp,
-        /// Scroll down by half a page
+        /// Scrolls down by half a page.
         ScrollHalfPageDown,
-        /// Scroll to the top of the terminal buffer
+        /// Scrolls to the top of the terminal buffer.
         ScrollToTop,
-        /// Scroll to the bottom of the terminal buffer
+        /// Scrolls to the bottom of the terminal buffer.
         ScrollToBottom,
-        /// Select all text in the terminal
+        /// Toggles vi mode in the terminal.
+        ToggleViMode,
+        /// Selects all text in the terminal.
         SelectAll,
     ]
 );

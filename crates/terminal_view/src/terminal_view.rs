@@ -81,7 +81,7 @@ pub struct SendKeystroke(String);
 actions!(
     terminal,
     [
-        /// Rerun the last executed task in the terminal
+        /// Reruns the last executed task in the terminal.
         RerunTask
     ]
 );

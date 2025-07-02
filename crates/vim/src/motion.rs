@@ -307,85 +307,85 @@ struct UnmatchedBackward {
 actions!(
     vim,
     [
-        /// Move cursor left one character
+        /// Moves cursor left one character.
         Left,
-        /// Move cursor left one character, wrapping to previous line
+        /// Moves cursor left one character, wrapping to previous line.
         #[action(deprecated_aliases = ["vim::Backspace"])]
         WrappingLeft,
-        /// Move cursor right one character
+        /// Moves cursor right one character.
         Right,
-        /// Move cursor right one character, wrapping to next line
+        /// Moves cursor right one character, wrapping to next line.
         #[action(deprecated_aliases = ["vim::Space"])]
         WrappingRight,
-        /// Select the current line
+        /// Selects the current line.
         CurrentLine,
-        /// Move to the start of the next sentence
+        /// Moves to the start of the next sentence.
         SentenceForward,
-        /// Move to the start of the previous sentence
+        /// Moves to the start of the previous sentence.
         SentenceBackward,
-        /// Move to the start of the paragraph
+        /// Moves to the start of the paragraph.
         StartOfParagraph,
-        /// Move to the end of the paragraph
+        /// Moves to the end of the paragraph.
         EndOfParagraph,
-        /// Move to the start of the document
+        /// Moves to the start of the document.
         StartOfDocument,
-        /// Move to the end of the document
+        /// Moves to the end of the document.
         EndOfDocument,
-        /// Move to the matching bracket or delimiter
+        /// Moves to the matching bracket or delimiter.
         Matching,
-        /// Go to a percentage position in the file
+        /// Goes to a percentage position in the file.
         GoToPercentage,
-        /// Move to the start of the next line
+        /// Moves to the start of the next line.
         NextLineStart,
-        /// Move to the start of the previous line
+        /// Moves to the start of the previous line.
         PreviousLineStart,
-        /// Move to the start of a line downward
+        /// Moves to the start of a line downward.
         StartOfLineDownward,
-        /// Move to the end of a line downward
+        /// Moves to the end of a line downward.
         EndOfLineDownward,
-        /// Go to a specific column number
+        /// Goes to a specific column number.
         GoToColumn,
-        /// Repeat the last character find
+        /// Repeats the last character find.
         RepeatFind,
-        /// Repeat the last character find in reverse
+        /// Repeats the last character find in reverse.
         RepeatFindReversed,
-        /// Move to the top of the window
+        /// Moves to the top of the window.
         WindowTop,
-        /// Move to the middle of the window
+        /// Moves to the middle of the window.
         WindowMiddle,
-        /// Move to the bottom of the window
+        /// Moves to the bottom of the window.
         WindowBottom,
-        /// Move to the start of the next section
+        /// Moves to the start of the next section.
         NextSectionStart,
-        /// Move to the end of the next section
+        /// Moves to the end of the next section.
         NextSectionEnd,
-        /// Move to the start of the previous section
+        /// Moves to the start of the previous section.
         PreviousSectionStart,
-        /// Move to the end of the previous section
+        /// Moves to the end of the previous section.
         PreviousSectionEnd,
-        /// Move to the start of the next method
+        /// Moves to the start of the next method.
         NextMethodStart,
-        /// Move to the end of the next method
+        /// Moves to the end of the next method.
         NextMethodEnd,
-        /// Move to the start of the previous method
+        /// Moves to the start of the previous method.
         PreviousMethodStart,
-        /// Move to the end of the previous method
+        /// Moves to the end of the previous method.
         PreviousMethodEnd,
-        /// Move to the next comment
+        /// Moves to the next comment.
         NextComment,
-        /// Move to the previous comment
+        /// Moves to the previous comment.
         PreviousComment,
-        /// Move to the previous line with lesser indentation
+        /// Moves to the previous line with lesser indentation.
         PreviousLesserIndent,
-        /// Move to the previous line with greater indentation
+        /// Moves to the previous line with greater indentation.
         PreviousGreaterIndent,
-        /// Move to the previous line with the same indentation
+        /// Moves to the previous line with the same indentation.
         PreviousSameIndent,
-        /// Move to the next line with lesser indentation
+        /// Moves to the next line with lesser indentation.
         NextLesserIndent,
-        /// Move to the next line with greater indentation
+        /// Moves to the next line with greater indentation.
         NextGreaterIndent,
-        /// Move to the next line with the same indentation
+        /// Moves to the next line with the same indentation.
         NextSameIndent,
     ]
 );

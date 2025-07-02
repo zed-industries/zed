@@ -48,13 +48,13 @@ use workspace::{
 actions!(
     project_search,
     [
-        /// Search in a new project search tab
+        /// Searches in a new project search tab.
         SearchInNew,
-        /// Toggle focus between the search bar and the search results
+        /// Toggles focus between the search bar and the search results.
         ToggleFocus,
-        /// Move to the next input field
+        /// Moves to the next input field.
         NextField,
-        /// Toggle the search filters panel
+        /// Toggles the search filters panel.
         ToggleFilters
     ]
 );

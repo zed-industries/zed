@@ -22,7 +22,7 @@ use workspace::{ModalView, Workspace};
 actions!(
     language_selector,
     [
-        /// Toggle the language selector modal
+        /// Toggles the language selector modal.
         Toggle
     ]
 );

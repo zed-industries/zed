@@ -47,7 +47,7 @@ pub struct ImportCursorSettings {
 actions!(
     zed,
     [
-        /// Open the settings editor
+        /// Opens the settings editor.
         OpenSettingsEditor
     ]
 );

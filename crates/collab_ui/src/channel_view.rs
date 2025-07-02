@@ -33,7 +33,7 @@ use workspace::{item::Dedup, notifications::NotificationId};
 actions!(
     collab,
     [
-        /// Copy a link to the current position in the channel buffer
+        /// Copies a link to the current position in the channel buffer.
         CopyLink
     ]
 );

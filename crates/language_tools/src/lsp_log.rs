@@ -207,7 +207,7 @@ pub(crate) struct LogMenuItem {
 actions!(
     dev,
     [
-        /// Open the language server protocol logs viewer
+        /// Opens the language server protocol logs viewer.
         OpenLanguageServerLogs
     ]
 );

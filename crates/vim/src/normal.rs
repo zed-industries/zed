@@ -36,59 +36,59 @@ use multi_buffer::MultiBufferRow;
 actions!(
     vim,
     [
-        /// Insert text after the cursor
+        /// Inserts text after the cursor.
         InsertAfter,
-        /// Insert text before the cursor
+        /// Inserts text before the cursor.
         InsertBefore,
-        /// Insert at the first non-whitespace character
+        /// Inserts at the first non-whitespace character.
         InsertFirstNonWhitespace,
-        /// Insert at the end of the line
+        /// Inserts at the end of the line.
         InsertEndOfLine,
-        /// Insert a new line above the current line
+        /// Inserts a new line above the current line.
         InsertLineAbove,
-        /// Insert a new line below the current line
+        /// Inserts a new line below the current line.
         InsertLineBelow,
-        /// Insert an empty line above without entering insert mode
+        /// Inserts an empty line above without entering insert mode.
         InsertEmptyLineAbove,
-        /// Insert an empty line below without entering insert mode
+        /// Inserts an empty line below without entering insert mode.
         InsertEmptyLineBelow,
-        /// Insert at the previous insert position
+        /// Inserts at the previous insert position.
         InsertAtPrevious,
-        /// Join the current line with the next line
+        /// Joins the current line with the next line.
         JoinLines,
-        /// Join lines without adding whitespace
+        /// Joins lines without adding whitespace.
         JoinLinesNoWhitespace,
-        /// Delete character to the left
+        /// Deletes character to the left.
         DeleteLeft,
-        /// Delete character to the right
+        /// Deletes character to the right.
         DeleteRight,
-        /// Delete using Helix-style behavior
+        /// Deletes using Helix-style behavior.
         HelixDelete,
-        /// Change from cursor to end of line
+        /// Changes from cursor to end of line.
         ChangeToEndOfLine,
-        /// Delete from cursor to end of line
+        /// Deletes from cursor to end of line.
         DeleteToEndOfLine,
-        /// Yank (copy) the selected text
+        /// Yanks (copies) the selected text.
         Yank,
-        /// Yank the entire line
+        /// Yanks the entire line.
         YankLine,
-        /// Toggle the case of selected text
+        /// Toggles the case of selected text.
         ChangeCase,
-        /// Convert selected text to uppercase
+        /// Converts selected text to uppercase.
         ConvertToUpperCase,
-        /// Convert selected text to lowercase
+        /// Converts selected text to lowercase.
         ConvertToLowerCase,
-        /// Apply ROT13 cipher to selected text
+        /// Applies ROT13 cipher to selected text.
         ConvertToRot13,
-        /// Apply ROT47 cipher to selected text
+        /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
-        /// Toggle comments for selected lines
+        /// Toggles comments for selected lines.
         ToggleComments,
-        /// Show the current location in the file
+        /// Shows the current location in the file.
         ShowLocation,
-        /// Undo the last change
+        /// Undoes the last change.
         Undo,
-        /// Redo the last undone change
+        /// Redoes the last undone change.
         Redo,
     ]
 );

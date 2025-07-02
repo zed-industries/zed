@@ -77,7 +77,7 @@ pub struct NotificationPresenter {
 actions!(
     notification_panel,
     [
-        /// Toggle focus on the notification panel
+        /// Toggles focus on the notification panel.
         ToggleFocus
     ]
 );

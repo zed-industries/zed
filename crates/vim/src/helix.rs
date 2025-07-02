@@ -9,7 +9,7 @@ use crate::{Vim, motion::Motion, state::Mode};
 actions!(
     vim,
     [
-        /// Switch to normal mode after the cursor (Helix-style)
+        /// Switches to normal mode after the cursor (Helix-style).
         HelixNormalAfter
     ]
 );

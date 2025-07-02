@@ -28,19 +28,19 @@ use nbformat::v4::Metadata as NotebookMetadata;
 actions!(
     notebook,
     [
-        /// Open a Jupyter notebook file
+        /// Opens a Jupyter notebook file.
         OpenNotebook,
-        /// Run all cells in the notebook
+        /// Runs all cells in the notebook.
         RunAll,
-        /// Clear all cell outputs
+        /// Clears all cell outputs.
         ClearOutputs,
-        /// Move the current cell up
+        /// Moves the current cell up.
         MoveCellUp,
-        /// Move the current cell down
+        /// Moves the current cell down.
         MoveCellDown,
-        /// Add a new markdown cell
+        /// Adds a new markdown cell.
         AddMarkdownBlock,
-        /// Add a new code cell
+        /// Adds a new code cell.
         AddCodeBlock,
     ]
 );

@@ -16,7 +16,7 @@ use workspace::{Item, SplitDirection, Workspace};
 actions!(
     dev,
     [
-        /// Open the key context view for debugging keybindings
+        /// Opens the key context view for debugging keybindings.
         OpenKeyContextView
     ]
 );

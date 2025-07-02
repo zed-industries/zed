@@ -31,7 +31,7 @@ use crate::{
 actions!(
     zed,
     [
-        /// Open the keymap editor
+        /// Opens the keymap editor.
         OpenKeymapEditor
     ]
 );
@@ -40,11 +40,11 @@ const KEYMAP_EDITOR_NAMESPACE: &'static str = "keymap_editor";
 actions!(
     keymap_editor,
     [
-        /// Edit the selected key binding
+        /// Edits the selected key binding.
         EditBinding,
-        /// Copy the action name to clipboard
+        /// Copies the action name to clipboard.
         CopyAction,
-        /// Copy the context predicate to clipboard
+        /// Copies the context predicate to clipboard.
         CopyContext
     ]
 );

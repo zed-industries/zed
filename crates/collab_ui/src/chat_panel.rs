@@ -74,7 +74,7 @@ struct SerializedChatPanel {
 actions!(
     chat_panel,
     [
-        /// Toggle focus on the chat panel
+        /// Toggles focus on the chat panel.
         ToggleFocus
     ]
 );

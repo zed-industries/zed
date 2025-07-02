@@ -22,7 +22,7 @@ use crate::lsp_log::GlobalLogStore;
 actions!(
     lsp_tool,
     [
-        /// Toggle the language server tool menu
+        /// Toggles the language server tool menu.
         ToggleMenu
     ]
 );

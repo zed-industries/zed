@@ -144,9 +144,9 @@ pub type CodeBlockTransformFn =
 actions!(
     markdown,
     [
-        /// Copy the selected text to the clipboard
+        /// Copies the selected text to the clipboard.
         Copy,
-        /// Copy the selected text as markdown to the clipboard
+        /// Copies the selected text as markdown to the clipboard.
         CopyAsMarkdown
     ]
 );

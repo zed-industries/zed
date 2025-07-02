@@ -20,7 +20,7 @@ use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 actions!(
     theme_selector,
     [
-        /// Reload all themes from disk
+        /// Reloads all themes from disk.
         Reload
     ]
 );

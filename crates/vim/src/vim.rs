@@ -134,93 +134,93 @@ struct PushLiteral {
 actions!(
     vim,
     [
-        /// Switch to normal mode
+        /// Switches to normal mode.
         SwitchToNormalMode,
-        /// Switch to insert mode
+        /// Switches to insert mode.
         SwitchToInsertMode,
-        /// Switch to replace mode
+        /// Switches to replace mode.
         SwitchToReplaceMode,
-        /// Switch to visual mode
+        /// Switches to visual mode.
         SwitchToVisualMode,
-        /// Switch to visual line mode
+        /// Switches to visual line mode.
         SwitchToVisualLineMode,
-        /// Switch to visual block mode
+        /// Switches to visual block mode.
         SwitchToVisualBlockMode,
-        /// Switch to Helix-style normal mode
+        /// Switches to Helix-style normal mode.
         SwitchToHelixNormalMode,
-        /// Clear any pending operators
+        /// Clears any pending operators.
         ClearOperators,
-        /// Clear the exchange register
+        /// Clears the exchange register.
         ClearExchange,
-        /// Insert a tab character
+        /// Inserts a tab character.
         Tab,
-        /// Insert a newline
+        /// Inserts a newline.
         Enter,
-        /// Select inner text object
+        /// Selects inner text object.
         InnerObject,
-        /// Maximize the current pane
+        /// Maximizes the current pane.
         MaximizePane,
-        /// Open the default keymap file
+        /// Opens the default keymap file.
         OpenDefaultKeymap,
-        /// Reset all pane sizes to default
+        /// Resets all pane sizes to default.
         ResetPaneSizes,
-        /// Resize the pane to the right
+        /// Resizes the pane to the right.
         ResizePaneRight,
-        /// Resize the pane to the left
+        /// Resizes the pane to the left.
         ResizePaneLeft,
-        /// Resize the pane upward
+        /// Resizes the pane upward.
         ResizePaneUp,
-        /// Resize the pane downward
+        /// Resizes the pane downward.
         ResizePaneDown,
-        /// Start a change operation
+        /// Starts a change operation.
         PushChange,
-        /// Start a delete operation
+        /// Starts a delete operation.
         PushDelete,
-        /// Exchange text regions
+        /// Exchanges text regions.
         Exchange,
-        /// Start a yank operation
+        /// Starts a yank operation.
         PushYank,
-        /// Start a replace operation
+        /// Starts a replace operation.
         PushReplace,
-        /// Delete surrounding characters
+        /// Deletes surrounding characters.
         PushDeleteSurrounds,
-        /// Set a mark at the current position
+        /// Sets a mark at the current position.
         PushMark,
-        /// Toggle the marks view
+        /// Toggles the marks view.
         ToggleMarksView,
-        /// Start a forced motion
+        /// Starts a forced motion.
         PushForcedMotion,
-        /// Start an indent operation
+        /// Starts an indent operation.
         PushIndent,
-        /// Start an outdent operation
+        /// Starts an outdent operation.
         PushOutdent,
-        /// Start an auto-indent operation
+        /// Starts an auto-indent operation.
         PushAutoIndent,
-        /// Start a rewrap operation
+        /// Starts a rewrap operation.
         PushRewrap,
-        /// Start a shell command operation
+        /// Starts a shell command operation.
         PushShellCommand,
-        /// Convert to lowercase
+        /// Converts to lowercase.
         PushLowercase,
-        /// Convert to uppercase
+        /// Converts to uppercase.
         PushUppercase,
-        /// Toggle case
+        /// Toggles case.
         PushOppositeCase,
-        /// Apply ROT13 encoding
+        /// Applies ROT13 encoding.
         PushRot13,
-        /// Apply ROT47 encoding
+        /// Applies ROT47 encoding.
         PushRot47,
-        /// Toggle the registers view
+        /// Toggles the registers view.
         ToggleRegistersView,
-        /// Select a register
+        /// Selects a register.
         PushRegister,
-        /// Start recording to a register
+        /// Starts recording to a register.
         PushRecordRegister,
-        /// Replay a register
+        /// Replays a register.
         PushReplayRegister,
-        /// Replace with register contents
+        /// Replaces with register contents.
         PushReplaceWithRegister,
-        /// Toggle comments
+        /// Toggles comments.
         PushToggleComments,
     ]
 );
@@ -229,7 +229,7 @@ actions!(
 actions!(
     workspace,
     [
-        /// Toggle Vim mode on or off
+        /// Toggles Vim mode on or off.
         ToggleVimMode,
     ]
 );

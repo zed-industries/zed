@@ -11,13 +11,13 @@ pub mod system_specs;
 actions!(
     zed,
     [
-        /// Copy system specifications to the clipboard for bug reports
+        /// Copies system specifications to the clipboard for bug reports.
         CopySystemSpecsIntoClipboard,
-        /// Open email client to send feedback to Zed support
+        /// Opens email client to send feedback to Zed support.
         EmailZed,
-        /// Open the Zed repository on GitHub
+        /// Opens the Zed repository on GitHub.
         OpenZedRepo,
-        /// Open the feature request form
+        /// Opens the feature request form.
         RequestFeature,
     ]
 );

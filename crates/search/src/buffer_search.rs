@@ -61,11 +61,11 @@ pub struct Deploy {
 actions!(
     buffer_search,
     [
-        /// Deploy the search and replace interface
+        /// Deploys the search and replace interface.
         DeployReplace,
-        /// Dismiss the search bar
+        /// Dismisses the search bar.
         Dismiss,
-        /// Focus back on the editor
+        /// Focuses back on the editor.
         FocusEditor
     ]
 );

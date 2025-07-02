@@ -34,7 +34,7 @@ const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 actions!(
     activity_indicator,
     [
-        /// Display error messages from language servers in the status bar
+        /// Displays error messages from language servers in the status bar.
         ShowErrorMessage
     ]
 );

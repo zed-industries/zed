@@ -34,9 +34,9 @@ use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 actions!(
     debugger,
     [
-        /// Navigate to the previous breakpoint property in the list
+        /// Navigates to the previous breakpoint property in the list.
         PreviousBreakpointProperty,
-        /// Navigate to the next breakpoint property in the list
+        /// Navigates to the next breakpoint property in the list.
         NextBreakpointProperty
     ]
 );

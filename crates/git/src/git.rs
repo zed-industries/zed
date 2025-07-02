@@ -31,59 +31,59 @@ actions!(
     git,
     [
         // per-hunk
-        /// Toggle the staged state of the hunk at cursor
+        /// Toggles the staged state of the hunk at cursor.
         ToggleStaged,
-        /// Stage the current hunk and move to the next one
+        /// Stages the current hunk and moves to the next one.
         StageAndNext,
-        /// Unstage the current hunk and move to the next one
+        /// Unstages the current hunk and moves to the next one.
         UnstageAndNext,
-        /// Restore the selected hunks to their original state
+        /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
         // per-file
-        /// Show git blame information for the current file
+        /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
-        /// Stage the current file
+        /// Stages the current file.
         StageFile,
-        /// Unstage the current file
+        /// Unstages the current file.
         UnstageFile,
         // repo-wide
-        /// Stage all changes in the repository
+        /// Stages all changes in the repository.
         StageAll,
-        /// Unstage all changes in the repository
+        /// Unstages all changes in the repository.
         UnstageAll,
-        /// Restore all tracked files to their last committed state
+        /// Restores all tracked files to their last committed state.
         RestoreTrackedFiles,
-        /// Move all untracked files to trash
+        /// Moves all untracked files to trash.
         TrashUntrackedFiles,
-        /// Undo the last commit, keeping changes in the working directory
+        /// Undoes the last commit, keeping changes in the working directory.
         Uncommit,
-        /// Push commits to the remote repository
+        /// Pushes commits to the remote repository.
         Push,
-        /// Push commits to a specific remote branch
+        /// Pushes commits to a specific remote branch.
         PushTo,
-        /// Force push commits to the remote repository
+        /// Force pushes commits to the remote repository.
         ForcePush,
-        /// Pull changes from the remote repository
+        /// Pulls changes from the remote repository.
         Pull,
-        /// Fetch changes from the remote repository
+        /// Fetches changes from the remote repository.
         Fetch,
-        /// Fetch changes from a specific remote
+        /// Fetches changes from a specific remote.
         FetchFrom,
-        /// Create a new commit with staged changes
+        /// Creates a new commit with staged changes.
         Commit,
-        /// Amend the last commit with staged changes
+        /// Amends the last commit with staged changes.
         Amend,
-        /// Cancel the current git operation
+        /// Cancels the current git operation.
         Cancel,
-        /// Expand the commit message editor
+        /// Expands the commit message editor.
         ExpandCommitEditor,
-        /// Generate a commit message using AI
+        /// Generates a commit message using AI.
         GenerateCommitMessage,
-        /// Initialize a new git repository
+        /// Initializes a new git repository.
         Init,
-        /// Open all modified files in the editor
+        /// Opens all modified files in the editor.
         OpenModifiedFiles,
     ]
 );

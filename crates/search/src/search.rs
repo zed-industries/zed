@@ -23,35 +23,35 @@ pub fn init(cx: &mut App) {
 actions!(
     search,
     [
-        /// Focus on the search input field
+        /// Focuses on the search input field.
         FocusSearch,
-        /// Toggle whole word matching
+        /// Toggles whole word matching.
         ToggleWholeWord,
-        /// Toggle case-sensitive search
+        /// Toggles case-sensitive search.
         ToggleCaseSensitive,
-        /// Toggle searching in ignored files
+        /// Toggles searching in ignored files.
         ToggleIncludeIgnored,
-        /// Toggle regular expression mode
+        /// Toggles regular expression mode.
         ToggleRegex,
-        /// Toggle the replace interface
+        /// Toggles the replace interface.
         ToggleReplace,
-        /// Toggle searching within selection only
+        /// Toggles searching within selection only.
         ToggleSelection,
-        /// Select the next search match
+        /// Selects the next search match.
         SelectNextMatch,
-        /// Select the previous search match
+        /// Selects the previous search match.
         SelectPreviousMatch,
-        /// Select all search matches
+        /// Selects all search matches.
         SelectAllMatches,
-        /// Cycle through search modes
+        /// Cycles through search modes.
         CycleMode,
-        /// Navigate to the next query in search history
+        /// Navigates to the next query in search history.
         NextHistoryQuery,
-        /// Navigate to the previous query in search history
+        /// Navigates to the previous query in search history.
         PreviousHistoryQuery,
-        /// Replace all matches
+        /// Replaces all matches.
         ReplaceAll,
-        /// Replace the next match
+        /// Replaces the next match.
         ReplaceNext,
     ]
 );

@@ -11,9 +11,9 @@ use workspace::{Toast, Workspace};
 actions!(
     cli,
     [
-        /// Install the Zed CLI tool to the system PATH
+        /// Installs the Zed CLI tool to the system PATH.
         Install,
-        /// Register the zed:// URL scheme handler
+        /// Registers the zed:// URL scheme handler.
         RegisterZedScheme
     ]
 );

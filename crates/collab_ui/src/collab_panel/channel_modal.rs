@@ -17,13 +17,13 @@ use workspace::{ModalView, notifications::DetachAndPromptErr};
 actions!(
     channel_modal,
     [
-        /// Select the next control in the channel modal
+        /// Selects the next control in the channel modal.
         SelectNextControl,
-        /// Toggle between invite members and manage members mode
+        /// Toggles between invite members and manage members mode.
         ToggleMode,
-        /// Toggle admin status for the selected member
+        /// Toggles admin status for the selected member.
         ToggleMemberAdmin,
-        /// Remove the selected member from the channel
+        /// Removes the selected member from the channel.
         RemoveMember
     ]
 );

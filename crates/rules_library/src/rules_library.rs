@@ -38,13 +38,13 @@ pub fn init(cx: &mut App) {
 actions!(
     rules_library,
     [
-        /// Create a new rule in the rules library
+        /// Creates a new rule in the rules library.
         NewRule,
-        /// Delete the selected rule
+        /// Deletes the selected rule.
         DeleteRule,
-        /// Duplicate the selected rule
+        /// Duplicates the selected rule.
         DuplicateRule,
-        /// Toggle whether the selected rule is a default rule
+        /// Toggles whether the selected rule is a default rule.
         ToggleDefaultRule
     ]
 );

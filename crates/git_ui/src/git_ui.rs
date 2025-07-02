@@ -34,7 +34,7 @@ pub mod repository_selector;
 actions!(
     git,
     [
-        /// Reset the git onboarding state to show the tutorial again
+        /// Resets the git onboarding state to show the tutorial again.
         ResetOnboarding
     ]
 );

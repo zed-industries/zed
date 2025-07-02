@@ -77,17 +77,17 @@ use zed_llm_client::CompletionIntent;
 actions!(
     git_panel,
     [
-        /// Close the git panel
+        /// Closes the git panel.
         Close,
-        /// Toggle focus on the git panel
+        /// Toggles focus on the git panel.
         ToggleFocus,
-        /// Open the git panel menu
+        /// Opens the git panel menu.
         OpenMenu,
-        /// Focus on the commit message editor
+        /// Focuses on the commit message editor.
         FocusEditor,
-        /// Focus on the changes list
+        /// Focuses on the changes list.
         FocusChanges,
-        /// Toggle automatic co-author suggestions
+        /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
     ]
 );

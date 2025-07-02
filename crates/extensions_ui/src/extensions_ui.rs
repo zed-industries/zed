@@ -41,7 +41,7 @@ use crate::extension_version_selector::{
 actions!(
     zed,
     [
-        /// Install an extension from a local directory for development
+        /// Installs an extension from a local directory for development.
         InstallDevExtension
     ]
 );

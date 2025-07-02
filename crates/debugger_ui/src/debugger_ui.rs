@@ -32,56 +32,56 @@ pub mod tests;
 actions!(
     debugger,
     [
-        /// Start a new debugging session
+        /// Starts a new debugging session.
         Start,
-        /// Continue execution until the next breakpoint
+        /// Continues execution until the next breakpoint.
         Continue,
-        /// Detach the debugger from the running process
+        /// Detaches the debugger from the running process.
         Detach,
-        /// Pause the currently running program
+        /// Pauses the currently running program.
         Pause,
-        /// Restart the current debugging session
+        /// Restarts the current debugging session.
         Restart,
-        /// Rerun the current debugging session with the same configuration
+        /// Reruns the current debugging session with the same configuration.
         RerunSession,
-        /// Step into the next function call
+        /// Steps into the next function call.
         StepInto,
-        /// Step over the current line
+        /// Steps over the current line.
         StepOver,
-        /// Step out of the current function
+        /// Steps out of the current function.
         StepOut,
-        /// Step back to the previous statement
+        /// Steps back to the previous statement.
         StepBack,
-        /// Stop the debugging session
+        /// Stops the debugging session.
         Stop,
-        /// Toggle whether to ignore all breakpoints
+        /// Toggles whether to ignore all breakpoints.
         ToggleIgnoreBreakpoints,
-        /// Clear all breakpoints in the project
+        /// Clears all breakpoints in the project.
         ClearAllBreakpoints,
-        /// Focus on the debugger console panel
+        /// Focuses on the debugger console panel.
         FocusConsole,
-        /// Focus on the variables panel
+        /// Focuses on the variables panel.
         FocusVariables,
-        /// Focus on the breakpoint list panel
+        /// Focuses on the breakpoint list panel.
         FocusBreakpointList,
-        /// Focus on the call stack frames panel
+        /// Focuses on the call stack frames panel.
         FocusFrames,
-        /// Focus on the loaded modules panel
+        /// Focuses on the loaded modules panel.
         FocusModules,
-        /// Focus on the loaded sources panel
+        /// Focuses on the loaded sources panel.
         FocusLoadedSources,
-        /// Focus on the terminal panel
+        /// Focuses on the terminal panel.
         FocusTerminal,
-        /// Show the stack trace for the current thread
+        /// Shows the stack trace for the current thread.
         ShowStackTrace,
-        /// Toggle the thread picker dropdown
+        /// Toggles the thread picker dropdown.
         ToggleThreadPicker,
-        /// Toggle the session picker dropdown
+        /// Toggles the session picker dropdown.
         ToggleSessionPicker,
-        /// Rerun the last debugging session
+        /// Reruns the last debugging session.
         #[action(deprecated_aliases = ["debugger::RerunLastSession"])]
         Rerun,
-        /// Toggle expansion of the selected item in the debugger UI
+        /// Toggles expansion of the selected item in the debugger UI.
         ToggleExpandItem,
     ]
 );
@@ -89,7 +89,7 @@ actions!(
 actions!(
     dev,
     [
-        /// Copy debug adapter launch arguments to clipboard
+        /// Copies debug adapter launch arguments to clipboard.
         CopyDebugAdapterArguments
     ]
 );

@@ -16,21 +16,21 @@ use crate::repl_store::ReplStore;
 actions!(
     repl,
     [
-        /// Run the current cell and advance to the next one
+        /// Runs the current cell and advances to the next one.
         Run,
-        /// Run the current cell without advancing
+        /// Runs the current cell without advancing.
         RunInPlace,
-        /// Clear all outputs in the REPL
+        /// Clears all outputs in the REPL.
         ClearOutputs,
-        /// Open the REPL sessions panel
+        /// Opens the REPL sessions panel.
         Sessions,
-        /// Interrupt the currently running kernel
+        /// Interrupts the currently running kernel.
         Interrupt,
-        /// Shutdown the current kernel
+        /// Shuts down the current kernel.
         Shutdown,
-        /// Restart the current kernel
+        /// Restarts the current kernel.
         Restart,
-        /// Refresh the list of available kernelspecs
+        /// Refreshes the list of available kernelspecs.
         RefreshKernelspecs
     ]
 );

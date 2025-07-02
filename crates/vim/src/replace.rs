@@ -16,9 +16,9 @@ use std::sync::Arc;
 actions!(
     vim,
     [
-        /// Toggle replace mode
+        /// Toggles replace mode.
         ToggleReplace,
-        /// Undo the last replacement
+        /// Undoes the last replacement.
         UndoReplace
     ]
 );

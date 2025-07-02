@@ -44,25 +44,25 @@ use workspace::{
 actions!(
     collab_panel,
     [
-        /// Toggle focus on the collaboration panel
+        /// Toggles focus on the collaboration panel.
         ToggleFocus,
-        /// Remove the selected channel or contact
+        /// Removes the selected channel or contact.
         Remove,
-        /// Open the context menu for the selected item
+        /// Opens the context menu for the selected item.
         Secondary,
-        /// Collapse the selected channel in the tree view
+        /// Collapses the selected channel in the tree view.
         CollapseSelectedChannel,
-        /// Expand the selected channel in the tree view
+        /// Expands the selected channel in the tree view.
         ExpandSelectedChannel,
-        /// Start moving a channel to a new location
+        /// Starts moving a channel to a new location.
         StartMoveChannel,
-        /// Move the selected item to the current location
+        /// Moves the selected item to the current location.
         MoveSelected,
-        /// Insert a space character in the filter input
+        /// Inserts a space character in the filter input.
         InsertSpace,
-        /// Move the selected channel up in the list
+        /// Moves the selected channel up in the list.
         MoveChannelUp,
-        /// Move the selected channel down in the list
+        /// Moves the selected channel down in the list.
         MoveChannelDown,
     ]
 );

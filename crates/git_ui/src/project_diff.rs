@@ -44,9 +44,9 @@ use workspace::{
 actions!(
     git,
     [
-        /// Show the diff between the working directory and the index
+        /// Shows the diff between the working directory and the index.
         Diff,
-        /// Add files to the git staging area
+        /// Adds files to the git staging area.
         Add
     ]
 );

@@ -49,7 +49,7 @@ const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 actions!(
     terminal_panel,
     [
-        /// Toggle focus on the terminal panel
+        /// Toggles focus on the terminal panel.
         ToggleFocus
     ]
 );

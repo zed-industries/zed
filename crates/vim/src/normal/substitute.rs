@@ -10,9 +10,9 @@ use crate::{
 actions!(
     vim,
     [
-        /// Substitute characters in the current selection
+        /// Substitutes characters in the current selection.
         Substitute,
-        /// Substitute the entire line
+        /// Substitutes the entire line.
         SubstituteLine
     ]
 );

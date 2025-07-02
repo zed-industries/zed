@@ -18,7 +18,7 @@ use workspace::{
 actions!(
     dev,
     [
-        /// Open the syntax tree view for the current file
+        /// Opens the syntax tree view for the current file.
         OpenSyntaxTreeView
     ]
 );

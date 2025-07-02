@@ -178,13 +178,13 @@ enum DeleteMarks {
 actions!(
     vim,
     [
-        /// Execute a command in visual mode
+        /// Executes a command in visual mode.
         VisualCommand,
-        /// Execute a command with a count prefix
+        /// Executes a command with a count prefix.
         CountCommand,
-        /// Execute a shell command
+        /// Executes a shell command.
         ShellCommand,
-        /// Indicates that an argument is required for the command
+        /// Indicates that an argument is required for the command.
         ArgumentRequired
     ]
 );

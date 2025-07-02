@@ -16,7 +16,7 @@ use workspace::{AppState, OpenVisible, Workspace};
 actions!(
     journal,
     [
-        /// Create a new journal entry for today
+        /// Creates a new journal entry for today.
         NewJournalEntry
     ]
 );

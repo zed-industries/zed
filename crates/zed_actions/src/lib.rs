@@ -28,25 +28,25 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
-        /// Open the settings editor
+        /// Opens the settings editor.
         OpenSettings,
-        /// Open the default keymap file
+        /// Opens the default keymap file.
         OpenDefaultKeymap,
-        /// Open account settings
+        /// Opens account settings.
         OpenAccountSettings,
-        /// Open server settings
+        /// Opens server settings.
         OpenServerSettings,
-        /// Quit the application
+        /// Quits the application.
         Quit,
-        /// Open the user keymap file
+        /// Opens the user keymap file.
         OpenKeymap,
-        /// Show information about Zed
+        /// Shows information about Zed.
         About,
-        /// Open the documentation website
+        /// Opens the documentation website.
         OpenDocs,
-        /// View open source licenses
+        /// Views open source licenses.
         OpenLicenses,
-        /// Open the telemetry log
+        /// Opens the telemetry log.
         OpenTelemetryLog,
     ]
 );
@@ -129,7 +129,7 @@ pub mod dev {
     actions!(
         dev,
         [
-            /// Toggle the developer inspector for debugging UI elements
+            /// Toggles the developer inspector for debugging UI elements.
             ToggleInspector
         ]
     );
@@ -155,13 +155,13 @@ pub mod git {
     actions!(
         git,
         [
-            /// Checkout a different git branch
+            /// Checks out a different git branch.
             CheckoutBranch,
-            /// Switch to a different git branch
+            /// Switches to a different git branch.
             Switch,
-            /// Select a different repository
+            /// Selects a different repository.
             SelectRepo,
-            /// Open the git branch selector
+            /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch
         ]
@@ -174,7 +174,7 @@ pub mod jj {
     actions!(
         jj,
         [
-            /// Open the Jujutsu bookmark list
+            /// Opens the Jujutsu bookmark list.
             BookmarkList
         ]
     );
@@ -186,7 +186,7 @@ pub mod toast {
     actions!(
         toast,
         [
-            /// Run the action associated with a toast notification
+            /// Runs the action associated with a toast notification.
             RunAction
         ]
     );
@@ -198,7 +198,7 @@ pub mod command_palette {
     actions!(
         command_palette,
         [
-            /// Toggle the command palette
+            /// Toggles the command palette.
             Toggle
         ]
     );
@@ -210,9 +210,9 @@ pub mod feedback {
     actions!(
         feedback,
         [
-            /// Open the bug report form
+            /// Opens the bug report form.
             FileBugReport,
-            /// Open the feedback form
+            /// Opens the feedback form.
             GiveFeedback
         ]
     );
@@ -252,11 +252,11 @@ pub mod agent {
     actions!(
         agent,
         [
-            /// Open the agent configuration panel
+            /// Opens the agent configuration panel.
             OpenConfiguration,
-            /// Open the agent onboarding modal
+            /// Opens the agent onboarding modal.
             OpenOnboardingModal,
-            /// Reset the agent onboarding state
+            /// Resets the agent onboarding state.
             ResetOnboarding
         ]
     );
@@ -279,7 +279,7 @@ pub mod assistant {
     actions!(
         assistant,
         [
-            /// Show the assistant configuration panel
+            /// Shows the assistant configuration panel.
             ShowConfiguration
         ]
     );
@@ -306,9 +306,9 @@ pub mod debugger {
     actions!(
         debugger,
         [
-            /// Open the debugger onboarding modal
+            /// Opens the debugger onboarding modal.
             OpenOnboardingModal,
-            /// Reset the debugger onboarding state
+            /// Resets the debugger onboarding state.
             ResetOnboarding
         ]
     );
@@ -420,14 +420,14 @@ pub mod outline {
 actions!(
     zed_predict_onboarding,
     [
-        /// Open the Zed Predict onboarding modal
+        /// Opens the Zed Predict onboarding modal.
         OpenZedPredictOnboarding
     ]
 );
 actions!(
     git_onboarding,
     [
-        /// Open the git integration onboarding modal
+        /// Opens the git integration onboarding modal.
         OpenGitIntegrationOnboarding
     ]
 );
@@ -435,18 +435,18 @@ actions!(
 actions!(
     debug_panel,
     [
-        /// Toggle focus on the debug panel
+        /// Toggles focus on the debug panel.
         ToggleFocus
     ]
 );
 actions!(
     debugger,
     [
-        /// Toggle the enabled state of a breakpoint
+        /// Toggles the enabled state of a breakpoint.
         ToggleEnableBreakpoint,
-        /// Remove a breakpoint
+        /// Removes a breakpoint.
         UnsetBreakpoint,
-        /// Open the project debug tasks configuration
+        /// Opens the project debug tasks configuration.
         OpenProjectDebugTasks,
     ]
 );

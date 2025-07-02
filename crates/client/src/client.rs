@@ -84,11 +84,11 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 actions!(
     client,
     [
-        /// Sign in to Zed account
+        /// Signs in to Zed account.
         SignIn,
-        /// Sign out of Zed account
+        /// Signs out of Zed account.
         SignOut,
-        /// Reconnect to the collaboration server
+        /// Reconnects to the collaboration server.
         Reconnect
     ]
 );

@@ -14,7 +14,7 @@ use crate::{Item, Workspace};
 actions!(
     dev,
     [
-        /// Open the theme preview window
+        /// Opens the theme preview window.
         OpenThemePreview
     ]
 );

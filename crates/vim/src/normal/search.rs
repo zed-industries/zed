@@ -76,11 +76,11 @@ pub(crate) struct Replacement {
 actions!(
     vim,
     [
-        /// Submit the current search query
+        /// Submits the current search query.
         SearchSubmit,
-        /// Move to the next search match
+        /// Moves to the next search match.
         MoveToNextMatch,
-        /// Move to the previous search match
+        /// Moves to the previous search match.
         MoveToPreviousMatch
     ]
 );

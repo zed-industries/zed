@@ -26,7 +26,7 @@ use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 actions!(
     console,
     [
-        /// Add an expression to the watch list
+        /// Adds an expression to the watch list.
         WatchExpression
     ]
 );

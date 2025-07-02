@@ -13,9 +13,9 @@ use crate::{RateCompletionModal, onboarding_modal::ZedPredictModal};
 actions!(
     edit_prediction,
     [
-        /// Reset the edit prediction onboarding state
+        /// Resets the edit prediction onboarding state.
         ResetOnboarding,
-        /// Open the rate completions modal
+        /// Opens the rate completions modal.
         RateCompletions
     ]
 );

@@ -50,11 +50,11 @@ const MAX_SHORT_SHA_LENGTH: usize = 8;
 actions!(
     collab,
     [
-        /// Toggle the user menu dropdown
+        /// Toggles the user menu dropdown.
         ToggleUserMenu,
-        /// Toggle the project menu dropdown
+        /// Toggles the project menu dropdown.
         ToggleProjectMenu,
-        /// Switch to a different git branch
+        /// Switches to a different git branch.
         SwitchBranch
     ]
 );

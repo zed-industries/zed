@@ -15,7 +15,7 @@ use workspace::notifications::{NotificationId, show_app_notification};
 actions!(
     auto_update,
     [
-        /// Open release notes in the browser for the current version
+        /// Opens release notes in the browser for the current version.
         ViewReleaseNotesLocally
     ]
 );

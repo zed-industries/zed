@@ -31,11 +31,11 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 actions!(
     auto_update,
     [
-        /// Check for available updates
+        /// Checks for available updates.
         Check,
-        /// Dismiss the update error message
+        /// Dismisses the update error message.
         DismissErrorMessage,
-        /// Open the release notes for the current version
+        /// Opens the release notes for the current version.
         ViewReleaseNotes,
     ]
 );
