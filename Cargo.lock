@@ -22,6 +22,7 @@ dependencies = [
  "markdown",
  "parking_lot",
  "project",
+ "proto",
  "serde_json",
  "settings",
  "smol",

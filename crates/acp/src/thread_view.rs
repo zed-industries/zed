@@ -12,8 +12,14 @@ use gpui::{
 };
 use gpui::{FocusHandle, Task};
 use language::Buffer;
+<<<<<<< HEAD
 use language::language_settings::SoftWrap;
 use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
+||||||| parent of 47b80cc740 (Show errors from ACP when requests error)
+use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
+=======
+use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
+>>>>>>> 47b80cc740 (Show errors from ACP when requests error)
 use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
@@ -32,6 +38,7 @@ pub struct AcpThreadView {
     // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
     thread_entry_views: Vec<Option<ThreadEntryView>>,
     message_editor: Entity<Editor>,
+    last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     send_task: Option<Task<Result<()>>>,
 }
@@ -96,6 +103,7 @@ impl AcpThreadView {
             message_editor,
             send_task: None,
             list_state: list_state,
+            last_error: None,
         }
     }
 
@@ -137,8 +145,37 @@ impl AcpThreadView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
+<<<<<<< HEAD
                         let subscription =
                             cx.subscribe_in(&thread, window, Self::handle_thread_event);
+||||||| parent of 47b80cc740 (Show errors from ACP when requests error)
+                        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
+                            let count = this.list_state.item_count();
+                            match event {
+                                AcpThreadEvent::NewEntry => {
+                                    this.list_state.splice(count..count, 1);
+                                }
+                                AcpThreadEvent::EntryUpdated(index) => {
+                                    this.list_state.splice(*index..*index + 1, 1);
+                                }
+                            }
+                            cx.notify();
+                        });
+=======
+                        dbg!(&thread);
+                        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
+                            let count = this.list_state.item_count();
+                            match event {
+                                AcpThreadEvent::NewEntry => {
+                                    this.list_state.splice(count..count, 1);
+                                }
+                                AcpThreadEvent::EntryUpdated(index) => {
+                                    this.list_state.splice(*index..*index + 1, 1);
+                                }
+                            }
+                            cx.notify();
+                        });
+>>>>>>> 47b80cc740 (Show errors from ACP when requests error)
                         this.list_state
                             .splice(0..0, thread.read(cx).entries().len());
 
@@ -148,6 +185,7 @@ impl AcpThreadView {
                         };
                     }
                     Err(e) => {
+                        dbg!(&e);
                         if let Some(exit_status) = agent.exit_status() {
                             this.thread_state = ThreadState::LoadError(
                                 format!(
@@ -189,6 +227,7 @@ impl AcpThreadView {
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_error.take();
         let text = self.message_editor.read(cx).text(cx);
         if text.is_empty() {
             return;
@@ -198,9 +237,15 @@ impl AcpThreadView {
         let task = thread.update(cx, |thread, cx| thread.send(&text, cx));
 
         self.send_task = Some(cx.spawn(async move |this, cx| {
-            task.await?;
+            let result = task.await;
 
-            this.update(cx, |this, _cx| {
+            this.update(cx, |this, cx| {
+                if let Err(err) = result {
+                    this.last_error =
+                        Some(cx.new(|cx| {
+                            Markdown::new(format!("Error: {err}").into(), None, None, cx)
+                        }))
+                }
                 this.send_task.take();
             })
         }));
@@ -865,7 +910,7 @@ impl Focusable for AcpThreadView {
 }
 
 impl Render for AcpThreadView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.message_editor.read(cx).text(cx);
         let is_editor_empty = text.is_empty();
         let focus_handle = self.message_editor.focus_handle(cx);
@@ -906,6 +951,21 @@ impl Render for AcpThreadView {
                         .size(LabelSize::Small)
                         .into()
                     })),
+            })
+            .when_some(self.last_error.clone(), |el, error| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .p_2()
+                        .gap_2()
+                        .border_t_1()
+                        .border_color(cx.theme().status().error_border)
+                        .bg(cx.theme().status().error_background)
+                        .child(MarkdownElement::new(
+                            error,
+                            default_markdown_style(window, cx),
+                        )),
+                )
             })
             .child(
                 v_flex()

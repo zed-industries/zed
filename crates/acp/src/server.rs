@@ -270,13 +270,18 @@ impl AcpServer {
     }
 
     pub async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<AcpThread>> {
-        let response = self.connection.request(acp::CreateThreadParams).await?;
+        let response = self
+            .connection
+            .request(acp::CreateThreadParams)
+            .await
+            .map_err(to_anyhow)?;
+
         let thread_id: ThreadId = response.thread_id.into();
         let server = self.clone();
         let thread = cx.new(|_| AcpThread {
             // todo!
             title: "ACP Thread".into(),
-            id: thread_id.clone(),
+            id: thread_id.clone(), // Either<ErrorState, Id>
             next_entry_id: ThreadEntryId(0),
             entries: Vec::default(),
             project: self.project.clone(),
@@ -297,13 +302,24 @@ impl AcpServer {
                 thread_id: thread_id.clone().into(),
                 message,
             })
-            .await?;
+            .await
+            .map_err(to_anyhow)?;
         Ok(())
     }
 
     pub fn exit_status(&self) -> Option<ExitStatus> {
         self.exit_status.lock().clone()
     }
+}
+
+#[track_caller]
+fn to_anyhow(e: acp::Error) -> anyhow::Error {
+    log::error!(
+        "failed to send message: {code}: {message}",
+        code = e.code,
+        message = e.message
+    );
+    anyhow::anyhow!(e.message)
 }
 
 impl From<acp::ThreadId> for ThreadId {
