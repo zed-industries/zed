@@ -801,7 +801,13 @@ impl OnboardingUI {
                 v_flex()
                     .gap_3()
                     .mt_4()
-                    .child(Label::new("Pick a Keymap").size(LabelSize::Large))
+                    .child(
+                        h_flex()
+                            .h(px(32.))
+                            .w_full()
+                            .justify_between()
+                            .child(Label::new("Pick a Keymap")),
+                    )
                     .child(
                         h_flex().gap_2().children(
                             vec![
@@ -820,19 +826,23 @@ impl OnboardingUI {
                                 let is_selected = current_keymap == label;
 
                                 v_flex()
+                                    .w(px(60.))
                                     .gap_1()
                                     .items_center()
+                                    .justify_center()
+                                    .text_center()
                                     .child(
-                                        div()
+                                        h_flex()
                                             .id(("keymap", index))
-                                            .p_3()
-                                            .rounded_md()
-                                            .bg(cx.theme().colors().element_background)
+                                            .size(px(40.))
+                                            .rounded(px(8.))
+                                            .items_center()
+                                            .justify_center()
                                             .border_1()
                                             .border_color(if is_selected {
                                                 cx.theme().colors().border_selected
                                             } else {
-                                                cx.theme().colors().border
+                                                transparent_black()
                                             })
                                             .when(is_focused, |this| {
                                                 this.border_color(
@@ -840,14 +850,25 @@ impl OnboardingUI {
                                                 )
                                             })
                                             .when(is_selected, |this| {
-                                                this.bg(cx.theme().colors().element_selected)
-                                            })
-                                            .hover(|this| {
-                                                this.bg(cx.theme().colors().element_hover)
+                                                this.bg(cx.theme().status().info.opacity(0.08))
                                             })
                                             .child(
-                                                Vector::new(icon, rems(2.), rems(2.))
-                                                    .color(Color::Muted),
+                                                h_flex()
+                                                    .size(px(34.))
+                                                    .rounded(px(6.))
+                                                    .border_2()
+                                                    .border_color(cx.theme().colors().border)
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .shadow_hairline()
+                                                    .child(
+                                                        Vector::new(icon, rems(1.25), rems(1.25))
+                                                            .color(if is_selected {
+                                                                Color::Info
+                                                            } else {
+                                                                Color::Default
+                                                            }),
+                                                    ),
                                             )
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 SettingsStore::update_global(
@@ -878,13 +899,12 @@ impl OnboardingUI {
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(Label::new(label).size(LabelSize::Small).color(
-                                        if is_selected {
-                                            Color::Default
-                                        } else {
-                                            Color::Muted
-                                        },
-                                    ))
+                                    .child(
+                                        div()
+                                            .text_color(cx.theme().colors().text)
+                                            .text_size(px(12.))
+                                            .child(label),
+                                    )
                             }),
                         ),
                     ),
