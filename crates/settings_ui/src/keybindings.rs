@@ -616,54 +616,46 @@ impl Render for KeymapEditor {
                                 })
                                 .menu({
                                     let this = cx.weak_entity();
-                                    move |window, cx| {
-                                        ContextMenu::build(window, cx, |menu, window, cx| {
-                                            let Some(this_entity) = this.upgrade() else {
-                                                return menu;
-                                            };
-                                            let selected_binding_context = this
-                                                .read_with(cx, |this, cx| {
-                                                    this.selected_binding()
-                                                        .map(|binding| binding.context.as_ref())
-                                                        .filter(|context| !context.is_empty())
-                                                        .map(|context| context.to_string())
-                                                })
-                                                .ok()
-                                                .flatten();
-                                            menu.entry(
-                                                "Edit",
-                                                None,
-                                                window.handler_for(
-                                                    &this_entity,
-                                                    |this, window, cx| {
-                                                        this.edit_selected_keybinding(window, cx);
-                                                    },
-                                                ),
-                                            )
-                                            .when_some(
-                                                selected_binding_context,
-                                                |menu, context| {
-                                                    menu.entry(
-                                                        "Copy context",
-                                                        None,
-                                                        move |window, cx| {
-                                                            cx.write_to_clipboard(
-                                                                gpui::ClipboardItem::new_string(
-                                                                    context.clone(),
-                                                                ),
-                                                            );
-                                                        },
-                                                    )
-                                                },
-                                            )
-                                        })
-                                    }
+                                    move |window, cx| build_keybind_context_menu(&this, window, cx)
                                 })
                                 .into_any_element()
                         }),
                     ),
             )
     }
+}
+
+fn build_keybind_context_menu(
+    this: &WeakEntity<KeymapEditor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ContextMenu> {
+    ContextMenu::build(window, cx, |menu, window, cx| {
+        let Some(this_entity) = this.upgrade() else {
+            return menu;
+        };
+        let selected_binding_context = this
+            .read_with(cx, |this, _cx| {
+                this.selected_binding()
+                    .and_then(|binding| binding.context.as_ref())
+                    .and_then(KeybindContextString::local)
+                    .map(|context| context.to_string())
+            })
+            .ok()
+            .flatten();
+        menu.entry(
+            "Edit",
+            None,
+            window.handler_for(&this_entity, |this, window, cx| {
+                this.edit_selected_keybinding(window, cx);
+            }),
+        )
+        .when_some(selected_binding_context, |menu, context| {
+            menu.entry("Copy context", None, move |_window, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
+            })
+        })
+    })
 }
 
 #[derive(Debug, Clone, IntoElement)]
