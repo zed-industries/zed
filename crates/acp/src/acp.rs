@@ -724,7 +724,7 @@ mod tests {
         }
     }
 
-    pub fn gemini_acp_server(project: Entity<Project>, mut cx: AsyncApp) -> Result<Arc<AcpServer>> {
+    pub fn gemini_acp_server(project: Entity<Project>, cx: AsyncApp) -> Result<Arc<AcpServer>> {
         let cli_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
         let mut command = util::command::new_smol_command("node");
@@ -743,6 +743,6 @@ mod tests {
 
         let child = command.spawn().unwrap();
 
-        Ok(AcpServer::stdio(child, project, &mut cx))
+        cx.update(|cx| AcpServer::stdio(child, project, cx))
     }
 }

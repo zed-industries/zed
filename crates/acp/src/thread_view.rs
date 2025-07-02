@@ -95,16 +95,6 @@ impl AcpThreadView {
             }),
         );
 
-        Self {
-            thread_state: Self::initial_state(project, window, cx),
-            thread_entry_views: Vec::new(),
-            message_editor,
-            send_task: None,
-            list_state: list_state,
-            last_error: None,
-        }
-    }
-
         let root_dir = project
             .read(cx)
             .visible_worktrees(cx)
@@ -132,6 +122,7 @@ impl AcpThreadView {
             thread_state: Self::initial_state(agent.clone(), window, cx),
             agent,
             message_editor,
+            thread_entry_views: Vec::new(),
             send_task: None,
             list_state: list_state,
             last_error: None,
