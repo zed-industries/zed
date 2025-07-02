@@ -34,7 +34,7 @@ impl RenderOnce for ThemePreviewTile {
 
         let root_radius = px(8.0);
         let root_border = px(2.0);
-        let root_padding = px(2.0);
+        let root_padding = px(0.0);
         let child_border = px(1.0);
         let inner_radius =
             inner_corner_radius(root_radius, root_border, root_padding, child_border);

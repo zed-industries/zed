@@ -9,7 +9,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
     Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, UpdateGlobal, WeakEntity,
-    actions, prelude::*, svg,
+    actions, prelude::*, svg, transparent_black,
 };
 use menu;
 use persistence::ONBOARDING_DB;
@@ -187,27 +187,22 @@ impl Render for OnboardingUI {
                     .on_action(cx.listener(Self::handle_jump_to_welcome))
                     .on_action(cx.listener(Self::handle_next_page))
                     .on_action(cx.listener(Self::handle_previous_page))
-                    .w(px(904.))
+                    .w(px(984.))
+                    .overflow_hidden()
                     .gap(px(24.))
                     .child(
                         h_flex()
                             .h(px(500.))
                             .w_full()
+                            .overflow_hidden()
                             .gap(px(48.))
                             .child(self.render_navigation(window, cx))
                             .child(
                                 v_flex()
                                     .h_full()
                                     .flex_1()
-                                    .when(self.focus_area == FocusArea::PageContent, |this| {
-                                        this.border_2()
-                                            .border_color(cx.theme().colors().border_focused)
-                                    })
-                                    .rounded_lg()
-                                    .p_4()
-                                    .child(
-                                        div().flex_1().child(self.render_active_page(window, cx)),
-                                    ),
+                                    .overflow_hidden()
+                                    .child(self.render_active_page(window, cx)),
                             ),
                     ),
             )
@@ -697,23 +692,23 @@ impl OnboardingUI {
         let theme_names = theme_registry.list_names();
         let current_theme = cx.theme().clone();
 
-        // For demo, we'll show 4 themes
-
         v_flex()
             .id("theme-selector")
             .h_full()
             .w_full()
-            .p_6()
             .gap_6()
             .overflow_y_scroll()
             // Theme selector section
             .child(
                 v_flex()
-                    .gap_3()
+                    .w_full()
+                    .overflow_hidden()
                     .child(
                         h_flex()
+                            .h(px(32.))
+                            .w_full()
                             .justify_between()
-                            .child(Label::new("Pick a Theme").size(LabelSize::Large))
+                            .child(Label::new("Pick a Theme"))
                             .child(
                                 Button::new("more_themes", "More Themes")
                                     .style(ButtonStyle::Subtle)
@@ -725,76 +720,76 @@ impl OnboardingUI {
                             ),
                     )
                     .child(
-                        h_flex()
-                            .gap_3()
-                            .children(
-                                vec![
-                                    ("One Dark", "one-dark"),
-                                    ("Gruvbox Dark", "gruvbox-dark"),
-                                    ("One Light", "one-light"),
-                                    ("Gruvbox Light", "gruvbox-light"),
-                                ]
-                                .into_iter()
-                                .enumerate()
-                                .map(|(i, (label, theme_name))| {
-                                    let is_selected = current_theme.name == *theme_name;
-                                    let is_focused = is_page_focused && focused_item == i;
+                        h_flex().w_full().overflow_hidden().gap_3().children(
+                            vec![
+                                ("One Dark", "One Dark"),
+                                ("Gruvbox Dark", "Gruvbox Dark"),
+                                ("One Light", "One Light"),
+                                ("Gruvbox Light", "Gruvbox Light"),
+                            ]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, (label, theme_name))| {
+                                let is_selected = current_theme.name == *theme_name;
+                                let is_focused = is_page_focused && focused_item == i;
 
-                                    v_flex()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .id("theme-item")
-                                                .when(is_focused, |this| {
-                                                    this.border_2().border_color(
-                                                        cx.theme().colors().border_focused,
-                                                    )
-                                                })
-                                                .rounded_md()
-                                                .p_1()
-                                                .id(("theme", i))
-                                                .child(
-                                                    if let Ok(theme) =
-                                                        theme_registry.get(theme_name)
-                                                    {
-                                                        ThemePreviewTile::new(
-                                                            theme,
-                                                            is_selected,
-                                                            0.5,
-                                                        )
-                                                        .into_any_element()
-                                                    } else {
-                                                        div()
-                                                            .w(px(200.))
-                                                            .h(px(120.))
-                                                            .bg(cx
-                                                                .theme()
-                                                                .colors()
-                                                                .surface_background)
-                                                            .rounded_md()
-                                                            .into_any_element()
-                                                    },
-                                                )
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        SettingsStore::update_global(cx, move |store, cx| {
-                                                            let mut settings = store.raw_user_settings().clone();
-                                                            settings["theme"] = serde_json::json!(theme_name);
-                                                            store.set_user_settings(&settings.to_string(), cx).ok();
-                                                        });
-                                                        cx.notify();
-                                                    },
-                                                )),
-                                        )
-                                        .child(Label::new(label).size(LabelSize::Small).color(
-                                            if is_selected {
-                                                Color::Default
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1p5()
+                                    .justify_center()
+                                    .text_center()
+                                    .child(
+                                        div()
+                                            .id(("theme", i))
+                                            .rounded(px(8.))
+                                            .h(px(90.))
+                                            .w_full()
+                                            .overflow_hidden()
+                                            .border_1()
+                                            .border_color(if is_focused {
+                                                cx.theme().colors().border_focused
                                             } else {
-                                                Color::Muted
-                                            },
-                                        ))
-                                },
-                            )),
+                                                transparent_black()
+                                            })
+                                            .child(
+                                                if let Ok(theme) = theme_registry.get(theme_name) {
+                                                    ThemePreviewTile::new(theme, is_selected, 0.5)
+                                                        .into_any_element()
+                                                } else {
+                                                    div()
+                                                        .size_full()
+                                                        .bg(cx.theme().colors().surface_background)
+                                                        .rounded_md()
+                                                        .into_any_element()
+                                                },
+                                            )
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                SettingsStore::update_global(
+                                                    cx,
+                                                    move |store, cx| {
+                                                        let mut settings =
+                                                            store.raw_user_settings().clone();
+                                                        settings["theme"] =
+                                                            serde_json::json!(theme_name);
+                                                        store
+                                                            .set_user_settings(
+                                                                &settings.to_string(),
+                                                                cx,
+                                                            )
+                                                            .ok();
+                                                    },
+                                                );
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(cx.theme().colors().text)
+                                            .text_size(px(12.))
+                                            .child(label),
+                                    )
+                            }),
+                        ),
                     ),
             )
             // Keymap selector section
@@ -851,34 +846,42 @@ impl OnboardingUI {
                                                     .color(Color::Muted),
                                             )
                                             .on_click(cx.listener(move |this, _, window, cx| {
-                                                SettingsStore::update_global(cx, move |store, cx| {
-                                                    let base_keymap = match label {
-                                                        "Zed" => "None",
-                                                        "Atom" => "Atom",
-                                                        "JetBrains" => "JetBrains",
-                                                        "Sublime" => "SublimeText",
-                                                        "VSCode" => "VSCode",
-                                                        "Emacs" => "Emacs",
-                                                        "TextMate" => "TextMate",
-                                                        _ => "VSCode",
-                                                    };
-                                                    let mut settings = store.raw_user_settings().clone();
-                                                    settings["base_keymap"] = serde_json::json!(base_keymap);
-                                                    store.set_user_settings(&settings.to_string(), cx).ok();
-                                                });
+                                                SettingsStore::update_global(
+                                                    cx,
+                                                    move |store, cx| {
+                                                        let base_keymap = match label {
+                                                            "Zed" => "None",
+                                                            "Atom" => "Atom",
+                                                            "JetBrains" => "JetBrains",
+                                                            "Sublime" => "SublimeText",
+                                                            "VSCode" => "VSCode",
+                                                            "Emacs" => "Emacs",
+                                                            "TextMate" => "TextMate",
+                                                            _ => "VSCode",
+                                                        };
+                                                        let mut settings =
+                                                            store.raw_user_settings().clone();
+                                                        settings["base_keymap"] =
+                                                            serde_json::json!(base_keymap);
+                                                        store
+                                                            .set_user_settings(
+                                                                &settings.to_string(),
+                                                                cx,
+                                                            )
+                                                            .ok();
+                                                    },
+                                                );
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(
-                                        Label::new(label)
-                                            .size(LabelSize::Small)
-                                            .color(if is_selected {
-                                                Color::Default
-                                            } else {
-                                                Color::Muted
-                                            }),
-                                    )
-                            })
+                                    .child(Label::new(label).size(LabelSize::Small).color(
+                                        if is_selected {
+                                            Color::Default
+                                        } else {
+                                            Color::Muted
+                                        },
+                                    ))
+                            }),
                         ),
                     ),
             )
@@ -912,20 +915,13 @@ impl OnboardingUI {
                                             .border_color(cx.theme().colors().border_selected)
                                     })
                                     .hover(|this| this.bg(cx.theme().colors().element_hover))
-                                    .child(
-                                        div().when(vim_enabled, |this| {
-                                            this.size_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(
-                                                    svg()
-                                                        .path("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
-                                                        .size_3()
-                                                        .text_color(cx.theme().colors().icon),
-                                                )
-                                        })
-                                    ),
+                                    .child(div().when(vim_enabled, |this| {
+                                        this.size_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(Icon::new(IconName::Check))
+                                    })),
                             )
                             .child(Label::new("Enable Vim Mode"))
                             .cursor_pointer()
@@ -963,20 +959,13 @@ impl OnboardingUI {
                                             .border_color(cx.theme().colors().border_selected)
                                     })
                                     .hover(|this| this.bg(cx.theme().colors().element_hover))
-                                    .child(
-                                        div().when(crash_reports_enabled, |this| {
-                                            this.size_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(
-                                                    svg()
-                                                        .path("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
-                                                        .size_3()
-                                                        .text_color(cx.theme().colors().icon),
-                                                )
-                                        })
-                                    ),
+                                    .child(div().when(crash_reports_enabled, |this| {
+                                        this.size_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(Icon::new(IconName::Check))
+                                    })),
                             )
                             .child(Label::new("Send Crash Reports"))
                             .cursor_pointer()
@@ -987,7 +976,8 @@ impl OnboardingUI {
                                     if settings.get("telemetry").is_none() {
                                         settings["telemetry"] = serde_json::json!({});
                                     }
-                                    settings["telemetry"]["diagnostics"] = serde_json::json!(!current);
+                                    settings["telemetry"]["diagnostics"] =
+                                        serde_json::json!(!current);
                                     store.set_user_settings(&settings.to_string(), cx).ok();
                                 });
                             }))
@@ -1017,20 +1007,13 @@ impl OnboardingUI {
                                             .border_color(cx.theme().colors().border_selected)
                                     })
                                     .hover(|this| this.bg(cx.theme().colors().element_hover))
-                                    .child(
-                                        div().when(telemetry_enabled, |this| {
-                                            this.size_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(
-                                                    svg()
-                                                        .path("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
-                                                        .size_3()
-                                                        .text_color(cx.theme().colors().icon),
-                                                )
-                                        })
-                                    ),
+                                    .child(div().when(telemetry_enabled, |this| {
+                                        this.size_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(Icon::new(IconName::Check))
+                                    })),
                             )
                             .child(Label::new("Send Telemetry"))
                             .cursor_pointer()
@@ -1180,28 +1163,6 @@ impl OnboardingUI {
                         // TODO: Close onboarding and start coding
                         cx.notify();
                     })),
-            )
-            .into_any_element()
-    }
-
-    fn render_keyboard_help(&self, cx: &mut Context<Self>) -> AnyElement {
-        let help_text = match self.focus_area {
-            FocusArea::Navigation => {
-                "Use ↑/↓ to navigate • Enter to select page • Tab to switch to page content"
-            }
-            FocusArea::PageContent => {
-                "Use ↑/↓ to navigate • Enter to activate • Esc to return to navigation"
-            }
-        };
-
-        h_flex()
-            .w_full()
-            .justify_center()
-            .p_2()
-            .child(
-                Label::new(help_text)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
             )
             .into_any_element()
     }
