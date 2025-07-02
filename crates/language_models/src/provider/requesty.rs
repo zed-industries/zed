@@ -1,17 +1,18 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
-use editor::Editor;
+use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use requesty::{
     Model, ModelMode as RequestyModelMode, ResponseStreamEvent, list_models, stream_completion,
@@ -21,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::Arc;
-use ui::prelude::*;
+use theme::ThemeSettings;
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
@@ -103,12 +105,10 @@ impl State {
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-        let api_url = if settings.api_url.is_empty() {
-            requesty::REQUESTY_API_URL.to_string()
-        } else {
-            settings.api_url.clone()
-        };
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .requesty
+            .api_url
+            .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(&api_url, &cx)
@@ -124,12 +124,10 @@ impl State {
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-        let api_url = if settings.api_url.is_empty() {
-            requesty::REQUESTY_API_URL.to_string()
-        } else {
-            settings.api_url.clone()
-        };
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .requesty
+            .api_url
+            .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
@@ -149,12 +147,10 @@ impl State {
         }
 
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-        let api_url = if settings.api_url.is_empty() {
-            requesty::REQUESTY_API_URL.to_string()
-        } else {
-            settings.api_url.clone()
-        };
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .requesty
+            .api_url
+            .clone();
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(REQUESTY_API_KEY_VAR) {
                 (api_key, true)
@@ -183,30 +179,28 @@ impl State {
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).requesty;
         let http_client = self.http_client.clone();
-        let api_url = if settings.api_url.is_empty() {
-            requesty::REQUESTY_API_URL.to_string()
-        } else {
-            settings.api_url.clone()
-        };
+        let api_url = settings.api_url.clone();
+        let api_key = self.api_key.clone();
 
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url).await?;
-
-            this.update(cx, |this, cx| {
-                this.available_models = models;
-                cx.notify();
-            })?;
-
-            Ok(())
+            if let Some(api_key) = api_key {
+                // For Requesty, we need to pass the API key when fetching models
+                let models = list_models_with_key(http_client.as_ref(), &api_url, &api_key).await?;
+                this.update(cx, |this, cx| {
+                    this.available_models = models;
+                    cx.notify();
+                })
+            } else {
+                Ok(())
+            }
         })
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        if self.fetch_models_task.is_some() {
-            return;
+        if self.is_authenticated() {
+            let task = self.fetch_models(cx);
+            self.fetch_models_task.replace(task);
         }
-        let task = self.fetch_models(cx);
-        self.fetch_models_task = Some(task);
     }
 }
 
@@ -219,7 +213,13 @@ impl RequestyLanguageModelProvider {
             available_models: Vec::new(),
             fetch_models_task: None,
             settings: RequestySettings::default(),
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let current_settings = &AllLanguageModelSettings::get_global(cx).requesty;
+                let settings_changed = current_settings != &this.settings;
+                if settings_changed {
+                    this.settings = current_settings.clone();
+                    this.restart_fetch_models_task(cx);
+                }
                 cx.notify();
             }),
         });
@@ -256,41 +256,50 @@ impl LanguageModelProvider for RequestyLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::ZedAssistant
+        IconName::AiRequesty
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let state = self.state.read(_cx);
-        state.available_models.first().map(|model| self.create_language_model(model.clone()))
+        Some(self.create_language_model(requesty::Model::default()))
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let state = self.state.read(_cx);
-        state.available_models.first().map(|model| self.create_language_model(model.clone()))
+        Some(self.create_language_model(requesty::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let state = self.state.read(cx);
-        let mut models = state.available_models
-            .iter()
-            .map(|model| self.create_language_model(model.clone()))
-            .collect::<Vec<_>>();
+        let mut models_from_api = self.state.read(cx).available_models.clone();
+        let mut settings_models = Vec::new();
 
-        // Add available models from settings
-        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-        for model in &settings.available_models {
-            let requesty_model = requesty::Model::new(
+        for model in &AllLanguageModelSettings::get_global(cx)
+            .requesty
+            .available_models
+        {
+            settings_models.push(requesty::Model::new(
                 &model.name,
-                model.max_tokens,
-                model.max_output_tokens,
-                model.supports_tools.unwrap_or(false),
-                model.supports_images.unwrap_or(false),
-                model.mode.clone().map(|m| m.into()).unwrap_or_default(),
-            );
-            models.push(self.create_language_model(requesty_model));
+                model.display_name.as_deref(),
+                Some(model.max_tokens),
+                model.supports_tools,
+                model.supports_images,
+                model.mode.clone().map(|m| m.into()),
+            ));
         }
 
-        models
+        for settings_model in &settings_models {
+            if let Some(pos) = models_from_api
+                .iter()
+                .position(|m| m.id() == settings_model.id())
+            {
+                models_from_api[pos] = settings_model.clone();
+            } else {
+                models_from_api.push(settings_model.clone());
+            }
+        }
+
+        models_from_api
+            .into_iter()
+            .map(|model| self.create_language_model(model))
+            .collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -302,12 +311,12 @@ impl LanguageModelProvider for RequestyLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
-        let entity = cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx));
-        entity.into()
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.read(cx).reset_api_key(cx)
+        self.state.update(cx, |state, cx| state.reset_api_key(cx))
     }
 }
 
@@ -327,34 +336,24 @@ impl RequestyLanguageModel {
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
-        let state = self.state.clone();
+        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).requesty;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!(
+                "App state dropped: Unable to read API key or API URL from the application state"
+            )))
+            .boxed();
+        };
 
-        async move {
-            let (api_key, api_url) = state
-                .update_in(cx, |state, cx| {
-                    let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-                    let api_url = if settings.api_url.is_empty() {
-                        requesty::REQUESTY_API_URL.to_string()
-                    } else {
-                        settings.api_url.clone()
-                    };
-                    (state.api_key.clone(), api_url)
-                })
-                .await?;
+        let future = self.request_limiter.stream(async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Requesty API Key"))?;
+            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let response = request.await?;
+            Ok(response)
+        });
 
-            let api_key = api_key.ok_or_else(|| anyhow!("API key not set"))?;
-
-            let response = stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                request,
-                &api_key,
-            )
-            .await?;
-
-            Ok(response.boxed())
-        }
-        .boxed()
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -376,7 +375,7 @@ impl LanguageModel for RequestyLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        self.model.supports_tools()
+        self.model.supports_tool_calls()
     }
 
     fn tool_input_format(&self) -> language_model::LanguageModelToolSchemaFormat {
@@ -384,7 +383,7 @@ impl LanguageModel for RequestyLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("requesty-{}", self.model.id())
+        format!("requesty/{}", self.model.id())
     }
 
     fn max_token_count(&self) -> u64 {
@@ -404,7 +403,7 @@ impl LanguageModel for RequestyLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_images()
+        self.model.supports_images.unwrap_or(false)
     }
 
     fn count_tokens(
@@ -412,25 +411,7 @@ impl LanguageModel for RequestyLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
-        cx.background_spawn(async move {
-            let mut total_tokens = 0;
-
-            for message in &request.messages {
-                for content in &message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            total_tokens += text.len() as u64 / 4; // Rough estimate
-                        }
-                        MessageContent::Image(_) => {
-                            total_tokens += 85; // Rough estimate for images
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            Ok(total_tokens)
-        }).boxed()
+        count_requesty_tokens(request, self.model.clone(), cx)
     }
 
     fn stream_completion(
@@ -447,19 +428,11 @@ impl LanguageModel for RequestyLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request_limiter = self.request_limiter.clone();
-        let model = self.model.clone();
-
+        let request = into_requesty(request, &self.model, self.max_output_tokens());
+        let completions = self.stream_completion(request, cx);
         async move {
-            request_limiter.acquire().await;
-
-            let requesty_request = into_requesty(request, &model, model.max_output_tokens());
-
-            let events = self.stream_completion(requesty_request, &cx).await?;
-
-            let mapped_events = RequestyEventMapper::new().map_stream(events);
-
-            Ok(mapped_events.boxed())
+            let mapper = RequestyEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
     }
@@ -477,10 +450,12 @@ pub fn into_requesty(
         messages.push(requesty_msg);
     }
 
-    let tools = request.tools.into_iter().map(|tool| requesty::ToolDefinition {
-        name: tool.name,
-        description: tool.description,
-        input_schema: tool.input_schema,
+    let tools = request.tools.into_iter().map(|tool| requesty::ToolDefinition::Function {
+        function: requesty::FunctionDefinition {
+            name: tool.name,
+            description: Some(tool.description),
+            parameters: Some(tool.input_schema),
+        },
     }).collect();
 
     let tool_choice = request.tool_choice.map(into_requesty_tool_choice);
@@ -493,7 +468,18 @@ pub fn into_requesty(
         temperature: request.temperature.unwrap_or(0.7),
         max_tokens: max_output_tokens,
         stream: true,
-        stop: if request.stop.is_empty() { None } else { Some(request.stop) },
+        stop: request.stop,
+        parallel_tool_calls: None,
+        reasoning: match model.mode {
+            requesty::ModelMode::Thinking { .. } => Some(requesty::Reasoning {
+                effort: None,
+                max_tokens: None,
+                exclude: None,
+                enabled: Some(true),
+            }),
+            _ => None,
+        },
+        usage: requesty::RequestUsage { include: true },
     }
 }
 
@@ -504,7 +490,7 @@ fn into_requesty_message(msg: LanguageModelRequestMessage) -> requesty::RequestM
         Role::User => requesty::RequestMessage::User { content },
         Role::Assistant => requesty::RequestMessage::Assistant {
             content: Some(content),
-            tool_calls: None,
+            tool_calls: Vec::new(),
         },
         Role::System => requesty::RequestMessage::System { content },
     }
@@ -517,7 +503,7 @@ fn into_requesty_content_list(content_list: Vec<MessageContent>) -> requesty::Me
         let parts = content_list.into_iter().map(|content| match content {
             MessageContent::Text(text) => requesty::MessagePart::Text { text },
             MessageContent::Image(image) => requesty::MessagePart::Image {
-                source: image.source.to_string(),
+                image_url: image.source.to_string(),
             },
             MessageContent::ToolUse(tool_use) => requesty::MessagePart::Text {
                 text: format!("Tool use: {} with input: {}", tool_use.name, tool_use.raw_input),
@@ -530,29 +516,29 @@ fn into_requesty_content_list(content_list: Vec<MessageContent>) -> requesty::Me
             },
             _ => requesty::MessagePart::Text { text: String::new() },
         }).collect();
-        requesty::MessageContent::MultiPart(parts)
+        requesty::MessageContent::Multipart(parts)
     }
 }
 
 fn into_requesty_content(content: MessageContent) -> requesty::MessageContent {
     match content {
-        MessageContent::Text(text) => requesty::MessageContent::Text(text),
+        MessageContent::Text(text) => requesty::MessageContent::Plain(text),
         MessageContent::Image(image) => {
-            requesty::MessageContent::MultiPart(vec![requesty::MessagePart::Image {
-                source: image.source.to_string(),
+            requesty::MessageContent::Multipart(vec![requesty::MessagePart::Image {
+                image_url: image.source.to_string(),
             }])
         }
         MessageContent::ToolUse(tool_use) => {
-            requesty::MessageContent::Text(format!("Tool use: {} with input: {}", tool_use.name, tool_use.raw_input))
+            requesty::MessageContent::Plain(format!("Tool use: {} with input: {}", tool_use.name, tool_use.raw_input))
         }
         MessageContent::ToolResult(result) => {
             let text = match result.content {
                 LanguageModelToolResultContent::Text(text) => text.to_string(),
                 LanguageModelToolResultContent::Image(_) => "[Image result]".to_string(),
             };
-            requesty::MessageContent::Text(text)
+            requesty::MessageContent::Plain(text)
         }
-        _ => requesty::MessageContent::Text(String::new()),
+        _ => requesty::MessageContent::Plain(String::new()),
     }
 }
 
@@ -573,7 +559,7 @@ pub struct RequestyEventMapper {
 impl RequestyEventMapper {
     pub fn new() -> Self {
         Self {
-            tool_calls_by_index: HashMap::new(),
+            tool_calls_by_index: HashMap::default(),
         }
     }
 
@@ -582,96 +568,149 @@ impl RequestyEventMapper {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
-        events.filter_map(move |result| {
-            let events = match result {
-                Ok(event) => self.map_event(Ok(event)),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(error))],
-            };
-
-            async move {
-                if events.is_empty() {
-                    None
-                } else {
-                    Some(futures::stream::iter(events))
-                }
-            }
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+            })
         })
-        .flatten()
     }
 
     pub fn map_event(
         &mut self,
-        event: Result<ResponseStreamEvent>,
+        event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut mapped_events = Vec::new();
+        let mut events = Vec::new();
 
-        match event {
-            Ok(ResponseStreamEvent::Text(text)) => {
-                mapped_events.push(Ok(LanguageModelCompletionEvent::Text(text)));
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        for choice in event.choices {
+            let delta = choice.delta;
+
+            if let Some(content) = delta.content {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
             }
-            Ok(ResponseStreamEvent::Usage(usage)) => {
-                mapped_events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0,
-                })));
-            }
-            Ok(ResponseStreamEvent::Reasoning(reasoning)) => {
-                mapped_events.push(Ok(LanguageModelCompletionEvent::Thinking {
+
+            if let Some(reasoning) = delta.reasoning {
+                events.push(Ok(LanguageModelCompletionEvent::Thinking {
                     text: reasoning,
                     signature: None,
                 }));
             }
-            Ok(ResponseStreamEvent::Stop(reason)) => {
-                let stop_reason = match reason.as_str() {
-                    "stop" => StopReason::EndTurn,
-                    "length" => StopReason::MaxTokens,
-                    "tool_calls" => StopReason::ToolUse,
-                    _ => StopReason::EndTurn,
-                };
-                mapped_events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
-            }
-            Ok(ResponseStreamEvent::ToolCallStart { id, name, index }) => {
-                self.tool_calls_by_index.insert(index, RawToolCall {
-                    id,
-                    name,
-                    arguments: String::new(),
-                });
-            }
-            Ok(ResponseStreamEvent::ToolCallDelta { index, delta }) => {
-                if let Some(tool_call) = self.tool_calls_by_index.get_mut(&index) {
-                    tool_call.arguments.push_str(&delta);
-                }
-            }
-            Ok(ResponseStreamEvent::ToolCallEnd { index }) => {
-                if let Some(entry) = self.tool_calls_by_index.remove(&index) {
-                    if let Ok(input) = serde_json::from_str(&entry.arguments) {
-                        mapped_events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: entry.id.into(),
-                                name: entry.name.into(),
-                                raw_input: entry.arguments,
-                                input,
-                                is_input_complete: true,
-                            }
-                        )));
+
+            if let Some(tool_calls) = delta.tool_calls {
+                for tool_call_chunk in tool_calls {
+                    let index = tool_call_chunk.index;
+                    let entry = self.tool_calls_by_index.entry(index).or_insert_with(|| {
+                        RawToolCall {
+                            id: String::new(),
+                            name: String::new(),
+                            arguments: String::new(),
+                        }
+                    });
+
+                    if let Some(id) = tool_call_chunk.id {
+                        entry.id = id;
+                    }
+
+                    if let Some(function) = tool_call_chunk.function {
+                        if let Some(name) = function.name {
+                            entry.name = name;
+                        }
+                        if let Some(arguments) = function.arguments {
+                            entry.arguments.push_str(&arguments);
+                        }
                     }
                 }
             }
-            Err(error) => {
-                mapped_events.push(Err(LanguageModelCompletionError::Other(error)));
+
+            if let Some(finish_reason) = choice.finish_reason {
+                match finish_reason.as_str() {
+                    "stop" => {
+                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                    }
+                    "tool_calls" => {
+                        events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                            match serde_json::Value::from_str(&tool_call.arguments) {
+                                Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                    LanguageModelToolUse {
+                                        id: tool_call.id.clone().into(),
+                                        name: tool_call.name.as_str().into(),
+                                        is_input_complete: true,
+                                        input,
+                                        raw_input: tool_call.arguments.clone().into(),
+                                    },
+                                )),
+                                Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    id: tool_call.id.clone().into(),
+                                    tool_name: tool_call.name.as_str().into(),
+                                    raw_input: tool_call.arguments.clone().into(),
+                                    json_parse_error: error.to_string(),
+                                }),
+                            }
+                        }));
+                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                    }
+                    stop_reason => {
+                        log::error!("Unexpected Requesty stop_reason: {stop_reason:?}",);
+                        events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                    }
+                }
             }
         }
 
-        mapped_events
+        events
     }
 }
 
+#[derive(Default)]
 struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+}
+
+pub fn count_requesty_tokens(
+    request: LanguageModelRequest,
+    _model: requesty::Model,
+    cx: &App,
+) -> BoxFuture<'static, Result<u64>> {
+    cx.background_spawn(async move {
+        let messages = request
+            .messages
+            .into_iter()
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(message.string_contents()),
+                name: None,
+                function_call: None,
+            })
+            .collect::<Vec<_>>();
+
+        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
+    })
+    .boxed()
+}
+
+async fn list_models_with_key(
+    http_client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+) -> Result<Vec<requesty::Model>> {
+    // Use the correct models endpoint with API key
+    let models_url = format!("{}/models", api_url.trim_end_matches('/'));
+    list_models(http_client, &models_url).await
 }
 
 struct ConfigurationView {
@@ -680,18 +719,37 @@ struct ConfigurationView {
     load_credentials_task: Option<Task<()>>,
 }
 
-const REQUESTY_SIGN_UP_URL: &str = "https://requesty.dev/signup";
-
 impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let api_key_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor
+                .set_placeholder_text("rq_00000000000000000000000000000000000000000000000000", cx);
+            editor
+        });
 
-        let load_credentials_task = Some(Self::load_credentials(
-            api_key_editor.clone(),
-            state.clone(),
-            window,
-            cx,
-        ));
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        let load_credentials_task = Some(cx.spawn_in(window, {
+            let state = state.clone();
+            async move |this, cx| {
+                if let Some(task) = state
+                    .update(cx, |state, cx| state.authenticate(cx))
+                    .log_err()
+                {
+                    let _ = task.await;
+                }
+
+                this.update(cx, |this, cx| {
+                    this.load_credentials_task = None;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
 
         Self {
             api_key_editor,
@@ -700,104 +758,142 @@ impl ConfigurationView {
         }
     }
 
-    fn load_credentials(
-        api_key_editor: Entity<Editor>,
-        state: gpui::Entity<State>,
-        window: &mut Window,
-        cx: &mut Context<ConfigurationView>,
-    ) -> Task<()> {
-        cx.spawn(async move |this, mut cx| {
-            if let Some(this) = this.upgrade() {
-                let credentials_provider = <dyn CredentialsProvider>::global(cx);
-                let api_url = state.read_with(cx, |state, cx| {
-                    let settings = &AllLanguageModelSettings::get_global(cx).requesty;
-                    if settings.api_url.is_empty() {
-                        requesty::REQUESTY_API_URL.to_string()
-                    } else {
-                        settings.api_url.clone()
-                    }
-                }).await?;
-
-                if let Ok((_, api_key)) = credentials_provider
-                    .read_credentials(&api_url, &cx)
-                    .await
-                {
-                    if let Ok(api_key) = String::from_utf8(api_key) {
-                        api_key_editor.update_in(cx, |editor, window, cx| {
-                            editor.set_text(api_key, window, cx);
-                        }).await?;
-                    }
-                }
-
-                this.update(cx, |this, cx| {
-                    this.load_credentials_task = None;
-                    cx.notify();
-                })?;
-            }
-            anyhow::Ok(())
-        }).detach_and_log_err(cx);
-
-        Task::ready(())
-    }
-
-    fn save_api_key(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
-
-        if !api_key.is_empty() {
-            let state = self.state.clone();
-            cx.spawn(async move |_, cx| {
-                state.read_with(cx, |state, cx| {
-                    state.reset_api_key(cx)
-                }).await??;
-                anyhow::Ok(())
-            }).detach_and_log_err(cx);
+    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let api_key = self.api_key_editor.read(cx).text(cx);
+        if api_key.is_empty() {
+            return;
         }
+
+        let state = self.state.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            state
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .await
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
     }
 
-    fn reset_api_key(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        // Implementation for reset
+    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+
+        let state = self.state.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
+    }
+
+    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.ui_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            white_space: WhiteSpace::Normal,
+            ..Default::default()
+        };
+        EditorElement::new(
+            &self.api_key_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).api_key_from_env
+        !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.should_render_editor(cx) {
-            return div()
-                .child(
-                    InstructionListItem::new("Requesty API Key", None, None).child(
-                        Label::new("Configured via REQUESTY_API_KEY environment variable")
-                    )
-                );
-        }
+        let env_var_set = self.state.read(cx).api_key_from_env;
 
-        div()
-            .child(
-                InstructionListItem::new("Requesty API Key", None, None).child(
-                    div()
-                        .child(self.api_key_editor.clone())
-                        .child(
-                            div()
-                                .child(
-                                    Button::new("save_key", "Save")
-                                        .on_click(cx.listener(Self::save_api_key))
-                                )
-                                .child(
-                                    Button::new("reset_key", "Reset")
-                                        .on_click(cx.listener(Self::reset_api_key))
-                                )
-                        )
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials...")).into_any()
+        } else if self.should_render_editor(cx) {
+            v_flex()
+                .size_full()
+                .on_action(cx.listener(Self::save_api_key))
+                .child(Label::new("To use Zed's assistant with Requesty, you need to add an API key. Follow these steps:"))
+                .child(
+                    List::new()
+                        .child(InstructionListItem::new(
+                            "Create an API key by visiting",
+                            Some("Requesty's sign up"),
+                            Some("https://app.requesty.ai/sign-up?ref_referrer=Zed"),
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Ensure your Requesty account has credits",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste your API key below and hit enter to start using the assistant",
+                        )),
                 )
-            )
-            .child(
-                div()
-                    .child(
-                        Button::new("sign_up", "Sign up for Requesty")
-                            .on_click(|_, _, cx| cx.open_url(REQUESTY_SIGN_UP_URL))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .my_2()
+                        .px_2()
+                        .py_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_sm()
+                        .child(self.render_api_key_editor(cx)),
+                )
+                .child(
+                    Label::new(
+                        format!("You can also assign the {REQUESTY_API_KEY_VAR} environment variable and restart Zed."),
                     )
-            )
+                    .size(LabelSize::Small).color(Color::Muted),
+                )
+                .into_any()
+        } else {
+            h_flex()
+                .mt_1()
+                .p_1()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new(if env_var_set {
+                            format!("API key set in {REQUESTY_API_KEY_VAR} environment variable.")
+                        } else {
+                            "API key configured.".to_string()
+                        })),
+                )
+                .child(
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .disabled(env_var_set)
+                        .when(env_var_set, |this| {
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {REQUESTY_API_KEY_VAR} environment variable.")))
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                )
+                .into_any()
+        }
     }
 }
