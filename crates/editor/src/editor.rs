@@ -21944,10 +21944,10 @@ impl SemanticsProvider for Entity<Project> {
         cx: &mut App,
     ) -> Option<Task<Result<Vec<LocationLink>>>> {
         Some(self.update(cx, |project, cx| match kind {
-            GotoDefinitionKind::Symbol => project.definition(&buffer, position, cx),
-            GotoDefinitionKind::Declaration => project.declaration(&buffer, position, cx),
-            GotoDefinitionKind::Type => project.type_definition(&buffer, position, cx),
-            GotoDefinitionKind::Implementation => project.implementation(&buffer, position, cx),
+            GotoDefinitionKind::Symbol => project.definitions(&buffer, position, cx),
+            GotoDefinitionKind::Declaration => project.declarations(&buffer, position, cx),
+            GotoDefinitionKind::Type => project.type_definitions(&buffer, position, cx),
+            GotoDefinitionKind::Implementation => project.implementations(&buffer, position, cx),
         }))
     }
 

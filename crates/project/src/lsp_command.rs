@@ -171,27 +171,27 @@ pub(crate) struct PerformRename {
     pub push_to_history: bool,
 }
 
-#[derive(Debug)]
-pub struct GetDefinition {
+#[derive(Debug, Clone, Copy)]
+pub struct GetDefinitions {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
-pub(crate) struct GetDeclaration {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetDeclarations {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
-pub(crate) struct GetTypeDefinition {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetTypeDefinitions {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
-pub(crate) struct GetImplementation {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetImplementations {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
@@ -588,7 +588,7 @@ impl LspCommand for PerformRename {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetDefinition {
+impl LspCommand for GetDefinitions {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoDefinition;
     type ProtoRequest = proto::GetDefinition;
@@ -690,7 +690,7 @@ impl LspCommand for GetDefinition {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetDeclaration {
+impl LspCommand for GetDeclarations {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoDeclaration;
     type ProtoRequest = proto::GetDeclaration;
@@ -793,7 +793,7 @@ impl LspCommand for GetDeclaration {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetImplementation {
+impl LspCommand for GetImplementations {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoImplementation;
     type ProtoRequest = proto::GetImplementation;
@@ -895,7 +895,7 @@ impl LspCommand for GetImplementation {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetTypeDefinition {
+impl LspCommand for GetTypeDefinitions {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoTypeDefinition;
     type ProtoRequest = proto::GetTypeDefinition;

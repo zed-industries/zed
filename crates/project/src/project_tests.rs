@@ -2993,7 +2993,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         )))
     });
     let mut definitions = project
-        .update(cx, |project, cx| project.definition(&buffer, 22, cx))
+        .update(cx, |project, cx| project.definitions(&buffer, 22, cx))
         .await
         .unwrap();
 
