@@ -47,29 +47,6 @@ enum ThreadState {
 
 impl AcpThreadView {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let Some(root_dir) = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path())
-        else {
-            todo!();
-        };
-
-        let cli_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
-
-        let child = util::command::new_smol_command("node")
-            .arg(cli_path)
-            .arg("--acp")
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-
         let message_editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -88,6 +65,61 @@ impl AcpThreadView {
             editor.set_soft_wrap();
             editor
         });
+
+        let list_state = ListState::new(
+            0,
+            gpui::ListAlignment::Bottom,
+            px(2048.0),
+            cx.processor({
+                move |this: &mut Self, item: usize, window, cx| {
+                    let Some(entry) = this
+                        .thread()
+                        .and_then(|thread| thread.read(cx).entries.get(item))
+                    else {
+                        return Empty.into_any();
+                    };
+                    this.render_entry(entry, window, cx)
+                }
+            }),
+        );
+
+        Self {
+            thread_state: Self::initial_state(project, window, cx),
+            message_editor,
+            send_task: None,
+            list_state: list_state,
+        }
+    }
+
+    fn initial_state(
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ThreadState {
+        let Some(root_dir) = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path())
+        else {
+            return ThreadState::LoadError(
+                "Gemini threads must be created within a project".into(),
+            );
+        };
+
+        let cli_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
+
+        let child = util::command::new_smol_command("node")
+            .arg(cli_path)
+            .arg("--acp")
+            .current_dir(root_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
 
         let project = project.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -136,29 +168,7 @@ impl AcpThreadView {
             .log_err();
         });
 
-        let list_state = ListState::new(
-            0,
-            gpui::ListAlignment::Bottom,
-            px(2048.0),
-            cx.processor({
-                move |this: &mut Self, item: usize, window, cx| {
-                    let Some(entry) = this
-                        .thread()
-                        .and_then(|thread| thread.read(cx).entries.get(item))
-                    else {
-                        return Empty.into_any();
-                    };
-                    this.render_entry(entry, window, cx)
-                }
-            }),
-        );
-
-        Self {
-            thread_state: ThreadState::Loading { _task: load_task },
-            message_editor,
-            send_task: None,
-            list_state: list_state,
-        }
+        ThreadState::Loading { _task: load_task }
     }
 
     fn thread(&self) -> Option<&Entity<AcpThread>> {
