@@ -25,8 +25,8 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
-    Role, SelectedModel, StopReason, TokenUsage,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError,
+    PaymentRequiredError, Role, SelectedModel, StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -39,13 +39,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
+    fmt::Write as _,
     io::Write,
     ops::Range,
     sync::Arc,
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, post_inc};
+use util::{ResultExt as _, debug_panic, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
@@ -1044,6 +1045,24 @@ impl Thread {
         )
     }
 
+    /// Finds or creates an appropriate assistant message to attach a notification.
+    pub fn upsert_notification_message(
+        &mut self,
+        segments: Vec<MessageSegment>,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        // todo: location
+        let hidden = true;
+        self.insert_message(
+            Role::Assistant,
+            segments,
+            LoadedContext::default(),
+            Vec::new(),
+            hidden,
+            cx,
+        )
+    }
+
     pub fn insert_message(
         &mut self,
         role: Role,
@@ -1247,6 +1266,8 @@ impl Thread {
         }
 
         self.remaining_turns -= 1;
+
+        self.flush_notifications(model.clone(), intent, cx);
 
         let request = self.to_completion_request(model.clone(), intent, cx);
 
@@ -1481,70 +1502,135 @@ impl Thread {
         request
     }
 
-    fn attach_tracked_files_state(
-        &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
-        cx: &App,
+    /// Insert auto-generated notifications (if any) to the thread
+    fn flush_notifications(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        // cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
-        let mut stale_files = String::new();
+        match intent {
+            CompletionIntent::UserPrompt | CompletionIntent::ToolResults => {
+                self.attach_tracked_files_state(model, cx);
+            }
+            CompletionIntent::ThreadSummarization
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => {}
+        };
+    }
 
+    fn attach_tracked_files_state(&mut self, model: Arc<dyn LanguageModel>, cx: &mut App) {
+        let messages = self.messages;
         let action_log = self.action_log.read(cx);
 
-        for stale_file in action_log.stale_buffers(cx) {
-            if let Some(file) = stale_file.read(cx).file() {
-                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
-            }
-        }
-
-        if stale_files.is_empty() {
+        if action_log.stale_buffers(cx).next().is_none() {
             return;
         }
 
-        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
-        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
-        let notification_text = format!("{STALE_FILES_HEADER}{stale_files}").replace("\r\n", "\n");
+        // Represent notification as a simulated `project_updates` tool call
+        let tool_name = Arc::from("project_updates");
+        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
+            return debug_panic!("`project_updates` tool not found");
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return;
+        }
+
+        let input = serde_json::json!({});
+        let request = Arc::new(LanguageModelRequest::default()); // unused
+        let window = None;
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project,
+            self.action_log,
+            model,
+            window,
+            cx,
+        );
 
         let tool_use_id =
             LanguageModelToolUseId::from(format!("project_updates_{}", messages.len()));
 
         let tool_use = LanguageModelToolUse {
             id: tool_use_id.clone(),
-            name: Arc::from("project_updates"),
+            name: tool_name,
             raw_input: "{}".to_string(),
             input: serde_json::json!({}),
             is_input_complete: true,
         };
 
-        let assistant_message = LanguageModelRequestMessage {
-            role: Role::Assistant,
-            content: vec![MessageContent::ToolUse(tool_use)],
-            cache: false,
+        // let assistant_message = Message {
+        //     role: Role::Assistant,
+        //     content: vec![MessageContent::ToolUse(tool_use)],
+        //     cache: false,
+        // };
+
+        // let tool_result = LanguageModelToolResult {
+        //     tool_use_id,
+        //     tool_name,
+        //     is_error: false,
+        //     content: LanguageModelToolResultContent::Text(Arc::from(notification_text)),
+        //     output: None,
+        // };
+
+        // let user_message = LanguageModelRequestMessage {
+        //     role: Role::User,
+        //     content: vec![MessageContent::ToolResult(tool_result)],
+        //     cache: false,
+        // };
+
+        let tool_output = cx.background_executor().block(tool_result.output);
+
+        let tool_message_id = self.upsert_notification_message(vec![], cx);
+
+        let tool_use_metadata = ToolUseMetadata {
+            model: model.clone(),
+            thread_id: self.id.clone(),
+            prompt_id: self.last_prompt_id.clone(),
         };
 
-        let tool_result = LanguageModelToolResult {
-            tool_use_id,
-            tool_name: Arc::from("project_updates"),
-            is_error: false,
-            content: LanguageModelToolResultContent::Text(Arc::from(notification_text)),
-            output: None,
-        };
+        self.tool_use
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
 
-        let user_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![MessageContent::ToolResult(tool_result)],
-            cache: false,
-        };
+        self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            tool_output,
+            self.configured_model.as_ref(),
+        );
 
         // Insert our messages before the last Assistant message.
         // Inserting it to the tail distracts the agent too much
-        let insert_position = messages
-            .iter()
-            .enumerate()
-            .rfind(|(_, message)| message.role == Role::Assistant)
-            .map_or(messages.len(), |(i, _)| i);
 
-        messages.insert(insert_position, assistant_message);
-        messages.insert(insert_position + 1, user_message);
+        // User
+        // Ass
+        // <file changed>
+        // User
+        // Ass -- tool use
+        // User -- tool result
+
+        // User
+        // Ass -- tool use
+        // User -- tool result
+        // <file changed>
+        // Ass - project_updates()
+        // User - project_updates() result
+
+        // let insert_position = messages
+        //     .iter()
+        //     .enumerate()
+        //     .rfind(|(_, message)| message.role == Role::Assistant)
+        //     .map_or(messages.len(), |(i, _)| i);
+
+        // messages.insert(insert_position, assistant_message);
+        // messages.insert(insert_position + 1, user_message);
     }
 
     pub fn stream_completion(
