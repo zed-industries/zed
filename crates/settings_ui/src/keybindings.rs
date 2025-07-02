@@ -231,8 +231,8 @@ impl KeymapEditor {
 
             let context = key_binding
                 .predicate()
-                .map(|predicate| predicate.to_string())
-                .unwrap_or_else(|| "<global>".to_string());
+                .map(|predicate| KeybindContextString::Local(predicate.to_string().into()))
+                .unwrap_or(KeybindContextString::Global);
 
             let source = source.map(|source| (source, source.name().into()));
 
@@ -249,7 +249,7 @@ impl KeymapEditor {
                 ui_key_binding,
                 action: action_name.into(),
                 action_input,
-                context: context.into(),
+                context: Some(context),
                 source,
             });
             string_match_candidates.push(string_match_candidate);
@@ -264,7 +264,7 @@ impl KeymapEditor {
                 ui_key_binding: None,
                 action: (*action_name).into(),
                 action_input: None,
-                context: empty.clone(),
+                context: None,
                 source: None,
             });
             string_match_candidates.push(string_match_candidate);
@@ -461,8 +461,41 @@ struct ProcessedKeybinding {
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
     action_input: Option<TextWithSyntaxHighlighting>,
-    context: SharedString,
+    context: Option<KeybindContextString>,
     source: Option<(KeybindSource, SharedString)>,
+}
+
+#[derive(Clone, Debug, IntoElement)]
+enum KeybindContextString {
+    Global,
+    Local(SharedString),
+}
+
+impl KeybindContextString {
+    const GLOBAL: SharedString = SharedString::new_static("<global>");
+
+    pub fn local(&self) -> Option<&SharedString> {
+        match self {
+            KeybindContextString::Global => None,
+            KeybindContextString::Local(name) => Some(name),
+        }
+    }
+
+    pub fn local_str(&self) -> Option<&str> {
+        match self {
+            KeybindContextString::Global => None,
+            KeybindContextString::Local(name) => Some(name),
+        }
+    }
+}
+
+impl RenderOnce for KeybindContextString {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        match self {
+            KeybindContextString::Global => KeybindContextString::GLOBAL.clone(),
+            KeybindContextString::Local(name) => name,
+        }
+    }
 }
 
 impl Item for KeymapEditor {
@@ -534,7 +567,12 @@ impl Render for KeymapEditor {
                                         .map_or(gpui::Empty.into_any_element(), |input| {
                                             input.into_any_element()
                                         });
-                                    let context = binding.context.clone().into_any_element();
+                                    let context = binding
+                                        .context
+                                        .clone()
+                                        .map_or(gpui::Empty.into_any_element(), |context| {
+                                            context.into_any_element()
+                                        });
                                     let source = binding
                                         .source
                                         .clone()
@@ -825,9 +863,14 @@ async fn save_keybinding_update(
         .map(|keybinding| keybinding.key_binding.keystrokes())
         .unwrap_or_default();
     let operation = if existing.ui_key_binding.is_some() {
+        let context = existing
+            .context
+            .as_ref()
+            .and_then(KeybindContextString::local_str);
+
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
-                context: Some(existing.context.as_ref()).filter(|context| !context.is_empty()),
+                context,
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
@@ -841,7 +884,7 @@ async fn save_keybinding_update(
                 .map(|(source, _name)| source)
                 .unwrap_or(KeybindSource::User),
             source: settings::KeybindUpdateTarget {
-                context: Some(existing.context.as_ref()).filter(|context| !context.is_empty()),
+                context,
                 keystrokes: new_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
