@@ -32,6 +32,11 @@ impl OllamaCompletionProvider {
         }
     }
 
+    /// Updates the model used by this provider
+    pub fn update_model(&mut self, new_model: String) {
+        self.model = new_model;
+    }
+
     fn build_fim_prompt(&self, prefix: &str, suffix: &str) -> String {
         // Use model-specific FIM patterns
         match self.model.as_str() {
@@ -100,7 +105,6 @@ impl EditPredictionProvider for OllamaCompletionProvider {
     ) {
         let http_client = self.http_client.clone();
         let api_url = self.api_url.clone();
-        let model = self.model.clone();
 
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
             if debounce {
@@ -125,8 +129,10 @@ impl EditPredictionProvider for OllamaCompletionProvider {
 
             let prompt = this.update(cx, |this, _| this.build_fim_prompt(&prefix, &suffix))?;
 
+            let model = this.update(cx, |this, _| this.model.clone())?;
+
             let request = GenerateRequest {
-                model: model.clone(),
+                model,
                 prompt,
                 stream: false,
                 options: Some(GenerateOptions {
@@ -359,5 +365,42 @@ mod tests {
         });
 
         assert!(completion.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_update_model(_cx: &mut TestAppContext) {
+        let mut provider = OllamaCompletionProvider::new(
+            Arc::new(FakeHttpClient::with_404_response()),
+            "http://localhost:11434".to_string(),
+            "codellama:7b".to_string(),
+        );
+
+        // Verify initial model
+        assert_eq!(provider.model, "codellama:7b");
+
+        // Test updating model
+        provider.update_model("deepseek-coder:6.7b".to_string());
+        assert_eq!(provider.model, "deepseek-coder:6.7b");
+
+        // Test FIM prompt changes with different model
+        let prefix = "def hello():";
+        let suffix = "    pass";
+        let prompt = provider.build_fim_prompt(prefix, suffix);
+
+        // Should now use deepseek pattern
+        assert!(prompt.contains("<｜fim▁begin｜>"));
+        assert!(prompt.contains("<｜fim▁hole｜>"));
+        assert!(prompt.contains("<｜fim▁end｜>"));
+
+        // Update to starcoder model
+        provider.update_model("starcoder:7b".to_string());
+        assert_eq!(provider.model, "starcoder:7b");
+
+        let prompt = provider.build_fim_prompt(prefix, suffix);
+
+        // Should now use starcoder pattern
+        assert!(prompt.contains("<fim_prefix>"));
+        assert!(prompt.contains("<fim_suffix>"));
+        assert!(prompt.contains("<fim_middle>"));
     }
 }
