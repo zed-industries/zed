@@ -592,8 +592,7 @@ impl TitleBar {
                             format!(
                                 "Current Plan: {}",
                                 match plan {
-                                    None => "None",
-                                    Some(proto::Plan::Free) => "Zed Free",
+                                    None | Some(proto::Plan::Free) => "Zed Free", // dl: assuming this will be true
                                     Some(proto::Plan::ZedPro) => "Zed Pro",
                                     Some(proto::Plan::ZedProTrial) => "Zed Pro (Trial)",
                                 }
