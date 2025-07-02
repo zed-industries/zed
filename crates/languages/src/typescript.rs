@@ -1178,8 +1178,14 @@ mod tests {
                     "mocha test $ZED_SYMBOL".into(),
                     Some("$ZED_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
                 ),
-                ("root/package.json > test".into(), Some("/root".into())),
-                ("sub/package.json > test".into(), Some("/root/sub".into())),
+                (
+                    "root/package.json > test".into(),
+                    Some(path!("/root").into())
+                ),
+                (
+                    "sub/package.json > test".into(),
+                    Some(path!("/root/sub").into())
+                ),
             ]
         );
     }
