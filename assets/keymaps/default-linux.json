@@ -557,6 +557,13 @@
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
+      "ctrl-alt-0": "workspace::ResetActiveDockSize",
+      // For 0px parameter, uses UI font size value.
+      "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-)": "workspace::ResetOpenDocksSize",
+      "ctrl-alt-_": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      "ctrl-alt-+": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],

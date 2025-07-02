@@ -193,6 +193,8 @@ actions!(
         OpenInTerminal,
         OpenComponentPreview,
         ReloadActiveItem,
+        ResetActiveDockSize,
+        ResetOpenDocksSize,
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
@@ -293,6 +295,46 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+}
+
+/// Increases size of a currently focused dock by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseActiveDockSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Decreases size of a currently focused dock by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseActiveDockSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Increases size of all currently visible docks uniformly, by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseOpenDocksSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Decreases size of all currently visible docks uniformly, by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseOpenDocksSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
 }
 
 actions!(
@@ -3617,9 +3659,9 @@ impl Workspace {
                 return;
             };
             match dock.read(cx).position() {
-                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
-                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
-                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+                DockPosition::Left => self.resize_left_dock(panel_size + amount, window, cx),
+                DockPosition::Bottom => self.resize_bottom_dock(panel_size + amount, window, cx),
+                DockPosition::Right => self.resize_right_dock(panel_size + amount, window, cx),
             }
         } else {
             self.center
@@ -5433,6 +5475,72 @@ impl Workspace {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if dock.focus_handle(cx).contains_focused(window, cx) {
+                            let Some(panel) = dock.read(cx).active_panel() else {
+                                return;
+                            };
+
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+
+                            return;
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if let Some(panel) = dock.read(cx).visible_panel() {
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::cancel))
     }
@@ -5622,6 +5730,72 @@ impl Workspace {
             cx.propagate();
         }
     }
+
+    fn adjust_dock_size_by_px(
+        &mut self,
+        panel_size: Pixels,
+        dock_pos: DockPosition,
+        px: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match dock_pos {
+            DockPosition::Left => self.resize_left_dock(panel_size + px, window, cx),
+            DockPosition::Right => self.resize_right_dock(panel_size + px, window, cx),
+            DockPosition::Bottom => self.resize_bottom_dock(panel_size + px, window, cx),
+        }
+    }
+
+    fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+
+        self.left_dock.update(cx, |left_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Left)
+            {
+                left_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                left_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
+
+    fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        self.left_dock.read_with(cx, |left_dock, cx| {
+            let left_dock_size = left_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels(0.0));
+            if left_dock_size + size > self.bounds.right() {
+                size = self.bounds.right() - left_dock_size
+            }
+        });
+        self.right_dock.update(cx, |right_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Right)
+            {
+                right_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                right_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
+
+    fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.bottom() - RESIZE_HANDLE_SIZE - self.bounds.top());
+        self.bottom_dock.update(cx, |bottom_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Bottom)
+            {
+                bottom_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                bottom_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
 }
 
 fn leader_border_for_pane(
@@ -5806,6 +5980,63 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
+fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
+    if val == 0 {
+        ThemeSettings::get_global(cx).ui_font_size(cx)
+    } else {
+        px(val as f32)
+    }
+}
+
+fn adjust_active_dock_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(active_dock) = workspace
+        .all_docks()
+        .into_iter()
+        .find(|dock| dock.focus_handle(cx).contains_focused(window, cx))
+    else {
+        return;
+    };
+    let dock = active_dock.read(cx);
+    let Some(panel_size) = dock.active_panel_size(window, cx) else {
+        return;
+    };
+    let dock_pos = dock.position();
+    workspace.adjust_dock_size_by_px(panel_size, dock_pos, px, window, cx);
+}
+
+fn adjust_open_docks_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let docks = workspace
+        .all_docks()
+        .into_iter()
+        .filter_map(|dock| {
+            if dock.read(cx).is_open() {
+                let dock = dock.read(cx);
+                let panel_size = dock.active_panel_size(window, cx)?;
+                let dock_pos = dock.position();
+                Some((panel_size, dock_pos, px))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    docks
+        .into_iter()
+        .for_each(|(panel_size, dock_pos, offset)| {
+            workspace.adjust_dock_size_by_px(panel_size, dock_pos, offset, window, cx);
+        });
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.active_pane.focus_handle(cx)
@@ -5963,28 +6194,25 @@ impl Render for Workspace {
                                                     Some(e.event.position);
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
-                                                        resize_left_dock(
+                                                        workspace.resize_left_dock(
                                                             e.event.position.x
                                                                 - workspace.bounds.left(),
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
                                                     }
                                                     DockPosition::Right => {
-                                                        resize_right_dock(
+                                                        workspace.resize_right_dock(
                                                             workspace.bounds.right()
                                                                 - e.event.position.x,
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
                                                     }
                                                     DockPosition::Bottom => {
-                                                        resize_bottom_dock(
+                                                        workspace.resize_bottom_dock(
                                                             workspace.bounds.bottom()
                                                                 - e.event.position.y,
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
@@ -6268,73 +6496,6 @@ impl Render for Workspace {
             cx,
         )
     }
-}
-
-fn resize_bottom_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let size =
-        new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
-    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Bottom)
-        {
-            bottom_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            bottom_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
-fn resize_right_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
-    workspace.left_dock.read_with(cx, |left_dock, cx| {
-        let left_dock_size = left_dock
-            .active_panel_size(window, cx)
-            .unwrap_or(Pixels(0.0));
-        if left_dock_size + size > workspace.bounds.right() {
-            size = workspace.bounds.right() - left_dock_size
-        }
-    });
-    workspace.right_dock.update(cx, |right_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Right)
-        {
-            right_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            right_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
-fn resize_left_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
-
-    workspace.left_dock.update(cx, |left_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Left)
-        {
-            left_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            left_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
 }
 
 impl WorkspaceStore {
