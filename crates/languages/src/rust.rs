@@ -889,7 +889,6 @@ struct TargetInfo {
     target_name: String,
     target_kind: TargetKind,
     required_features: Vec<String>,
-    manifest_path: Arc<Path>,
 }
 
 async fn target_info_from_abs_path(
@@ -956,7 +955,6 @@ fn target_info_from_metadata(
                             target_name: target.name,
                             required_features: target.required_features,
                             target_kind: bin_kind,
-                            manifest_path: package.manifest_path,
                         }),
                         path,
                     )
@@ -1419,62 +1417,77 @@ mod tests {
     fn test_target_info_from_metadata() {
         for (input, absolute_path, expected) in [
             (
-                r#"{"packages":[{"id":"path+file:///absolute/path/to/project/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///absolute/path/to/project/zed/crates/zed#0.131.0","manifest_path":"/path/to/zed/Cargo.toml","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "zed".into(),
-                    target_name: "zed".into(),
-                    required_features: Vec::new(),
-                    target_kind: TargetKind::Bin,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "zed".into(),
+                        target_name: "zed".into(),
+                        required_features: Vec::new(),
+                        target_kind: TargetKind::Bin,
+                    }),
+                    Arc::from("/path/to/zed".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","manifest_path":"/path/to/custom-package/Cargo.toml","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: Vec::new(),
-                    target_kind: TargetKind::Bin,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: Vec::new(),
+                        target_kind: TargetKind::Bin,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}],"manifest_path":"/path/to/custom-package/Cargo.toml"}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: Vec::new(),
-                    target_kind: TargetKind::Example,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: Vec::new(),
+                        target_kind: TargetKind::Example,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":["foo","bar"]}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","manifest_path":"/path/to/custom-package/Cargo.toml","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":["foo","bar"]}]}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: vec!["foo".to_owned(), "bar".to_owned()],
-                    target_kind: TargetKind::Example,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: vec!["foo".to_owned(), "bar".to_owned()],
+                        target_kind: TargetKind::Example,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":[]}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":[]}],"manifest_path":"/path/to/custom-package/Cargo.toml"}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: vec![],
-                    target_kind: TargetKind::Example,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: vec![],
+                        target_kind: TargetKind::Example,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/path/to/custom-package/src/main.rs"}],"manifest_path":"/path/to/custom-package/Cargo.toml"}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                None,
+                Some((None, Arc::from("/path/to/custom-package".as_ref()))),
             ),
         ] {
-            let metadata: CargoMetadata = serde_json::from_str(input).unwrap();
+            let metadata: CargoMetadata = serde_json::from_str(input).context(input).unwrap();
 
             let absolute_path = Path::new(absolute_path);
 
