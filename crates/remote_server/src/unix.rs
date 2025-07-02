@@ -599,10 +599,10 @@ pub(crate) enum ExecuteProxyError {
         path: PathBuf,
     },
 
-    #[error("Failed to kill pid '{pid}'")]
+    #[error("Failed to kill existing server with pid '{pid}'")]
     KillRunningServer {
         #[source]
-        source: KillRunningServerError,
+        source: std::io::Error,
         pid: u32,
     },
 
@@ -657,8 +657,7 @@ pub(crate) fn execute_proxy(
                 "proxy found server already running with PID {}. Killing process and cleaning up files...",
                 pid
             );
-            kill_running_server(pid, &server_paths)
-                .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
+            kill_running_server(pid, &server_paths)?;
         }
 
         spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
@@ -716,16 +715,12 @@ pub(crate) fn execute_proxy(
     Ok(())
 }
 
-#[derive(Debug, Error)]
-#[error("failed to kill existing server")]
-pub(crate) struct KillRunningServerError(std::io::Error);
-
-fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), KillRunningServerError> {
+fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
     std::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
-        .map_err(KillRunningServerError)?;
+        .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
 
     for file in [
         &paths.pid_file,
