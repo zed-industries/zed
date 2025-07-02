@@ -582,7 +582,6 @@ pub async fn stream_completion(
 
 pub async fn list_models(client: &dyn HttpClient, api_url: &str, api_key: &str) -> Result<Vec<Model>> {
     let uri = format!("{api_url}/models");
-    eprintln!("DEBUG: Requesty API request to: {}", uri);
 
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
@@ -598,49 +597,40 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str, api_key: &str) 
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
-    eprintln!("DEBUG: Requesty API response status: {}", response.status());
-    eprintln!("DEBUG: Requesty API response body: {}", body);
-
     if response.status().is_success() {
-        match serde_json::from_str::<ListModelsResponse>(&body) {
-            Ok(response) => {
-                eprintln!("DEBUG: Successfully parsed {} models", response.data.len());
-                let models = response
-                    .data
-                    .into_iter()
-                    .map(|entry| {
-                        // Extract display name from ID (e.g., "openai/gpt-4" -> "GPT-4")
-                        let display_name = entry.id
-                            .split('/')
-                            .last()
-                            .unwrap_or(&entry.id)
-                            .replace('-', " ")
-                            .to_uppercase();
+        let response: ListModelsResponse =
+            serde_json::from_str(&body).context("Unable to parse Requesty models response")?;
 
-                        Model {
-                            name: entry.id,
-                            display_name: Some(display_name),
-                            max_tokens: entry.context_window.unwrap_or(128000),
-                            supports_tools: Some(true), // Assume tools are supported for most models
-                            supports_images: entry.supports_vision,
-                            mode: if entry.supports_reasoning.unwrap_or(false) {
-                                ModelMode::Thinking {
-                                    budget_tokens: Some(4_096),
-                                }
-                            } else {
-                                ModelMode::Default
-                            },
+        let models = response
+            .data
+            .into_iter()
+            .map(|entry| {
+                // Extract display name from ID (e.g., "openai/gpt-4" -> "GPT-4")
+                let display_name = entry.id
+                    .split('/')
+                    .last()
+                    .unwrap_or(&entry.id)
+                    .replace('-', " ")
+                    .to_uppercase();
+
+                Model {
+                    name: entry.id,
+                    display_name: Some(display_name),
+                    max_tokens: entry.context_window.unwrap_or(128000),
+                    supports_tools: Some(true), // Assume tools are supported for most models
+                    supports_images: entry.supports_vision,
+                    mode: if entry.supports_reasoning.unwrap_or(false) {
+                        ModelMode::Thinking {
+                            budget_tokens: Some(4_096),
                         }
-                    })
-                    .collect();
+                    } else {
+                        ModelMode::Default
+                    },
+                }
+            })
+            .collect();
 
-                Ok(models)
-            }
-            Err(parse_err) => {
-                eprintln!("DEBUG: Failed to parse JSON: {}", parse_err);
-                Err(anyhow!("Unable to parse Requesty models response: {}", parse_err))
-            }
-        }
+        Ok(models)
     } else {
         Err(anyhow!(
             "Failed to connect to Requesty API: {} {}",
