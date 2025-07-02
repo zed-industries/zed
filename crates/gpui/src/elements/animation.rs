@@ -61,7 +61,6 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(move |this, _, value| animator(this, value)),
             animations: smallvec::smallvec![animation],
-            repeat: false,
         }
     }
 
@@ -80,7 +79,6 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(animator),
             animations: animations.into(),
-            repeat: false,
         }
     }
 }
@@ -93,7 +91,6 @@ pub struct AnimationElement<E> {
     element: Option<E>,
     animations: SmallVec<[Animation; 1]>,
     animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
-    repeat: bool,
 }
 
 impl<E> AnimationElement<E> {
@@ -101,12 +98,6 @@ impl<E> AnimationElement<E> {
     /// to the element being animated.
     pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> AnimationElement<E> {
         self.element = self.element.map(f);
-        self
-    }
-
-    /// Set the animation chain to repeat when it finishes
-    pub fn repeat(mut self) -> Self {
-        self.repeat = true;
         self
     }
 }
@@ -157,12 +148,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             if delta > 1.0 {
                 if self.animations[animation_ix].oneshot {
                     if animation_ix >= self.animations.len() - 1 {
-                        if self.repeat {
-                            state.start = Instant::now();
-                            state.animation_ix = 0;
-                        } else {
-                            done = true;
-                        }
+                        done = true;
                     } else {
                         state.start = Instant::now();
                         state.animation_ix += 1;
@@ -269,34 +255,5 @@ mod easing {
 
             min + (normalized_alpha * range)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::div;
-
-    #[test]
-    fn test_animation_repeat() {
-        let animations = vec![
-            Animation::new(Duration::from_millis(100)),
-            Animation::new(Duration::from_millis(200)),
-        ];
-
-        let element = div()
-            .with_animations("test_multiple", animations, |el, _, _| el)
-            .repeat();
-
-        assert!(element.repeat);
-    }
-
-    #[test]
-    fn test_animation_no_repeat() {
-        let animation = Animation::new(Duration::from_millis(100));
-
-        let element = div().with_animation("test_single", animation, |el, _| el);
-
-        assert!(!element.repeat);
     }
 }
