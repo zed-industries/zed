@@ -15,7 +15,7 @@ use std::{
 use task::{DEFAULT_REMOTE_SHELL, Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
-    terminal_settings::{self, TerminalSettings, VenvSettings},
+    terminal_settings::{self, ActivateScript, TerminalSettings, VenvSettings},
 };
 use util::ResultExt;
 
@@ -466,17 +466,17 @@ impl Project {
             })
     }
 
-    fn get_activate_venv_script_file(&self, program: Option<&str>) -> &'static str {
-        let shell = std::path::Path::new(program.unwrap_or(""))
+    fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
+        let shell = std::path::Path::new(shell.unwrap_or(""))
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
         match shell {
-            "fish" => "activate.fish",
-            "tcsh" => "activate.csh",
-            "nu" => "activate.nu",
-            "powershell" | "pwsh" => "activate.ps1",
-            _ => "activate",
+            "fish" => ActivateScript::Fish,
+            "tcsh" => ActivateScript::Csh,
+            "nu" => ActivateScript::Nushell,
+            "powershell" | "pwsh" => ActivateScript::PowerShell,
+            _ => ActivateScript::Default,
         }
     }
 
@@ -496,16 +496,23 @@ impl Project {
             terminal_settings::ActivateScript::PowerShell => ".",
             _ => "source",
         };
-        let activate_script_name = match venv_settings.activate_script {
-            terminal_settings::ActivateScript::Default => match shell {
-                Shell::Program(program) => self.get_activate_venv_script_file(Some(program)),
-                Shell::WithArguments {
-                    program,
-                    args: _,
-                    title_override: _,
-                } => self.get_activate_venv_script_file(Some(program)),
-                Shell::System => self.get_activate_venv_script_file(None),
-            },
+        let script_kind =
+            if venv_settings.activate_script == terminal_settings::ActivateScript::Default {
+                match shell {
+                    Shell::Program(program) => Self::activate_script_kind(Some(program)),
+                    Shell::WithArguments {
+                        program,
+                        args: _,
+                        title_override: _,
+                    } => Self::activate_script_kind(Some(program)),
+                    Shell::System => Self::activate_script_kind(None),
+                }
+            } else {
+                venv_settings.activate_script
+            };
+
+        let activate_script_name = match script_kind {
+            terminal_settings::ActivateScript::Default => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
             terminal_settings::ActivateScript::Fish => "activate.fish",
             terminal_settings::ActivateScript::Nushell => "activate.nu",
