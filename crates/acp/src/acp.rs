@@ -133,7 +133,7 @@ pub struct ToolCall {
 #[derive(Debug)]
 pub enum ToolCallStatus {
     WaitingForConfirmation {
-        confirmation: acp::ToolCallConfirmation,
+        confirmation: ToolCallConfirmation,
         respond_tx: oneshot::Sender<acp::ToolCallConfirmationOutcome>,
     },
     Allowed {
@@ -144,16 +144,152 @@ pub enum ToolCallStatus {
 }
 
 #[derive(Debug)]
+pub enum ToolCallConfirmation {
+    Edit {
+        diff: Diff,
+        description: Option<Entity<Markdown>>,
+    },
+    Execute {
+        command: String,
+        root_command: String,
+        description: Option<Entity<Markdown>>,
+    },
+    Mcp {
+        server_name: String,
+        tool_name: String,
+        tool_display_name: String,
+        description: Option<Entity<Markdown>>,
+    },
+    Fetch {
+        urls: Vec<String>,
+        description: Option<Entity<Markdown>>,
+    },
+    Other {
+        description: Entity<Markdown>,
+    },
+}
+
+impl ToolCallConfirmation {
+    pub fn from_acp(
+        confirmation: acp::ToolCallConfirmation,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        let to_md = |description: String, cx: &mut App| -> Entity<Markdown> {
+            cx.new(|cx| {
+                Markdown::new(
+                    description.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
+            })
+        };
+
+        match confirmation {
+            acp::ToolCallConfirmation::Edit { diff, description } => Self::Edit {
+                diff: Diff::from_acp(diff, language_registry.clone(), cx),
+                description: description.map(|description| to_md(description, cx)),
+            },
+            acp::ToolCallConfirmation::Execute {
+                command,
+                root_command,
+                description,
+            } => Self::Execute {
+                command,
+                root_command,
+                description: description.map(|description| to_md(description, cx)),
+            },
+            acp::ToolCallConfirmation::Mcp {
+                server_name,
+                tool_name,
+                tool_display_name,
+                description,
+            } => Self::Mcp {
+                server_name,
+                tool_name,
+                tool_display_name,
+                description: description.map(|description| to_md(description, cx)),
+            },
+            acp::ToolCallConfirmation::Fetch { urls, description } => Self::Fetch {
+                urls,
+                description: description.map(|description| to_md(description, cx)),
+            },
+            acp::ToolCallConfirmation::Other { description } => Self::Other {
+                description: to_md(description, cx),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ToolCallContent {
-    Markdown {
-        markdown: Entity<Markdown>,
-    },
-    Diff {
-        path: PathBuf,
-        diff: Entity<BufferDiff>,
-        buffer: Entity<MultiBuffer>,
-        _task: Task<Result<()>>,
-    },
+    Markdown { markdown: Entity<Markdown> },
+    Diff { diff: Diff },
+}
+
+#[derive(Debug)]
+pub struct Diff {
+    // todo! show path somewhere
+    buffer: Entity<MultiBuffer>,
+    _path: PathBuf,
+    _task: Task<Result<()>>,
+}
+
+impl Diff {
+    pub fn from_acp(
+        diff: acp::Diff,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        let acp::Diff {
+            path,
+            old_text,
+            new_text,
+        } = diff;
+
+        let buffer = cx.new(|cx| Buffer::local(new_text, cx));
+        let text_snapshot = buffer.read(cx).text_snapshot();
+        let buffer_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+            multibuffer.add_diff(buffer_diff.clone(), cx);
+            multibuffer
+        });
+
+        Self {
+            buffer: multibuffer,
+            _path: path.clone(),
+            _task: cx.spawn(async move |cx| {
+                let diff_snapshot = BufferDiff::update_diff(
+                    buffer_diff.clone(),
+                    text_snapshot.clone(),
+                    old_text.map(|o| o.into()),
+                    true,
+                    true,
+                    None,
+                    Some(language_registry.clone()),
+                    cx,
+                )
+                .await?;
+
+                buffer_diff.update(cx, |diff, cx| {
+                    diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
+                })?;
+
+                if let Some(language) = language_registry
+                    .language_for_file_path(&path)
+                    .await
+                    .log_err()
+                {
+                    buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx))?;
+                }
+
+                anyhow::Ok(())
+            }),
+        }
+    }
 }
 
 /// A `ThreadEntryId` that is known to be a ToolCall
@@ -293,7 +429,11 @@ impl AcpThread {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
-            confirmation,
+            confirmation: ToolCallConfirmation::from_acp(
+                confirmation,
+                self.project.read(cx).languages().clone(),
+                cx,
+            ),
             respond_tx: tx,
         };
 
@@ -399,56 +539,9 @@ impl AcpThread {
                                 )
                             }),
                         },
-                        acp::ToolCallContent::Diff {
-                            path,
-                            old_text,
-                            new_text,
-                        } => {
-                            let buffer = cx.new(|cx| Buffer::local(new_text, cx));
-                            let text_snapshot = buffer.read(cx).text_snapshot();
-                            let buffer_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
-
-                            let multibuffer = cx.new(|cx| {
-                                let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-                                multibuffer.add_diff(buffer_diff.clone(), cx);
-                                multibuffer
-                            });
-
-                            ToolCallContent::Diff {
-                                path: path.clone(),
-                                diff: buffer_diff.clone(),
-                                buffer: multibuffer,
-                                _task: cx.spawn(async move |_this, cx| {
-                                    let diff_snapshot = BufferDiff::update_diff(
-                                        buffer_diff.clone(),
-                                        text_snapshot.clone(),
-                                        old_text.map(|o| o.into()),
-                                        true,
-                                        true,
-                                        None,
-                                        Some(language_registry.clone()),
-                                        cx,
-                                    )
-                                    .await?;
-
-                                    buffer_diff.update(cx, |diff, cx| {
-                                        diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
-                                    })?;
-
-                                    if let Some(language) = language_registry
-                                        .language_for_file_path(&path)
-                                        .await
-                                        .log_err()
-                                    {
-                                        buffer.update(cx, |buffer, cx| {
-                                            buffer.set_language(Some(language), cx)
-                                        })?;
-                                    }
-
-                                    anyhow::Ok(())
-                                }),
-                            }
-                        }
+                        acp::ToolCallContent::Diff { diff } => ToolCallContent::Diff {
+                            diff: Diff::from_acp(diff, language_registry, cx),
+                        },
                     });
                     *status = new_status;
                 }
@@ -647,7 +740,7 @@ mod tests {
                 id,
                 status:
                     ToolCallStatus::WaitingForConfirmation {
-                        confirmation: acp::ToolCallConfirmation::Execute { root_command, .. },
+                        confirmation: ToolCallConfirmation::Execute { root_command, .. },
                         ..
                     },
                 ..

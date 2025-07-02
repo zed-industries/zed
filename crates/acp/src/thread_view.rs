@@ -2,7 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agentic_coding_protocol::{self as acp, ToolCallConfirmation};
+use agentic_coding_protocol::{self as acp};
 use anyhow::Result;
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
@@ -24,7 +24,7 @@ use zed_actions::agent::Chat;
 
 use crate::{
     AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
+    ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId, ToolCallStatus,
 };
 
 pub struct AcpThreadView {
@@ -232,20 +232,33 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    // todo! should we do this on the fly from render?
     fn sync_thread_entry_view(
         &mut self,
         entry_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(buffer) = self.entry_diff_buffer(entry_ix, cx) else {
-            return;
+        let buffer = match (
+            self.entry_diff_buffer(entry_ix, cx),
+            self.thread_entry_views.get(entry_ix),
+        ) {
+            (Some(buffer), Some(Some(ThreadEntryView::Diff { editor }))) => {
+                if editor.read(cx).buffer() == &buffer {
+                    // same buffer, all synced up
+                    return;
+                }
+                // new buffer, replace editor
+                buffer
+            }
+            (Some(buffer), _) => buffer,
+            (None, Some(Some(ThreadEntryView::Diff { .. }))) => {
+                // no longer displaying a diff, drop editor
+                self.thread_entry_views[entry_ix] = None;
+                return;
+            }
+            (None, _) => return,
         };
-
-        if let Some(Some(ThreadEntryView::Diff { .. })) = self.thread_entry_views.get(entry_ix) {
-            return;
-        }
-        // todo! should we do this on the fly from render?
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -297,16 +310,20 @@ impl AcpThreadView {
     fn entry_diff_buffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
 
-        if let AgentThreadEntryContent::ToolCall(ToolCall {
-            status:
-                crate::ToolCallStatus::Allowed {
-                    content: Some(ToolCallContent::Diff { buffer, .. }),
-                    ..
-                },
-            ..
-        }) = &entry.content
-        {
-            Some(buffer.clone())
+        if let AgentThreadEntryContent::ToolCall(ToolCall { status, .. }) = &entry.content {
+            if let ToolCallStatus::WaitingForConfirmation {
+                confirmation: ToolCallConfirmation::Edit { diff, .. },
+                ..
+            }
+            | ToolCallStatus::Allowed {
+                content: Some(ToolCallContent::Diff { diff }),
+                ..
+            } = status
+            {
+                Some(diff.buffer.clone())
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -423,7 +440,13 @@ impl AcpThreadView {
 
         let content = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
-                Some(self.render_tool_call_confirmation(tool_call.id, confirmation, cx))
+                Some(self.render_tool_call_confirmation(
+                    entry_ix,
+                    tool_call.id,
+                    confirmation,
+                    window,
+                    cx,
+                ))
             }
             ToolCallStatus::Allowed { content, .. } => content.as_ref().map(|content| {
                 div()
@@ -437,15 +460,7 @@ impl AcpThreadView {
                             default_markdown_style(window, cx),
                         )
                         .into_any_element(),
-                        ToolCallContent::Diff { .. } => {
-                            if let Some(Some(ThreadEntryView::Diff { editor })) =
-                                self.thread_entry_views.get(entry_ix)
-                            {
-                                editor.clone().into_any_element()
-                            } else {
-                                Empty.into_any()
-                            }
-                        }
+                        ToolCallContent::Diff { .. } => self.render_diff_editor(entry_ix),
                     })
                     .into_any_element()
             }),
@@ -482,24 +497,25 @@ impl AcpThreadView {
 
     fn render_tool_call_confirmation(
         &self,
+        entry_ix: usize,
         tool_call_id: ToolCallId,
         confirmation: &ToolCallConfirmation,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         match confirmation {
             ToolCallConfirmation::Edit {
-                file_name,
-                file_diff,
                 description,
+                diff: _,
             } => v_flex()
                 .border_color(cx.theme().colors().border)
                 .border_t_1()
                 .px_2()
                 .py_1p5()
-                // todo! nicer rendering
-                .child(file_name.clone())
-                .child(file_diff.clone())
-                .children(description.clone())
+                .child(self.render_diff_editor(entry_ix))
+                .children(description.clone().map(|description| {
+                    MarkdownElement::new(description, default_markdown_style(window, cx))
+                }))
                 .child(
                     h_flex()
                         .justify_end()
@@ -571,7 +587,9 @@ impl AcpThreadView {
                 .py_1p5()
                 // todo! nicer rendering
                 .child(command.clone())
-                .children(description.clone())
+                .children(description.clone().map(|description| {
+                    MarkdownElement::new(description, default_markdown_style(window, cx))
+                }))
                 .child(
                     h_flex()
                         .justify_end()
@@ -644,7 +662,9 @@ impl AcpThreadView {
                 .py_1p5()
                 // todo! nicer rendering
                 .child(format!("{server_name} - {tool_display_name}"))
-                .children(description.clone())
+                .children(description.clone().map(|description| {
+                    MarkdownElement::new(description, default_markdown_style(window, cx))
+                }))
                 .child(
                     h_flex()
                         .justify_end()
@@ -732,7 +752,9 @@ impl AcpThreadView {
                 .py_1p5()
                 // todo! nicer rendering
                 .children(urls.clone())
-                .children(description.clone())
+                .children(description.clone().map(|description| {
+                    MarkdownElement::new(description, default_markdown_style(window, cx))
+                }))
                 .child(
                     h_flex()
                         .justify_end()
@@ -796,7 +818,10 @@ impl AcpThreadView {
                 .px_2()
                 .py_1p5()
                 // todo! nicer rendering
-                .child(description.clone())
+                .child(MarkdownElement::new(
+                    description.clone(),
+                    default_markdown_style(window, cx),
+                ))
                 .child(
                     h_flex()
                         .justify_end()
@@ -854,6 +879,15 @@ impl AcpThreadView {
                         ),
                 )
                 .into_any(),
+        }
+    }
+
+    fn render_diff_editor(&self, entry_ix: usize) -> AnyElement {
+        if let Some(Some(ThreadEntryView::Diff { editor })) = self.thread_entry_views.get(entry_ix)
+        {
+            editor.clone().into_any_element()
+        } else {
+            Empty.into_any()
         }
     }
 }
