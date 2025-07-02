@@ -15,7 +15,7 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use requesty::{
-    Model, ModelMode as RequestyModelMode, ResponseStreamEvent, list_models, stream_completion,
+    Model, ModelMode as RequestyModelMode, ResponseStreamEvent, stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -31,10 +31,19 @@ use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("requesty");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Requesty");
 
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RequestySettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+}
+
+impl Default for RequestySettings {
+    fn default() -> Self {
+        Self {
+            api_url: requesty::REQUESTY_API_URL.to_string(),
+            available_models: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -177,22 +186,33 @@ impl State {
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).requesty;
         let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
+        let api_url = self.settings.api_url.clone();
         let api_key = self.api_key.clone();
 
         cx.spawn(async move |this, cx| {
-            if let Some(api_key) = api_key {
-                // For Requesty, we need to pass the API key when fetching models
-                let models = list_models_with_key(http_client.as_ref(), &api_url, &api_key).await?;
-                this.update(cx, |this, cx| {
-                    this.available_models = models;
-                    cx.notify();
-                })
-            } else {
-                Ok(())
+            async move {
+                if let Some(api_key) = api_key {
+                    log::info!("Fetching Requesty models from: {}", api_url);
+                    match requesty::list_models(http_client.as_ref(), &api_url, &api_key).await {
+                        Ok(models) => {
+                            log::info!("Successfully fetched {} Requesty models", models.len());
+                            this.update(cx, |this, cx| {
+                                this.available_models = models;
+                                cx.notify();
+                            })?;
+                        }
+                        Err(err) => {
+                            log::error!("Failed to fetch Requesty models: {}", err);
+                            return Err(err);
+                        }
+                    }
+                } else {
+                    log::warn!("No API key available for Requesty model fetching");
+                }
+                anyhow::Ok(())
             }
+            .await
         })
     }
 
@@ -701,16 +721,6 @@ pub fn count_requesty_tokens(
         tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
     })
     .boxed()
-}
-
-async fn list_models_with_key(
-    http_client: &dyn HttpClient,
-    api_url: &str,
-    _api_key: &str,
-) -> Result<Vec<requesty::Model>> {
-    // Use the correct models endpoint with API key
-    let models_url = format!("{}/models", api_url.trim_end_matches('/'));
-    list_models(http_client, &models_url).await
 }
 
 struct ConfigurationView {
