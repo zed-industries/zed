@@ -62,7 +62,6 @@ impl AcpThreadView {
         let child = util::command::new_smol_command("node")
             .arg(cli_path)
             .arg("--acp")
-            .args(["--model", "gemini-2.5-flash"])
             .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -362,21 +361,24 @@ impl AcpThreadView {
                         .justify_end()
                         .gap_1()
                         .child(
-                            Button::new(("allow", tool_call_id.as_u64()), "Always Allow Edits")
-                                .icon(IconName::CheckDouble)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Success)
-                                .on_click(cx.listener({
-                                    let id = tool_call_id;
-                                    move |this, _, _, cx| {
-                                        this.authorize_tool_call(
-                                            id,
-                                            acp::ToolCallConfirmationOutcome::AlwaysAllow,
-                                            cx,
-                                        );
-                                    }
-                                })),
+                            Button::new(
+                                ("always_allow", tool_call_id.as_u64()),
+                                "Always Allow Edits",
+                            )
+                            .icon(IconName::CheckDouble)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Success)
+                            .on_click(cx.listener({
+                                let id = tool_call_id;
+                                move |this, _, _, cx| {
+                                    this.authorize_tool_call(
+                                        id,
+                                        acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                                        cx,
+                                    );
+                                }
+                            })),
                         )
                         .child(
                             Button::new(("allow", tool_call_id.as_u64()), "Allow")
@@ -430,7 +432,7 @@ impl AcpThreadView {
                         .gap_1()
                         .child(
                             Button::new(
-                                ("allow", tool_call_id.as_u64()),
+                                ("always_allow", tool_call_id.as_u64()),
                                 format!("Always Allow {root_command}"),
                             )
                             .icon(IconName::CheckDouble)
@@ -501,7 +503,7 @@ impl AcpThreadView {
                         .gap_1()
                         .child(
                             Button::new(
-                                ("allow", tool_call_id.as_u64()),
+                                ("always_allow_server", tool_call_id.as_u64()),
                                 format!("Always Allow {server_name}"),
                             )
                             .icon(IconName::CheckDouble)
@@ -521,7 +523,7 @@ impl AcpThreadView {
                         )
                         .child(
                             Button::new(
-                                ("allow", tool_call_id.as_u64()),
+                                ("always_allow_tool", tool_call_id.as_u64()),
                                 format!("Always Allow {tool_display_name}"),
                             )
                             .icon(IconName::CheckDouble)
@@ -587,7 +589,7 @@ impl AcpThreadView {
                         .justify_end()
                         .gap_1()
                         .child(
-                            Button::new(("allow", tool_call_id.as_u64()), "Always Allow")
+                            Button::new(("always_allow", tool_call_id.as_u64()), "Always Allow")
                                 .icon(IconName::CheckDouble)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Small)

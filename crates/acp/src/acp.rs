@@ -446,13 +446,11 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{FutureExt as _, channel::mpsc, select};
     use gpui::{AsyncApp, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt;
-    use std::{env, path::Path, process::Stdio, time::Duration};
+    use std::{env, path::Path, process::Stdio};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -547,32 +545,6 @@ mod tests {
             // });
             *id
         });
-    }
-
-    async fn run_until_tool_call(thread: &Entity<AcpThread>, cx: &mut TestAppContext) {
-        let (mut tx, mut rx) = mpsc::channel(1);
-
-        let subscription = cx.update(|cx| {
-            cx.subscribe(thread, move |thread, _, cx| {
-                if thread
-                    .read(cx)
-                    .entries
-                    .iter()
-                    .any(|e| matches!(e.content, AgentThreadEntryContent::ToolCall(_)))
-                {
-                    tx.try_send(()).unwrap();
-                }
-            })
-        });
-
-        select! {
-            _ = cx.executor().timer(Duration::from_secs(5)).fuse() => {
-                panic!("Timeout waiting for tool call")
-            }
-            _ = rx.next().fuse() => {
-                drop(subscription);
-            }
-        }
     }
 
     pub fn gemini_acp_server(project: Entity<Project>, mut cx: AsyncApp) -> Result<Arc<AcpServer>> {
