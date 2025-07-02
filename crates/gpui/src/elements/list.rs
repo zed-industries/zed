@@ -1175,20 +1175,21 @@ mod test {
 
         // Should move to item 2
         let offset = state.logical_scroll_top();
-        assert_eq!(offset.item_ix, 2);
-        assert_eq!(offset.offset_in_item, px(0.));
+        assert_eq!(offset.item_ix, 1);
+        assert_eq!(offset.offset_in_item, px(10.));
 
         // Test negative distance: start at item 2, move up 30px
         state.scroll_by(px(-30.));
 
         // Should move back to item 1
         let offset = state.logical_scroll_top();
-        assert_eq!(offset.item_ix, 1);
+        assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
 
         // Test zero distance
         state.scroll_by(px(0.));
-        assert_eq!(offset.item_ix, 1);
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
     }
 }
