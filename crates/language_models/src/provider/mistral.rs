@@ -319,6 +319,10 @@ impl LanguageModel for MistralLanguageModel {
 
     fn max_image_size(&self) -> u64 {
         if self.model.supports_images() {
+            // Mistral documentation: https://www.infoq.com/news/2025/03/mistral-ai-ocr-api/
+            // "The API is currently limited to files that do not exceed 50MB in size or 1,000 pages"
+            // Also confirmed in https://github.com/everaldo/mcp-mistral-ocr/blob/master/README.md
+            // "Maximum file size: 50MB (enforced by Mistral API)"
             52_428_800 // 50 MB - Mistral's OCR API limit
         } else {
             0

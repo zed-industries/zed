@@ -367,6 +367,8 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn max_image_size(&self) -> u64 {
         if self.model.supports_vision.unwrap_or(false) {
+            // Ollama documentation: https://github.com/ollama/ollama/releases/tag/v0.1.15
+            // "Images up to 100MB in size are supported."
             104_857_600 // 100 MB - Ollama's documented API limit
         } else {
             0

@@ -351,6 +351,9 @@ impl LanguageModel for GoogleLanguageModel {
 
     fn max_image_size(&self) -> u64 {
         if self.model.supports_images() {
+            // Google Gemini documentation: https://ai.google.dev/gemini-api/docs/image-understanding
+            // "Note: Inline image data limits your total request size (text prompts, system instructions, and inline bytes) to 20MB."
+            // "For larger requests, upload image files using the File API."
             20_971_520 // 20 MB - Google Gemini's file API limit
         } else {
             0

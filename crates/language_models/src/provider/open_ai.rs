@@ -303,8 +303,11 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn max_image_size(&self) -> u64 {
-        0 // OpenAI models don't currently support images in this implementation
+        // OpenAI documentation: https://help.openai.com/en/articles/8983719-what-are-the-file-upload-size-restrictions
+        // "For images, there's a limit of 20MB per image."
+        // Note: OpenAI models don't currently support images in this implementation
         // When enabled, OpenAI supports up to 20MB (20_971_520 bytes)
+        0
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {

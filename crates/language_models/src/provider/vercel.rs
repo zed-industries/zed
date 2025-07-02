@@ -306,6 +306,10 @@ impl LanguageModel for VercelLanguageModel {
     }
 
     fn max_image_size(&self) -> u64 {
+        // Vercel AI SDK uses standard provider limits. Since it supports multiple providers,
+        // we use a conservative 20MB limit which matches OpenAI's documented limit:
+        // https://help.openai.com/en/articles/8983719-what-are-the-file-upload-size-restrictions
+        // "For images, there's a limit of 20MB per image."
         20_971_520 // 20 MB - Default limit for Vercel AI SDK
     }
 

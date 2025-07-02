@@ -412,6 +412,10 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn max_image_size(&self) -> u64 {
         if self.model.supports_images {
+            // LM Studio documentation: https://lmstudio.ai/docs/typescript/llm-prediction/image-input
+            // While not explicitly stated, LM Studio uses a standard 20MB limit
+            // matching OpenAI's documented limit: https://help.openai.com/en/articles/8983719-what-are-the-file-upload-size-restrictions
+            // "For images, there's a limit of 20MB per image."
             20_971_520 // 20 MB - Default limit for local models
         } else {
             0

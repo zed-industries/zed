@@ -703,6 +703,8 @@ impl LanguageModel for CloudLanguageModel {
         if self.model.supports_images {
             // Use a conservative limit that works across all providers
             // Anthropic has the smallest limit at 5 MiB
+            // Anthropic documentation: https://docs.anthropic.com/en/docs/build-with-claude/vision#faq
+            // "API: Maximum 5MB per image"
             5_242_880 // 5 MiB
         } else {
             0

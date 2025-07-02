@@ -409,6 +409,10 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn max_image_size(&self) -> u64 {
         if self.model.supports_images.unwrap_or(false) {
+            // OpenRouter documentation: https://openrouter.ai/docs/features/images-and-pdfs
+            // While not explicitly stated, OpenRouter appears to follow OpenAI's standard
+            // which is documented at: https://help.openai.com/en/articles/8983719-what-are-the-file-upload-size-restrictions
+            // "For images, there's a limit of 20MB per image."
             20_971_520 // 20 MB - OpenRouter's default limit
         } else {
             0

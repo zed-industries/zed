@@ -218,6 +218,9 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn max_image_size(&self) -> u64 {
         if self.model.supports_vision() {
+            // OpenAI documentation: https://help.openai.com/en/articles/8983719-what-are-the-file-upload-size-restrictions
+            // "For images, there's a limit of 20MB per image."
+            // GitHub Copilot uses OpenAI models under the hood
             20_971_520 // 20 MB - GitHub Copilot uses OpenAI models
         } else {
             0

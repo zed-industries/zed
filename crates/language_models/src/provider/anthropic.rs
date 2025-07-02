@@ -438,6 +438,9 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn max_image_size(&self) -> u64 {
+        // Anthropic documentation: https://docs.anthropic.com/en/docs/build-with-claude/vision#faq
+        // FAQ section: "Is there a limit to the image file size I can upload?"
+        // "API: Maximum 5MB per image"
         5_242_880 // 5 MiB - Anthropic's stated maximum
     }
 
