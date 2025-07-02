@@ -212,7 +212,9 @@ impl Vim {
                         }
                     }
 
-                    Mode::HelixNormal => {}
+                    Mode::HelixNormal => {
+                        ranges.push(selection.start..selection.end);
+                    }
                     Mode::Insert | Mode::Normal | Mode::Replace => {
                         let start = selection.start;
                         let mut end = start;
@@ -240,9 +242,11 @@ impl Vim {
                         .collect::<String>();
                     editor.edit([(range, text)], cx)
                 }
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(cursor_positions)
-                })
+                if !cursor_positions.is_empty() {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges(cursor_positions)
+                    })
+                }
             });
         });
         self.switch_mode(Mode::Normal, true, window, cx)
