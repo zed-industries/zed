@@ -248,7 +248,7 @@ impl KeymapEditor {
 
             let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = Some(
-                ui::KeyBinding::new(key_binding.clone(), cx)
+                ui::KeyBinding::new_from_action(key_binding.clone(), cx)
                     .vim_mode(source == Some(settings::KeybindSource::Vim)),
             );
 
@@ -1012,6 +1012,7 @@ impl Render for KeybindInput {
             .py_2()
             .px_3()
             .gap_1()
+            .gap_2()
             .min_h_8()
             .w_full()
             .justify_between()
@@ -1021,11 +1022,21 @@ impl Render for KeybindInput {
             .flex_1()
             .overflow_hidden()
             .child(
-                div()
+                h_flex()
+                    .w_full()
                     .min_w_0()
-                    .flex_1()
-                    .text_center()
-                    .child(ui::text_for_keystrokes(&self.keystrokes, cx)),
+                    .justify_center()
+                    .flex_wrap()
+                    .gap(ui::DynamicSpacing::Base04.rems(cx))
+                    .children(self.keystrokes.iter().map(|keystroke| {
+                        h_flex().children(ui::render_keystroke(
+                            keystroke,
+                            None,
+                            Some(rems(0.875).into()),
+                            ui::PlatformStyle::platform(),
+                            false,
+                        ))
+                    })),
             )
             .child(
                 h_flex()
